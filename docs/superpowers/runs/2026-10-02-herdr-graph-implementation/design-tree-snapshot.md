@@ -6,6 +6,7 @@ Deliver: Cargo crate herdr-graph (edition 2024), committed symlink third_party/h
 owns: model record schemas; port trait signatures (Store, Writer, HerdrApi, ThreadsPort, Clock); CLI module layout; IPC envelope types; action-record envelope schema (act_: id, kind, time, op ids, affected objects with before/after, retired vs already_retired, compensation data) shared by observer/templates/plan producers and undo; effect-record schema (ef_ identity = hash(op, object, kind, object_rev), fencing rev, status pending|done|obsolete|failed|unknown|needs_revision) that the journal effects table stores; launch env contract (HERDR_GRAPH=1, HERDR_GRAPH_INSTANCE, HERDR_GRAPH_SEAT, HERDR_GRAPH_CLONE) and harness launch/resume profiles table (shell: no agent; claude: kind claude, resume '--resume <id>', model '--model'; codex: kind codex, args '--no-daemon', resume 'resume <id>', model '-m'; session-id capture rule per harness); seat config key 'summaries' (bool; ordinary default true) and role marker 'role' (e.g. summarizer, system, cron, dispatcher → summaries default false); native-session (ns_) and transcript (tr_) record schema with byte-range [start,end) coverage/gap fields; ThreadsPort delivery capability query (fallback vs service-ack).
 Acceptance: cargo build + cargo test green; serde round-trip test for each record type; no business logic.
 Files: Cargo.toml, third_party/herdr-threads, src/lib.rs, src/main.rs, src/model/**, src/*/mod.rs, src/cli/mod.rs, src/ipc.rs, .gitignore
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): profiles table per spec §4.1 now carries cwd rule, launch args (codex --no-daemon), resume/model args, exit sequence (agent.send_keys), readiness/start outcomes (blocked_needs_human, needs_revision, unknown), session-id source and transcript locator (Claude slug = non-[A-Za-z0-9] → '-', CLAUDE_CONFIG_DIR, path-kind agent_session, glob fallback). Binding schema per §4.2 adds graph token `hg=<id>` and incarnation; ns_ records recorded cwd. Effect record carries predicted end state incl. induced container closures (§3.3, §4.4).
 
 ### hg-zmi.2 — Store: committed-revision reads, instance layout, slugging, path resolution
 deps: ['hg-zmi.1']
@@ -26,6 +27,7 @@ consumes: Store layout + tree-building helpers.
 blocked-by hg-zmi.2: consumes Store tree-building helpers and committed reads
 Acceptance (tier 2 tests): two renames of same seat from same rev -> exactly one commits, other rejected with explanation; disjoint seat edits both commit; reader thread observing many commits never sees a partial multi-file change; crash at every failpoint then restart -> no lost or duplicate op (each op's trailer appears at most once, admitted ops eventually commit or reject); cancel of admitted op never commits; cancel vs commit race is linearizable (one of cancelled|committed).
 Files: src/journal/**, src/writer/**, tests/writer_*.rs
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): working tree is a derived view (spec §3.5): FF re-run on daemon start after recovery; dirty files recorded in .graph-local/worktree_dirty (doctor + Notify); untracked/dirty leftovers under moved folders moved to .graph-local/orphans/<op>/; commit oid reported as view_rev.
 
 ### hg-zmi.4 — Daemon, IPC server, CLI framework and status/doctor
 deps: ['hg-zmi.1', 'hg-zmi.2']
@@ -37,6 +39,7 @@ blocked-by hg-zmi.1: consumes IPC envelope types and port traits
 blocked-by hg-zmi.2: consumes Store impl for daemon-less read-only fallback
 Acceptance: integration test starts daemon in a temp instance, --ensure twice yields one daemon, CLI round-trips a command, status reports; socket path fallback for long paths tested.
 Files: src/daemon/**, src/ipc.rs (impl), src/cli/status.rs, src/cli/daemon.rs, src/config.rs
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): locate-and-ensure chain (spec §1): HERDR_GRAPH_INSTANCE → `$HERDR_BIN_PATH plugin config-dir herdr-graph`/config.toml → ~/.config/herdr-graph/config.toml; mutating/seat/undo/request commands auto-run `daemon --ensure` (10s) and retry once, else fail clearly without admitting; `daemon --ensure` double-forks with setsid and returns when the socket answers; exits 0 when no instance is configured.
 
 ### hg-zmi.5 — Herdr socket client and private-Herdr test fixture
 deps: ['hg-zmi.1']
@@ -48,6 +51,7 @@ blocked-by hg-zmi.1: consumes HerdrApi trait
 Acceptance: tier-3 test (feature private-herdr) creates workspace/tab/panes with env in a private server, observes created/renamed/closed events, snapshot matches; FakeHerdr unit tests.
 Files: src/herdr/**, tests/support/private_herdr.rs, tests/herdr_client.rs
 Coverage r2: credential pass-through rule for real-agent tiers — only explicit env (ANTHROPIC_API_KEY, OPENAI_API_KEY) or the macOS keychain (not HOME-based) may reach private agents; never copy the user's settings, hooks, skills or memory-observer config; real-agent tests skip with reason when unauthenticated.
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): HerdrApi adds report_metadata tokens, agent.get, agent.send_keys, pane.current, process start-time lookup for incarnation. Spikes in the PRIVATE server, results written to docs/herdr-spikes.md and consumed by hg-zmi.8: (1) event order when closing a multi-pane tab / multi-tab workspace; (2) whether closing a workspace's last tab closes the workspace; (3) whether metadata tokens / labels survive a Herdr server restart and whether terminal_ids are reused; (4) whether a detached daemon started from a [[startup]] hook survives the hook's exit; (5) whether agent_session is reported for agent.start'ed Claude without Herdr's Claude integration. Design is defensive either way; spikes only choose token vs label-nonce.
 
 ### hg-zmi.6 — Plan/confirm/apply engine core and seat lifecycle kinds
 deps: ['hg-zmi.3', 'hg-zmi.4']
@@ -59,6 +63,7 @@ blocked-by hg-zmi.3: consumes Writer Mutation registration API and journal op st
 blocked-by hg-zmi.4: consumes daemon IPC command registry for plan/apply handlers
 Acceptance: plan hash stable; unrelated commit between plan and apply does not stale it; same-object change does; retire seat plan lists its clones; resurrect restores ids; effective config precedence.
 Files: src/plan/**, src/model/effective.rs, src/cli/plan.rs
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): confirmation exactness (spec §3.3): apply executes only the confirmed effect set; any recomputed-vs-confirmed effect difference ⇒ stale_plan regardless of relied_on (recompute includes set-shaped reads); no bypass flag; non-TTY without --json prints and never applies; plans predict and show induced container closures. Seat deactivate leaves clones active with runtime absent.
 
 ### hg-zmi.7 — Reconciler: desired-vs-live effects, fencing, retries, session replacement
 deps: ['hg-zmi.5', 'hg-zmi.6']
@@ -70,6 +75,7 @@ blocked-by hg-zmi.6: consumes plan effect types and effective config resolver
 blocked-by hg-zmi.5: consumes FakeHerdr for unit tests
 Acceptance: unit tests with FakeHerdr: activate seat -> tab+pane+agent effects in order; retire after queued create -> no tab created (obsolete); transient failure retried; unknown outcome inspected not duplicated; model change on occupied clone -> replacement with resume args.
 Files: src/reconcile/**
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): Reconciler is the second half of the shared observer/reconciler loop step (spec §4.3.6, §4.4): never acts on a snapshot whose observations are uncommitted; no create effects for `unknown` objects; effects record predicted end states (incl. induced container closures) that the observer uses for classification (replaces the 30s correlation window); unknown outcomes resolved by token lookup; start_agent readiness precondition and outcomes (§4.1); session replacement per §4.5 (idle gate, exit timeout → needs_revision, no new agent).
 
 ### hg-zmi.8 — Observer: events + snapshots to observed mutations, closure cascades, renames, moves
 deps: ['hg-zmi.7']
@@ -81,6 +87,7 @@ blocked-by hg-zmi.7: consumes reconciler expected-observation correlation record
 Acceptance: FakeHerdr tests: pane close retires clone only; last-pane close also closing tab retires seat once; workspace close retires dormant seats too; graph-issued close not double-retired; disconnect -> unknown; rename tracked; move -> reload_required; event loss recovered by snapshot.
 Files: src/observe/**
 Acceptance (coverage r2): per-harness session-id capture unit tests (claude agent_session id + transcript path; codex agent_session or argv resume id; shell none).
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): REDESIGNED (spec §4.3): the observer is a level-triggered structural differ. Events/tick/reconnect only trigger complete snapshots; persisted baseline .graph-local/baseline.json with incarnation; diffs only between same-incarnation complete snapshots; first snapshot after start/reconnect/incarnation change is a rebind pass (identity matching only; unmatched → unknown); matching by graph token then terminal_id then native session; diff yields move / rename / occupancy end/start / disappearance; containment grouping (workspace > tab > pane, moved-out panes handled as moves); every element classified against committed intent + journaled effects' predicted end states (explained → bookkeeping only); no wall-clock correlation window. Replaces the old event→mutation mapping and 30s correlation; 'expected-observation correlation records' from hg-zmi.7 are now effect predicted end states. Acceptance adds: Herdr restart → no mass retirement; close while daemon down → unknown not recreated; retire last clone → induced tab close explained; deactivate → no retirement; dropped rename recovered from diff; move emptying a tab.
 
 ### hg-zmi.9 — Templates and applications: live propagation, exclusivity withdrawal, re-addition
 deps: ['hg-zmi.6']
@@ -115,6 +122,7 @@ Acceptance: FakeThreads unit tests for all effects incl never fabricating accept
 Files: src/threads/**, src/cli/who.rs, tests/threads_*.rs
 blocked-by hg-zmi.17: consumes participation join/leave scope semantics
 blocked-by hg-zmi.5: consumes PrivateHerdr fixture and test-isolation guard
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): membership cleanup keyed to occupancy (spec §7.1): occupancy end (from the differ) → ReleaseRequirement for that occupant; occupant started/changed → re-invite the new occupant's threads seat (Required for system channels, Ordinary for seat-wide participation); clone retirement also releases.
 
 ### hg-zmi.12 — Transcripts and processing requests: coverage, delivery, summarizer relaunch
 deps: ['hg-zmi.11', 'hg-zmi.8']
@@ -126,6 +134,7 @@ blocked-by hg-zmi.8: consumes session-ended hook and native session records
 blocked-by hg-zmi.11: consumes ThreadsPort impl for Notify delivery
 Acceptance: proptest coverage merge under arbitrary result order; summaries=false seat creates no request; disabling keeps pending; missing input unresolved; retired summarizer not activated; absent occupant relaunched; ACK != success.
 Files: src/transcripts/**, src/cli/request.rs
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): session identity from graph's own SessionStart hook via `herdr-graph session-report` first, then Herdr agent_session, then process argv (spec §8.1); transcript locator from the profile table; deterministic summarizer destination and `undeliverable` flagging; daemon-owned liveness scan every 10 min (redeliver undelivered, re-deliver un-ACKed after 30 min, retry dispatched-not-completed after 6 h) — the role's /loop is convenience only (spec §8.2).
 
 ### hg-zmi.13 — Bootstrap and shipped skills/templates: /seat, graph skill, setup hook, Beads labels
 deps: ['hg-zmi.9', 'hg-zmi.11', 'hg-zmi.17', 'hg-zmi.6', 'hg-zmi.4']
@@ -140,6 +149,7 @@ Files: src/cli/seat.rs, src/cli/setup.rs, src/cli/content.rs, src/bootstrap/**, 
 blocked-by hg-zmi.9: consumes template semantics for shipped templates
 blocked-by hg-zmi.11: consumes pending-invitations query
 blocked-by hg-zmi.17: consumes pending-ops query
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): `setup claude` hook runs `herdr-graph session-report --from-hook claude` in addition to prompting /seat when HERDR_GRAPH=1; `content write --object <id> --rel <path>` resolves at write time and rejects non-live targets (spec §3.5); /seat reports view_rev and worktree_dirty; `rebind <clone> --pane <pane>` CLI surface for proposed rebind plans (kind owned by hg-zmi.17). Summarizer AGENTS.md writes via content write --object.
 
 ### hg-zmi.14 — Packaging: herdr plugin manifest, build script, README with verified-vs-assumed matrix
 deps: ['hg-zmi.4']
@@ -223,6 +233,7 @@ blocked-by hg-zmi.16: consumes real-agent smoke results for the matrix
 blocked-by hg-zmi.17: consumes override/participation/cancel/reassign kinds
 Coverage r2 additions: owns the README 'Verification matrix' section content (written from docs/verification-matrix.md). Flows also: install the built plugin into the private Herdr (herdr plugin link against the PRIVATE server with its own HERDR_PLUGIN_STATE_DIR), invoke status action, confirm startup '--ensure' runs one daemon; manual pane close → cascade → undo run from a pane in the private Herdr adopts that pane as the restored clone.
 blocked-by hg-zmi.14: consumes plugin manifest and build script
+Roast design r1 amendments (spec is authoritative; see 2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md): add flows per spec §11 tier 3: Herdr private-server restart (rebind pass, no mass retirement, no duplicates), close while daemon down (unknown, no recreation), retire last clone (induced tab close explained), seat deactivate, pane move emptying a tab, dropped rename recovered.
 
 ### hg-zmi.20 — Integration sweep: herdr-graph MVP
 deps: ['hg-zmi.19', 'hg-zmi.18', 'hg-zmi.9', 'hg-zmi.3', 'hg-zmi.16', 'hg-zmi.5', 'hg-zmi.8', 'hg-zmi.13', 'hg-zmi.12', 'hg-zmi.2', 'hg-zmi.17', 'hg-zmi.15', 'hg-zmi.10', 'hg-zmi.7', 'hg-zmi.14', 'hg-zmi.1', 'hg-zmi.11', 'hg-zmi.6', 'hg-zmi.4']
@@ -247,4 +258,46 @@ blocked-by hg-zmi.16: consumes all leaves (integration sweep)
 blocked-by hg-zmi.17: consumes all leaves (integration sweep)
 blocked-by hg-zmi.18: consumes all leaves (integration sweep)
 blocked-by hg-zmi.19: consumes all leaves (integration sweep)
+
+### hg-zmi.21 — Design fix r1 C1: observer redesign as level-triggered snapshot differ
+deps: []
+
+Redesign applied (step-back r1). Spec §4.2-§4.4 rewritten; beads hg-zmi.7/.8 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.22 — Design fix r1 C2: harness launch profile table (cwd, args, exit, readiness, transcript locator)
+deps: []
+
+Spec §4.1 profile table, §4.5, §8.1; beads hg-zmi.1/.7/.12 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.23 — Design fix r1 C3: locate-and-ensure chain for CLI/daemon
+deps: []
+
+Spec §1; bead hg-zmi.4 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.24 — Design fix r1 C4: working tree as derived view; content write by object id
+deps: []
+
+Spec §3.5/§3.6/§10; beads hg-zmi.3/.13 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.25 — Design fix r1 C5: confirmation exactness (apply only confirmed effects, no bypass)
+deps: []
+
+Spec §3.3; bead hg-zmi.6 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.26 — Design fix r1 C6: daemon-owned summarizer liveness and deterministic destination
+deps: []
+
+Spec §8.2/§8.3; bead hg-zmi.12 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
+
+### hg-zmi.27 — Design fix r1: threads membership cleanup keyed to occupancy
+deps: []
+
+Spec §7.1; bead hg-zmi.11 amended.
+Roast reports: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md. Step-back record: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md. Applied inline as a design (spec + bead description) fix; no code.
 
