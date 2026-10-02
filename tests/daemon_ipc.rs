@@ -216,11 +216,16 @@ fn doctor_reports_checks_and_fails_without_daemon() {
     assert!(text.contains("[ok] instance repo"), "{text}");
     assert!(text.contains("[ok] herdr socket"), "{text}");
     assert!(text.contains("[FAIL] daemon:"), "{text}");
+    // No herdr-threads state dir in the fixture HOME: a degraded install, reported as WARN, never FAIL.
+    assert!(text.contains("[WARN] threads:"), "{text}");
+    assert!(!text.contains("[FAIL] threads"), "{text}");
     assert_eq!(out.status.code(), Some(1));
     assert!(f.run(&["daemon", "--ensure"]).status.success());
     let out = f.run(&["doctor"]);
     assert!(out.status.success(), "{}", stdout(&out));
-    assert!(stdout(&out).contains("[ok] daemon:"));
+    let text = stdout(&out);
+    assert!(text.contains("[ok] daemon:"), "{text}");
+    assert!(text.contains("[WARN] threads:"), "{text}");
 }
 
 #[test]
