@@ -1,0 +1,7 @@
+{
+  "id": "F11",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Narrowed to an unqualified CLI contract, not a claim of proven runtime failure. CURRENT-DESIGN.md:46 requires every selected undo preview to include adoption of the command's current terminal pane; :47-48 includes hydration and template updates. DESIGN-NOTES.md:265,273 repeats adoption into a restored arrangement, but :285-288 specifies that hydration undo retires created objects/reverses relationships and template undo reverses an edit, neither necessarily restoring a pane/tab/workspace. A template-only edit is a concrete in-scope action with no adoption destination, so its required concrete preview cannot be constructed as worded. Full-text searches across all four reviewed docs for undo/adoption, restoration, current pane/scope, output/result and retirement found no conditional-adoption or zero-target rule. CURRENT-DESIGN.md:49 acknowledges multi-object adoption and dependency conflicts, not this case. If the CLI runs in a seat created by the hydration being undone, the command scope also needs explicit handling; no assertion is made that an actual terminal will close. Clarify that adoption applies only when restoration has a target and define the preview/result path when no target exists or the caller's object is retired."
+}

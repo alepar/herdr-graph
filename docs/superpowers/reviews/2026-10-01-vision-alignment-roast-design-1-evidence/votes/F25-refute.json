@@ -1,0 +1,7 @@
+{
+  "id": "F25",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) No equivalent rule resolves later reuse of an object or relationship created by the selected hydration. DESIGN-NOTES.md:285-289 and CURRENT-DESIGN.md:46-49 record provenance, preview, and agent repair for conflicts, but never say whether reuse without a field edit is a conflict or whether it retains/transfers ownership. DESIGN-NOTES.md:274 expressly leaves exact dependency conflicts open. (b) Best-effort external reconciliation (CURRENT-DESIGN.md:15-17) does not accept loss of unrelated later graph work during undo; the undo contract says preserve it (line 47). (c) Hydration undo is explicitly in initial scope (CURRENT-DESIGN.md:47-48). (d) If A creates seat S and relationship R, then B reuses S and R unchanged, retiring A's creations removes B's still-desired organization. The generic conflict route only helps if this dependency is recognized. This is an acknowledged, material design gap, not evidence of an existing implementation defect."
+}

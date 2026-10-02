@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firstmate: public operator sentiment - Deep Research Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1a1a1a;
+            background: #ffffff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+        }
+
+        .header {
+            background: #003d5c;
+            color: white;
+            padding: 25px 40px;
+            border-bottom: 3px solid #002840;
+        }
+
+        .header h1 {
+            font-size: 26px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .header-meta {
+            font-size: 13px;
+            color: #b8d4e6;
+            display: flex;
+            gap: 25px;
+        }
+
+        .metrics-dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0;
+            border-bottom: 2px solid #003d5c;
+        }
+
+        .metric {
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-right: 1px solid #d1d5db;
+            text-align: center;
+        }
+
+        .metric:last-child {
+            border-right: none;
+        }
+
+        .metric-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #003d5c;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #4a5568;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .content {
+            padding: 30px 40px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #003d5c;
+            margin: 32px 0 16px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #003d5c;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            line-height: 1.3;
+        }
+
+        .subsection-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin: 24px 0 12px 0;
+            line-height: 1.4;
+        }
+
+        .executive-summary {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .executive-summary p {
+            margin-bottom: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        p {
+            margin-bottom: 14px;
+            line-height: 1.7;
+            text-align: left;
+        }
+
+        /* Better paragraph spacing in content sections */
+        .content > p,
+        .section p {
+            margin-bottom: 16px;
+        }
+
+        .findings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .finding-card {
+            background: #f8f9fa;
+            padding: 18px;
+            border-left: 3px solid #003d5c;
+        }
+
+        .finding-card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 10px;
+        }
+
+        .finding-card p {
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 13px;
+        }
+
+        .data-table th {
+            background: #003d5c;
+            color: white;
+            padding: 10px 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .data-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        ul, ol {
+            margin: 16px 0 16px 28px;
+            padding-left: 0;
+        }
+
+        li {
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+            padding-left: 8px;
+        }
+
+        /* Nested lists */
+        li ul, li ol {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        /* Better bullet/number spacing */
+        ol {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        ul {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        .key-insight {
+            background: white;
+            border: 1px solid #d1d5db;
+            border-left: 3px solid #003d5c;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .key-insight strong {
+            color: #003d5c;
+            font-weight: 600;
+        }
+
+        .citation {
+            color: #003d5c;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            position: relative;
+            padding: 2px 4px;
+            background: #f0f7fc;
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .citation:hover {
+            background: #003d5c;
+            color: white;
+        }
+
+        /* Attribution Gradients (2025 Enhancement) */
+        .citation-tooltip {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-bottom: 8px;
+            background: white;
+            border: 2px solid #003d5c;
+            box-shadow: 0 4px 12px rgba(0, 61, 92, 0.15);
+            padding: 12px;
+            min-width: 300px;
+            max-width: 500px;
+            z-index: 1000;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .citation:hover .citation-tooltip {
+            display: block;
+        }
+
+        .tooltip-title {
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 6px;
+        }
+
+        .tooltip-source {
+            color: #4a5568;
+            margin-bottom: 8px;
+            font-style: italic;
+        }
+
+        .tooltip-claim {
+            background: #f8f9fa;
+            padding: 8px;
+            margin-top: 8px;
+            border-left: 3px solid #003d5c;
+            font-size: 11px;
+        }
+
+        .tooltip-claim-label {
+            font-weight: 600;
+            color: #003d5c;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .evidence-chain {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #d1d5db;
+        }
+
+        .evidence-chain-label {
+            font-weight: 600;
+            color: #003d5c;
+            font-size: 11px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .evidence-step {
+            padding: 6px;
+            background: #f8f9fa;
+            margin-bottom: 4px;
+            font-size: 11px;
+            border-left: 2px solid #d1d5db;
+            padding-left: 8px;
+        }
+
+        .bibliography {
+            background: #f8f9fa;
+            padding: 30px;
+            margin-top: 40px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .bibliography-content {
+            background: #f8f9fa;
+            padding: 20px 0;
+        }
+
+        .bib-entry {
+            margin-bottom: 18px;
+            padding-left: 50px;
+            text-indent: -50px;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        .bib-number {
+            color: #003d5c;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .bib-entry a {
+            color: #003d5c;
+            word-wrap: break-word;
+            text-decoration: none;
+        }
+
+        .bib-entry a:hover {
+            text-decoration: underline;
+        }
+
+        .compact-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .compact-list li {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .info-box {
+            background: white;
+            border: 1px solid #d1d5db;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .info-box h4 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .highlight-stat {
+            font-weight: 700;
+            color: #003d5c;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+
+        @media print {
+            .container {
+                max-width: 100%;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .metrics-dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .findings-grid {
+                grid-template-columns: 1fr;
+            }
+            .compact-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+<style>@page{size:A4;margin:18mm 17mm;@bottom-center{content:counter(page);font-size:8pt}}@media print{body{font-size:10pt;line-height:1.5}.header{padding:12pt}.content{padding:0}.header-meta{display:block}h2,h3,h4{page-break-after:avoid}p{orphans:3;widows:3}table{font-size:8pt}tr{page-break-inside:avoid}.bib-entry{page-break-inside:avoid;font-size:8pt}.bibliography{padding:10pt}a{color:#003d5c;text-decoration:none}}.bib-entry{margin-bottom:10px}a{color:#003d5c}</style></head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Firstmate: public operator sentiment</h1>
+            <div class="header-meta">
+                <span>28 September 2026</span>
+                <span>•</span>
+                <span>15 Sources</span>
+            </div>
+        </div>
+
+        
+
+        <div class="content">
+            <div class="section"><div class="executive-summary"><h2 class="section-title">Executive Summary</h2>
+
+<p>Firstmate has credible positive operator testimony beyond its creator's promotion. Two Hacker News users describe actual trials favorably; a Reddit user praises its combination with Herdr, delegation, and automatic worktree management while criticizing harness coverage. A separate Hacker News commenter considers its orchestration easier to understand than Gas Town, without establishing hands-on use. These are useful early signals, not demonstrated productivity gains or representative customer sentiment. <a href="#source-1">[1]</a><a href="#source-2">[2]</a><a href="#source-3">[3]</a><a href="#source-4">[4]</a>
+</p>
+
+<p>The most substantive criticism comes from people continuing to operate and modify fleets. One daily-driver operator reports that no-mistakes validation serialized otherwise parallel work, including idle waits for human decisions. A different upstream reporter describes similar contention. More recently, two contributors report costly review loops; one supplies a task-level account of 11 review rounds followed by seven on restart. These reports concern particular configurations and self-reported workloads, not every Firstmate delivery mode. <a href="#source-5">[5]</a><a href="#source-6">[6]</a><a href="#source-7">[7]</a><a href="#source-8">[8]</a>
+</p>
+
+<p>There is a meaningful product-policy disagreement: the maintainer account reports that the captain rejected an always-on review cap and lane-size gate, while welcoming a future opt-in design. Conversely, a reported Herdr environment-isolation defect received a merged fix. Open issue status alone therefore cannot be read as neglect, universal breakage, or dissatisfaction. <a href="#source-9">[9]</a><a href="#source-10">[10]</a><a href="#source-11">[11]</a>
+</p>
+
+<p>My recommendation from sentiment alone is to trial Firstmate before recreating its coordinator experience. Measure interruptions, recovery effort, review spend, and delivery time on our workload. Its users give reasons to take it seriously and concrete failure cases to test. They do not supply evidence that a new generic graph will solve those cases. A graph still needs its own organizational value proposition; being another way to supervise agents is insufficient differentiation. This last judgment is an inference from the evidence, not a measured comparison with herdr-graph.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Introduction</h2>
+
+<p>The question is whether people who actually use Firstmate find its coordinator-and-crew experience valuable, and what their friction implies for building herdr-graph. Research covered GitHub issues and PRs, Hacker News, Reddit, and attempted X retrieval. Product identity was constrained to <code>kunchenguid/firstmate</code>; unrelated pet food, travel agents, NFT markets, and other software called FirstMate were excluded.
+</p>
+
+<p>I separate attributed operator observations from maintainer policy, proposed fixes, creator marketing, and our conclusions. Public accounts establish distinct apparent author clusters, not verified identities or commercial independence. Firstmate's creator-operated account explicitly labels several replies as written by the firstmate agent; those establish public project positions, not additional human testimony. <a href="#source-9">[9]</a>
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Main Analysis</h2>
+
+<h3 class="subsection-title">1. Positive experience is real, but its denominator is small</h3>
+
+<p>On 5 August, <code>brandall10</code> said they had used Firstmate for several weeks, disclaimed affiliation, and were pleasantly surprised by its performance even with weaker agents. Their earlier 29 July description also mentioned Firstmate; these are one author cluster, not two independent endorsements. On 12 August, <code>wifipunk</code> returned to the same thread after trying it for a week and expressed enthusiasm. The second report is hands-on, though socially recruited by the first recommendation rather than independently sampled. <a href="#source-1">[1]</a><a href="#source-2">[2]</a>
+</p>
+
+<p><code>maherbeg</code> favored Firstmate's comprehensibility over Gas Town on 3 August. That supports a perception of a more approachable product shape, but the comment gives neither a workload nor proof of use. It should not become a third successful deployment. <a href="#source-3">[3]</a>
+</p>
+
+<p>On Reddit, <code>The_Tarman_</code> described using Herdr and adding Firstmate to delegate work, highlighting automatic worktree management. Their verdict was positive with a specific caveat: harness support favored major tools, although they added omp support without much difficulty. This combines practical value and adaptation friction in the same account. The retrieved page displayed relative dates inconsistently across cached views, so its exact comment date remains unverified. <a href="#source-4">[4]</a>
+</p>
+
+<h3 class="subsection-title">2. Validation can undermine the parallelism people adopted it for</h3>
+
+<p>Issue #558, opened by <code>julius-retzer</code> on 14 July, describes a daily-driver fleet whose crew worked in parallel but queued at the default no-mistakes validation gate. The reporter supplied a 54-run sample: mean CI monitoring was 75 minutes, versus 10 minutes for tests and eight for review. They attributed roughly three quarters of elapsed run time to CI monitoring and described human-decision waits holding the shared slot. This is one fleet's database summary, not a benchmark independently reproduced here. <a href="#source-5">[5]</a>
+</p>
+
+<p>A separate operator, <code>ooiyeefei</code>, reported upstream contention on no-mistakes v1.31.2 with three concurrent worktree runs on Ubuntu. Their account also describes zombie-worker and stale-mirror recovery problems. This corroborates a historical failure class, not its current frequency or universal applicability. Both issues remained open in the 28 September API snapshot; #558's only retrieved follow-up was a September ready-for-PR triage stamp. No observed resolution was established. <a href="#source-5">[5]</a><a href="#source-6">[6]</a>
+</p>
+
+<p>Current Firstmate explicitly offers no-mistakes, direct-PR, and local-only paths. Its contract defaults unregistered projects to no-mistakes, but the reported bottleneck must not be generalized to the other modes or every installed version of no-mistakes. The correct trial question is whether our selected gate and workload preserve useful concurrency, including while the human is absent. The report's timeout/abort workarounds are operator proposals and practices, not recommendations endorsed by this audit. <a href="#source-5">[5]</a><a href="#source-15">[15]</a>
+</p>
+
+<h3 class="subsection-title">3. Cost criticism includes a policy disagreement, not just defects</h3>
+
+<p>On 7 September, <code>NewAiCoder-bot</code> reported review rounds repeatedly finding minor issues and unusually large lanes. The account explicitly identifies itself as the same person as <code>NewAiCoder</code>, so those names form one cluster. Its figures concern one operator's cached spend, not a standard price or total project cost. On 11 September, <code>tiago-peixoto</code> added a distinct measured account: a Firstmate-driven task ran 11 cold review rounds, failed at a test timeout, then ran seven more reviews after restart; reported review usage totaled 117.1 million tokens on that task. We have not inspected the underlying billing or run database. <a href="#source-7">[7]</a><a href="#source-8">[8]</a>
+</p>
+
+<p>The proposed always-on soft cap and lane-size gates became PR #3980, which the API records as closed without merge. On 14 September, the maintainer's firstmate attributed that decision to the captain rejecting those settings as unconfigured product defaults. The issue remained open for an opt-in design. Treating this as merely an abandoned bug fix would erase the actual disagreement about who chooses delivery rigor and when to stop reviewing. <a href="#source-9">[9]</a>
+</p>
+
+<p>This is particularly relevant to a reusable foundation. My inference is that review policy, budget policy, and team practice should remain separable from organizational mechanics. It is not evidence that Firstmate lacks customization: the public discussion itself invites opt-in behavior. Nor do reported token totals establish dollars spent, because cache treatment, model mix, and billing terms are unspecified. <a href="#source-7">[7]</a><a href="#source-8">[8]</a><a href="#source-9">[9]</a>
+</p>
+
+<h3 class="subsection-title">4. Durable state does not eliminate supervision and integration friction</h3>
+
+<p><code>RooseveltAdvisors</code> reported in August that a long-lived Herdr server leaked Firstmate-home and harness identity into subsequent panes, producing misclassification and repeated recovery guards. PR #2792 merged on 1 September with a launch-only environment-isolation fix; existing servers were deliberately left untouched. This is a concrete incident plus remediation, not a valid assertion that today's new launches still suffer the same defect. <a href="#source-10">[10]</a><a href="#source-11">[11]</a>
+</p>
+
+<p>Two September reports expose different edges. <code>morecoffeyplease</code> described three false watcher-failure alarms on a heavily loaded machine supervising five secondmates, explicitly stating that no lost supervision event was demonstrated. <code>NewAiCoder-bot</code> reported that a pipeline running in an external clone became invisible to worktree-based status lookup, allowing a stale paused report to hide failure for roughly an hour. The latter belongs to the same author cluster as the review-cost issue. Both were open in the snapshot. <a href="#source-12">[12]</a><a href="#source-13">[13]</a>
+</p>
+
+<p>A third operator, <code>jcpoyser</code>, reported that blanket steering approvals violated their temporary rule requiring personal answers to every review decision. Their proposed optional record gate explicitly acknowledges that a recorded answer attested by firstmate does not prove human authorship. This is evidence of a stricter local authority requirement, not proof that every Firstmate user expects it or that our graph implements stronger authorization. <a href="#source-14">[14]</a>
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Synthesis & Insights</h2>
+
+<p>The useful pattern is coexistence: users value delegation and reduced coordination work, while committed operators encounter validation cost, stale status, and integration boundaries. Bug reports often come from people maintaining active fleets or contributing fixes, so they are evidence of investment as well as pain. It would be misleading to turn this selected issue sample into a negative satisfaction score. <a href="#source-1">[1]</a><a href="#source-2">[2]</a><a href="#source-4">[4]</a><a href="#source-5">[5]</a><a href="#source-7">[7]</a><a href="#source-10">[10]</a>
+</p>
+
+<p>The strongest implication for our product decision is to distinguish experience from mechanism. Firstmate already has users who appreciate the experience we might otherwise recreate. The problems above suggest evaluation scenarios for any foundation: a human leaves during review; a process is alive but slow; a task's execution location changes; a worker asks to resolve a decision; a costly review keeps finding small issues. Whether graph is the right solution must be established by its proposed semantics and an implementation comparison, not inferred from Firstmate's issue list.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Limitations & Caveats</h2>
+
+<p>This is a purposive sample, with no known population denominator, retention cohort, audited ROI, or reliable satisfaction percentage. GitHub issues over-sample problems and technically invested users; social recommendations over-sample enthusiasm. Distinct account names do not prove independent organizations. No live Firstmate deployment was run.
+</p>
+
+<p>X's dedicated search provider was unconfigured and direct X pages returned 403. General search found creator claims about life-changing experiences and indexed reply snippets, but those are excluded from the independent sentiment count. A Reddit search snippet alleged ignored follow-up PR adjustments; the actual comment and author could not be recovered, so that allegation is excluded from findings. Threads and YouTube leads likewise did not yield directly inspectable testimony. These retrieval failures leave gaps, not evidence of absence.
+</p>
+
+<p>The skill's three-independent-sources-per-major-claim aspiration is not met for individual incidents. Claims are therefore scoped to named reports, with corroboration identified only where it exists. We did not inflate the report with unrelated reviews or treat stars and forks as satisfaction. The full GitHub index was retrieved for metadata checks; it was not exhaustively read or coded.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Recommendations</h2>
+
+<p>Trial Firstmate on actual delivery work before implementing a competing captain-and-crew layer. Record completed outcomes, elapsed time, human interventions, review rounds, billed cost, and recovery actions. Include a paused human review and a restart; choose delivery mode explicitly so the trial measures the intended setup.
+</p>
+
+<p>Continue graph only if its reusable organizational semantics produce concrete value across different factory practices. Treat Firstmate as a possible reference customer or adapter target conceptually, rather than assuming its existence invalidates graph or its bugs justify rebuilding it. This is a product recommendation, not a proposal to contact its maintainers.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Methodology Appendix</h2>
+
+<p>Search date was read from the system. Eight general search batches used the installed search CLI, covering exact repository identity, reviews/problems, Reddit, Hacker News, X-indexed experience, GitHub issues, model-related experience, and negative testimony. Searches were followed by actual browser reads and GitHub REST retrieval. HN's Algolia API supplied precise comment dates. Public GitHub issue and PR metadata, selected comment threads, and current Firstmate AGENTS.md at commit <code>2d833ff147cd26a5c461e914e06854e0eb2707ce</code> supplied current-status checks.
+</p>
+
+<p>The initial praise/criticism outline was refined into four findings because operational issue threads provided stronger evidence than broad social sentiment. Creator promotion and unmatched product names were filtered out. Account aliases and repeat comments were deduplicated. Sources, short evidence excerpts, scoped claims, raw search results, issue metadata, and selected comment bodies are preserved alongside this report in <code>sentiment-<em>.jsonl</code> and <code>sentiment-</em>.json</code>.
+</p>
+
+<table>
+<thead><tr>
+<th>Author cluster</th>
+<th>Platform/date</th>
+<th>Firsthand?</th>
+<th>Signal</th>
+<th>Limitation</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>brandall10</td>
+<td>HN, Aug 5</td>
+<td>Yes, weeks of use</td>
+<td>Positive</td>
+<td>No workload metrics; July repeat deduplicated <a href="#source-1">[1]</a></td>
+</tr>
+<tr>
+<td>wifipunk</td>
+<td>HN, Aug 12</td>
+<td>Yes, one-week trial</td>
+<td>Positive</td>
+<td>Same recommendation thread <a href="#source-2">[2]</a></td>
+</tr>
+<tr>
+<td>maherbeg</td>
+<td>HN, Aug 3</td>
+<td>Not established</td>
+<td>Positive comparison</td>
+<td>Comprehensibility opinion only <a href="#source-3">[3]</a></td>
+</tr>
+<tr>
+<td>The_Tarman_</td>
+<td>Reddit, Aug/Sep; exact date unverified</td>
+<td>Yes</td>
+<td>Mixed-positive</td>
+<td>Herdr and Firstmate benefits partly combined <a href="#source-4">[4]</a></td>
+</tr>
+<tr>
+<td>julius-retzer</td>
+<td>GitHub, Jul 14</td>
+<td>Yes, daily-driver fleet</td>
+<td>Critical</td>
+<td>One fleet, 54 self-reported runs <a href="#source-5">[5]</a></td>
+</tr>
+<tr>
+<td>ooiyeefei</td>
+<td>Upstream GitHub</td>
+<td>Yes</td>
+<td>Critical corroboration</td>
+<td>no-mistakes v1.31.2, not direct Firstmate testimony <a href="#source-6">[6]</a></td>
+</tr>
+<tr>
+<td>NewAiCoder / NewAiCoder-bot</td>
+<td>GitHub, Sep 7 and 13</td>
+<td>Reported fleet observations</td>
+<td>Critical</td>
+<td>One cluster across two issues <a href="#source-7">[7]</a><a href="#source-13">[13]</a></td>
+</tr>
+<tr>
+<td>tiago-peixoto</td>
+<td>GitHub, Sep 11</td>
+<td>Reported task measurement</td>
+<td>Critical</td>
+<td>Token accounting unaudited <a href="#source-8">[8]</a></td>
+</tr>
+<tr>
+<td>RooseveltAdvisors</td>
+<td>GitHub, Aug 22; fix Sep 1</td>
+<td>Reported reproduction</td>
+<td>Critical, remediated</td>
+<td>New-server fix, not existing server cleanup <a href="#source-10">[10]</a><a href="#source-11">[11]</a></td>
+</tr>
+<tr>
+<td>morecoffeyplease</td>
+<td>GitHub, Sep 12</td>
+<td>Reported three occurrences</td>
+<td>Critical</td>
+<td>Heavy-load case; no lost event demonstrated <a href="#source-12">[12]</a></td>
+</tr>
+<tr>
+<td>jcpoyser</td>
+<td>GitHub, Sep 26</td>
+<td>Reported local audit</td>
+<td>Critical</td>
+<td>Stricter home-local authority policy <a href="#source-14">[14]</a></td>
+</tr>
+<tr>
+<td>Creator account / firstmate</td>
+<td>GitHub policy and contract</td>
+<td>Project position</td>
+<td>Context</td>
+<td>Excluded as independent user sentiment <a href="#source-9">[9]</a><a href="#source-15">[15]</a></td>
+</tr>
+</tbody></table>
+
+<p>Sample: ten apparent non-creator Firstmate author clusters in the table, plus one upstream-only operator cluster. Nine Firstmate clusters describe use or operator observations; maherbeg's hands-on use is unestablished. Only three clusters provide firsthand positive social experience, one of them mixed. These categories are not a voting tally.
+</p>
+
+<p>Validation: structure checks passed (optional academic-section warning). Citation checks passed with 12 of 15 URLs accessible; three HN HEAD requests returned HTTP 405, while their content and dates were verified through browser reads and the HN Algolia API. Ledger references were checked separately; these automated checks do not certify claim truth.
+</p>
+
+
+</div>
+
+            <div class="bibliography">
+                <div class="section-title">Bibliography</div>
+                <p class="bib-entry" id="source-1">[1] brandall10 (2026-08-05T18:52:43Z). &quot;Firstmate comment&quot;. <a href="https://news.ycombinator.com/item?id=49187254">operator testimony</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-2">[2] wifipunk (2026-08-12T00:35:41Z). &quot;Firstmate comment&quot;. <a href="https://news.ycombinator.com/item?id=49266395">operator testimony</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-3">[3] maherbeg (2026-08-03T16:03:02Z). &quot;Firstmate comment&quot;. <a href="https://news.ycombinator.com/item?id=49157582">comparative opinion</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-4">[4] The_Tarman_ (2026-08/09 (relative timestamp only)). &quot;How are you running multiple coding agents at the same time?&quot;. <a href="https://www.reddit.com/r/ClaudeCode/comments/1vtfawm/how_are_you_running_multiple_coding_agents_at_the/">operator testimony</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-5">[5] julius-retzer (2026-07-14T10:18:18Z). &quot;Default no-mistakes gate serializes the crew: one validation run per repo defeats fleet parallelism&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/558">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-6">[6] ooiyeefei (2026-06-28T01:23:30Z). &quot;Single shared daemon serializes runs across worktrees&quot;. <a href="https://github.com/kunchenguid/no-mistakes/issues/354">upstream operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-7">[7] NewAiCoder-bot (2026-09-07T14:35:07Z). &quot;feat(gate): soft-cap no-mistakes review rounds at 3 with a severity escape, and add lane-size targets with telemetry&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/3923">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-8">[8] tiago-peixoto (2026-09-11T20:44:21Z). &quot;Measured review loop cost&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/3923#issuecomment-5640412990">operator comment</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-9">[9] kunchenguid account, speaking as firstmate (2026-09-14T03:58:47Z). &quot;Always-on review cap declined&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/3923#issuecomment-5658773080">maintainer/agent policy</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-10">[10] RooseveltAdvisors (2026-08-22T03:00:38Z). &quot;Herdr server leaks Firstmate home and harness identity into later panes&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/2774">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-11">[11] RooseveltAdvisors (2026-08-22T10:46:02Z). &quot;fix(bin): isolate new Herdr server environments&quot;. <a href="https://github.com/kunchenguid/firstmate/pull/2792">merged remediation</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-12">[12] morecoffeyplease (2026-09-12T19:21:29Z). &quot;watcher guard: a slow poll cycle under load is reported as a failed/wedged watcher&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/4316">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-13">[13] NewAiCoder-bot (2026-09-13T01:17:31Z). &quot;A declared paused: pipeline claim outranks a failed/cancelled/parked run in a separate clone, and a failed watch-arm is silent&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/4335">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-14">[14] jcpoyser (2026-09-26T01:50:57Z). &quot;Require recorded answers before resolving review decisions&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/5736">operator issue</a>. Retrieved 2026-09-28.</p>
+<p class="bib-entry" id="source-15">[15] Firstmate maintainers (2026-09-28 snapshot). &quot;Firstmate current agent contract&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/AGENTS.md">primary technical contract</a>. Retrieved 2026-09-28.</p>
+            </div>
+
+        </div>
+    </div>
+</body>
+</html>

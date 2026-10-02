@@ -1,0 +1,7 @@
+{
+  "id": "F09",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Acknowledged gap, narrowed to repeated applications in one destination. DESIGN-NOTES.md:75 permits composing a group into an existing team without a group runtime node. Apply the same feature-group template twice there (auth and billing): both engineer declarations carry the same stable member ID across applications, while each engineer has a distinct independent seat ID (DESIGN-NOTES.md:293-296,300-302). Retire only auth's engineer. The contract requires a local exclusion so live reconciliation does not recreate that seat, while preserving the other application (CURRENT-DESIGN.md:23-26; DESIGN-NOTES.md:217-219). Yet exclusions are specified as referencing member IDs, and exact scope/correspondence for multiple applications is expressly unresolved (DESIGN-NOTES.md:294,296). A member-ID-only exclusion would also suppress billing's engineer; an unbound exclusion would allow auth's engineer to reappear. Switching just auth to a copied template has the same unresolved target mapping (DESIGN-NOTES.md:295-296). Either outcome violates the specified local exclusion and distinct-instance behavior. This is a required design decision before supporting repeated composition, not a claim that the draft already implements either failure."
+}

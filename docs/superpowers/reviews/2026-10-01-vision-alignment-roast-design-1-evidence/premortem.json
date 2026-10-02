@@ -1,0 +1,76 @@
+{
+  "findings": [
+    {
+      "claim": "Serializing writes does not yet prevent one clone from silently replacing another clone's newer shared state, because mutation preconditions remain undefined.",
+      "location": "CURRENT-DESIGN.md, State and reconciliation; DESIGN-NOTES.md:149-160",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Current design explicitly says 'precise stale-edit/precondition semantics still need design'; notes say 'Serial execution prevents simultaneous writes, but does not by itself detect a stale whole-file replacement computed by a caller.' Failure story: two clones read a seat's instructions, independently revise different concerns, and enqueue complete replacement text. Both requests serialize successfully, but the second removes the first's decision. This is an acknowledged unresolved contract, not a contradiction or a claim that the design promises implementation readiness."
+    },
+    {
+      "claim": "The closure-to-retirement rule lacks the cascade and unavailable-observation contract needed to avoid retiring the wrong scope during ordinary workspace recovery.",
+      "location": "CURRENT-DESIGN.md, State and reconciliation; DESIGN-NOTES.md:147,157,197-198",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Current design makes closing a live pane/tab/workspace retire corresponding graph objects, while explicitly leaving 'Exact cascading closure and external cleanup contracts' open. Notes additionally leave the last-pane/containing-tab behavior and closure versus unavailable observation unspecified. Failure story: a last-pane close or workspace disappearance is represented as multiple observations; the implementation archives a containing seat/team or cleans up participants whose intended lifecycle was not actually resolved. Accepted best-effort missed manual actions do not choose the scope of an action that was observed."
+    },
+    {
+      "claim": "Durable transcript results use summary paths, but the design does not define how those references survive the name-driven relocation of seat folders.",
+      "location": "DESIGN-NOTES.md, User decisions and direction (rename/state-path bullets), and :238-239,255-257; CURRENT-DESIGN.md, Identity and scope",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Names drive corresponding state paths, folder hierarchy follows teams/seats/clones, and completed transcript results reference a 'summary path'. Callers must resolve their current state path rather than cache it, but there is no equivalent reference contract for already-recorded output paths. Failure story: summarization succeeds, a human renames the teamspace, and a returning occupant follows the completion record to the old summary location. Stable seat IDs and current-path lookup can support a solution, but the design has not specified identity-relative artifact references, redirects, or rewriting existing references. This concerns graph-managed result references, not a demand to rewrite arbitrary opaque project prose."
+    },
+    {
+      "claim": "Automatic /seat bootstrap can create a fresh bound identity in the recovery pane before undo adopts that pane, with no contract for resolving that provisional identity.",
+      "location": "DESIGN-NOTES.md:193,238,263-265,272-274; CURRENT-DESIGN.md, Bootstrap and system-duty seats / Undo",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Session-start instructions can automatically run /seat; unbound context may create a seat through a plan. Undo is a separate CLI because automatic matching/creation conflicts with restoring a previous object into a fresh location, and the command's current pane must be adopted into the restoration. Failure story: after accidentally closing a seat, the user opens the requested fresh tab/agent; boot creates a new seat and channels before the user asks for recovery. Undo now encounters an already bound pane. The design leaves unspecified whether adoption retires/reuses that provisional seat, transfers its new history, or refuses restoration, and how it avoids a leftover identity even though it promises to avoid a leftover recovery pane."
+    },
+    {
+      "claim": "Transcript coverage has no settled rule for concurrent or out-of-order results, so late completion can make the recovery summary represent less transcript than an earlier completion.",
+      "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:248,255-259",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The summarizer accepts additional work without waiting for earlier summaries; resumed transcripts append processing work; completion reports carry processed-through coverage and a summary path. The notes explicitly leave 'concurrent or out-of-order result handling' open. Failure story: a request covering a resumed transcript finishes first, then an older request overwrites the same artifact or becomes the current result. The graph's summary pointer or watermark now exposes an incomplete account as the usable recovery artifact. This is a concrete acknowledged design gap rather than a requirement to merge arbitrary summaries automatically."
+    },
+    {
+      "claim": "The transcript workflow specifies activation when no occupant exists but leaves pending-request recovery undefined when an occupant remains present and stops making progress.",
+      "location": "DESIGN-NOTES.md:247-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Graph activates an unoccupied summarizer, reuses an existing occupant without requiring it to be idle, and preserves pending requests after crashes. Instructions tell the occupant to dispatch subagents and report results; the durable contract currently distinguishes requests and explicit completion but defines no stalled/in-progress/failure reporting or reassignment policy for a still-running occupant. Failure story: the summarizer dispatches processing that never reports, remains present accepting messages, and requests remain indefinitely pending while successors wait for recovery summaries. Durable discoverability prevents disappearance but does not settle how this case is detected or repaired. A recovery policy can remain ordinary agent practice; no plugin worker pool or periodic model wake is required by this finding."
+    },
+    {
+      "claim": "Asynchronous transcript processing has no defined source-availability contract, so durable requests may outlive the input needed to fulfill them.",
+      "location": "DESIGN-NOTES.md:241,251,255-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Graph tracks native transcript references and processed-through coverage, triggers work after session closure, and persists requests across occupant loss. The design does not state who ensures that the referenced input remains readable, how it identifies a truncated/replaced source, or how an unavailable transcript becomes a terminal repairable result. Failure story: a pending summary is retried after its source was moved or removed, and durable request persistence alone cannot reconstruct it. This does not assert any particular harness retention behavior or require graph to own a transcript archive; the missing contract could instead expose source-unavailable status and a documented recovery limitation."
+    },
+    {
+      "claim": "The automatic transcript-service design has not established which system-duty transcripts themselves qualify for processing, leaving self-generated service work an untested assumption.",
+      "location": "DESIGN-NOTES.md:241,247-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+      "category": "premortem",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "Graph observes native session closure and automatically activates an absent summarizer; the summarizer is an ordinary seat/native occupant and users may add further transcript-driven service roles. No eligibility or termination rule distinguishes user/project transcripts from the summarizer's own dispatch/completion conversations. Failure story: service-session replacements keep producing another tranche of summarization work, reviving a service the user expected to become dormant and accumulating summaries of service bookkeeping. This is not a claim of an inevitable immediate infinite loop: that depends on closure behavior and eligibility choices that are currently unspecified. A small end-to-end exercise should decide whether the additional work is intentional and bounded."
+    },
+    {
+      "claim": "Stable template-member IDs alone do not settle repeated composition, so two applications of the same group can still collapse roles or propagate exclusions to the wrong seats.",
+      "location": "CURRENT-DESIGN.md, Templates; DESIGN-NOTES.md:217-219,293-303",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Member IDs survive copying and renaming; local retirement excludes a template member; instantiated seats have independent IDs; 'Exact scoping for multiple applications/composition of the same template remains to design.' Failure story: auth and billing feature groups in one team each contain an engineer from the same template. Retiring the auth engineer records an exclusion whose correspondence scope is not defined, or switching only one group to a copied template matches both engineers. Either billing staffing changes unexpectedly or the retired auth role is recreated. Independent seat identity solves identity derivation, but does not itself identify which declaration application an override or live reconciliation targets."
+    }
+  ]
+}

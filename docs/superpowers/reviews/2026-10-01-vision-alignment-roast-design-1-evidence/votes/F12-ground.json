@@ -1,0 +1,7 @@
+{
+  "id": "F12",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Internal premises hold: DESIGN-NOTES.md:27-28 places shared Beads data in the graph-instance Git repository while assigning work ownership to Beads; :149-150 makes the plugin the sole graph-state writer and Git committer; :239 extends serialized write/commit rules to graph-repository files. CURRENT-DESIGN.md:14 repeats the sole-committer rule, and :56 explicitly lists graph-owned versus external persistence boundaries as future design. A full-text search for Beads/database/storage, writer/commit/queue, and coordination/persistence equivalents found only open questions at DESIGN-NOTES.md:27-29,134 and HERDR-GRAPH-VISION.md:149, not a contract for committing Beads-owned changes in that shared checkout. This is material to the stated durable shared work record and continuity across sessions (SOFTWARE-FACTORY-VISION.md:59; HERDR-GRAPH-VISION.md:137-139). The gap is an acknowledged design question, not evidence of current data loss or implementation unreadiness; it can be resolved without making graph the work tracker. No external-product behavior is needed for this finding."
+}

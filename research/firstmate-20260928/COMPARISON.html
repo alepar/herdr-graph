@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firstmate versus herdr-graph: what remains worth building? - Deep Research Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1a1a1a;
+            background: #ffffff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+        }
+
+        .header {
+            background: #003d5c;
+            color: white;
+            padding: 25px 40px;
+            border-bottom: 3px solid #002840;
+        }
+
+        .header h1 {
+            font-size: 26px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .header-meta {
+            font-size: 13px;
+            color: #b8d4e6;
+            display: flex;
+            gap: 25px;
+        }
+
+        .metrics-dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0;
+            border-bottom: 2px solid #003d5c;
+        }
+
+        .metric {
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-right: 1px solid #d1d5db;
+            text-align: center;
+        }
+
+        .metric:last-child {
+            border-right: none;
+        }
+
+        .metric-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #003d5c;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #4a5568;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .content {
+            padding: 30px 40px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #003d5c;
+            margin: 32px 0 16px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #003d5c;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            line-height: 1.3;
+        }
+
+        .subsection-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin: 24px 0 12px 0;
+            line-height: 1.4;
+        }
+
+        .executive-summary {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .executive-summary p {
+            margin-bottom: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        p {
+            margin-bottom: 14px;
+            line-height: 1.7;
+            text-align: left;
+        }
+
+        /* Better paragraph spacing in content sections */
+        .content > p,
+        .section p {
+            margin-bottom: 16px;
+        }
+
+        .findings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .finding-card {
+            background: #f8f9fa;
+            padding: 18px;
+            border-left: 3px solid #003d5c;
+        }
+
+        .finding-card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 10px;
+        }
+
+        .finding-card p {
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 13px;
+        }
+
+        .data-table th {
+            background: #003d5c;
+            color: white;
+            padding: 10px 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .data-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        ul, ol {
+            margin: 16px 0 16px 28px;
+            padding-left: 0;
+        }
+
+        li {
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+            padding-left: 8px;
+        }
+
+        /* Nested lists */
+        li ul, li ol {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        /* Better bullet/number spacing */
+        ol {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        ul {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        .key-insight {
+            background: white;
+            border: 1px solid #d1d5db;
+            border-left: 3px solid #003d5c;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .key-insight strong {
+            color: #003d5c;
+            font-weight: 600;
+        }
+
+        .citation {
+            color: #003d5c;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            position: relative;
+            padding: 2px 4px;
+            background: #f0f7fc;
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .citation:hover {
+            background: #003d5c;
+            color: white;
+        }
+
+        /* Attribution Gradients (2025 Enhancement) */
+        .citation-tooltip {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-bottom: 8px;
+            background: white;
+            border: 2px solid #003d5c;
+            box-shadow: 0 4px 12px rgba(0, 61, 92, 0.15);
+            padding: 12px;
+            min-width: 300px;
+            max-width: 500px;
+            z-index: 1000;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .citation:hover .citation-tooltip {
+            display: block;
+        }
+
+        .tooltip-title {
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 6px;
+        }
+
+        .tooltip-source {
+            color: #4a5568;
+            margin-bottom: 8px;
+            font-style: italic;
+        }
+
+        .tooltip-claim {
+            background: #f8f9fa;
+            padding: 8px;
+            margin-top: 8px;
+            border-left: 3px solid #003d5c;
+            font-size: 11px;
+        }
+
+        .tooltip-claim-label {
+            font-weight: 600;
+            color: #003d5c;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .evidence-chain {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #d1d5db;
+        }
+
+        .evidence-chain-label {
+            font-weight: 600;
+            color: #003d5c;
+            font-size: 11px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .evidence-step {
+            padding: 6px;
+            background: #f8f9fa;
+            margin-bottom: 4px;
+            font-size: 11px;
+            border-left: 2px solid #d1d5db;
+            padding-left: 8px;
+        }
+
+        .bibliography {
+            background: #f8f9fa;
+            padding: 30px;
+            margin-top: 40px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .bibliography-content {
+            background: #f8f9fa;
+            padding: 20px 0;
+        }
+
+        .bib-entry {
+            margin-bottom: 18px;
+            padding-left: 50px;
+            text-indent: -50px;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        .bib-number {
+            color: #003d5c;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .bib-entry a {
+            color: #003d5c;
+            word-wrap: break-word;
+            text-decoration: none;
+        }
+
+        .bib-entry a:hover {
+            text-decoration: underline;
+        }
+
+        .compact-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .compact-list li {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .info-box {
+            background: white;
+            border: 1px solid #d1d5db;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .info-box h4 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .highlight-stat {
+            font-weight: 700;
+            color: #003d5c;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+
+        @media print {
+            .container {
+                max-width: 100%;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .metrics-dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .findings-grid {
+                grid-template-columns: 1fr;
+            }
+            .compact-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+<style>@page{size:A4;margin:18mm 17mm;@bottom-center{content:counter(page);font-size:8pt}}@media print{body{font-size:10pt;line-height:1.5}.header{padding:12pt}.content{padding:0}.header-meta{display:block}h2,h3,h4{page-break-after:avoid}p{orphans:3;widows:3}table{font-size:8pt}tr{page-break-inside:avoid}.bib-entry{page-break-inside:avoid;font-size:8pt}.bibliography{padding:10pt}a{color:#003d5c;text-decoration:none}}.bib-entry{margin-bottom:10px}a{color:#003d5c}</style></head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Firstmate versus herdr-graph: what remains worth building?</h1>
+            <div class="header-meta">
+                <span>28 September 2026</span>
+                <span>•</span>
+                <span>26 Sources</span>
+            </div>
+        </div>
+
+        
+
+        <div class="content">
+            <div class="section"><div class="executive-summary"><h2 class="section-title">Executive Summary</h2>
+
+<p><strong>Firstmate materially weakens the case for building another software-factory supervisor. It leaves a narrower, credible case for graph as an organizational layer.</strong> If the immediate goal is to give requests to one coordinator and receive completed software work, trying Firstmate is the sensible next move. If the essential goal is a persistent organization of directly addressable responsibilities, concurrent seat clones, and shared topical threads, the current Firstmate model does not directly supply that shape. This is a recommendation based on inspected contracts and code, not a comparative runtime trial.
+</p>
+
+<p>The overlap is substantial. Firstmate already supports Herdr, multiple harnesses, persistent scoped secondmate homes, idle responsibilities, durable steering, restart recovery, guarded delivery, configurable dispatch, and Beads through a task adapter. Calling it a disposable-worker launcher would badly understate it. Its author identifies relief from constant agent context-switching as the purpose of the product. <a href="#source-1">[1]</a><a href="#source-2">[2]</a><a href="#source-3">[3]</a><a href="#source-4">[4]</a><a href="#source-8">[8]</a><a href="#source-13">[13]</a>
+</p>
+
+<p>The meaningful difference is how the human relates to the organization and what runtime state means. Firstmate organizes a single liaison and its delegated supervisors around software delivery. Graph proposes configurable organizational relationships, several conversations occupying one responsibility, public discoverable threads, and Herdr changes that carry organizational meaning. Firstmate has real implementation in these adjacent areas; graph's corresponding benefits remain design hypotheses. <a href="#source-2">[2]</a><a href="#source-4">[4]</a><a href="#source-5">[5]</a><a href="#source-6">[6]</a><a href="#source-10">[10]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>My recommendation is to keep the two-product distinction but reconsider their build order. Test Firstmate as the delivery baseline before building the concrete factory. Retain only graph capabilities that solve observed gaps in that experience. Do not start a large fork to change Firstmate's organizing principle, and do not build an integration that gives both systems ownership of the same pane lifecycle. A small comparative trial can determine whether graph is necessary infrastructure or an appealing abstraction the actual work does not need.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Introduction</h2>
+
+<p>The user asked whether Firstmate's similar shape makes herdr-graph unnecessary. This report compares Firstmate with both local products: <a href="../../HERDR-GRAPH-VISION.md">the graph foundation</a> and <a href="../../SOFTWARE-FACTORY-VISION.md">the concrete software factory</a>. Those are different comparisons. Firstmate overlaps most directly with the factory, while also implementing several mechanisms graph would otherwise have to build.
+</p>
+
+<p>Firstmate was cloned read-only and inspected at commit <code>2d833ff147cd26a5c461e914e06854e0eb2707ce</code>, whose commit metadata is 28 September 2026. The local comparison uses current <a href="../../DESIGN-NOTES.md">DESIGN-NOTES.md</a>, including the amendments limiting graph to organizational state and approving latest-intent reconciliation and cancellation. No Firstmate session, hook, installer, or test suite was run. The repository's AGENTS.md was read as its product contract, not adopted as instructions for this research session.
+</p>
+
+<p>Two research passes independently examined the product model and relevant code paths; a separately delegated sentiment pass examined operator accounts and current issue status. Their detailed evidence is in <a href="vision-evidence.md">vision-evidence.md</a> and <a href="code-evidence.md">code-evidence.md</a>. Source files from the same project are one authoring cluster, even when they corroborate a behavior at several layers. This is a deep comparison of two designs, not an independently validated effectiveness study.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Main Analysis</h2>
+
+<h3 class="subsection-title">1. Firstmate has a clearer immediate job than our foundation</h3>
+
+<p>Firstmate's creator describes the problem as the human repeatedly switching among agents and reconstructing what each needs. The intended benefit is confidence and less interruption. The choice to package it as an agent distribution lets it operate through existing harnesses and terminal backends. This is an experience-led thesis, rather than a claim that a particular orchestration architecture is universally superior. <a href="#source-13">[13]</a>
+</p>
+
+<p>The supervisor contract makes that thesis operational: one firstmate is the user's principal contact; it delegates project work, supervises progress, and returns outcomes. Workers report through it. Direct human intervention in a worker is explicitly authoritative and must be reconciled, so the rule does not mean the user is technically barred from visiting a worker. Persistent secondmates extend the delegation model rather than replacing it with a different organization. <a href="#source-2">[2]</a><a href="#source-3">[3]</a>
+</p>
+
+<p>Firstmate’s own vision explicitly serves one individual, aims to reduce command depth, and invites deep personal customization. It is deliberately not a general agent framework. Its emphasis on explicit authority and independent validation differs from our instance’s peer-trust language, but both still need evidence and clear authority; this is not a choice between trust and verification. <a href="#source-17">[17]</a>
+</p>
+
+<p>Our factory has a related foreman front door, but the user also wants to return directly to a designer, researcher, or another clone of a busy seat. Our foundation makes the organization itself a persistent navigable object. Those experiences can coexist—a graph instance could choose one liaison—but Firstmate offers a more opinionated default with less organizational design required from the user.
+</p>
+
+<p>This is an advantage for Firstmate if the real need is delegation. Generality alone does not justify graph. It must make a valued interaction possible or materially easier, and that interaction must be worth the extra machinery. Our current vision risks describing a broader conceptual model before proving that the user needs to operate it.
+</p>
+
+<h3 class="subsection-title">2. Several apparent differentiators disappear on inspection</h3>
+
+<p>Secondmates have persistent isolated homes, natural-language scopes, charters, project lists, their own state, and recovery. Their homes can outlive a running process. However, confirmed-dead registered secondmate agents are recovered by supervision; that is not identical to graph’s intended deliberately dormant seat with no occupant. Different scoped secondmates may include the same project, and empty secondmates wait rather than initiating arbitrary work. These are already meaningful continuing responsibilities. The distinction cannot be that graph has durable roles and Firstmate does not. <a href="#source-3">[3]</a>
+</p>
+
+<p>Herdr support is also substantive. The backend qualifies launcher identity, uses recorded endpoint IDs, handles restart and liveness states, and documents uncertainty and version boundaries. On supported versions it defaults to disposable per-task presentation workspaces; a flat layout is configurable. This is existing integration work, not a future roadmap bullet. Its documented verification is upstream evidence, not a runtime result reproduced here. <a href="#source-4">[4]</a>
+</p>
+
+<p>Firstmate separates message persistence from wake delivery. Its inbox implementation writes sequenced records under a lock and publishes them by rename. Remote idempotent enqueue compares pending and handled records before adding another; the terminal carries a short doorbell. This is substantially stronger than sending an unrecorded prompt and hoping it lands. It remains different from topical multiparty threads and graph's seat-wide subscription intent. <a href="#source-11">[11]</a>
+</p>
+
+<p>Its task layer can use Beads through tasks-axi. It also keeps project memory with projects and provides operational memory curation. Those overlap with the user's existing preferences. Neither using Beads nor leaving project knowledge outside graph is a unique product advantage. <a href="#source-3">[3]</a><a href="#source-8">[8]</a>
+</p>
+
+<p>Even concurrent conversation has counterevidence: Pi runs a supervision branch alongside the main chat, and a separate host offers related behavior for some other harnesses. That specialized branch is not the same as arbitrary durable clones of any seat, but it already addresses part of the wish to keep a human conversation responsive while work proceeds. <a href="#source-6">[6]</a>
+</p>
+
+<h3 class="subsection-title">3. The remaining differences are structural, not nautical terminology</h3>
+
+<table>
+<thead><tr>
+<th>Dimension</th>
+<th>Firstmate at inspected commit</th>
+<th>Graph's current intended shape</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Primary experience</td>
+<td>One liaison reduces the human's coordination burden</td>
+<td>A continuing organization the human can navigate and address directly</td>
+</tr>
+<tr>
+<td>Persistent responsibility</td>
+<td>Scoped secondmate supervisor with an isolated home and charter</td>
+<td>Generic seat: designer, engineer, researcher, foreman, or another profession</td>
+</tr>
+<tr>
+<td>Concurrent presence</td>
+<td>One controlling session per home, plus specialized supervision branch/host</td>
+<td>Several independently active clones of the same seat</td>
+</tr>
+<tr>
+<td>Herdr meaning</td>
+<td>Backend endpoints; disposable task workspaces are presentation</td>
+<td>Teamspace = workspace; seat = tab; clone = pane; observed UI changes affect organization</td>
+</tr>
+<tr>
+<td>Communication</td>
+<td>Durable steering inboxes and parent-directed outcome/status channels</td>
+<td>Topical discoverable threads, seat/clone participation, planned threads system-author extension</td>
+</tr>
+<tr>
+<td>State ownership</td>
+<td>Per-home private operational files with multiple guarded script owners</td>
+<td>Shared Git-tracked organizational state with one plugin writer/committer</td>
+</tr>
+<tr>
+<td>Work records</td>
+<td>Per-home task adapter and delivery lifecycle</td>
+<td>Existing work systems stay authoritative; graph records organizational operations</td>
+</tr>
+<tr>
+<td>Policy</td>
+<td>Opinionated supervisor and shipping contracts with configuration</td>
+<td>Instance-defined professions, relationships, arbitration and rulebooks</td>
+</tr>
+<tr>
+<td>Execution reach</td>
+<td>Implemented dispatch, supervision, worktrees, delivery and remote homes</td>
+<td>No comparable implemented delivery engine in this workspace</td>
+</tr>
+</tbody></table>
+
+<p>The Firstmate column follows its supervisor contract, architecture, Herdr backend, configuration, session lock, and code audit. The graph column is a design comparison, not a claim of delivered capability. <a href="#source-2">[2]</a><a href="#source-3">[3]</a><a href="#source-4">[4]</a><a href="#source-5">[5]</a><a href="#source-6">[6]</a><a href="#source-8">[8]</a><a href="#source-10">[10]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>The clone difference has a concrete implementation consequence. Firstmate's inspected task metadata names one endpoint tuple and a replacement generation. Its home lock rejects a competing live controlling session. Graph proposes multiple contemporaneous occupants submitting changes to one seat through a serialized organizational writer. Naming three Firstmate homes “designer” would create three separate homes, not automatically implement one shared seat with three clones. <a href="#source-10">[10]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>The Herdr distinction is similarly consequential. Firstmate expressly treats projected workspaces as presentation and retains task endpoint authority through label changes. Graph intends observed renames, closures, and cross-tab moves to affect organizational identity or lifecycle. These systems can see a secondmate endpoint’s disappearance differently: Firstmate recovers confirmed-dead secondmates, while graph’s <a href="../../DESIGN-NOTES.md">approved direction</a> treats observed deliberate manual closure as retirement. Detection details still matter; this is not a claim that every closed worker is automatically relaunched. Ownership must be resolved before combining their control loops. <a href="#source-3">[3]</a><a href="#source-4">[4]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>The communication contrast is not reliability versus unreliability. Firstmate already has durable inboxes, reply correlation, and script-published outcomes. Its parent-channel design documents failures caused by agents answering in the wrong place, then moves evidence-backed reporting into scripts. Graph's proposed advantage is a different participation model: shared discussions discoverable by topic, with seat-level intent and clone-level receipts. <a href="#source-5">[5]</a><a href="#source-11">[11]</a>
+</p>
+
+<p>Retirement also differs: the inspected secondmate teardown removes its home and registry route after its guards pass. Graph instead intends archived responsibility and resurrection. Preserved outcome logs elsewhere should not be confused with keeping the retired home as a resumable organizational seat. <a href="#source-18">[18]</a>
+</p>
+
+<h3 class="subsection-title">4. Where Firstmate is ahead, and where reuse becomes expensive</h3>
+
+<p>Firstmate has implemented delivery modes, worktree handling, harness adaptation, watcher supervision, restart handling, remote homes, and operator procedures. Those are sizeable areas of engineering that our vision documents do not deliver. Its detailed recovery mechanisms also demonstrate that an agent distribution is more than a prompt package: behavior is spread across instructions, scripts, hooks, contracts, and tests. <a href="#source-1">[1]</a><a href="#source-3">[3]</a><a href="#source-4">[4]</a><a href="#source-9">[9]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>There is a relevant Codex qualification: its documented normal supervision path uses bounded foreground watcher checkpoints, during which Codex cannot reason. The Pi branch and other harness mechanisms differ. A trial should therefore use our actual intended harness mix, rather than assume every advertised interaction feels the same in Codex. <a href="#source-19">[19]</a>
+</p>
+
+<p>Its discipline is useful to borrow. Persist a message before waking an agent; distinguish event history from current truth; publish mechanically observable outcomes mechanically; preserve uncertain remote state rather than guessing that it is dead; and qualify the exact endpoint before mutation. Graph's proposed single writer is not evidence that its implementation will be more reliable than Firstmate's scoped owners. It is a different coordination design with its own costs. <a href="#source-3">[3]</a><a href="#source-5">[5]</a><a href="#source-9">[9]</a><a href="#source-11">[11]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>Firstmate is MIT-licensed, allowing reuse under its license terms; that does not remove integration or maintenance cost. <a href="#source-12">[12]</a>
+</p>
+
+<p>A small configuration change can choose Herdr, change delivery modes, select a harness, use Beads, or create a scoped secondmate. It cannot by itself establish a general seat/clone model, a global organizational registry, or shared topical membership. Firstmate's current external extension contract is explicitly a narrow process-event adapter, not a general lifecycle or delivery-provider plugin system. A deep organizational change would require new contracts or maintained modifications. <a href="#source-8">[8]</a><a href="#source-15">[15]</a>
+</p>
+
+<p>Integration is conceivable, but “graph above Firstmate” is an untested option, not a ready-made architecture. One could assign a Firstmate home responsibility for bounded delivery while graph owns the outer organization's seats. That leaves task attribution, supervision authority, manual moves, thread bridging, and lifecycle ownership to design. Firstmate's external fleet ledger is useful observational input, but its documented gaps and crash limits rule out treating it as graph's authoritative journal. <a href="#source-7">[7]</a>
+</p>
+
+<p>There is also a tradeoff in our own approach. Git-tracked organizational state can help review history, but adds commit coordination. Mapping responsibilities to tabs makes the organization tangible, but makes UI moves and closes semantically significant. A generic rulebook can express more organizations, but gives agents and users more to interpret. These costs need evidence of user value; elegance does not offset them automatically.
+</p>
+
+<h3 class="subsection-title">5. Adoption evidence supports a trial, not a guaranteed result</h3>
+
+<p>The source contains thoughtful handling of real operational failure modes. The parent-channel document, for example, records missed reports and a specific response. That is useful evidence of engineering attention, but it remains the project's own account. Code inspection confirmed relevant mutation paths; it did not establish production failure rates. <a href="#source-5">[5]</a><a href="#source-14">[14]</a>
+</p>
+
+<p>A separate <a href="SENTIMENT.md">operator-sentiment study</a> found credible firsthand praise: two HN trial accounts and a mixed-positive Reddit report about delegation and worktrees. The study distinguishes ten apparent non-creator Firstmate author clusters, including one comparison opinion without established use. This is a purposive sample, not a satisfaction tally or evidence of representative adoption. <a href="#source-20">[20]</a><a href="#source-21">[21]</a><a href="#source-22">[22]</a>
+</p>
+
+<p>The strongest criticism comes from active operators. Issue #558 describes no-mistakes validation serializing a daily-driver fleet's otherwise parallel work. It remained open in the research snapshot, but Firstmate also offers direct-PR and local-only delivery, so the complaint does not establish a universal concurrency limit. Issue #3923 includes independent reports of excessive review loops. One operator reports 11 rounds followed by seven after restart and 117.1 million review tokens; this is unaudited task-level accounting, not a price or benchmark. <a href="#source-23">[23]</a><a href="#source-24">[24]</a>
+</p>
+
+<p>The review dispute also exposes a policy choice: an always-on cap proposal was declined, while an opt-in design remained welcome. That supports keeping review and budget rules at the factory-instance layer; it does not establish that Firstmate cannot be customized. Other incidents received fixes: the Herdr environment-isolation repair merged in #2792. Historical bug reports should therefore become trial scenarios, not blanket claims about current reliability. <a href="#source-25">[25]</a><a href="#source-26">[26]</a>
+</p>
+
+<p>The important asymmetry is sufficient without such claims: Firstmate can be tried, while graph's differentiating behavior is mostly a proposed design. That should shift the burden of proof toward building. A trial could reveal that one liaison with persistent domains gives the user nearly all the experience they want. It could instead show that direct specialist relationships and shared-seat conversations are recurring needs that Firstmate's organizing model makes awkward.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Synthesis & Insights</h2>
+
+<p>Firstmate challenges the concrete factory product more directly than the graph foundation. A foreman, delegated research, isolated engineers, durable records, and guarded delivery are not enough to establish a new factory's value proposition. Those capabilities should now be treated as a baseline available elsewhere.
+</p>
+
+<p>Graph still has a coherent hypothesis: a Herdr-native organizational layer can support enduring, directly addressable responsibilities and concurrent conversations without prescribing one factory's command structure. That is narrower than a universal orchestration framework. It remains broader than relabeling Firstmate secondmates, because the state, identity and communication contracts differ.
+</p>
+
+<p>However, the foundation can be distinct and still not be worth building. If the user prefers the single-liaison experience in real work, its more general organization may impose cost without benefit. The deciding evidence should be recurring workflow friction, not a feature matrix in which our unimplemented design wins by definition.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Counterevidence Register</h2>
+
+<table>
+<thead><tr>
+<th>Tempting claim</th>
+<th>Evidence against it</th>
+<th>Corrected conclusion</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Firstmate only has disposable workers</td>
+<td>Persistent secondmate homes and scoped charters <a href="#source-3">[3]</a></td>
+<td>Durable roles overlap substantially</td>
+</tr>
+<tr>
+<td>Graph wins because it is Herdr-native</td>
+<td>Firstmate's implemented Herdr backend <a href="#source-4">[4]</a></td>
+<td>Difference lies in organizational semantics</td>
+</tr>
+<tr>
+<td>Firstmate just types unreliable prompts</td>
+<td>Durable inbox and idempotent remote enqueue <a href="#source-11">[11]</a></td>
+<td>Compare participation models, not caricatured transport</td>
+</tr>
+<tr>
+<td>Firstmate cannot support parallel conversation</td>
+<td>Pi supervision branch and hosted variant <a href="#source-6">[6]</a></td>
+<td>General seat clones remain a distinct proposed capability</td>
+</tr>
+<tr>
+<td>Firstmate forbids direct human contact</td>
+<td>Intervention is authoritative and conversational <a href="#source-2">[2]</a><a href="#source-3">[3]</a></td>
+<td>Single liaison is the intended workflow, not a physical barrier</td>
+</tr>
+<tr>
+<td>Graph's writer is necessarily safer</td>
+<td>Firstmate has scoped locks, journals and recovery <a href="#source-10">[10]</a><a href="#source-11">[11]</a><a href="#source-14">[14]</a></td>
+<td>No comparative reliability result exists</td>
+</tr>
+</tbody></table>
+
+</div>
+<div class="section"><h2 class="section-title">Claims-Evidence Table</h2>
+
+<table>
+<thead><tr>
+<th>Decision-relevant claim</th>
+<th>Evidence</th>
+<th>Confidence and boundary</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Durable roles and Herdr already overlap</td>
+<td>Architecture and Herdr docs <a href="#source-3">[3]</a><a href="#source-4">[4]</a></td>
+<td>High for documented design; runtime not tested</td>
+</tr>
+<tr>
+<td>General seat clones differ from one home controller</td>
+<td>Home lock body and graph design <a href="#source-10">[10]</a></td>
+<td>High for inspected lock behavior; specialized branches are counterevidence</td>
+</tr>
+<tr>
+<td>Messaging is durable but parent/task-oriented</td>
+<td>Inbox code and parent contract <a href="#source-5">[5]</a><a href="#source-11">[11]</a></td>
+<td>High for inspected mechanisms; no delivery benchmark</td>
+</tr>
+<tr>
+<td>Deep graph integration is not a current generic plugin option</td>
+<td>Extension boundary <a href="#source-15">[15]</a></td>
+<td>High for current documented interface; future extensibility open</td>
+</tr>
+<tr>
+<td>Firstmate should be trialed before broad factory implementation</td>
+<td>Overlap, existing code, and unimplemented graph scope</td>
+<td>Recommendation, not a measured superiority claim</td>
+</tr>
+</tbody></table>
+
+</div>
+<div class="section"><h2 class="section-title">Recommendations</h2>
+
+<p><strong>For immediate software delivery: try Firstmate before building our own factory.</strong> It is the stronger current candidate when the desired interaction is a request to one trusted supervisor followed by reviewable outcomes. This recommendation does not require changing the graph vision or migrating existing projects today.
+</p>
+
+<p><strong>For graph: continue only around demonstrable organizational gaps.</strong> The defensible focus is persistent team/seat/clone identity, general concurrent clones, relationships and thread membership, and the intended relationship between manual Herdr actions and organizational state. Avoid adding another shipping engine, work tracker, knowledge store, remote runner, or model wake scheduler to justify the foundation.
+</p>
+
+<p>A useful next experiment would run one bounded, representative project through Firstmate on Herdr, with one scoped secondmate and the chosen work tracker. Compare it with the user's present workflow on five concrete situations: direct design discussion during execution; two simultaneous conversations for one responsibility; a discussion spanning two responsibilities without relaying everything through the supervisor; return after occupant replacement; and a manual rename/move/close. Record configuration needed, repeated explanations, state divergence, and human intervention. Choose the delivery mode and review policy explicitly, and measure review rounds, actual billed cost, validation concurrency, and waits for human decisions. Successful ordinary delivery should also count: the experiment must not consist solely of edge cases chosen to favor graph.
+</p>
+
+<p>Use the result to choose among three outcomes. Adopt Firstmate if configuration covers the valued experience. Propose a small upstream extension if one missing behavior fits its single-liaison model. Build the narrow graph foundation if several recurring needs require changing Firstmate's identity and relationship model. A large permanent fork is the least attractive default because it couples us to ongoing changes across many operational contracts.
+</p>
+
+<p>The trial is a recommendation only. This research did not install Firstmate as an operating home, alter existing agent sessions, or change the approved local design.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Limitations & Caveats</h2>
+
+<p>This is static source and documentation research, pinned to one commit. No integration, load, crash-recovery, security, or cost benchmark was run. Upstream tests and live-verification documents demonstrate the project's stated coverage, not independently reproduced results. Inspected implementation paths support positive claims; absence claims remain scoped to the model and interfaces inspected.
+</p>
+
+<p>The bibliography includes many files but few independent authoring clusters. Firstmate documentation, code, and creator commentary cannot be counted as three independent validations of effectiveness. The local graph is a design, so its flexibility is intent and its costs remain estimates without quantified effort. No claim is made that all Firstmate behaviors can or cannot be extended in the future.
+</p>
+
+
+</div><div class="section"><h2 class="section-title">Methodology Appendix</h2>
+
+<p>Applied the deep-research skill: scoped the adoption/build question, checked the date, searched with search-cli, pinned the source checkout, and read the supervisor contract, architecture, backend, state, messaging and extension documentation. Two parallel research passes examined vision and code. Inspected function bodies for locking, inbox publication, task metadata, parent routing and reconciliation rather than relying only on headers. Saved claims and evidence before synthesis.
+</p>
+
+<p>The outline changed after finding persistent secondmates and concurrent supervision conversations: claims of uniqueness for persistent roles or parallel conversation were dropped. Critique considered the strongest case for adoption, the cost of implementing our proposed differences, and the risk of counting one project's many files as independent evidence. Claims of absence were narrowed to inspected interfaces. No implementation or live trial was performed.
+</p>
+
+<p>The package stays in this workspace beside the earlier research. The synthesis is deliberately shorter than the skill's long-form targets for readability; Markdown is authoritative, with HTML/PDF reading copies. Source and evidence ledgers, search results, and the two audit briefs preserve the deeper trace. Automated structure and URL checks do not prove runtime behavior; that boundary is explicit throughout.
+</p>
+
+</div>
+
+            <div class="bibliography">
+                <div class="section-title">Bibliography</div>
+                <p class="bib-entry" id="source-1">[1] Kun Chen / Firstmate (2026). &quot;Firstmate README&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/README.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-2">[2] Kun Chen / Firstmate (2026). &quot;Supervisor contract&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/AGENTS.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-3">[3] Kun Chen / Firstmate (2026). &quot;Architecture&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/architecture.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-4">[4] Kun Chen / Firstmate (2026). &quot;Herdr backend&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/herdr-backend.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-5">[5] Kun Chen / Firstmate (2026). &quot;Secondmate parent channel&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/secondmate-parent-channel.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-6">[6] Kun Chen / Firstmate (2026). &quot;Pi supervision branch&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/pi-supervision-branch.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-7">[7] Kun Chen / Firstmate (2026). &quot;Fleet activity ledger&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/fleet-ledger.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-8">[8] Kun Chen / Firstmate (2026). &quot;Configuration and task adapters&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/configuration.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-9">[9] Kun Chen / Firstmate (2026). &quot;Remote secondmates&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/remote-secondmates.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-10">[10] Kun Chen / Firstmate (2026). &quot;Per-home session lock implementation&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/bin/fm-lock.sh">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-11">[11] Kun Chen / Firstmate (2026). &quot;Durable steering inbox implementation&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/bin/fm-task-inbox-lib.sh">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-12">[12] Kun Chen / Firstmate (2026). &quot;MIT license&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/LICENSE">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-13">[13] Kun Chen / Firstmate (2026). &quot;Creator account of Firstmate vision&quot;. <a href="https://substack.com/@kunchenguid/note/c-311919739">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-14">[14] Kun Chen / Firstmate (2026). &quot;Spawn metadata and guarded publication&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/bin/fm-spawn.sh">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-15">[15] Kun Chen / Firstmate (2026). &quot;Trusted external process-event bindings&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/extension-bindings.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-16">[16] brandall10 (2026). &quot;First-person description of related tools&quot;. <a href="https://news.ycombinator.com/item?id=49100596">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-17">[17] Firstmate (2026). &quot;Product vision&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/VISION.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-18">[18] Firstmate (2026). &quot;Secondmate retirement implementation&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/bin/fm-teardown.sh">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-19">[19] Firstmate (2026). &quot;Codex supervision protocol&quot;. <a href="https://github.com/kunchenguid/firstmate/blob/2d833ff147cd26a5c461e914e06854e0eb2707ce/docs/supervision-protocols/codex.md">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-20">[20] brandall10 (2026). &quot;Firsthand trial&quot;. <a href="https://news.ycombinator.com/item?id=49187254">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-21">[21] wifipunk (2026). &quot;Follow-up trial&quot;. <a href="https://news.ycombinator.com/item?id=49266395">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-22">[22] The_Tarman_ (2026). &quot;Herdr and Firstmate operator account&quot;. <a href="https://www.reddit.com/r/ClaudeCode/comments/1vtfawm/how_are_you_running_multiple_coding_agents_at_the/">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-23">[23] julius-retzer (2026). &quot;Validation serialization report&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/558">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-24">[24] Firstmate operators (2026). &quot;Review-loop reports and task accounting&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/3923">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-25">[25] Firstmate maintainer account (2026). &quot;Always-on review cap declined; opt-in welcome&quot;. <a href="https://github.com/kunchenguid/firstmate/issues/3923#issuecomment-5658773080">Read source</a>. Accessed 2026-09-28.</p>
+<p class="bib-entry" id="source-26">[26] RooseveltAdvisors (2026). &quot;Merged Herdr environment-isolation fix&quot;. <a href="https://github.com/kunchenguid/firstmate/pull/2792">Read source</a>. Accessed 2026-09-28.</p>
+            </div>
+
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "panels": 26,
+  "rr": 0.8461538461538461,
+  "rg": 0.8076923076923077,
+  "fg": 0.8846153846153846,
+  "unanimous": 0.7692307692307693,
+  "ground-loo": 0.9090909090909091,
+  "ground-loo-n": 22,
+  "seats": {
+    "reproduce": {
+      "CONFIRM": 21,
+      "REJECT": 5
+    },
+    "refute": {
+      "CONFIRM": 25,
+      "REJECT": 1
+    },
+    "ground": {
+      "CONFIRM": 24,
+      "REJECT": 2
+    }
+  }
+}

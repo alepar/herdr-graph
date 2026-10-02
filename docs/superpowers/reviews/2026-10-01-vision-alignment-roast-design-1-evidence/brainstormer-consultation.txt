@@ -1,0 +1,64 @@
+Author consultation via Herdr w8:p5, 2026-10-01. Author context, not independent review.
+
+• Author context only: the essential promise is a durable, directly navigable organization with configurable practices. It is not a promise that graph supplies every
+  factory execution capability.
+
+  Essential promises
+
+  • Durable team/seat/clone identity; concurrent conversations within one responsibility; direct human relationships with specialists. See graph experience (HERDR-
+    GRAPH-VISION.md:25) and current identity model (CURRENT-DESIGN.md:5).
+
+  • Templates and relationships must produce maintained organizational structure, beyond labels and prompts. Professions, hierarchy, and behavioral policy remain
+    configurable.
+
+  • The PR-monitoring example is intentional acceptance context: share relevant lessons without human relay; resurrect a responsibility and recover its authorized
+    recurring work. Transcript restoration alone does not restore scheduled jobs. See recovery example (HERDR-GRAPH-VISION.md:35) and factory recovery practice
+    (SOFTWARE-FACTORY-VISION.md:77).
+
+  • Peer learning remains an agent practice supported by shared references and threads—not automatic synchronization of model knowledge.
+
+  Explicit supersessions—do not report these as unaddressed contradictions
+
+  • Live templates now propagate structural changes automatically, preserving overrides/additions/exclusions. Earlier “load-only” language applies to agents learning
+    changed instructions, not structural reconciliation. Current templates (CURRENT-DESIGN.md:21)
+
+  • Deferred seats now have individual records before tabs exist.
+
+  • /seat supersedes the earlier /load entrypoint; the agent reads context itself, without a plugin-generated semantic brief.
+
+  • Mechanical transcript indexing and processing requests are now in scope. Semantic summarization remains delegated to ordinary seats; generic scheduling remains
+    excluded. Bootstrap/system duties (CURRENT-DESIGN.md:28)
+
+  • Undo now covers retirement, hydration, and template changes through compensating mutations. Both visions explicitly defer to the newer current design.
+
+  Known omissions/tensions worth examining
+
+  • Stable identities alone do not settle repeated template composition, member removal/re-addition, or correspondence across multiple applications. Removal
+    automatically retiring every derived seat was not sealed.
+
+  • Retirement/resurrection still needs cascade behavior, native resume selection, unavailable transcripts, bindings, and external-job recovery contracts.
+
+  • Summarizer activation is approved for its system duty; it does not establish automatic resurrection of every retired seat receiving a message. Request
+    deduplication, transcript coverage, closure detection, and out-of-order results remain open.
+
+  • Durable queue plus single writer does not yet specify stale-edit handling or conflicting manual observations.
+
+  • Lesson sharing and task recipes need shipped instructions and evaluation scenarios; graph mechanics alone will not fulfill those experiences.
+
+  • Live-template fan-out and undo are coupled: later instances and overrides must appear accurately in previews. Open topics and undo (CURRENT-DESIGN.md:44)
+
+  Competitor leads and scope interpretation
+
+  • Firstmate: implemented persistent supervisors, Herdr integration, durable inboxes, recovery, worktrees, and delivery modes. Those are baseline capabilities, not
+    graph differentiators. General seat clones and configurable peer/topic relationships remain our intended distinction. See local audit (research/firstmate-
+    20260928/COMPARISON.md), pinned architecture.
+
+  • Devin—assuming “delvin”: inspect dynamic workflows, playbooks, scheduled automation, and shared knowledge/skills migration. Templates, shared learning,
+    background execution, and resumability are not unique to us. Workflow execution and scheduling are deliberate graph exclusions; equivalent factory outcomes still
+    need an integration story.
+
+  • Wheelhouse: factory philosophy and Seats and Sunsets informed enduring responsibilities and application-specific practice. Treat these as author accounts, not
+    independently verified performance evidence.
+
+  The review should distinguish missing machinery needed for our own promises from competitor features deliberately assigned to threads, work systems, or the factory
+  layer. No files changed or agents launched.

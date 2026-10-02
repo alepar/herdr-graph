@@ -1,0 +1,7 @@
+{
+  "id": "F16",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) No equivalent precedence rule found: CURRENT-DESIGN.md:16 says reconciliation follows latest committed intent, but does not decide whether transcript work creates new activation intent after retirement; :18 says manual tab closure retires the seat; :32 says an absent occupant is activated for processing. DESIGN-NOTES.md:197-198 distinguishes never-activated/active/retired lifecycle, while :247-250 and :258 approve activation of an 'unoccupied summarizer' without defining whether that includes retired. (b) Best-effort missed observations (:179-180) do not resolve an observed/committed retirement, and :250 bounds auto-resurrection of arbitrary seats but does not settle the summarizer itself. (c) The question is within agreed mechanical transcript scope (CURRENT-DESIGN.md:10,32-34), not a request for general scheduling. (d) Material: after the user closes the summarizer tab with processing pending, automatic activation could recreate the deliberately retired seat, whereas suppression leaves pending requests with no specified processing path. The contract must define retirement versus summarizer activation precedence; this is an acknowledged lifecycle detail, not an implementation defect or data-loss claim."
+}

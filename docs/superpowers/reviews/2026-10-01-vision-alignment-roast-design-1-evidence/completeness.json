@@ -1,0 +1,58 @@
+[
+  {
+    "claim": "Automatic transcript processing has no eligibility rule for the summarizer's own sessions or its processing subagents, leaving self-generated processing work without a defined stopping boundary.",
+    "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-259",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Newly exposed gap, not an established runtime failure: graph 'detects transcript processing work' and activates an absent summarizer, while that ordinary seat creates native conversations and concurrent subagent work of its own. The request contract defines transcript identity and processed-through coverage but never says which transcripts are eligible. If service-generated transcripts are eligible, closing a summarizer can generate work that reactivates it, and processing subagents can produce further eligible transcripts. The design needs an explicit inclusion/exclusion or other finite-processing policy; this does not require a plugin worker pool."
+  },
+  {
+    "claim": "The transcript request contract does not distinguish temporarily unavailable input from permanently missing or truncated input, so it cannot describe an honest terminal outcome when the requested coverage can no longer be read.",
+    "location": "CURRENT-DESIGN.md:34,54; DESIGN-NOTES.md:253-259",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "New error-case gap within the acknowledged unfinished request contract: results reference 'transcript identity, processed-through position, and summary path'; resumed transcripts can append work and pending requests survive crashes. The only explicit result described is completion with coverage. No retained snapshot requirement, input-unavailable outcome, or reduced-coverage disposition is stated. This matters even if transcript retention remains harness-owned: the graph must avoid representing unreadable coverage as completed or leaving such requests indistinguishable from retryable pending work. It is not a claim that native transcripts are guaranteed to disappear."
+  },
+  {
+    "claim": "Live reconciliation of template defaults lacks a transition rule for model or harness defaults that differ from the configuration of an already running native session.",
+    "location": "CURRENT-DESIGN.md:23,41; DESIGN-NOTES.md:202-203,209-212,227",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Newly exposed contract gap: current design says 'defaults AND structural edits affect current instances and reconcile automatically'; the explicit default example is a template model changing from X to Z, with only an explicit override preserving Y. The notes separately explain that instruction changes are learned on load, but do not say whether a changed model/harness default applies only at next activation, marks current sessions stale, or causes replacement. Session replacement/termination authority is explicitly unresolved. Without a runtime-configuration distinction, 'reconciled' is ambiguous and a default edit could be interpreted as permission to interrupt work. This is not a request for hidden template pinning or a graph-enforced factory approval gate."
+  },
+  {
+    "claim": "The undo flow requires current-pane adoption for every candidate even though undoing a template edit or hydration can have no restored pane or seat into which to adopt it.",
+    "location": "CURRENT-DESIGN.md:46-49; DESIGN-NOTES.md:265,273,278,285-289",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "A scope mismatch introduced by expanding the earlier closure-restoration flow: the current common flow always includes 'adoption of the command's current terminal pane', but hydration undo retires created objects and template undo reverses configuration. Neither necessarily restores a runtime arrangement. The acknowledged multi-object-adoption question covers how to choose among restoration targets, but not the zero-restoration-target case or the case where the command runs inside an object being undone. The design should delimit when adoption applies and what remains available to show results when the command's current scope is retired."
+  },
+  {
+    "claim": "The single graph writer's persistence boundary is unresolved for the adopted shared Beads database housed in the same graph-instance repository.",
+    "location": "CURRENT-DESIGN.md:9,14,56; DESIGN-NOTES.md:27-28,134,149-150,239",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Acknowledged unresolved integration contract, not a contradiction or readiness claim: the notes place a shared Beads database across projects in the graph repository, state Beads owns tracked work, later make the plugin the sole graph-state writer AND Git committer, and retain the serialized write/commit rule for graph-repository files. CURRENT-DESIGN explicitly lists the graph-owned versus external persistence boundary as future work. A concrete owner is still needed for Beads-generated changes and their commits, especially during graph renames/commits. This gap should be tracked before relying on the shared work record; resolving it must not turn graph into the project task engine."
+  },
+  {
+    "claim": "Named composed groups have a promised collective list/retire/resurrect experience but no current rule for reconstructing their membership after later additions, removals, reuse, or template switches.",
+    "location": "DESIGN-NOTES.md:39,75,285-286,295-302; CURRENT-DESIGN.md:25-26",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Acknowledged unresolved contract: the earlier agreed direction permits a named hydration whose seats and threads can be listed, retired, and resurrected together. The latest clarification correctly makes seats independent identities and says a separate runtime group identity remains unspecified, while grouped action records retain created/reused seat IDs for undo. An action's historical create/reuse set does not by itself settle a living group's membership after subsequent composition or edits. A durable extra group node is not required, but the collective operations still need membership semantics or an explicit scope reduction; retaining independent seat IDs does not answer that experience question."
+  },
+  {
+    "claim": "The factory's continuity promise still lacks a default instance-owned convention for locating live commitments and recording transfer when a temporary seat retires.",
+    "location": "CURRENT-DESIGN.md:9,17,56; DESIGN-NOTES.md:104-105,185-194,228-239",
+    "category": "completeness",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Proposed future factory capability and acknowledged open instance work, not a graph defect: the design explicitly says persistent threads alone cannot recover outstanding commitments, retrieves work according to instance instructions, and preserves only graph operations on requester retirement. Project commitments stay in Beads, wikis, and conversations; Beads attribution/accepted-milestone metadata is still proposed and exact multiple-contributor representation remains open. Therefore the foundation's concrete survival path for graph requests does not yet provide the factory's promised 'remaining commitments have an owner' behavior. The next instance design needs a minimal authoritative convention for current owner, acceptance/transfer state, and lookup from a retired seat; it need not import those records into graph or add mandatory approval machinery."
+  }
+]

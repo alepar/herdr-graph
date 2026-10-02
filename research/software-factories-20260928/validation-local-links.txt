@@ -1,0 +1,2 @@
+Checked local Markdown targets in both visions and RESEARCH.md.
+PASS

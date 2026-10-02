@@ -1,0 +1,7 @@
+{
+  "id": "F27",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "CURRENT-DESIGN.md:32-34 specifies concurrent summarizer dispatch, processed-through coverage, resumed append work, and expressly leaves out-of-order results open. DESIGN-NOTES.md:248,251,255-259 requires explicit completion tied to source coverage and artifact, permits newly appended processing and dispatch without waiting, and expressly leaves concurrent/out-of-order result handling and request identity/deduplication to design. A full-text search across all four reviewed documents for transcript/coverage/frontier/range/prefix/snapshot/cursor/offset/checkpoint/dedup/result found no bounded range or contiguous-frontier rule elsewhere. If a result for appended positions 101-200 advances a single processed-through value to 200 before 1-100 completes, the remaining gap can be concealed; preserving each request/result identity or range could prevent that, but is not yet specified. This is a material acknowledged contract gap for reliable transcript processing, not a claim that the draft currently implements the faulty update or is implementation-ready. No external premise is needed."
+}

@@ -1,0 +1,28 @@
+{
+  "findings": [
+    {
+      "claim": "The factory promises that the human need not keep conversations alive, but leaves project-work supervision without a defined owner or wake/recovery contract once a worker or foreman stops responding.",
+      "location": "SOFTWARE-FACTORY-VISION.md:11,39-49,71-77; CURRENT-DESIGN.md: State and reconciliation / Bootstrap and system-duty seats",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The factory promise includes not having to 'keep every conversation alive'; standing roles need not run continuously. Its recurring-work recovery brief covers resurrected monitors, but not who observes delegated work completion, distinguishes waiting from stalled work, or wakes an unavailable coordinator. Current graph reconciliation covers organizational effects and the explicitly approved summarizer activation path, not all project jobs. Firstmate documents an event watcher and declared-wait/liveness distinctions: https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md (Event-driven supervision, retrieved 2026-10-01). This is a factory/execution-adapter gap, not a request to add a graph model scheduler."
+    },
+    {
+      "claim": "The proposed factory has no concrete attention digest or decision-inbox interaction spanning its work systems, so the promise of knowing which questions remain open still relies on querying and reconstructing distributed records.",
+      "location": "SOFTWARE-FACTORY-VISION.md:21-23,43-45,95-99; absent product interaction for outstanding decisions and returning-human recap",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The secretary is tasked with making activity understandable and preserving commitments, and work stays in Beads/wikis/threads, but the vision only describes an occupant load brief and final outcome report. It does not describe a bounded human recap, ownership of unanswered decisions, or a way to distinguish items requiring human attention from routine progress. Firstmate's current README documents /ahoy for unanswered decisions and /bearings for a bounded fleet digest: https://github.com/kunchenguid/firstmate (Built-in skills, retrieved 2026-10-01). A factory skill could supply this without making graph a work tracker."
+    },
+    {
+      "claim": "The factory does not describe onboarding and verifying a project's execution environment before assigning engineers, leaving a practical capability gap between creating a team and having one able to reproduce, build, and test the project.",
+      "location": "SOFTWARE-FACTORY-VISION.md:29-31,55-77,129; absent project execution-environment onboarding recipe",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The vision links projects, worktrees, recipes and evidence but has no project setup/readiness recipe or named adapter responsible for reproducing the tooling environment. Devin's official environment setup describes reusable blueprints and machine snapshots for preparing session machines: https://docs.devin.ai/onboard-devin/environment (retrieved 2026-10-01). This is a factory onboarding/execution-adapter feature gap; it does not imply graph should provision VMs, store credentials, or replace native harness capabilities."
+    }
+  ]
+}

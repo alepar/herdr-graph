@@ -1,0 +1,7 @@
+{
+  "id": "F14",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) Equivalents: SOFTWARE-FACTORY-VISION.md:69-77 proposes template/task recipes and a load brief; :95-99 directs agents to record assignments and remaining work; DESIGN-NOTES.md:193-194 retrieves Beads/wiki context via instance instructions. These establish intended practice but no default authoritative lookup or transfer record for a retiring temporary seat. (b) Contract: CURRENT-DESIGN.md:9,17 and DESIGN-NOTES.md:185-187 explicitly confine graph's surviving-request/reassignment machinery to graph operations; that accepted boundary does not waive the factory's separate project-work continuity promise. (c) Scope: this is instance-owned work-system/skill convention, not a demand to import commitments into graph. (d) Materiality: SOFTWARE-FACTORY-VISION.md:35,75,97,149 promises that temporary seats retire with remaining commitments owned, incoming occupants find live commitments, and the group can retire without losing them. Without a specified lookup/transfer convention, those outcomes depend on ad hoc discovery. SOFTWARE-FACTORY-VISION.md:157 explicitly acknowledges retirement handoff practices still need instance design, so this is a material acknowledged factory gap, not a foundation defect or implementation failure."
+}

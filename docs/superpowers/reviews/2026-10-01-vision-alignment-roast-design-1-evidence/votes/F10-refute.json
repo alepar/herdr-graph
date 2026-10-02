@@ -1,0 +1,7 @@
+{
+  "id": "F10",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) No equivalent transition rule found. CURRENT-DESIGN.md:23 and DESIGN-NOTES.md:202-203,209-212 make changed template defaults effective for existing seats; DESIGN-NOTES.md:212 and HERDR-GRAPH-VISION.md:76 cover instruction rereads, not a running session's model/harness. SOFTWARE-FACTORY-VISION.md:143 discusses replacing an occupant while preserving seat history, but gives no trigger or policy for a template edit. (b) The accepted tradeoff is live templates and delayed agent understanding of prose, not an explicit choice between keeping, reconfiguring, or replacing an occupant after an effective runtime default changes. (c) This is within scope: the model default is the design's own example at DESIGN-NOTES.md:203, and graph activates native sessions. (d) The distinction materially affects whether an active occupant continues under old runtime configuration or is interrupted, and how reconciliation truthfully reports current versus desired state; CURRENT-DESIGN.md:41 expressly leaves native-session termination authority open. Narrowing: this confirms a transition/status rule is needed before applying such defaults; it does not demand automatic session killing or immediate adoption of the new model. The open issue is acknowledged in the draft, not an implementation failure."
+}

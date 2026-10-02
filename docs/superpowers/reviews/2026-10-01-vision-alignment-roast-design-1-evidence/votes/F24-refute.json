@@ -1,0 +1,7 @@
+{
+  "id": "F24",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) Equivalent: CURRENT-DESIGN.md:15-16 and DESIGN-NOTES.md:179 require reconciliation to follow latest committed intent, so reconciliation has a semantic boundary; no section gives /seat or direct multi-file readers a coherent revision/read-retry mechanism. CURRENT-DESIGN.md:30 and DESIGN-NOTES.md:238-239 instead have the agent read applicable state directly from human-browsable files; DESIGN-NOTES.md:149-150 specifies separate seat/clone files and one serialized writer. (b) Accepted tradeoffs in DESIGN-NOTES.md:153,180 concern non-atomic external effects and missed manual observations, not seeing half of one graph commit. (c) The issue is within scope because load and reconciliation are core operations (HERDR-GRAPH-VISION.md:60,92-98). (d) During a grouped template/rename update (CURRENT-DESIGN.md:23,30), /seat can read a changed file and an unchanged related file before the writer commits, yielding a binding/configuration that matches no committed graph revision; that can misorient a seat or trigger wrong participation. Narrowing: the claim overstates absence of any committed-intent contract for reconciliation; the missing piece is an explicit coherent read boundary for direct readers and a way for reconciliation to satisfy its existing latest-committed rule. This is an acknowledged design-stage contract detail, but material to the stated continuity and correct organizational state outcomes, without claiming actual data loss."
+}

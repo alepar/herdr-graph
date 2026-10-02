@@ -1,0 +1,7 @@
+{
+  "id": "F11",
+  "seat": "REPRODUCE",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "CURRENT-DESIGN.md:46 requires every selected action's concrete undo plan to include adoption of the command's current terminal pane; :47-48 includes hydration and template edits in that same flow. Reproduce: hydrate a new team with new seat/clone (DESIGN-NOTES.md:188-192, 278-282), run undo from its clone, then choose that hydration. The approved inverse retires the newly created objects and reverses added relationships (CURRENT-DESIGN.md:48; DESIGN-NOTES.md:285-289), so the selected action restores no pane/seat arrangement into which that current pane can be adopted. Keeping or rebinding it would need a separate retention/target rule and could contradict the required inverse; omitting adoption contradicts the unconditional preview instruction at :46. Template-edit undo likewise changes live configuration with no necessary runtime restoration (:23, :48). The multi-object mapping acknowledged at :49 does not settle the zero-target case. Narrow finding: specify when adoption applies and how an undo command in a pane being retired presents/completes the result. This is a design gap, not an assertion of implemented data loss."
+}

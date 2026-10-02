@@ -1,0 +1,351 @@
+Firstmate: public operator sentiment
+28 September 2026 • 15 Sources
+
+EXECUTIVE SUMMARY
+Firstmate has credible positive operator testimony beyond its creator's promotion. Two Hacker
+News users describe actual trials favorably; a Reddit user praises its combination with Herdr,
+delegation, and automatic worktree management while criticizing harness coverage. A separate
+Hacker News commenter considers its orchestration easier to understand than Gas Town, without
+establishing hands-on use. These are useful early signals, not demonstrated productivity gains or
+representative customer sentiment. [1][2][3][4]
+The most substantive criticism comes from people continuing to operate and modify fleets. One
+daily-driver operator reports that no-mistakes validation serialized otherwise parallel work,
+including idle waits for human decisions. A different upstream reporter describes similar contention.
+More recently, two contributors report costly review loops; one supplies a task-level account of 11
+review rounds followed by seven on restart. These reports concern particular configurations and
+self-reported workloads, not every Firstmate delivery mode. [5][6][7][8]
+There is a meaningful product-policy disagreement: the maintainer account reports that the captain
+rejected an always-on review cap and lane-size gate, while welcoming a future opt-in design.
+Conversely, a reported Herdr environment-isolation defect received a merged fix. Open issue status
+alone therefore cannot be read as neglect, universal breakage, or dissatisfaction. [9][10][11]
+My recommendation from sentiment alone is to trial Firstmate before recreating its coordinator
+experience. Measure interruptions, recovery effort, review spend, and delivery time on our
+workload. Its users give reasons to take it seriously and concrete failure cases to test. They do not
+supply evidence that a new generic graph will solve those cases. A graph still needs its own
+organizational value proposition; being another way to supervise agents is insufficient
+differentiation. This last judgment is an inference from the evidence, not a measured comparison
+with herdr-graph.
+
+INTRODUCTION
+The question is whether people who actually use Firstmate find its coordinator-and-crew experience valuable,
+and what their friction implies for building herdr-graph. Research covered GitHub issues and PRs, Hacker
+News, Reddit, and attempted X retrieval. Product identity was constrained to kunchenguid/firstmate;
+unrelated pet food, travel agents, NFT markets, and other software called FirstMate were excluded.
+
+1
+
+I separate attributed operator observations from maintainer policy, proposed fixes, creator marketing, and our
+conclusions. Public accounts establish distinct apparent author clusters, not verified identities or commercial
+independence. Firstmate's creator-operated account explicitly labels several replies as written by the firstmate
+agent; those establish public project positions, not additional human testimony. [9]
+
+MAIN ANALYSIS
+1. Positive experience is real, but its denominator is small
+On 5 August, brandall10 said they had used Firstmate for several weeks, disclaimed affiliation, and were
+pleasantly surprised by its performance even with weaker agents. Their earlier 29 July description also
+mentioned Firstmate; these are one author cluster, not two independent endorsements. On 12 August,
+wifipunk returned to the same thread after trying it for a week and expressed enthusiasm. The second report
+is hands-on, though socially recruited by the first recommendation rather than independently sampled. [1][2]
+maherbeg favored Firstmate's comprehensibility over Gas Town on 3 August. That supports a perception of a
+more approachable product shape, but the comment gives neither a workload nor proof of use. It should not
+become a third successful deployment. [3]
+On Reddit, The_Tarman_ described using Herdr and adding Firstmate to delegate work, highlighting automatic
+worktree management. Their verdict was positive with a specific caveat: harness support favored major tools,
+although they added omp support without much difficulty. This combines practical value and adaptation friction
+in the same account. The retrieved page displayed relative dates inconsistently across cached views, so its
+exact comment date remains unverified. [4]
+
+2. Validation can undermine the parallelism people adopted it for
+Issue #558, opened by julius-retzer on 14 July, describes a daily-driver fleet whose crew worked in
+parallel but queued at the default no-mistakes validation gate. The reporter supplied a 54-run sample: mean CI
+monitoring was 75 minutes, versus 10 minutes for tests and eight for review. They attributed roughly three
+quarters of elapsed run time to CI monitoring and described human-decision waits holding the shared slot. This
+is one fleet's database summary, not a benchmark independently reproduced here. [5]
+A separate operator, ooiyeefei, reported upstream contention on no-mistakes v1.31.2 with three concurrent
+worktree runs on Ubuntu. Their account also describes zombie-worker and stale-mirror recovery problems. This
+corroborates a historical failure class, not its current frequency or universal applicability. Both issues remained
+open in the 28 September API snapshot; #558's only retrieved follow-up was a September ready-for-PR triage
+stamp. No observed resolution was established. [5][6]
+Current Firstmate explicitly offers no-mistakes, direct-PR, and local-only paths. Its contract defaults
+unregistered projects to no-mistakes, but the reported bottleneck must not be generalized to the other modes
+or every installed version of no-mistakes. The correct trial question is whether our selected gate and workload
+preserve useful concurrency, including while the human is absent. The report's timeout/abort workarounds are
+operator proposals and practices, not recommendations endorsed by this audit. [5][15]
+
+2
+
+3. Cost criticism includes a policy disagreement, not just defects
+On 7 September, NewAiCoder-bot reported review rounds repeatedly finding minor issues and unusually
+large lanes. The account explicitly identifies itself as the same person as NewAiCoder, so those names form
+one cluster. Its figures concern one operator's cached spend, not a standard price or total project cost. On 11
+September, tiago-peixoto added a distinct measured account: a Firstmate-driven task ran 11 cold review
+rounds, failed at a test timeout, then ran seven more reviews after restart; reported review usage totaled 117.1
+million tokens on that task. We have not inspected the underlying billing or run database. [7][8]
+The proposed always-on soft cap and lane-size gates became PR #3980, which the API records as closed
+without merge. On 14 September, the maintainer's firstmate attributed that decision to the captain rejecting
+those settings as unconfigured product defaults. The issue remained open for an opt-in design. Treating this as
+merely an abandoned bug fix would erase the actual disagreement about who chooses delivery rigor and when
+to stop reviewing. [9]
+This is particularly relevant to a reusable foundation. My inference is that review policy, budget policy, and team
+practice should remain separable from organizational mechanics. It is not evidence that Firstmate lacks
+customization: the public discussion itself invites opt-in behavior. Nor do reported token totals establish dollars
+spent, because cache treatment, model mix, and billing terms are unspecified. [7][8][9]
+
+4. Durable state does not eliminate supervision and integration friction
+RooseveltAdvisors reported in August that a long-lived Herdr server leaked Firstmate-home and harness
+identity into subsequent panes, producing misclassification and repeated recovery guards. PR #2792 merged
+on 1 September with a launch-only environment-isolation fix; existing servers were deliberately left untouched.
+This is a concrete incident plus remediation, not a valid assertion that today's new launches still suffer the same
+defect. [10][11]
+Two September reports expose different edges. morecoffeyplease described three false watcher-failure
+alarms on a heavily loaded machine supervising five secondmates, explicitly stating that no lost supervision
+event was demonstrated. NewAiCoder-bot reported that a pipeline running in an external clone became
+invisible to worktree-based status lookup, allowing a stale paused report to hide failure for roughly an hour. The
+latter belongs to the same author cluster as the review-cost issue. Both were open in the snapshot. [12][13]
+A third operator, jcpoyser, reported that blanket steering approvals violated their temporary rule requiring
+personal answers to every review decision. Their proposed optional record gate explicitly acknowledges that a
+recorded answer attested by firstmate does not prove human authorship. This is evidence of a stricter local
+authority requirement, not proof that every Firstmate user expects it or that our graph implements stronger
+authorization. [14]
+
+3
+
+SYNTHESIS & INSIGHTS
+The useful pattern is coexistence: users value delegation and reduced coordination work, while committed
+operators encounter validation cost, stale status, and integration boundaries. Bug reports often come from
+people maintaining active fleets or contributing fixes, so they are evidence of investment as well as pain. It
+would be misleading to turn this selected issue sample into a negative satisfaction score. [1][2][4][5][7][10]
+The strongest implication for our product decision is to distinguish experience from mechanism. Firstmate
+already has users who appreciate the experience we might otherwise recreate. The problems above suggest
+evaluation scenarios for any foundation: a human leaves during review; a process is alive but slow; a task's
+execution location changes; a worker asks to resolve a decision; a costly review keeps finding small issues.
+Whether graph is the right solution must be established by its proposed semantics and an implementation
+comparison, not inferred from Firstmate's issue list.
+
+LIMITATIONS & CAVEATS
+This is a purposive sample, with no known population denominator, retention cohort, audited ROI, or reliable
+satisfaction percentage. GitHub issues over-sample problems and technically invested users; social
+recommendations over-sample enthusiasm. Distinct account names do not prove independent organizations.
+No live Firstmate deployment was run.
+X's dedicated search provider was unconfigured and direct X pages returned 403. General search found creator
+claims about life-changing experiences and indexed reply snippets, but those are excluded from the
+independent sentiment count. A Reddit search snippet alleged ignored follow-up PR adjustments; the actual
+comment and author could not be recovered, so that allegation is excluded from findings. Threads and YouTube
+leads likewise did not yield directly inspectable testimony. These retrieval failures leave gaps, not evidence of
+absence.
+The skill's three-independent-sources-per-major-claim aspiration is not met for individual incidents. Claims are
+therefore scoped to named reports, with corroboration identified only where it exists. We did not inflate the
+report with unrelated reviews or treat stars and forks as satisfaction. The full GitHub index was retrieved for
+metadata checks; it was not exhaustively read or coded.
+
+RECOMMENDATIONS
+Trial Firstmate on actual delivery work before implementing a competing captain-and-crew layer. Record
+completed outcomes, elapsed time, human interventions, review rounds, billed cost, and recovery actions.
+Include a paused human review and a restart; choose delivery mode explicitly so the trial measures the
+intended setup.
+
+4
+
+Continue graph only if its reusable organizational semantics produce concrete value across different factory
+practices. Treat Firstmate as a possible reference customer or adapter target conceptually, rather than
+assuming its existence invalidates graph or its bugs justify rebuilding it. This is a product recommendation, not
+a proposal to contact its maintainers.
+
+METHODOLOGY APPENDIX
+Search date was read from the system. Eight general search batches used the installed search CLI, covering
+exact repository identity, reviews/problems, Reddit, Hacker News, X-indexed experience, GitHub issues,
+model-related experience, and negative testimony. Searches were followed by actual browser reads and
+GitHub REST retrieval. HN's Algolia API supplied precise comment dates. Public GitHub issue and PR
+metadata, selected comment threads, and current Firstmate AGENTS.md at commit
+2d833ff147cd26a5c461e914e06854e0eb2707ce supplied current-status checks.
+The initial praise/criticism outline was refined into four findings because operational issue threads provided
+stronger evidence than broad social sentiment. Creator promotion and unmatched product names were filtered
+out. Account aliases and repeat comments were deduplicated. Sources, short evidence excerpts, scoped
+claims, raw search results, issue metadata, and selected comment bodies are preserved alongside this report in
+sentiment-.jsonl and sentiment-.json.
+Author cluster
+
+Platform/date
+
+Firsthand?
+
+Signal
+
+brandall10
+
+HN, Aug 5
+
+Yes, weeks of use
+
+Positive
+
+wifipunk
+
+HN, Aug 12
+
+Yes, one-week trial
+
+Positive
+
+maherbeg
+
+HN, Aug 3
+
+Not established
+
+The_Tarman_
+
+Reddit, Aug/Sep; exact
+date unverified
+
+no-mistakes v1.31.2, not direct Firstmate
+
+corroboration
+
+testimony [6]
+
+Critical
+
+One cluster across two issues [7][13]
+
+Critical
+
+Token accounting unaudited [8]
+
+Critical,
+
+New-server fix, not existing server
+
+remediated
+
+cleanup [10][11]
+
+Yes
+
+RooseveltAdvisors
+
+GitHub, Aug 22; fix Sep 1
+
+morecoffeyplease
+
+GitHub, Sep 12
+
+jcpoyser
+
+GitHub, Sep 26
+
+Creator account /
+firstmate
+
+Herdr and Firstmate benefits partly
+
+Critical
+
+Upstream GitHub
+
+GitHub, Sep 11
+
+Comprehensibility opinion only [3]
+
+One fleet, 54 self-reported runs [5]
+
+ooiyeefei
+
+tiago-peixoto
+
+Same recommendation thread [2]
+
+Critical
+
+Yes, daily-driver fleet
+
+GitHub, Sep 7 and 13
+
+deduplicated [1]
+
+Mixed-positive
+
+GitHub, Jul 14
+
+NewAiCoder-bot
+
+comparison
+
+No workload metrics; July repeat
+
+Yes
+
+julius-retzer
+
+NewAiCoder /
+
+Positive
+
+Limitation
+
+Reported fleet
+observations
+Reported task
+measurement
+Reported reproduction
+Reported three
+occurrences
+Reported local audit
+
+GitHub policy and contract Project position
+
+Critical
+Critical
+Context
+
+combined [4]
+
+Heavy-load case; no lost event
+demonstrated [12]
+Stricter home-local authority policy [14]
+Excluded as independent user sentiment
+[9][15]
+
+Sample: ten apparent non-creator Firstmate author clusters in the table, plus one upstream-only operator
+cluster. Nine Firstmate clusters describe use or operator observations; maherbeg's hands-on use is
+unestablished. Only three clusters provide firsthand positive social experience, one of them mixed. These
+categories are not a voting tally.
+
+5
+
+Validation: structure checks passed (optional academic-section warning). Citation checks passed with 12 of 15
+URLs accessible; three HN HEAD requests returned HTTP 405, while their content and dates were verified
+through browser reads and the HN Algolia API. Ledger references were checked separately; these automated
+checks do not certify claim truth.
+
+BIBLIOGRAPHY
+[1] brandall10 (2026-08-05T18:52:43Z). "Firstmate comment". operator testimony. Retrieved 2026-09-28.
+[2] wifipunk (2026-08-12T00:35:41Z). "Firstmate comment". operator testimony. Retrieved 2026-09-28.
+[3] maherbeg (2026-08-03T16:03:02Z). "Firstmate comment". comparative opinion. Retrieved 2026-09-28.
+[4] The_Tarman_ (2026-08/09 (relative timestamp only)). "How are you running multiple coding agents at the same time?". operator
+testimony. Retrieved 2026-09-28.
+[5] julius-retzer (2026-07-14T10:18:18Z). "Default no-mistakes gate serializes the crew: one validation run per repo defeats fleet
+parallelism". operator issue. Retrieved 2026-09-28.
+[6] ooiyeefei (2026-06-28T01:23:30Z). "Single shared daemon serializes runs across worktrees". upstream operator issue. Retrieved
+2026-09-28.
+[7] NewAiCoder-bot (2026-09-07T14:35:07Z). "feat(gate): soft-cap no-mistakes review rounds at 3 with a severity escape, and add
+lane-size targets with telemetry". operator issue. Retrieved 2026-09-28.
+[8] tiago-peixoto (2026-09-11T20:44:21Z). "Measured review loop cost". operator comment. Retrieved 2026-09-28.
+[9] kunchenguid account, speaking as firstmate (2026-09-14T03:58:47Z). "Always-on review cap declined". maintainer/agent policy.
+Retrieved 2026-09-28.
+[10] RooseveltAdvisors (2026-08-22T03:00:38Z). "Herdr server leaks Firstmate home and harness identity into later panes". operator
+issue. Retrieved 2026-09-28.
+[11] RooseveltAdvisors (2026-08-22T10:46:02Z). "fix(bin): isolate new Herdr server environments". merged remediation. Retrieved
+2026-09-28.
+[12] morecoffeyplease (2026-09-12T19:21:29Z). "watcher guard: a slow poll cycle under load is reported as a failed/wedged
+watcher". operator issue. Retrieved 2026-09-28.
+[13] NewAiCoder-bot (2026-09-13T01:17:31Z). "A declared paused: pipeline claim outranks a failed/cancelled/parked run in a
+separate clone, and a failed watch-arm is silent". operator issue. Retrieved 2026-09-28.
+[14] jcpoyser (2026-09-26T01:50:57Z). "Require recorded answers before resolving review decisions". operator issue. Retrieved
+2026-09-28.
+[15] Firstmate maintainers (2026-09-28 snapshot). "Firstmate current agent contract". primary technical contract. Retrieved
+2026-09-28.
+
+6
+
+

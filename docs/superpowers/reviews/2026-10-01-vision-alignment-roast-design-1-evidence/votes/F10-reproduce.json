@@ -1,0 +1,7 @@
+{
+  "id": "F10",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Concrete path: (1) a clone has a running native session launched with template model X (DESIGN-NOTES.md:11,62,202-203). (2) The live template changes its model default to Z, with no seat override; that makes Z the seat's effective desired configuration and calls for automatic reconciliation of the current instance (CURRENT-DESIGN.md:15,23; DESIGN-NOTES.md:202-203,209-211). (3) The already-running native session remains an X occupant until some runtime transition occurs; the only stated learn-on-load boundary addresses instructions, not model/harness changes (DESIGN-NOTES.md:212), while authority for native-session replacement remains explicitly open (CURRENT-DESIGN.md:41). (4) The design gives reconciliation no rule to distinguish 'desired Z, running X, pending authorized transition' from 'fully applied Z', nor a rule for when/how to perform that transition. Treating the graph edit alone as completed reconciliation would misstate the live effect, contrary to the required distinction between desired and observed/applied effects and truthful operation status (DESIGN-NOTES.md:152-153; HERDR-GRAPH-VISION.md:72,92-94). This is an acknowledged design-stage contract gap; it supports defining transition/status semantics, not automatic termination or any claim of actual lost work."
+}

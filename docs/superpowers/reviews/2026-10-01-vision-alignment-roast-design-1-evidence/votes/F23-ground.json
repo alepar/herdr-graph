@@ -1,0 +1,7 @@
+{
+  "id": "F23",
+  "seat": "ground",
+  "verdict": "REJECT",
+  "severity": "FYI",
+  "evidence": "Load-bearing premise fails: the adopted initial move requires a destination reload but explicitly retains the old transcript/context (CURRENT-DESIGN.md:19), and the detailed decision expressly says this does not claim the live model forgets prior instructions (DESIGN-NOTES.md:148). The reload reads current templates, rules and seat/clone configuration (DESIGN-NOTES.md:193); work commitments live in Beads/native sessions rather than graph state (CURRENT-DESIGN.md:9; DESIGN-NOTES.md:186), with general instructions to route out-of-responsibility work and preserve handoffs (SOFTWARE-FACTORY-VISION.md:87,97,117). Full-text search for move/reload/transfer/handoff/helper/unfinished-work equivalents found no cross-tab source-task handoff procedure, so that narrower edge case is open. But the finding alleges an unqualified assumption of clean adoption; the spec acknowledges preserved old context and does not promise transparent completion of in-flight source work. No external native-session behavior is needed for this judgment."
+}

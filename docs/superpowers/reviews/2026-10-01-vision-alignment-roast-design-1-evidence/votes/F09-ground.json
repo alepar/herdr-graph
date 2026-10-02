@@ -1,0 +1,7 @@
+{
+  "id": "F09",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "CURRENT-DESIGN.md:23-26 commits to live structural reconciliation, local exclusions, stable member/seat identities, and explicitly says repeated composition/correspondence still needs specification. DESIGN-NOTES.md:217-219,293-296 says exclusions reference member IDs and copied templates preserve those IDs, while multiple applications remain unscoped; :300-302 clarifies seat IDs are independent and grouped action records can name seats for undo/provenance, but does not define which application a live override, exclusion, or template switch addresses. Full-text search across all four reviewed documents for template/composition/hydration/correspondence/exclusion/provenance/action-record equivalents found no operative repeated-application mapping. The claimed failure is a prospective ambiguity, not observed collapse: when one team receives the same group twice, member ID alone cannot distinguish the two declarations' instantiated seats for ongoing reconciliation. This materially affects the agreed composable, live-template behavior (DESIGN-NOTES.md:75,209; HERDR-GRAPH-VISION.md:68-70), though the omission is acknowledged and is not proof of implementation data loss. No separate durable group identity is required by this vote."
+}

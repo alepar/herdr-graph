@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Software factories: evidence for two product visions - Deep Research Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #1a1a1a;
+            background: #ffffff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+        }
+
+        .header {
+            background: #003d5c;
+            color: white;
+            padding: 25px 40px;
+            border-bottom: 3px solid #002840;
+        }
+
+        .header h1 {
+            font-size: 26px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        .header-meta {
+            font-size: 13px;
+            color: #b8d4e6;
+            display: flex;
+            gap: 25px;
+        }
+
+        .metrics-dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0;
+            border-bottom: 2px solid #003d5c;
+        }
+
+        .metric {
+            padding: 20px 30px;
+            background: #f8f9fa;
+            border-right: 1px solid #d1d5db;
+            text-align: center;
+        }
+
+        .metric:last-child {
+            border-right: none;
+        }
+
+        .metric-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: #003d5c;
+            display: block;
+            margin-bottom: 6px;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #4a5568;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        .content {
+            padding: 30px 40px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #003d5c;
+            margin: 32px 0 16px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #003d5c;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            line-height: 1.3;
+        }
+
+        .subsection-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1a1a1a;
+            margin: 24px 0 12px 0;
+            line-height: 1.4;
+        }
+
+        .executive-summary {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .executive-summary p {
+            margin-bottom: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        p {
+            margin-bottom: 14px;
+            line-height: 1.7;
+            text-align: left;
+        }
+
+        /* Better paragraph spacing in content sections */
+        .content > p,
+        .section p {
+            margin-bottom: 16px;
+        }
+
+        .findings-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .finding-card {
+            background: #f8f9fa;
+            padding: 18px;
+            border-left: 3px solid #003d5c;
+        }
+
+        .finding-card h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 10px;
+        }
+
+        .finding-card p {
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 8px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 13px;
+        }
+
+        .data-table th {
+            background: #003d5c;
+            color: white;
+            padding: 10px 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .data-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        ul, ol {
+            margin: 16px 0 16px 28px;
+            padding-left: 0;
+        }
+
+        li {
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+            padding-left: 8px;
+        }
+
+        /* Nested lists */
+        li ul, li ol {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        /* Better bullet/number spacing */
+        ol {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        ul {
+            list-style-position: outside;
+            padding-left: 0;
+        }
+
+        .key-insight {
+            background: white;
+            border: 1px solid #d1d5db;
+            border-left: 3px solid #003d5c;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .key-insight strong {
+            color: #003d5c;
+            font-weight: 600;
+        }
+
+        .citation {
+            color: #003d5c;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            position: relative;
+            padding: 2px 4px;
+            background: #f0f7fc;
+            border-radius: 2px;
+            transition: all 0.2s ease;
+        }
+
+        .citation:hover {
+            background: #003d5c;
+            color: white;
+        }
+
+        /* Attribution Gradients (2025 Enhancement) */
+        .citation-tooltip {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-bottom: 8px;
+            background: white;
+            border: 2px solid #003d5c;
+            box-shadow: 0 4px 12px rgba(0, 61, 92, 0.15);
+            padding: 12px;
+            min-width: 300px;
+            max-width: 500px;
+            z-index: 1000;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .citation:hover .citation-tooltip {
+            display: block;
+        }
+
+        .tooltip-title {
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-bottom: 1px solid #d1d5db;
+            padding-bottom: 6px;
+        }
+
+        .tooltip-source {
+            color: #4a5568;
+            margin-bottom: 8px;
+            font-style: italic;
+        }
+
+        .tooltip-claim {
+            background: #f8f9fa;
+            padding: 8px;
+            margin-top: 8px;
+            border-left: 3px solid #003d5c;
+            font-size: 11px;
+        }
+
+        .tooltip-claim-label {
+            font-weight: 600;
+            color: #003d5c;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .evidence-chain {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #d1d5db;
+        }
+
+        .evidence-chain-label {
+            font-weight: 600;
+            color: #003d5c;
+            font-size: 11px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .evidence-step {
+            padding: 6px;
+            background: #f8f9fa;
+            margin-bottom: 4px;
+            font-size: 11px;
+            border-left: 2px solid #d1d5db;
+            padding-left: 8px;
+        }
+
+        .bibliography {
+            background: #f8f9fa;
+            padding: 30px;
+            margin-top: 40px;
+            border-left: 4px solid #003d5c;
+        }
+
+        .bibliography-content {
+            background: #f8f9fa;
+            padding: 20px 0;
+        }
+
+        .bib-entry {
+            margin-bottom: 18px;
+            padding-left: 50px;
+            text-indent: -50px;
+            line-height: 1.6;
+            font-size: 13px;
+        }
+
+        .bib-number {
+            color: #003d5c;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+
+        .bib-entry a {
+            color: #003d5c;
+            word-wrap: break-word;
+            text-decoration: none;
+        }
+
+        .bib-entry a:hover {
+            text-decoration: underline;
+        }
+
+        .compact-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin: 15px 0;
+        }
+
+        .compact-list li {
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .info-box {
+            background: white;
+            border: 1px solid #d1d5db;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .info-box h4 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #003d5c;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .highlight-stat {
+            font-weight: 700;
+            color: #003d5c;
+        }
+
+        strong {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+
+        @media print {
+            .container {
+                max-width: 100%;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .metrics-dashboard {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .findings-grid {
+                grid-template-columns: 1fr;
+            }
+            .compact-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+<style>@page {size:A4;margin:18mm 17mm;@bottom-center {content:counter(page);font-size:8pt;}} @media print {body{font-size:10pt;line-height:1.5}.header{padding:12pt}.content{padding:0}.header-meta{display:block}.container{max-width:100%}h1{font-size:20pt}h2,h3,h4{page-break-after:avoid}p{orphans:3;widows:3}table{page-break-inside:avoid;font-size:8pt}tr{page-break-inside:avoid}.bib-entry{page-break-inside:avoid;font-size:8pt}.bibliography{padding:10pt}a{color:#003d5c;text-decoration:none}} .bib-entry{margin-bottom:10px}a{color:#003d5c}</style></head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Software factories: evidence for two product visions</h1>
+            <div class="header-meta">
+                <span>28 September 2026</span>
+                <span>•</span>
+                <span>21 Sources</span>
+            </div>
+        </div>
+
+        
+
+        <div class="content">
+            <div class="section"><div class="executive-summary"><h2 class="section-title">Executive Summary</h2>
+
+<p>The useful opportunity for herdr-graph is a durable organizational foundation beneath a configurable factory. The surveyed systems emphasize different layers: Gas Town provides a coordination organization; StrongDM describes a factory operating philosophy; Attractor specifies workflow execution; Symphony coordinates issue-driven runs; OpenHands supplies an agent substrate; Devin packages agents and reusable working practices. These are complementary comparison points rather than interchangeable implementations. <a href="#source-1">[1]</a><a href="#source-5">[5]</a><a href="#source-7">[7]</a><a href="#source-8">[8]</a><a href="#source-10">[10]</a><a href="#source-12">[12]</a>
+</p>
+
+<p>The local design gives graph a distinct purpose: persistent teamspaces, seats, and clones in Herdr; organizational instructions and relationships; and recoverable state changes. The concrete factory adds foreman-led project teams, temporary feature collaborators, knowledge stewardship, and a chosen delivery practice. This division preserves the user's existing decisions while allowing other organizations to use the foundation differently.
+</p>
+
+<p>Operator accounts support the appeal of delegated coordination but reveal adoption costs. Early Gas Town users describe productive parallel work alongside observability, recovery, and mental-model problems. Wheelhouse's creator reports both useful output and serious resource and policy-complexity constraints. StrongDM-related discussions show interest in scenario validation, with continuing concerns about code quality and maintainability. These are qualitative signals, not a representative survey or comparative performance study. <a href="#source-2">[2]</a><a href="#source-14">[14]</a><a href="#source-15">[15]</a><a href="#source-16">[16]</a><a href="#source-18">[18]</a><a href="#source-19">[19]</a><a href="#source-20">[20]</a>
+</p>
+
+<p>The resulting recommendation is to lead both visions with continuity, intelligible ownership, and accepted outcomes. Keep staffing flexible, distinguish completion claims from evidence, and make recovery part of the ordinary experience. Treat cost and human attention as product concerns. Avoid equating agent count, commit volume, or a closed work item with value. The strongest evidence supports specific documented mechanisms and reported experiences; it does not establish that any factory is universally reliable, economical, or suitable for unattended production.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Introduction</h2>
+
+<p>The research question is: which principles and operator lessons should inform two products—herdr-graph as a Herdr-native foundation and a concrete software factory built on it? The user clarified that the outputs are product visions rather than whitepapers or implementation specifications. The two primary deliverables are <a href="../../HERDR-GRAPH-VISION.md">the foundation vision</a> and <a href="../../SOFTWARE-FACTORY-VISION.md">the factory vision</a>.
+</p>
+
+<p>Local authority comes from <a href="../../DESIGN-NOTES.md">DESIGN-NOTES.md</a>, <a href="../../RESUME.md">RESUME.md</a>, and a directly acknowledged <a href="designer-consultation.md">consultation with the adjacent designer</a>. External projects supply examples and challenges; they do not override those decisions. In particular, the foundation has no fixed organizational hierarchy or model wake scheduler, and the concrete factory has not been authorized as an unattended deployment system.
+</p>
+
+<p>This is a targeted qualitative study. Official documentation establishes what projects describe or intend; first-person accounts establish what their authors report experiencing. No surveyed factory was installed or benchmarked. Mutable documentation was retrieved on the research date, without pinning all repositories to commits. Wheelhouse is accessible here through its creator's accounts, not an independent implementation audit. <a href="#source-3">[3]</a>
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Main Analysis</h2>
+
+<h3 class="subsection-title">Finding 1: compare layers before comparing factories</h3>
+
+<p>Gas Town's public documentation makes a coordinator, workers, supervision, durable work, and integration visible parts of its organization. That is useful evidence for assigning ownership to coordination work. It is not an argument that every organization requires the same named roles. <a href="#source-1">[1]</a>
+</p>
+
+<p>StrongDM's first-party factory account places specifications and scenario validation at the center of development. Its no-human-code-review position is an operating choice. Attractor, separately, specifies a workflow engine with checkpoints, extensible handlers, conditional routing, and human decision points. One team's philosophy and its reusable mechanisms do not have identical boundaries. <a href="#source-5">[5]</a><a href="#source-6">[6]</a><a href="#source-7">[7]</a>
+</p>
+
+<p>Symphony describes an issue-driven coordination service, with policy in a repository workflow and operational mechanisms for bounded execution and recovery. The specification explicitly limits its scope rather than presenting a complete enduring organization. OpenHands likewise provides agent capabilities and application surfaces; its SDK is not itself a factory rulebook. <a href="#source-8">[8]</a><a href="#source-9">[9]</a><a href="#source-10">[10]</a>
+</p>
+
+<p>This comparison changes the initial research framing. Asking which factory to emulate obscures the more useful question: which layer owns a behavior? Graph should own durable organizational state and its lifecycle. A factory should own its professions, acceptance policy, and working habits. Execution engines can support either without becoming the definition of a seat. This is a design inference corroborated by the separation of mechanisms and policy in Attractor, Symphony, and OpenHands—not independent validation of graph's exact proposed architecture. <a href="#source-7">[7]</a><a href="#source-9">[9]</a><a href="#source-11">[11]</a>
+</p>
+
+<h3 class="subsection-title">Finding 2: continuity is a valuable product boundary</h3>
+
+<p>The local design's seat/clone/session distinction answers a problem that a workflow alone does not: who remains responsible after a run finishes? Herdr supplies the addressable workspace, tab, and pane surfaces; graph gives those surfaces organizational meaning through its adopted mapping. Herdr's own documentation does not claim that its tabs are durable organizational seats. <a href="#source-4">[4]</a>
+</p>
+
+<p>Yegge's September discussion presents seats as responsibilities with inherited context, while his August account argues strongly for application-specific harnesses. The productive tension is between persistent organizational identity and tailored operating practice. A reusable foundation can address the former while leaving the latter to the instance; whether that boundary proves useful remains a product hypothesis. <a href="#source-2">[2]</a><a href="#source-3">[3]</a>
+</p>
+
+<p>Devin's playbooks distinguish reusable procedures from broader organizational knowledge. Its dynamic workflows describe resumable background execution that leaves the coordinating conversation available. This is a relevant experience comparison for the user's wish to discuss a responsibility while another clone works, but it does not imply equivalent clone identity or shared-state semantics. <a href="#source-12">[12]</a><a href="#source-13">[13]</a>
+</p>
+
+<p>The proposed product should therefore make continuity tangible through ordinary actions: load a responsibility, discover its commitments, open a side conversation, reassign work, and retire or resurrect a seat. A compelling demonstration would show useful recovery across occupant replacement rather than simply launching many agents. That recommendation comes primarily from the local design, with external examples helping define the contrast.
+</p>
+
+<h3 class="subsection-title">Finding 3: sentiment favors delegation when progress remains understandable</h3>
+
+<p>Three early Gas Town trials provide a mixed picture. Tim Sehn liked the Mayor interface but reported no acceptable result from four attempted fixes. Tenzin Wangdhen reported six merged PRs from seven tasks during one dinner, yet ultimately preferred borrowing ideas over adopting the whole system. Justin Abrahms described completing work and recovering after a restart while finding the vocabulary and startup model difficult to understand. These are different workloads and authors, not a shared benchmark. <a href="#source-14">[14]</a><a href="#source-15">[15]</a><a href="#source-16">[16]</a>
+</p>
+
+<p>Wangdhen's complaints about observability and prodding are especially relevant to product design. His historical orphan-process report explicitly says the issue was later fixed, so it should not be repeated as a current defect. Sehn's roughly $100 trial cost likewise belongs to that experiment and billing context, not to a universal price for Gas Town. Two of the three authors disclose knowing Yegge; this limits any claim of fully independent sampling. <a href="#source-14">[14]</a><a href="#source-15">[15]</a><a href="#source-16">[16]</a>
+</p>
+
+<p>A separate issue report describes concurrent dispatch returning success while assignments failed to persist. Retrieved snapshots disagree about its later resolution state. The defensible use is to illustrate a historical class of discrepancy between an operation response and durable state, without asserting that current versions have the bug. <a href="#source-17">[17]</a>
+</p>
+
+<p>Our inference is that user trust depends on inspectable ownership, progress, and exceptions. Graph's intended durable mutation journal and reconciliation fit that concern, but persistence alone is insufficient: the human needs to understand whether a request was admitted, committed, applied, or failed. The factory also needs to explain whether a worker finished, checks passed, an owner accepted the result, or a release occurred. Neither product should promise those states are equivalent.
+</p>
+
+<h3 class="subsection-title">Finding 4: evidence of behavior does not eliminate stewardship</h3>
+
+<p>StrongDM's scenarios and behavioral service twins put validation of outcomes ahead of generated implementation volume. That is a useful challenge to factories organized around task closure alone. It remains a first-party report, and adopting its validation emphasis does not entail adopting every policy in its operating model. <a href="#source-5">[5]</a><a href="#source-6">[6]</a>
+</p>
+
+<p>The associated Hacker News discussion includes actual Attractor experiments as well as skeptical code inspection. Favorable accounts describe small applications or incomplete stacks; they do not demonstrate production economics. Criticisms include code quality concerns. A former customer's objection was corrected in-thread to distinguish the research lab from the core product; repeating that objection without its correction would misrepresent the evidence. <a href="#source-18">[18]</a>
+</p>
+
+<p>Another operator describes a positive Attractor fork experience using property tests, fault injection, fuzzing, browser checks, and scenarios. The account provides no controlled outcomes or cost record. OctopusGarden's creator similarly reports functional CRUD/REST results alongside difficulty maintaining or repairing the generated code. These observations suggest evaluating maintainability and recoverability as well as behavioral success. <a href="#source-19">[19]</a><a href="#source-20">[20]</a>
+</p>
+
+<p>The proposed factory should make acceptance an explicit project practice. Some projects may delegate it extensively; others may rely on direct human assessment. Graph should preserve the attribution and links needed to tell that story, without deciding what every project must accept. This is a recommendation, not a finding that any particular review policy is universally superior.
+</p>
+
+<h3 class="subsection-title">Finding 5: organizational overhead needs an owner</h3>
+
+<p>Yegge's Wheelhouse accounts caution that successful generation can coexist with costly operation and accumulated restrictions. These are creator reports about a private system, not audited measurements. They are nevertheless useful counterevidence to the assumption that more roles, more rules, or more output necessarily improves the human's experience. <a href="#source-2">[2]</a><a href="#source-3">[3]</a>
+</p>
+
+<p>The official landscape also offers narrower approaches. Symphony constrains its job to coordination and execution. OpenHands' design discusses separating application logic from the agent core. The SWE-agent repository recommends a simpler successor. None establishes a universal optimum, but together they justify questioning machinery that does not earn its place. <a href="#source-9">[9]</a><a href="#source-11">[11]</a><a href="#source-21">[21]</a>
+</p>
+
+<p>For graph, the proposed implication is cheap dormant responsibility and ordinary non-model bookkeeping. For the factory, it is deliberate staffing, attention to unfinished work, and explicit ownership of rule maintenance. A useful rule needs a reason to exist; an old incident need not create a permanent layer of bureaucracy. These choices align with the user's peer-trust stance.
+</p>
+
+<p>Factory improvement also needs to remain distinguishable from product work. It may be worthwhile, but it should not quietly consume the project it exists to serve. Release pacing, review capacity, and the human's attention can constrain useful delivery even when coding is fast. Proposed success measures should therefore follow accepted outcomes, rework, recovery effort, and whole-system cost rather than maximizing activity.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Synthesis & Insights</h2>
+
+<p>The two-product split is a defensible design hypothesis because it separates two kinds of change. Identity, history, participation, and recoverable organizational state should remain stable across a change in operating practice. Roles, escalation, review, and delivery methods need to vary by project and evolve through use. The surveyed architectures show several ways to separate mechanisms from policy, but no source proves that the proposed graph primitives cover every factory. <a href="#source-7">[7]</a><a href="#source-9">[9]</a><a href="#source-11">[11]</a>
+</p>
+
+<p>The user-facing distinction is equally useful. Graph answers where responsibility lives and how it continues. The factory answers how this particular team turns an intention into a useful result. A product vision should make that experience legible before describing every queue, adapter, or schema. The detailed design can then test whether the intended behavior survives concurrency, failure, and manual intervention.
+</p>
+
+<p>The suggested first proving ground is the user's foreman-led project team. A differently organized second instance would then challenge accidental assumptions. Broad generalization should be earned through those differences; it should not begin as a promise of drop-in compatibility with Gas Town, Wheelhouse, or any other engine.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Counterevidence Register</h2>
+
+<table>
+<thead><tr>
+<th>Initial attraction</th>
+<th>Counterevidence or limit</th>
+<th>Consequence for the visions</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>More agents create more throughput</td>
+<td>Operator accounts report attention and observability costs <a href="#source-14">[14]</a><a href="#source-15">[15]</a><a href="#source-16">[16]</a></td>
+<td>Staffing must improve outcomes, not just activity</td>
+</tr>
+<tr>
+<td>A common factory can suit every project</td>
+<td>Wheelhouse's author advocates bespoke harnesses <a href="#source-3">[3]</a></td>
+<td>Reuse organizational mechanisms; keep practice configurable</td>
+</tr>
+<tr>
+<td>Passing scenarios settles quality</td>
+<td>Creator/operator accounts still describe maintenance concerns <a href="#source-18">[18]</a><a href="#source-20">[20]</a></td>
+<td>Acceptance includes the project's ownership requirements</td>
+</tr>
+<tr>
+<td>Persistent state ensures delivery</td>
+<td>Historical dispatch issue separates success response from persistence <a href="#source-17">[17]</a></td>
+<td>Show admission, application, uncertainty, and recovery distinctly</td>
+</tr>
+<tr>
+<td>More rules improve reliability</td>
+<td>Wheelhouse creator reports policy overgrowth <a href="#source-2">[2]</a></td>
+<td>Make amendment and simplification part of instance practice</td>
+</tr>
+<tr>
+<td>Positive online reaction establishes maturity</td>
+<td>Favorable examples include toy apps and unverified self-reports <a href="#source-18">[18]</a><a href="#source-19">[19]</a></td>
+<td>Treat sentiment as discovery input, not proof</td>
+</tr>
+</tbody></table>
+
+</div>
+<div class="section"><h2 class="section-title">Claims-Evidence Table</h2>
+
+<table>
+<thead><tr>
+<th>Claim</th>
+<th>Support</th>
+<th>Status</th>
+</tr></thead>
+<tbody>
+<tr>
+<td>Mechanism/policy separation recurs across projects</td>
+<td>Attractor, Symphony, OpenHands <a href="#source-7">[7]</a><a href="#source-9">[9]</a><a href="#source-11">[11]</a></td>
+<td>Cross-project synthesis; not a benchmark</td>
+</tr>
+<tr>
+<td>Early Gas Town trials combine appeal and friction</td>
+<td>Sehn, Wangdhen, Abrahms <a href="#source-14">[14]</a><a href="#source-15">[15]</a><a href="#source-16">[16]</a></td>
+<td>Multiple first-person accounts; self-selected sample</td>
+</tr>
+<tr>
+<td>Wheelhouse motivates seats but raises cost/complexity questions</td>
+<td>Yegge <a href="#source-2">[2]</a><a href="#source-3">[3]</a></td>
+<td>One creator cluster; private implementation</td>
+</tr>
+<tr>
+<td>Scenario evaluation can coexist with human decision points</td>
+<td>StrongDM philosophy and Attractor spec <a href="#source-5">[5]</a><a href="#source-7">[7]</a></td>
+<td>Documentary distinction; same authoring organization</td>
+</tr>
+<tr>
+<td>Herdr provides the native UI surfaces used in the local mapping</td>
+<td>Herdr concepts and local design <a href="#source-4">[4]</a></td>
+<td>Documented surface; graph semantics remain proposed</td>
+</tr>
+<tr>
+<td>Graph plus a configurable factory is the right product direction</td>
+<td>Local decisions plus synthesis above</td>
+<td>Product recommendation, to be tested through use</td>
+</tr>
+</tbody></table>
+
+</div>
+<div class="section"><h2 class="section-title">Limitations & Caveats</h2>
+
+<p>The research does not rank products or estimate comparative costs, reliability, security, or productivity. Official pages are primary evidence of documented intent, not independent proof of performance. Several sources share an author or organization and must not be counted as independent corroboration. Project-specific claims often have one primary source; their status remains explicit rather than padded with retellings.
+</p>
+
+<p>Sentiment is English-language, self-selected, and weighted toward technically engaged early adopters. Hacker News identities and outcomes were not independently verified. A favorable comment whose authorship was disputed was excluded from human sentiment evidence. January and February Gas Town trials cannot establish September behavior; the Wheelhouse material concerns a different private system. Source dates and unresolved cache discrepancies are retained in the ledgers.
+</p>
+
+<p>The existing local Herdr identity audit remains the relevant installed-version qualification. Current public documentation should not silently replace that evidence. The threads extension is designed and handed off, not verified implemented. The latest adjacent design approves current-intent reconciliation and explicit reassignment and cancellation of unresolved graph requests. Graph's journal concerns organizational mutations; project tasks and knowledge remain in their existing systems.
+</p>
+
+</div>
+<div class="section"><h2 class="section-title">Recommendations</h2>
+
+<p>Use the foundation vision to articulate continuity, discoverability, composition, and recoverable operation in native Herdr. Keep its universal vocabulary small. Its first proof should be a responsibility that survives conversation replacement and partial failure while staying intelligible to the human.
+</p>
+
+<p>Use the factory vision to propose a concrete working relationship: a standing foreman-led team, temporary feature collaborators, compact orientation, explicit acceptance, and practical peer trust. Make its templates useful defaults rather than staffing limits. Keep additional office functions, scheduling policies, budgets, and delegated release practices visibly optional or still to be designed.
+</p>
+
+<p>Evaluate through real project outcomes before promising broad compatibility or large-scale autonomy. Measure what the human receives and what it costs to obtain and maintain it. Preserve contradictory observations; they are material for improving the product boundary rather than obstacles to a positive narrative.
+</p>
+
+
+</div><div class="section"><h2 class="section-title">Methodology Appendix</h2>
+
+<p>Used the requested deep-research skill, whose existing default-profile copy matched a freshly downloaded upstream package. Installed identical copies into the three AISW Codex profiles; hashes and destinations are in <code>skill-installation.json</code>. Read its methodology and quality guidance, checked the system date, and initialized a persisted research run. Search CLI was used first; sandbox-blocked requests were retried with authorization. Browser retrieval checked source pages. Two delegated research tasks covered the official landscape and operator sentiment.
+</p>
+
+<p>Evidence was saved before synthesis in <code>sources.jsonl</code>, <code>evidence.jsonl</code>, <code>claims.jsonl</code>, and the companion landscape/sentiment ledgers. Source-specific provenance and caveats remain in those packets. The outline shifted from a survey of interchangeable factories to five findings about layers, continuity, legibility, acceptance, and overhead. The reason was documentary evidence that the surveyed projects operate at different layers, plus user clarification that the deliverables are product visions.
+</p>
+
+<p>Self-review used three questions: would an operator recognize the account; would a skeptical reviewer distinguish self-report from validation; and could an implementer tell settled direction from a new proposal? Initial revisions retained the designer's retry decision and removed any implication of universally compatible engines or proven threads integration. A completion audit incorporated subsequent approval of latest-intent reconciliation, request reassignment and cancellation, and the explicit limit of graph state to organizational concerns. Structure and citation checks accompany the report. Link verification cannot establish that a source is true; substantive support was checked during retrieval and synthesis.
+</p>
+
+<p>The package is project-local to support the requested vision documents. It uses a compact synthesis rather than the skill's longer per-finding word targets. HTML and PDF are reading copies; Markdown and evidence ledgers remain authoritative. No application code, live organization, or deployment was created, and the designer's source notes were left intact.
+</p>
+
+</div>
+
+            <div class="bibliography">
+                <div class="section-title">Bibliography</div>
+                <p class="bib-entry" id="source-1">[1] Gas Town maintainers. &quot;Gas Town README&quot;. <a href="https://github.com/gastownhall/gastown">Project documentation</a>.</p>
+<p class="bib-entry" id="source-2">[2] Steve Yegge (2026). &quot;Seats and Sunsets&quot;. September 15. <a href="https://yegge.ai/essays/seats-and-sunsets/">Creator account</a>.</p>
+<p class="bib-entry" id="source-3">[3] Steve Yegge (2026). &quot;The Shape of Things to Come&quot;. August. <a href="https://yegge.ai/essays/the-shape-of-things-to-come/">Creator account</a>.</p>
+<p class="bib-entry" id="source-4">[4] Herdr. &quot;Concepts&quot;. <a href="https://herdr.dev/docs/concepts/">Official documentation</a>.</p>
+<p class="bib-entry" id="source-5">[5] StrongDM (2026). &quot;Software Factories And The Agentic Moment&quot;. February 6. <a href="https://factory.strongdm.ai/">First-party account</a>.</p>
+<p class="bib-entry" id="source-6">[6] StrongDM. &quot;Principles&quot;. <a href="https://factory.strongdm.ai/principles">Factory principles</a>.</p>
+<p class="bib-entry" id="source-7">[7] StrongDM. &quot;Attractor Specification&quot;. <a href="https://github.com/strongdm/attractor/blob/main/attractor-spec.md">Specification</a>.</p>
+<p class="bib-entry" id="source-8">[8] OpenAI. &quot;Symphony README&quot;. <a href="https://github.com/openai/symphony">Project documentation</a>.</p>
+<p class="bib-entry" id="source-9">[9] OpenAI. &quot;Symphony Service Specification&quot;. <a href="https://github.com/openai/symphony/blob/main/SPEC.md">Specification</a>.</p>
+<p class="bib-entry" id="source-10">[10] OpenHands. &quot;Software Agent SDK&quot;. <a href="https://docs.openhands.dev/sdk">Official documentation</a>.</p>
+<p class="bib-entry" id="source-11">[11] OpenHands. &quot;Design Principles&quot;. <a href="https://docs.openhands.dev/sdk/arch/design">Architecture documentation</a>.</p>
+<p class="bib-entry" id="source-12">[12] Cognition. &quot;Creating Devin Playbooks&quot;. <a href="https://docs.devin.ai/product-guides/creating-playbooks">Official documentation</a>.</p>
+<p class="bib-entry" id="source-13">[13] Cognition. &quot;Devin Dynamic Workflows&quot;. <a href="https://docs.devin.ai/work-with-devin/dynamic-workflows">Official documentation</a>.</p>
+<p class="bib-entry" id="source-14">[14] Tim Sehn (2026). &quot;A Day in Gas Town&quot;. January 15. <a href="https://www.dolthub.com/blog/2026-01-15-a-day-in-gas-town/">Operator report</a>.</p>
+<p class="bib-entry" id="source-15">[15] Tenzin Wangdhen (2026). &quot;Gas Town: The Good, The Bad, The Ugly&quot;. February 19. <a href="https://tenzinwangdhen.com/posts/gastown-good-bad-ugly/">Operator report</a>.</p>
+<p class="bib-entry" id="source-16">[16] Justin Abrahms (2026). &quot;Gas Town: Running Dozens of Claude Code Instances at Once&quot;. January 5. <a href="https://justin.abrah.ms/blog/2026-01-05-wrapping-my-head-around-gas-town.html">Operator report</a>.</p>
+<p class="bib-entry" id="source-17">[17] patrickclancy (2026). &quot;Gas Town issue 3114&quot;. March 21. <a href="https://github.com/gastownhall/gastown/issues/3114">Historical issue report</a>.</p>
+<p class="bib-entry" id="source-18">[18] Hacker News participants (2026). &quot;Software factories and the agentic moment discussion&quot;. February. <a href="https://news.ycombinator.com/item?id=46924426">Discussion</a>.</p>
+<p class="bib-entry" id="source-19">[19] MarkMarine (2026). &quot;Attractor operator reply on Symphony discussion&quot;. March; exact day unverified. <a href="https://news.ycombinator.com/item?id=47254924">First-person comment</a>.</p>
+<p class="bib-entry" id="source-20">[20] foundatron (2026). &quot;Show HN: OctopusGarden&quot;. March; exact day unverified. <a href="https://news.ycombinator.com/item?id=47226107">Creator report</a>.</p>
+<p class="bib-entry" id="source-21">[21] SWE-agent maintainers. &quot;SWE-agent README&quot;. <a href="https://github.com/SWE-agent/SWE-agent">Project documentation</a>.</p>
+            </div>
+
+        </div>
+    </div>
+</body>
+</html>

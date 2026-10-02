@@ -1,0 +1,64 @@
+{
+  "findings": [
+    {
+      "claim": "Automatic transcript processing has no stated eligibility rule that prevents summarizer or processing-subagent transcripts from creating further automatic processing work.",
+      "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-258",
+      "category": "feasibility",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The summarizer is an ordinary seat, graph detects transcript processing work and automatically activates an absent summarizer, and the occupant dispatches subagents. The shared contract records coverage and results but does not define which sessions enter this pipeline. If system-duty sessions or their subagents are eligible, finishing or closing processing conversations creates fresh inputs; repeatedly retiring and reactivating the summarizer can sustain work after all user conversations have stopped. This is conditional on eligibility, not a claim that recursion is inevitable. An explicit exclusion or bounded eligibility/coalescing policy would resolve it without adding a worker pool."
+    },
+    {
+      "claim": "The ordinary-seat summarizer design depends on a native occupant continuing to receive and act on durable thread requests across busy and idle states, but no end-to-end qualification of that service behavior is supplied.",
+      "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:248-250,258",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The design says role instructions tell the summarizer to wait for requests, concurrently dispatch helpers, and report results; graph reuses an existing occupant without requiring it to be idle and activates only an absent occupant. Durable request storage proves recoverability, not that an existing native session consumes a newly arrived request after its prior turn finishes. The documents qualify launch flags but supply no corresponding busy/idle service trace. This finding asserts an unverified dependency, not that either supported harness cannot do it.",
+      "spike": {
+        "question": "Can an ordinary native summarizer service successive requests without a human continuation prompt or periodic model wake?",
+        "cheapest_test": "Use the existing threads integration and a minimal summarizer instruction file in each intended harness. Send one request while its previous subagent is active and another after its main turn has ended; then restart the occupant with one pending request. Record request receipt, dispatch and graph completion separately.",
+        "kill_criteria": "Reject the assumed unattended service contract for a harness if any request needs human prompting or an undeclared wake mechanism to progress. Keep the ordinary-seat model, but specify and prove the missing generic wake/resume path before relying on it."
+      }
+    },
+    {
+      "claim": "The core continuity promise assumes agent-led retrieval and opaque memory practices recover live obligations accurately enough that replacing an occupant reduces human reconstruction, but that assumption has not been demonstrated.",
+      "location": "HERDR-GRAPH-VISION.md:23,37,139; CURRENT-DESIGN.md:9-10,30; SOFTWARE-FACTORY-VISION.md:75-77",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The first promised demonstration is recovering responsibility, outstanding work and evidence without a human rebuilding the story. Current design correctly leaves project work in Beads, sessions and wikis and has the agent discover applicable state itself, without a generated semantic brief. Those boundaries mean durable identity and transcript coverage alone do not establish correct recovery of outstanding obligations or current authorization. A factory recipe could provide that recovery; the four documents do not yet show evidence that one does. This is a product feasibility hypothesis, not a demand for graph to own a second commitment database.",
+      "spike": {
+        "question": "Can a replacement recover what matters from the chosen external records without the human repairing its account?",
+        "cheapest_test": "Prepare one small seat fixture containing an unfinished commitment, a superseded decision, an unresolved disagreement and a closed bead lacking acceptance, distributed across the intended stores. Give a fresh occupant only the planned /seat instructions and links. Compare its account and next action with a short human-authored answer key, and measure corrections and retrieval effort against the current manual workflow.",
+        "kill_criteria": "Do not claim the continuity recipe succeeds if the replacement misses a live obligation, treats obsolete direction as current, or requires as much human reconstruction as the baseline. Repair the instance retrieval/handoff practice before expanding the organization."
+      }
+    },
+    {
+      "claim": "The concurrent-clone product scenario assumes a design decision in one conversation reaches and changes another conversation before it continues incompatible work, but the factory supplies no concrete decision-adoption practice to validate that outcome.",
+      "location": "HERDR-GRAPH-VISION.md:29,110,139; SOFTWARE-FACTORY-VISION.md:35,105-109; CURRENT-DESIGN.md:37-40",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The product explicitly offers design discussion in one clone while another executes and says relevant decisions are recorded and communicated. The texts correctly distinguish membership, receipt, and adoption and do not pretend shared seat identity means shared knowledge. Nevertheless the only proposed adoption practice is general lesson-sharing guidance; there is no worked case defining which current decision record an executing clone checks or how a conflicting in-flight action is reconsidered. The distinctive multi-clone benefit can otherwise produce concurrent work based on different accepted directions even when message transport is correct. This belongs to factory instructions and evaluation, not mandatory graph scheduling or locking.",
+      "spike": {
+        "question": "Does the proposed instance practice keep simultaneous design and execution coherent without making the human relay decisions?",
+        "cheapest_test": "Run two ordinary conversations for one seat. Let the executing clone begin a small reversible task, then have the human change an accepted requirement through the design clone. Use only planned records and threads, and observe whether the executing clone identifies the changed decision, reports already performed effects and adjusts remaining work.",
+        "kill_criteria": "Do not count concurrent clones as a demonstrated product advantage if the human must relay the decision or the executor reports completion against the superseded requirement. Specify and retest the instance decision-adoption practice."
+      }
+    },
+    {
+      "claim": "Cross-seat reload assumes a continuing native conversation can adopt a destination seat without carrying incompatible source-seat instructions or unfinished actions into that responsibility, and the design has not qualified that assumption.",
+      "location": "CURRENT-DESIGN.md:19; DESIGN-NOTES.md:148",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The adopted initial behavior detects a cross-tab move and requires destination-seat reload while preserving the old transcript/context. The notes explicitly acknowledge that the model does not forget its earlier instructions. They do not show how the initial reload behavior is expected to treat an unfinished source-seat task, a running helper, or conflicting old role instructions. This is a cooperative correctness concern, not an adversarial authorization claim, and it does not invalidate the deliberate decision to preserve history.",
+      "spike": {
+        "question": "Can the initial reload convention reliably separate preserved source history from destination responsibility?",
+        "cheapest_test": "Use two seats with intentionally different project paths and responsibilities. Move a native conversation after it has accepted a source task and dispatched a helper, then perform the proposed reload. Check its next tool target, attribution and treatment of the late helper result.",
+        "kill_criteria": "Reject transparent continuation for this case if it executes source work as destination work or attributes the late result to the new seat. Define a source-work handoff or fresh-session option for such moves; do not require erasing history."
+      }
+    }
+  ]
+}

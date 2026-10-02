@@ -1,0 +1,7 @@
+{
+  "id": "F15",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Concrete sequence: (1) activation commits a desired seat before creating its Herdr pane (DESIGN-NOTES.md:152; CURRENT-DESIGN.md:15); (2) Herdr is unavailable, so the external effect remains unresolved and reconciliation retries transient failures (DESIGN-NOTES.md:172; CURRENT-DESIGN.md:17); (3) the responsible agent explicitly cancels that unresolved graph request, an approved operation whose stated result is to end obsolete work/reminders (DESIGN-NOTES.md:185,189; HERDR-GRAPH-VISION.md:98); (4) no specified cancellation mutation removes or supersedes the still-current activation intent, while periodic reconciliation follows latest committed intent and drives missing effects (DESIGN-NOTES.md:165,179; CURRENT-DESIGN.md:15-16). When Herdr recovers, the same pane creation remains due and can occur despite cancellation, defeating the stated end to the cancelled work. The text explicitly leaves cancellation details open (DESIGN-NOTES.md:151; HERDR-GRAPH-VISION.md:149). This is a missing cancellation-to-desired-state contract, not a demand to undo effects already completed. The gap also matters for live template-derived intent, which needs an instance exclusion or other superseding state if cancellation is to suppress creation (CURRENT-DESIGN.md:23-24; DESIGN-NOTES.md:217-219)."
+}

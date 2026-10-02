@@ -1,0 +1,7 @@
+{
+  "id": "F09",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) Equivalent mechanisms: independent seat IDs (CURRENT-DESIGN.md:8,25; DESIGN-NOTES.md:300-302), member IDs across copies (DESIGN-NOTES.md:293-296), and grouped action provenance (CURRENT-DESIGN.md:25; DESIGN-NOTES.md:302) preserve identity/history, but none specifies application-scoped correspondence for effective live template state or exclusions. DESIGN-NOTES.md:296 and CURRENT-DESIGN.md:26 explicitly leave repeated-composition scoping open. (b) The contract accepts case-by-case hydration reuse (DESIGN-NOTES.md:39-40) and best-effort missed manual observations (CURRENT-DESIGN.md:16), but does not accept cross-application exclusions or role collapse; it requires local retirement to stay excluded (CURRENT-DESIGN.md:23-24; DESIGN-NOTES.md:217-219). (c) Repeated group composition is within scope (DESIGN-NOTES.md:75; HERDR-GRAPH-VISION.md:68-70; SOFTWARE-FACTORY-VISION.md:61-65), with live template reconciliation required (DESIGN-NOTES.md:207-213). (d) If the same declaration is applied twice in one team, an exclusion keyed only by member correspondence has no specified application target; a later live reconciliation or explicit template switch could affect the other seat or recreate the retired one, changing intended staffing. This is a significant acknowledged design gap before implementation, not proof that an implementation currently collapses seats; the latter wording should be narrowed. No external premise is needed."
+}

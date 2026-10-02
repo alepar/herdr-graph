@@ -1,0 +1,60 @@
+{
+  "findings": [
+    {
+      "claim": "Cancellation does not specify how outstanding reconciliation is stopped when the cancelled request has already committed the desired state that keeps generating its effects.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation; DESIGN-NOTES.md:177–189",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The approved policy is to follow 'latest committed intent' and retry transient failures automatically. Separately, cancellation 'ends obsolete work/reminders' without claiming that effects happened or were undone. Consider a committed activation whose Herdr creation fails, followed by cancellation while desired activation remains current: a normal reconciliation still sees an absent desired pane and can issue the same creation again. Cancelling a request must have some specified relationship to desired state, effect suppression, or a superseding mutation; none is selected. This is an unsealed cancellation contract, not evidence that cancellation must undo already-performed effects."
+    },
+    {
+      "claim": "The transcript workflow does not define whether system-duty transcripts are eligible inputs, leaving automatic summarizer activation exposed to processing its own successive sessions.",
+      "location": "CURRENT-DESIGN.md: Bootstrap and system-duty seats; DESIGN-NOTES.md:236–259",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Graph observes native session/transcript lifecycle and the summarizer is an 'ordinary role/seat'; when processing is needed and no occupant is running, graph activates it automatically. No source selection or recursion boundary excludes its own sessions or identifies who handles them. If a summarizer session closes after processing, its own newly closed transcript can require another activation; closing that session yields another candidate. This need not happen under a chosen filtering or routing policy, but that policy is absent and ordinary session treatment alone does not terminate this chain."
+    },
+    {
+      "claim": "Automatic activation of an unoccupied summarizer has no defined precedence against an explicit retirement of that same seat.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation and Bootstrap and system-duty seats; DESIGN-NOTES.md:147,179,247–258",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Manual tab closure retires the corresponding seat, reconciliation follows latest committed intent, and graph activates an 'unoccupied summarizer' through ordinary activation whenever transcript processing is needed. The notes expressly say this does not establish auto-resurrection for arbitrary retired seats, but do not distinguish retired from dormant for the summarizer itself. A user closing the summarizer while transcript requests are pending therefore has no defined outcome: automatically resurrect the retired seat, leave requests discoverable, or use another seat. An ordinary activation operation does not by itself settle this precedence."
+    },
+    {
+      "claim": "Notification-driven whole-seat leave has no specified protection against a delayed agent instruction applying after a newer whole-seat join.",
+      "location": "DESIGN-NOTES.md:13,57,177–179; CURRENT-DESIGN.md: Threads and policy",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Whole-seat leave removes intent and posts instructions telling other clones to leave individually, preserving pending work for unavailable clones. Individual leave can create a persistent clone opt-out, while latest-intent reconciliation stops obsolete effects. If a clone handles an old leave instruction after a later whole-seat join, acting on the instruction can remove current membership and potentially preserve that removal as a new opt-out. Stopping plugin retries does not retract instructions already stored in threads. The contract does not say how these agent-executed instructions carry intent revisions, are checked on execution, or are distinguished from a new voluntary clone leave. This is separate from the already acknowledged question of how new joins treat genuine existing opt-outs."
+    },
+    {
+      "claim": "Hydration undo does not define the fate of members created later by live-template reconciliation, so its recorded creation set is insufficient to describe the current inverse.",
+      "location": "CURRENT-DESIGN.md: Templates and Undo; DESIGN-NOTES.md:207–219,283–302",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "An approved hydration action records the independent IDs it created/reused, and undo retires 'objects created by that action' and reverses relationships it added. Live templates subsequently add structure to current instances automatically. Example: hydration H creates member A in an existing team; a later template edit creates B for that same application; undo H then has to decide whether B remains, retires, or constitutes a dependency conflict, and must remove the source of desired membership so reconciliation does not recreate the undone group. The original action's before/after and created-object list do not answer that. Repeated-composition identity and exact dependency checks are acknowledged open areas; this is a concrete lifecycle consequence, not a claim that the design already promised a safe inverse for every history."
+    },
+    {
+      "claim": "The request/result contract does not define how a completed summary reference remains resolvable after a graph-owned seat or team rename moves its containing state folder.",
+      "location": "DESIGN-NOTES.md:17–19,238–239,253–259; CURRENT-DESIGN.md: Identity and scope and Bootstrap and system-duty seats",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Human-browsable folders follow teams/seats/clones, and renames change corresponding state paths. Completed transcript work records an output artifact reference including a 'summary path'. The path-resolution API resolves the caller seat's current state path, but no result-reference convention, rewrite rule, or stable artifact handle is specified. When a summary is stored in those folders, a later rename can leave a durable completed request pointing to its former location even though its processed-through coverage is still recorded as complete. Stable IDs and current-path lookup can support a solution, but the contract must connect them to artifact references; it currently does not."
+    },
+    {
+      "claim": "The serialized writer has no specified crash-recovery boundary between journal admission, checkout mutation, Git commit, and recording operation completion.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation and Useful next design topics; DESIGN-NOTES.md:150–153,159",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Mutation requests enter a durable journaled queue, one worker writes and commits, admission differs from completion, and reconciliation must use latest committed intent. A crash after files are changed but before Git commits leaves readable checkout contents ahead of committed intent; a crash after commit but before recording completion leaves the admitted request apparently unfinished. No selected recovery rule identifies the authoritative commit for an operation or prevents applying that mutation twice during replay. Serial execution eliminates simultaneous writers but not these interrupted transitions. The document explicitly lists mutation/journal contracts as future design; this finding identifies the concrete local failure boundary that remains to be settled rather than contradicting an implementation-readiness claim."
+    }
+  ]
+}

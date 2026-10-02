@@ -1,0 +1,7 @@
+{
+  "id": "F30",
+  "seat": "refute",
+  "verdict": "REJECT",
+  "severity": "FYI",
+  "evidence": "External premise verified: Devin's official https://docs.devin.ai/onboard-devin/environment says 'Configure Devin’s environment so sessions start with repos, tools, dependencies, environment variables, and secrets ready' and 'Without one, Devin can’t build your project, can’t run your tests'. REFUTE (a): SOFTWARE-FACTORY-VISION.md:69-75 already defines project-adaptable team/task recipes with useful inputs, evidence and occupant context; a project can put environment prerequisites there. (b): SOFTWARE-FACTORY-VISION.md:31,71-73,99,127-129 expects engineers and meaningful verification but leaves the particular checks and practice to projects. (c): HERDR-GRAPH-VISION.md:112 explicitly separates repository-specific tests and deployment infrastructure from graph; SOFTWARE-FACTORY-VISION.md:59,145 leaves artifacts in project repositories/work systems. (d): No reviewed document promises a preconfigured, verified environment before an engineer is assigned; SOFTWARE-FACTORY-VISION.md:157 says the first project and instance practice remain to be designed, and CURRENT-DESIGN.md:58 disclaims implementation readiness. The absence of a dedicated environment-onboarding recipe is a reasonable product idea, but the finding does not establish a material contradiction of the current stated contract."
+}

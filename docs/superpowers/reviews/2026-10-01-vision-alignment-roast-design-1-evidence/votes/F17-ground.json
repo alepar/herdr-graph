@@ -1,0 +1,7 @@
+{
+  "id": "F17",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Internal premises hold. DESIGN-NOTES.md:13 makes individual leave a durable clone opt-out, while :57 specifies a seat-system-channel instruction for other clones to leave and explicitly preserves pending work for unavailable clones. CURRENT-DESIGN.md:38-40 repeats the intent/membership split and lagging completion. DESIGN-NOTES.md:179 and CURRENT-DESIGN.md:16 say reconciliation checks latest committed intent, but full-text searches for leave/join, supersession, revision, stale instructions, notification, and equivalent mechanisms in all four reviewed documents found no rule for a recipient to validate a previously published leave instruction against a later join, nor a way to distinguish its delayed execution from a fresh voluntary clone leave. The latest-intent rule fences reconciler external actions, but does not expressly fence an agent executing a durable notification. Thus a leave notice pending while a clone is unavailable can be acted on after a newer seat join and create an opt-out under the stated API semantics, contradicting current seat participation. This is distinct from the acknowledged question at DESIGN-NOTES.md:13 of how a later join treats pre-existing genuine opt-outs. No outside-world premise is needed."
+}

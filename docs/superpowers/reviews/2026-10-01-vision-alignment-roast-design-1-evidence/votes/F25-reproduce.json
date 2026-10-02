@@ -1,0 +1,7 @@
+{
+  "id": "F25",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Concrete sequence: hydration A creates seat S and adds relationship R; grouped provenance records created/reused seat IDs (DESIGN-NOTES.md:285-286,302). A later, independently selected hydration B reuses S and R without changing a field, which the design permits case by case (DESIGN-NOTES.md:39-40,285-286). The stated inverse for A retires objects A created and reverses relationships A added (DESIGN-NOTES.md:286; CURRENT-DESIGN.md:47-48). Applied literally, it retires S and removes R despite B's continuing use, contradicting the requirement that undo preserve unrelated later work (CURRENT-DESIGN.md:47; DESIGN-NOTES.md:279,287-289). Same-field edit conflict handling does not catch this dependency because B made no edit. Exact dependency conflict checks are acknowledged as unfinished (CURRENT-DESIGN.md:49; DESIGN-NOTES.md:274,289). The finding concerns the missing later-reuse rule, not a claim that the draft implementation already loses state."
+}

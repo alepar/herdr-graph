@@ -1,0 +1,7 @@
+{
+  "id": "F11",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) No equivalent conditional adoption rule appears in the four reviewed documents: CURRENT-DESIGN.md:46 and DESIGN-NOTES.md:273 prescribe a preview including where the command's current pane is adopted, while DESIGN-NOTES.md:265 describes adoption specifically into a restored pane/tab/workspace arrangement. (b) The accepted uncertainty in CURRENT-DESIGN.md:49 concerns multi-object mapping and launch/resume, not a zero-restoration target; no tradeoff accepts forcing adoption for every action. (c) Template-update and hydration undo are expressly in initial scope (CURRENT-DESIGN.md:47-48; DESIGN-NOTES.md:278,285-288). A template edit can reverse configuration alone; hydration undo can retire created objects, including the command's current scope, without restoring an object. (d) Thus the required concrete preview cannot specify an adoption destination for these valid candidates, and applying one from inside a retiring object leaves the command's result location unspecified. This affects the promised usable undo flow, not merely wording. The design is explicitly unfinished, so this identifies a contract to settle, not actual data loss or implementation failure."
+}

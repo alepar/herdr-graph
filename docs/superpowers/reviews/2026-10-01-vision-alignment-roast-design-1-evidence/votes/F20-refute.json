@@ -1,0 +1,7 @@
+{
+  "id": "F20",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) Equivalent search: CURRENT-DESIGN.md:32-34 and DESIGN-NOTES.md:247-259 specify ordinary activation only when no occupant runs, durable thread requests, role instructions to wait/dispatch, and pending-request discovery after crashes; none specifies how an existing occupant receives and acts on a request after its main turn ends. The reconciliation periodic checks in CURRENT-DESIGN.md:15 concern graph/Herdr state, and DESIGN-NOTES.md:240 and CURRENT-DESIGN.md:33 select no periodic model wake. (b) Best-effort missed manual observations (DESIGN-NOTES.md:179-180) are an accepted tradeoff, but stalled transcript requests are not; explicit completion and processed-through coverage are required (DESIGN-NOTES.md:255-258). (c) Mechanical transcript processing is current scope (CURRENT-DESIGN.md:10,32-34), though this is design-stage qualification, not an assertion that a harness cannot do it or a demand for production guarantees. (d) If a request arrives after an occupant's prior turn and nothing resumes it, the request persists without dispatch or completion, frustrating the selected processing workflow. Narrow finding: qualify/specify the generic delivery/resume path for busy and idle occupants before relying on unattended summarization. No claim about actual Codex/Claude runtime capability is made."
+}

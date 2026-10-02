@@ -1,0 +1,7 @@
+{
+  "id": "F26",
+  "seat": "reproduce",
+  "verdict": "REJECT",
+  "severity": "FYI",
+  "evidence": "The end-to-end demonstration breaks at the proposed single current-seat lookup: the spec does not require that lookup for historical attribution. CURRENT-DESIGN.md:9 explicitly requires attribution including teamspace/seat/clone/native session/transcript; DESIGN-NOTES.md:16 says Beads and other work carry seat, clone, and agentic-session attribution, and :149 preserves that after the revised model. For a transcript that spans A then B, per-contribution work records can retain A and B without transcript-position scope segments. CURRENT-DESIGN.md:19 and DESIGN-NOTES.md:148 specify that the destination seat's applicable state changes on reload while the old transcript remains. DESIGN-NOTES.md:230 calls for historical traceability after moves, but does not prescribe a particular index. The finding does expose an implementation detail to settle around a move before reload, yet it never demonstrates that the existing attribution contract cannot satisfy the stated requirement. The shared processing request contract at CURRENT-DESIGN.md:34 and DESIGN-NOTES.md:255-259 promises transcript identity and coverage, not seat-segmented summaries."
+}

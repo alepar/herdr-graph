@@ -1,0 +1,7 @@
+{
+  "id": "F27",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Acknowledged design gap, conditional failure rather than observed data loss. DESIGN-NOTES.md:256-258 requires durable requests, explicit completion tied to input coverage, processing of a resumed transcript's newly appended portion, and dispatch without waiting for earlier summaries; :248 permits concurrent subagents. Suppose A processes positions 1-100 and B processes only newly appended 101-200. B reports first with transcript identity, processed-through=200, and summary path, the result fields specified at :256. If graph interprets 200 as a completed prefix, it conceals the unfinished 1-100 and violates explicit coverage/completion at :251,256-257; if it declines to advance the prefix, it must retain B's disjoint completed range and artifact to prevent redundant work. Neither request bounds nor contiguous-frontier/result aggregation semantics are specified; DESIGN-NOTES.md:259 and CURRENT-DESIGN.md:34 explicitly leave out-of-order results open. Durable per-request pending status could keep A visible, so the finding does not prove an inevitable loss; it shows the required coverage semantics remain unresolved before the promised transcript completion record can be truthful. This is material to recovery continuity (HERDR-GRAPH-VISION.md:9,37,139), but the draft disclaims implementation readiness (CURRENT-DESIGN.md:58), so Should-fix rather than Blocking."
+}

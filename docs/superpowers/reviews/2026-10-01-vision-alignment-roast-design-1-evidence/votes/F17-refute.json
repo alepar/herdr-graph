@@ -1,0 +1,7 @@
+{
+  "id": "F17",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) Equivalent mechanisms: CURRENT-DESIGN.md:16 and DESIGN-NOTES.md:179 fence obsolete reconciler retries/external actions, but do not specify a validity check on an already published instruction when a clone acts on it. DESIGN-NOTES.md:53,58 and CURRENT-DESIGN.md:14 leave expected revision/precondition semantics proposed/open, not an established protection. (b) Contract: DESIGN-NOTES.md:57 accepts lagging completion and pending work for unavailable clones; that does not expressly accept a leave instruction from superseded seat intent taking effect after a later join. (c) Scope: clone membership and whole-seat intent are core graph responsibilities (CURRENT-DESIGN.md:38-40; DESIGN-NOTES.md:13-14), so this is in scope. (d) Materiality: after leave L publishes an instruction, newer join J restores seat intent and clone B's membership; B later obeys L by issuing individual leave, which DESIGN-NOTES.md:13 says records a clone opt-out. That new mutation can defeat J for B, and the latest-intent reconciler cannot identify it as the obsolete L effect from the specified contract. The distinct question of how J handles pre-existing genuine opt-outs remains open (DESIGN-NOTES.md:13), but does not resolve this delayed-instruction race. Design-stage gap, not a claim of observed implementation failure or data loss."
+}

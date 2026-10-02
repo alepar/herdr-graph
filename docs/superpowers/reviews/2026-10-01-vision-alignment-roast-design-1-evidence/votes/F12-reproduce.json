@@ -1,0 +1,7 @@
+{
+  "id": "F12",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Narrow confirmed gap, already acknowledged: DESIGN-NOTES.md:27 places the shared Beads database in the graph-instance repository, while :28 and :186-187 assign project work to Beads rather than graph; :150 makes the plugin the only Git committer, and :239 applies serialized write/commit rules to graph-repository files. Reproduction: an agent records a new work assignment in Beads (the work record must track ownership/dependencies, SOFTWARE-FACTORY-VISION.md:31,59,71). That changes the shared database in the same checkout, but the design specifies neither how that Beads-owned change enters the plugin's sole-committer queue nor who owns its Git representation and commit boundary (DESIGN-NOTES.md:134; CURRENT-DESIGN.md:56). Committing it directly would breach the sole-committer rule; sending it through the plugin needs an as-yet undefined handoff. Thus the stated shared, durable work-record flow cannot be implemented from the current contract across sessions (SOFTWARE-FACTORY-VISION.md:31,59; HERDR-GRAPH-VISION.md:9,125,139). This is a material design dependency, not evidence that current code loses data or that graph must own project tasks."
+}

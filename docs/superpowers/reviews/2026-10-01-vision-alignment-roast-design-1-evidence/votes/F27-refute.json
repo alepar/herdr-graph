@@ -1,0 +1,7 @@
+{
+  "id": "F27",
+  "seat": "refute",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "(a) No equivalent bounded-range or contiguous-frontier rule appears in the four reviewed documents. CURRENT-DESIGN.md:34 names transcript identity, processed-through coverage, and output references; DESIGN-NOTES.md:256-259 specifies the same fields while explicitly leaving concurrent/out-of-order handling open. Durable request status (DESIGN-NOTES.md:251,257) can preserve a pending A, but the design has not defined how a completed B for a newly appended portion is represented as disjoint coverage or later combined with A. (b) Best-effort missed manual Herdr observations are an accepted tradeoff (DESIGN-NOTES.md:179-180); skipped transcript coverage is not. Explicit completion must link source coverage and artifact (DESIGN-NOTES.md:251,256), and dispatch alone does not count. (c) Mechanical transcript processing requests and indexing are expressly in scope (CURRENT-DESIGN.md:10,32-34), though semantic summarization remains delegated. (d) With concurrent dispatch (DESIGN-NOTES.md:248,258), B can complete for positions 101-200 while A for 1-100 remains pending. A single processed-through value of 200 cannot by itself establish a complete prefix; treating it as such would hide A's gap, contrary to explicit source-coverage completion and durable pending-work semantics. This is an acknowledged material contract gap to settle before implementation, not evidence of actual data loss or a claim that the draft has chosen the unsafe frontier algorithm."
+}

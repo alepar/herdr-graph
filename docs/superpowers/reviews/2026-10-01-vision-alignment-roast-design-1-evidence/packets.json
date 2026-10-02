@@ -1,0 +1,1664 @@
+[
+  {
+    "f": {
+      "claim": "Serializing writes does not yet prevent one clone from silently replacing another clone's newer shared state, because mutation preconditions remain undefined.",
+      "location": "CURRENT-DESIGN.md, State and reconciliation; DESIGN-NOTES.md:149-160",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Current design explicitly says 'precise stale-edit/precondition semantics still need design'; notes say 'Serial execution prevents simultaneous writes, but does not by itself detect a stale whole-file replacement computed by a caller.' Failure story: two clones read a seat's instructions, independently revise different concerns, and enqueue complete replacement text. Both requests serialize successfully, but the second removes the first's decision. This is an acknowledged unresolved contract, not a contradiction or a claim that the design promises implementation readiness.",
+      "id": "F01",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        1
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F01",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:9,14 permits multiple clones of one seat and specifies a serialized writer, but explicitly leaves stale-edit/precondition semantics undesigned. DESIGN-NOTES.md:149-151 makes shared seat state a separate file and queues all writes; :160 explicitly warns that serialization cannot detect a stale whole-file replacement. Concrete path: clones A and B read the same seat instructions; A submits replacement adding decision X, B independently submits replacement adding Y from the older text; absent an enforced revision/patch precondition, the worker commits A then B, and B's stale content silently removes X. This violates HERDR-GRAPH-VISION.md:139's explicit success criterion that two clones contribute without silently overwriting shared state. DESIGN-NOTES.md:53,58 proposes expected revisions, but CURRENT-DESIGN.md:14 and HERDR-GRAPH-VISION.md:149 leave the actual contract open. This is an acknowledged gap in a draft design, not an observed implementation failure; Should-fix before realizing the stated concurrency outcome.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F01-reproduce.json"
+      },
+      {
+        "id": "F01",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent safeguard: CURRENT-DESIGN.md:18 requires a serialized writer and validation against state/queued predecessors only 'where practical,' then explicitly leaves stale-edit/precondition semantics open. DESIGN-NOTES.md:53,58 propose expected revisions and patches, but label protection proposed; :149 says admission/version semantics remain unspecified, and :160 explicitly says serialization does not detect stale whole-file replacement. The stale-precondition failure path in :173 does not define when that failure occurs. (b) No accepted tradeoff permits silently losing a clone's committed shared-state edit; accepted best-effort missed manual observations (DESIGN-NOTES.md:179-180) concern Herdr observation, not concurrent plugin mutations. (c) This is inside graph's state API and shared seat state (CURRENT-DESIGN.md:11,18; DESIGN-NOTES.md:149), not a demand for project-work storage or production guarantees. (d) It is material: HERDR-GRAPH-VISION.md:139 expressly expects two clones to contribute without silently overwriting shared state; with two reads of revision N and queued whole-file replacements, serial execution alone can commit both, making the second erase the first. This is an acknowledged design gap, not evidence of actual data loss or a claim of implementation readiness; Should-fix when the mutation contract is specified.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F01-refute.json"
+      },
+      {
+        "id": "F01",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:10,14 explicitly separates shared seat state from clone state, serializes plugin writes, and says precise stale-edit/precondition semantics still need design. DESIGN-NOTES.md:149-151 confirms separate files, a single journal worker, and only practical admission compatibility checks; :160 explicitly states serial execution does not detect stale whole-file replacement. Full-text synonym search found expected revisions/patches proposed in DESIGN-NOTES.md:53,58, but :53 calls revisions proposed and the later approved summary leaves their semantics open. With two clones reading the same seat text, serially accepting both complete replacements can erase the first edit without a conflict. HERDR-GRAPH-VISION.md:139 explicitly requires that two clones contribute without silently overwriting shared state, while :149 acknowledges mutation preconditions remain unsettled. Thus this is an acknowledged material design gap, not evidence of actual implementation data loss; Should-fix for the pending mutation contract.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F01-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The closure-to-retirement rule lacks the cascade and unavailable-observation contract needed to avoid retiring the wrong scope during ordinary workspace recovery.",
+      "location": "CURRENT-DESIGN.md, State and reconciliation; DESIGN-NOTES.md:147,157,197-198",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Current design makes closing a live pane/tab/workspace retire corresponding graph objects, while explicitly leaving 'Exact cascading closure and external cleanup contracts' open. Notes additionally leave the last-pane/containing-tab behavior and closure versus unavailable observation unspecified. Failure story: a last-pane close or workspace disappearance is represented as multiple observations; the implementation archives a containing seat/team or cleans up participants whose intended lifecycle was not actually resolved. Accepted best-effort missed manual actions do not choose the scope of an action that was observed.",
+      "id": "F02",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        2
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F02",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to unavailable observation versus closure. CURRENT-DESIGN.md:15-18 says observed Herdr changes feed the graph writer, committed intent drives reconciliation, and closing a live pane/tab/workspace retires corresponding graph objects; it explicitly leaves closure contracts open. DESIGN-NOTES.md:147 expressly says reliable distinction between closure and unavailable observation needs specification; :157 notes an incomplete snapshot is insufficient evidence of deliberate closure. Concrete path: a formerly live tab is temporarily absent from a check, the unspecified classifier treats that absence as a manual close, the writer archives its seat, and latest-intent reconciliation (:179; CURRENT-DESIGN.md:16) drives retirement/cleanup even when availability returns. That leaves a still-intended responsibility archived and possibly changes thread participation, contradicting HERDR-GRAPH-VISION.md:9,33,90-94's organizational continuity and requirement to distinguish deliberate changes from incomplete observations. This is a contract gap, not a claim of actual implementation data loss. The separate last-pane cascade concern is acknowledged as open at DESIGN-NOTES.md:147 but is not needed for this demonstrated failure.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F02-reproduce.json"
+      },
+      {
+        "id": "F02",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent settled cascade or closure-evidence rule appears in the four artifacts: CURRENT-DESIGN.md:18 explicitly leaves cascading closure and external cleanup unspecified; DESIGN-NOTES.md:147 explicitly leaves last-pane/containing-tab behavior and closure-versus-unavailability unresolved. DESIGN-NOTES.md:157 says an incomplete snapshot is insufficient, but labels that section 'proposed for discussion, not yet approved'; HERDR-GRAPH-VISION.md:94 likewise states the desired distinction while leaving exact matching/conflict policy open. (b) Best-effort missed manual actions are accepted (DESIGN-NOTES.md:180), but that tradeoff does not settle the scope or classification of an observed change. (c) Pane/tab/workspace retirement is in current scope (CURRENT-DESIGN.md:18), including closure undo (DESIGN-NOTES.md:278). (d) Misclassifying temporary unavailability as closure, or a last-pane close as seat retirement, changes durable lifecycle and thread cleanup (DESIGN-NOTES.md:147), so this is material. Narrow finding: an acknowledged design contract gap, not evidence that implementation currently loses data or that every missed action must be recovered.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F02-refute.json"
+      },
+      {
+        "id": "F02",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Confirmed, narrowed to the unresolved decision rule rather than an absence of any safeguard. CURRENT-DESIGN.md:18 adopts retirement on live pane/tab/workspace closure and explicitly leaves cascading closure and external cleanup unspecified. DESIGN-NOTES.md:147 expressly leaves last-pane/containing-tab behavior and reliable closure-versus-unavailable-observation distinction open; :157 proposes that an incomplete snapshot cannot prove deliberate closure and that graph-issued closures need correlation, but this is labeled an unapproved consequence, not a complete rule. Full-text search of all four artifacts for close/closure, retire/archive, cascade, unavailable/missing/snapshot, ambiguity, and recovery found directional safeguards at DESIGN-NOTES.md:125,157,166,197-198 and HERDR-GRAPH-VISION.md:33,92-94, yet no adopted evidence threshold or descendant-scope mapping. The missing contract is material to the stated requirement that ordinary manual Herdr changes feed graph state while preserving correct organizational identity (HERDR-GRAPH-VISION.md:33,54,94,139). A last-pane observation or transiently incomplete workspace view could otherwise be interpreted at the wrong scope; this is a prospective design risk, not a claim of actual data loss or a demand for perfect observation. The accepted best-effort allowance for missed actions (DESIGN-NOTES.md:180) does not settle classification of an observed ambiguous action.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F02-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Durable transcript results use summary paths, but the design does not define how those references survive the name-driven relocation of seat folders.",
+      "location": "DESIGN-NOTES.md, User decisions and direction (rename/state-path bullets), and :238-239,255-257; CURRENT-DESIGN.md, Identity and scope; DESIGN-NOTES.md:17–19,238–239,253–259; CURRENT-DESIGN.md: Identity and scope and Bootstrap and system-duty seats",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Source 3 (premortem, GAP): Names drive corresponding state paths, folder hierarchy follows teams/seats/clones, and completed transcript results reference a 'summary path'. Callers must resolve their current state path rather than cache it, but there is no equivalent reference contract for already-recorded output paths. Failure story: summarization succeeds, a human renames the teamspace, and a returning occupant follows the completion record to the old summary location. Stable seat IDs and current-path lookup can support a solution, but the design has not specified identity-relative artifact references, redirects, or rewriting existing references. This concerns graph-managed result references, not a demand to rewrite arbitrary opaque project prose.\n\nSource 22 (failure-mode, GAP): Human-browsable folders follow teams/seats/clones, and renames change corresponding state paths. Completed transcript work records an output artifact reference including a 'summary path'. The path-resolution API resolves the caller seat's current state path, but no result-reference convention, rewrite rule, or stable artifact handle is specified. When a summary is stored in those folders, a later rename can leave a durable completed request pointing to its former location even though its processed-through coverage is still recorded as complete. Stable IDs and current-path lookup can support a solution, but the contract must connect them to artifact references; it currently does not.",
+      "id": "F03",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        3,
+        22
+      ],
+      "sourceCategories": [
+        "premortem",
+        "failure-mode"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ],
+      "sources": [
+        {
+          "sourceIndex": 3,
+          "claim": "Durable transcript results use summary paths, but the design does not define how those references survive the name-driven relocation of seat folders.",
+          "location": "DESIGN-NOTES.md, User decisions and direction (rename/state-path bullets), and :238-239,255-257; CURRENT-DESIGN.md, Identity and scope",
+          "category": "premortem",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Names drive corresponding state paths, folder hierarchy follows teams/seats/clones, and completed transcript results reference a 'summary path'. Callers must resolve their current state path rather than cache it, but there is no equivalent reference contract for already-recorded output paths. Failure story: summarization succeeds, a human renames the teamspace, and a returning occupant follows the completion record to the old summary location. Stable seat IDs and current-path lookup can support a solution, but the design has not specified identity-relative artifact references, redirects, or rewriting existing references. This concerns graph-managed result references, not a demand to rewrite arbitrary opaque project prose."
+        },
+        {
+          "sourceIndex": 22,
+          "claim": "The request/result contract does not define how a completed summary reference remains resolvable after a graph-owned seat or team rename moves its containing state folder.",
+          "location": "DESIGN-NOTES.md:17–19,238–239,253–259; CURRENT-DESIGN.md: Identity and scope and Bootstrap and system-duty seats",
+          "category": "failure-mode",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Human-browsable folders follow teams/seats/clones, and renames change corresponding state paths. Completed transcript work records an output artifact reference including a 'summary path'. The path-resolution API resolves the caller seat's current state path, but no result-reference convention, rewrite rule, or stable artifact handle is specified. When a summary is stored in those folders, a later rename can leave a durable completed request pointing to its former location even though its processed-through coverage is still recorded as complete. Stable IDs and current-path lookup can support a solution, but the contract must connect them to artifact references; it currently does not."
+        }
+      ]
+    },
+    "votes": [
+      {
+        "id": "F03",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete permitted path: the proposed seat folder contains transcript summaries (DESIGN-NOTES.md:229), and the approved result contract records a summary path plus processed-through coverage (DESIGN-NOTES.md:255-257; CURRENT-DESIGN.md:34). Human-browsable folders follow teams/seats/clones (CURRENT-DESIGN.md:10; DESIGN-NOTES.md:238-239), and a workspace/tab rename changes the corresponding state path while preserving identity (DESIGN-NOTES.md:17). If the summary is stored under that folder, the rename relocates it while the completed result can retain the former path: the only current-path resolver is specified for a caller seat's state path (DESIGN-NOTES.md:18), and no result-reference relocation/indirection rule is given. On occupant replacement, the completed coverage remains recorded but its summary reference cannot retrieve the evidence without manual repair, defeating the stated continuity demonstration (HERDR-GRAPH-VISION.md:37,139). This is a conditional design-contract gap, not proof of actual loss or a claim that all summaries must live in seat folders; a stable external artifact location or stable-ID-relative reference would close it. The seat-folder summary placement is expressly a pending proposal (DESIGN-NOTES.md:227-229), which narrows the finding but does not remove the need to specify how a graph-managed path reference remains valid if that allowed placement is used.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F03-reproduce.json"
+      },
+      {
+        "id": "F03",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent search: DESIGN-NOTES.md:17-19 gives stable IDs, current *seat state-path* lookup, and rename notifications; :58 uses ID-addressed mutations, but none defines resolution or rewriting of already recorded output-artifact references. CURRENT-DESIGN.md:8,10,34 likewise supplies identity, moving human-browsable folders, and output references without connecting them. (b) No approved tradeoff accepts stale completed-result references; best-effort missed Herdr observations concerns a different boundary. (c) Narrow scope: this applies to a summary stored under a graph-managed team/seat folder, not an arbitrary external wiki or opaque prose; that placement is contemplated in DESIGN-NOTES.md:229,239, while :256 explicitly makes summary path part of the durable result contract. (d) It matters to the stated ability to recover a responsibility and its evidence after rename (HERDR-GRAPH-VISION.md:33,37,139). After a rename moves the folder, a recorded former path can cease to locate the summary although the result still reports completed coverage. The spec has several possible fixes but selects none. This is an acknowledged draft-design detail, not a claim of actual data loss or implementation readiness.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F03-refute.json"
+      },
+      {
+        "id": "F03",
+        "seat": "ground",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "The approved premises are narrower than the failure story: rename changes teamspace/seat state paths (DESIGN-NOTES.md:17-19; CURRENT-DESIGN.md:10), and completed transcript results include a summary path (DESIGN-NOTES.md:255-257; CURRENT-DESIGN.md:34). Full-text searches for summary/artifact/path/reference/relocation equivalents found no approved rule placing summary artifacts beneath renamed seat folders. The only explicit 'seat folder ... transcript index/summaries' placement is a pending discussion item, not an approved choice (DESIGN-NOTES.md:222-234, especially :229); summarization remains delegated and output artifacts are merely referenced (CURRENT-DESIGN.md:10,32-34). A summary path outside the renamed folder remains valid, so the stale-reference failure depends on an unestablished placement/move premise. If a later design chooses summaries inside renamable folders, reference preservation becomes a real detail to specify, but F03 does not establish a present material contradiction.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F03-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Automatic /seat bootstrap can create a fresh bound identity in the recovery pane before undo adopts that pane, with no contract for resolving that provisional identity.",
+      "location": "DESIGN-NOTES.md:193,238,263-265,272-274; CURRENT-DESIGN.md, Bootstrap and system-duty seats / Undo",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Session-start instructions can automatically run /seat; unbound context may create a seat through a plan. Undo is a separate CLI because automatic matching/creation conflicts with restoring a previous object into a fresh location, and the command's current pane must be adopted into the restoration. Failure story: after accidentally closing a seat, the user opens the requested fresh tab/agent; boot creates a new seat and channels before the user asks for recovery. Undo now encounters an already bound pane. The design leaves unspecified whether adoption retires/reuses that provisional seat, transfers its new history, or refuses restoration, and how it avoids a leftover identity even though it promises to avoid a leftover recovery pane.",
+      "id": "F04",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        4
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F04",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Conditional but supported path: close established seat S, which archives it (CURRENT-DESIGN.md:18); open fresh tab/pane P and agent to undo the closure (DESIGN-NOTES.md:232). Session-start instructions may run /seat (DESIGN-NOTES.md:238; CURRENT-DESIGN.md:30), and unbound /load may propose creation as well as resurrection/rebind (DESIGN-NOTES.md:193). If that plan creates fresh seat N and binds P before the user requests undo, the dedicated CLI then must adopt its current P into restored S (DESIGN-NOTES.md:263-265,272-274; CURRENT-DESIGN.md:46). The stated plan does not say whether N is retired, retained, or transferred, nor how N's new native-session history and thread relationships follow the rebind; the listed open details cover multi-object adoption and dependency conflicts but do not resolve this case (CURRENT-DESIGN.md:49). Thus a permitted ordinary boot order leaves the promised concrete adoption/restoration plan underdetermined and can leave a second live identity or incorrectly scoped history. This is a material recovery-contract gap, not a claim that every boot creates N or that data loss has occurred.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F04-reproduce.json"
+      },
+      {
+        "id": "F04",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent resolution found: DESIGN-NOTES.md:193 permits create/resurrect/rebind for unbound context, :238 enables session-start /seat prompting, while :263 explicitly recognizes /seat matching/creation conflicts with restoration; :265 and :273 promise adoption of the undo command's current pane but give no disposition for a fresh seat already bound there. Generic conflict/repair planning (CURRENT-DESIGN.md:49; DESIGN-NOTES.md:289) does not settle retire/reuse/transfer of that seat and its channels/history. (b) Best-effort missed observations and open multi-object mapping are accepted, but neither explicitly accepts a leftover provisional identity in this ordinary recovery path. (c) Closure undo and pane adoption are initial scope (CURRENT-DESIGN.md:46-47), so this is in scope. (d) If startup /seat creates a seat before the user runs the separate undo CLI, adopting its pane for the resurrected seat leaves the new durable seat identity's fate undefined, potentially breaking clean recovery and attribution; no actual data loss is established. Narrow finding to this timing/identity interaction, not a general demand for atomic undo.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F04-refute.json"
+      },
+      {
+        "id": "F04",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Premises hold, with a conditional trigger: DESIGN-NOTES.md:238 and CURRENT-DESIGN.md:30 permit session-start /seat; DESIGN-NOTES.md:193 allows an unbound context to propose a create/resurrect/rebind plan, so creation is possible but not inevitable. DESIGN-NOTES.md:263 explicitly identifies automatic matching/creation as conflicting with restoration into a fresh location; :265 and :273 require adopting the undo command's current pane. Full-text searches across all four artifacts for binding/rebind, resurrection, recovery/restore/undo, adoption, reuse, and retirement found no rule for a seat/clone already created in that pane before undo. Generic conflict repair at :289 and acknowledged open restoration details in CURRENT-DESIGN.md:49 do not specify disposition of its independent seat ID, channels, or history. If bootstrap has created that identity, adopting the same pane into the archived seat cannot be planned unambiguously while preserving identity/provenance (DESIGN-NOTES.md:300-302) and avoiding a leftover recovery pane (:265). This materially affects the stated closure-recovery experience; it is an acknowledged design-stage gap, with no claim of observed data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F04-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Transcript coverage has no settled rule for concurrent or out-of-order results, so late completion can make the recovery summary represent less transcript than an earlier completion.",
+      "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:248,255-259",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The summarizer accepts additional work without waiting for earlier summaries; resumed transcripts append processing work; completion reports carry processed-through coverage and a summary path. The notes explicitly leave 'concurrent or out-of-order result handling' open. Failure story: a request covering a resumed transcript finishes first, then an older request overwrites the same artifact or becomes the current result. The graph's summary pointer or watermark now exposes an incomplete account as the usable recovery artifact. This is a concrete acknowledged design gap rather than a requirement to merge arbitrary summaries automatically.",
+      "id": "F05",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        5
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F05",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Acknowledged gap, narrowed to current-result selection (physical artifact overwrite is not specified). DESIGN-NOTES.md:247-259 permits concurrent requests and newly appended transcript work, requires explicit results with transcript identity, processed-through position and summary path, and expressly leaves concurrent/out-of-order result handling open; CURRENT-DESIGN.md:32-34 repeats that contract. Concrete sequence: request A processes transcript through position 100; after resume request B processes through 150. B completes first, A later. If the unresolved completion rule treats the last arrival as current, the recovery reference regresses to coverage 100 despite completed coverage 150. Nothing specified requires choosing the greatest valid coverage or keeping a later-coverage result current. That breaks the stated purpose of indexed transcript summaries for recovery (DESIGN-NOTES.md:228-241; HERDR-GRAPH-VISION.md:37,139), while the explicit processed-through field makes the missing ordering rule consequential. This is a design gap before implementation, not evidence of existing data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F05-reproduce.json"
+      },
+      {
+        "id": "F05",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanism: DESIGN-NOTES.md:255-258 and CURRENT-DESIGN.md:34 require transcript identity, processed-through coverage, output references, and durable completion, but specify no rule for selecting/combining concurrent results; DESIGN-NOTES.md:259 explicitly leaves out-of-order handling open. (b) No accepted tradeoff permits regression in represented coverage: delegated semantic summarization (CURRENT-DESIGN.md:10) and best-effort manual Herdr observation (CURRENT-DESIGN.md:16) address different boundaries. (c) Mechanical transcript processing/indexing is expressly in scope (CURRENT-DESIGN.md:10,32-34). (d) A later-arriving result for an earlier transcript portion could be exposed as the latest usable summary without the resumed portion, impairing the stated recovery/continuity goal (HERDR-GRAPH-VISION.md:37,139). Narrowing: the spec does not promise a single current pointer or allow overwriting a shared artifact; those are illustrative failure paths, not established behavior. The material missing rule is how graph represents usable coverage when results complete out of order. This is an acknowledged design gap, not an implementation claim.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F05-refute.json"
+      },
+      {
+        "id": "F05",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:32-34 approves durable transcript requests, concurrent dispatch, coverage/output references and resumed work, then explicitly leaves out-of-order results open. DESIGN-NOTES.md:248,256-259 confirms the main occupant need not wait, completion includes transcript identity, processed-through position and summary path, and no ordering rule is settled. Full-text search of all four artifacts for summary/result/coverage/recovery and equivalent handling found no monotonic current-result selection, artifact versioning, or overwrite rule. Thus an implementation that treats the last completion as current could expose a shorter older summary after a newer one, undermining replacement-occupant recovery (HERDR-GRAPH-VISION.md:37,139). Narrowing: neither a single summary pointer nor shared-path overwrite is specified, so regression is a plausible failure mode of the acknowledged contract gap, not an established behavior or actual data loss. Significant continuity risk, but draft design claims no implementation readiness (CURRENT-DESIGN.md:58).",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F05-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The transcript workflow specifies activation when no occupant exists but leaves pending-request recovery undefined when an occupant remains present and stops making progress.",
+      "location": "DESIGN-NOTES.md:247-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Graph activates an unoccupied summarizer, reuses an existing occupant without requiring it to be idle, and preserves pending requests after crashes. Instructions tell the occupant to dispatch subagents and report results; the durable contract currently distinguishes requests and explicit completion but defines no stalled/in-progress/failure reporting or reassignment policy for a still-running occupant. Failure story: the summarizer dispatches processing that never reports, remains present accepting messages, and requests remain indefinitely pending while successors wait for recovery summaries. Durable discoverability prevents disappearance but does not settle how this case is detected or repaired. A recovery policy can remain ordinary agent practice; no plugin worker pool or periodic model wake is required by this finding.",
+      "id": "F06",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        6
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F06",
+        "seat": "reproduce",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "Concrete path: graph posts a durable transcript request to a present summarizer (CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:250,258); its helper stalls without a completion report (DESIGN-NOTES.md:248,251,256); graph therefore leaves the request pending and discoverable (DESIGN-NOTES.md:256-257). The demonstration stops there: the approved contract requires durable requests, explicit completion, and recovery after occupant loss, but states no deadline or automatic stall detection for a still-present occupant. The notes place dispatch/reply behavior in role instructions and reject a plugin worker pool (DESIGN-NOTES.md:248-250,258); CURRENT-DESIGN.md:54 explicitly leaves crash/retry behavior for further design. Thus indefinite pending work is a real operational risk, but this story does not reach a contradiction of a stated transcript-workflow guarantee. It would require an additional liveness requirement to confirm this finding.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F06-reproduce.json"
+      },
+      {
+        "id": "F06",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanism: none found. DESIGN-NOTES.md:247-259 specifies activation only when unoccupied, durable pending requests, explicit completion, and result coverage; it leaves retry/deduplication open. Graph-operation reminders/reassignment at DESIGN-NOTES.md:150-189 are expressly limited to structural/relationship requests (187), so they do not cover transcript processing. (b) Accepted contract: role instructions own dispatch and reporting (248,258), and no recurring model wake is selected (240), but neither accepts indefinitely stalled transcript work as an outcome. (c) Scope: mechanical transcript indexing and processing requests are now in scope (CURRENT-DESIGN.md:10,39-43; DESIGN-NOTES.md:241,255-258); a stall policy could remain ordinary agent practice. (d) Materiality: if a still-present occupant dispatches a subagent that never reports, the request remains pending without a defined detection/recovery path; the intended transcript-processing result and coverage record (DESIGN-NOTES.md:256-257) may never appear. This confirms only the missing stalled-request recovery contract, not a requirement for a plugin worker pool or periodic model wake.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F06-refute.json"
+      },
+      {
+        "id": "F06",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "DESIGN-NOTES.md:247-258 approves activation only for an unoccupied summarizer, reuse of an existing occupant without requiring idleness, durable pending requests, and explicit completion distinct from dispatch. CURRENT-DESIGN.md:32-34 repeats that contract and :54 names summarizer crash/retry as open. Full-text checks for stalled/stuck/hung/unresponsive work, timeout/heartbeat/progress, failure reporting, reminder, retry, reassignment, and monitoring across all four artifacts found no policy for a present occupant whose dispatched work never completes. CURRENT-DESIGN.md:17 and DESIGN-NOTES.md:170-189 cover failed graph mutations and external reconciliation, not transcript-processing request liveness; SOFTWARE-FACTORY-VISION.md:77 covers a separate instance monitoring recipe. Narrowly, a request can remain visibly pending indefinitely while the summarizer is present, preventing the transcript result/coverage promised in DESIGN-NOTES.md:255-258 and weakening cross-session continuity (HERDR-GRAPH-VISION.md:137-139). This is an acknowledged design-stage gap, not a claim of actual data loss or a requirement for a plugin worker pool or periodic model wake.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F06-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Asynchronous transcript processing has no defined source-availability contract, so durable requests may outlive the input needed to fulfill them.",
+      "location": "DESIGN-NOTES.md:241,251,255-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats; CURRENT-DESIGN.md:34,54; DESIGN-NOTES.md:253-259",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Source 7 (premortem, GAP): Graph tracks native transcript references and processed-through coverage, triggers work after session closure, and persists requests across occupant loss. The design does not state who ensures that the referenced input remains readable, how it identifies a truncated/replaced source, or how an unavailable transcript becomes a terminal repairable result. Failure story: a pending summary is retried after its source was moved or removed, and durable request persistence alone cannot reconstruct it. This does not assert any particular harness retention behavior or require graph to own a transcript archive; the missing contract could instead expose source-unavailable status and a documented recovery limitation.\n\nSource 11 (completeness, GAP): New error-case gap within the acknowledged unfinished request contract: results reference 'transcript identity, processed-through position, and summary path'; resumed transcripts can append work and pending requests survive crashes. The only explicit result described is completion with coverage. No retained snapshot requirement, input-unavailable outcome, or reduced-coverage disposition is stated. This matters even if transcript retention remains harness-owned: the graph must avoid representing unreadable coverage as completed or leaving such requests indistinguishable from retryable pending work. It is not a claim that native transcripts are guaranteed to disappear.",
+      "id": "F07",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        7,
+        11
+      ],
+      "sourceCategories": [
+        "premortem",
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ],
+      "sources": [
+        {
+          "sourceIndex": 7,
+          "claim": "Asynchronous transcript processing has no defined source-availability contract, so durable requests may outlive the input needed to fulfill them.",
+          "location": "DESIGN-NOTES.md:241,251,255-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+          "category": "premortem",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Graph tracks native transcript references and processed-through coverage, triggers work after session closure, and persists requests across occupant loss. The design does not state who ensures that the referenced input remains readable, how it identifies a truncated/replaced source, or how an unavailable transcript becomes a terminal repairable result. Failure story: a pending summary is retried after its source was moved or removed, and durable request persistence alone cannot reconstruct it. This does not assert any particular harness retention behavior or require graph to own a transcript archive; the missing contract could instead expose source-unavailable status and a documented recovery limitation."
+        },
+        {
+          "sourceIndex": 11,
+          "claim": "The transcript request contract does not distinguish temporarily unavailable input from permanently missing or truncated input, so it cannot describe an honest terminal outcome when the requested coverage can no longer be read.",
+          "location": "CURRENT-DESIGN.md:34,54; DESIGN-NOTES.md:253-259",
+          "category": "completeness",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "New error-case gap within the acknowledged unfinished request contract: results reference 'transcript identity, processed-through position, and summary path'; resumed transcripts can append work and pending requests survive crashes. The only explicit result described is completion with coverage. No retained snapshot requirement, input-unavailable outcome, or reduced-coverage disposition is stated. This matters even if transcript retention remains harness-owned: the graph must avoid representing unreadable coverage as completed or leaving such requests indistinguishable from retryable pending work. It is not a claim that native transcripts are guaranteed to disappear."
+        }
+      ]
+    },
+    "votes": [
+      {
+        "id": "F07",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete path: graph observes a session close and queues transcript processing (DESIGN-NOTES.md:241; CURRENT-DESIGN.md:32); the request survives summarizer loss and can be rediscovered (DESIGN-NOTES.md:251,255-258). Before retry, the native transcript is unavailable—a condition the older vision itself allows for recovery, while leaving retention contracts open (HERDR-GRAPH-VISION.md:37). The saved identity/coverage pointer cannot supply the unreadable input, so the summarizer cannot report truthful processed-through coverage and an output artifact as the approved result requires (DESIGN-NOTES.md:256). Across the four artifacts, no source-retention, source-validity, or unavailable-input disposition closes that request; the request/result and retry details are expressly unfinished (CURRENT-DESIGN.md:34,54; DESIGN-NOTES.md:259). It can therefore remain apparently pending despite being unfulfillable, contradicting the stated visible, repairable operational-progress goal (HERDR-GRAPH-VISION.md:92-96). This is an acknowledged design gap, not a claim of actual transcript loss or a demand that graph archive transcripts.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F07-reproduce.json"
+      },
+      {
+        "id": "F07",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Refute checks: (a) Searched all four artifacts for retention, source identity/finality, truncation, unavailable input, failure and coverage equivalents. CURRENT-DESIGN.md:34 and DESIGN-NOTES.md:255-259 specify durable pending requests and positive completion with transcript identity, processed-through position and summary path; neither defines source availability or a source-unavailable terminal/result state. General graph failure/retry handling at CURRENT-DESIGN.md:17 and DESIGN-NOTES.md:171-174 concerns external reconciliation and does not supply this transcript request outcome. (b) Keeping native transcript references and delegated semantic work (CURRENT-DESIGN.md:9-10,32-34) bounds ownership, but does not explicitly accept indefinitely pending work or false coverage if source cannot be read. (c) Mechanical session/transcript indexing and processing are explicitly in scope (CURRENT-DESIGN.md:10,32-34; DESIGN-NOTES.md:241), so this does not demand graph archival or a harness retention guarantee. (d) A durable request can remain discoverable after occupant loss (DESIGN-NOTES.md:257), yet without input-availability/failure disposition it cannot reach an honest, repairable outcome if its referenced input is unavailable; this affects the promised visible, repairable progress (HERDR-GRAPH-VISION.md, Recoverable operation). Narrow confirmation: define unavailable-input handling and coverage truthfulness within the acknowledged unfinished lifecycle/request contract (CURRENT-DESIGN.md:54; DESIGN-NOTES.md:241,259). No claim that any current harness actually loses transcripts.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F07-refute.json"
+      },
+      {
+        "id": "F07",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Grounded as an acknowledged contract gap, narrowed to truthful source-unavailable handling rather than a requirement to archive transcripts. CURRENT-DESIGN.md:32-34 and DESIGN-NOTES.md:241,251,255-259 specify asynchronous processing, durable pending requests, explicit completion, transcript identity/processed-through coverage and summary path; they leave lifecycle/retry/result details open. Full-text searches for transcript, source, input, unavailable, unreadable, retention, snapshot, failure, result, coverage and equivalents across all four artifacts find no rule that preserves source readability, detects changed/truncated source, or records terminal incomplete/unavailable processing. HERDR-GRAPH-VISION.md:37 acknowledges transcripts can be unavailable for native-session resume, but its fresh-session recovery fallback does not dispose of a pending summary request. DESIGN-NOTES.md:151,170-174 and HERDR-GRAPH-VISION.md:96 address structural/reconciliation failures, not this later transcript contract; DESIGN-NOTES.md:183-189 explicitly bounds that older operation machinery. If a durable request is retried after its source is unavailable, persistence of the request cannot yield covered output; leaving it pending or marking completion without coverage conflicts with explicit completion/coverage and the vision's visible repairable progress (HERDR-GRAPH-VISION.md:92-94). No actual transcript loss or harness-retention behavior is asserted.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F07-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Automatic transcript processing has no eligibility rule for the summarizer's own sessions or its processing subagents, leaving self-generated processing work without a defined stopping boundary.",
+      "location": "DESIGN-NOTES.md:241,247-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats; CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-259; CURRENT-DESIGN.md: Bootstrap and system-duty seats; DESIGN-NOTES.md:236–259; CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-258; CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:241, 247–258",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Source 8 (premortem, UNVERIFIED-ASSUMPTION): Graph observes native session closure and automatically activates an absent summarizer; the summarizer is an ordinary seat/native occupant and users may add further transcript-driven service roles. No eligibility or termination rule distinguishes user/project transcripts from the summarizer's own dispatch/completion conversations. Failure story: service-session replacements keep producing another tranche of summarization work, reviving a service the user expected to become dormant and accumulating summaries of service bookkeeping. This is not a claim of an inevitable immediate infinite loop: that depends on closure behavior and eligibility choices that are currently unspecified. A small end-to-end exercise should decide whether the additional work is intentional and bounded.\n\nSource 10 (completeness, GAP): Newly exposed gap, not an established runtime failure: graph 'detects transcript processing work' and activates an absent summarizer, while that ordinary seat creates native conversations and concurrent subagent work of its own. The request contract defines transcript identity and processed-through coverage but never says which transcripts are eligible. If service-generated transcripts are eligible, closing a summarizer can generate work that reactivates it, and processing subagents can produce further eligible transcripts. The design needs an explicit inclusion/exclusion or other finite-processing policy; this does not require a plugin worker pool.\n\nSource 18 (failure-mode, GAP): Graph observes native session/transcript lifecycle and the summarizer is an 'ordinary role/seat'; when processing is needed and no occupant is running, graph activates it automatically. No source selection or recursion boundary excludes its own sessions or identifies who handles them. If a summarizer session closes after processing, its own newly closed transcript can require another activation; closing that session yields another candidate. This need not happen under a chosen filtering or routing policy, but that policy is absent and ordinary session treatment alone does not terminate this chain.\n\nSource 24 (feasibility, GAP): The summarizer is an ordinary seat, graph detects transcript processing work and automatically activates an absent summarizer, and the occupant dispatches subagents. The shared contract records coverage and results but does not define which sessions enter this pipeline. If system-duty sessions or their subagents are eligible, finishing or closing processing conversations creates fresh inputs; repeatedly retiring and reactivating the summarizer can sustain work after all user conversations have stopped. This is conditional on eligibility, not a claim that recursion is inevitable. An explicit exclusion or bounded eligibility/coalescing policy would resolve it without adding a worker pool.\n\nSource 32 (domain:agent-session-and-messaging-integration, GAP): The design makes the summarizer an ordinary seat, has graph detect transcript work and automatically activate an absent summarizer, and has that occupant dispatch transcript processing to subagents. It does not say whether service-seat or helper transcripts are eligible inputs. If they are, processing a transcript creates another eligible conversation; closing the summarizer can itself create the work that immediately activates it again. If they are excluded, the exclusion and its scope have not been selected. This is a missing stopping condition, not a claim that the unimplemented observer necessarily processes every transcript. An ordinary-role implementation can keep the policy in instance configuration/instructions without adding a special worker pool.",
+      "id": "F08",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        8,
+        10,
+        18,
+        24,
+        32
+      ],
+      "sourceCategories": [
+        "premortem",
+        "completeness",
+        "failure-mode",
+        "feasibility",
+        "domain:agent-session-and-messaging-integration"
+      ],
+      "sourceKinds": [
+        "UNVERIFIED-ASSUMPTION",
+        "GAP"
+      ],
+      "sources": [
+        {
+          "sourceIndex": 8,
+          "claim": "The automatic transcript-service design has not established which system-duty transcripts themselves qualify for processing, leaving self-generated service work an untested assumption.",
+          "location": "DESIGN-NOTES.md:241,247-259; CURRENT-DESIGN.md, Bootstrap and system-duty seats",
+          "category": "premortem",
+          "external": false,
+          "kind": "UNVERIFIED-ASSUMPTION",
+          "evidence": "Graph observes native session closure and automatically activates an absent summarizer; the summarizer is an ordinary seat/native occupant and users may add further transcript-driven service roles. No eligibility or termination rule distinguishes user/project transcripts from the summarizer's own dispatch/completion conversations. Failure story: service-session replacements keep producing another tranche of summarization work, reviving a service the user expected to become dormant and accumulating summaries of service bookkeeping. This is not a claim of an inevitable immediate infinite loop: that depends on closure behavior and eligibility choices that are currently unspecified. A small end-to-end exercise should decide whether the additional work is intentional and bounded."
+        },
+        {
+          "sourceIndex": 10,
+          "claim": "Automatic transcript processing has no eligibility rule for the summarizer's own sessions or its processing subagents, leaving self-generated processing work without a defined stopping boundary.",
+          "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-259",
+          "category": "completeness",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Newly exposed gap, not an established runtime failure: graph 'detects transcript processing work' and activates an absent summarizer, while that ordinary seat creates native conversations and concurrent subagent work of its own. The request contract defines transcript identity and processed-through coverage but never says which transcripts are eligible. If service-generated transcripts are eligible, closing a summarizer can generate work that reactivates it, and processing subagents can produce further eligible transcripts. The design needs an explicit inclusion/exclusion or other finite-processing policy; this does not require a plugin worker pool."
+        },
+        {
+          "sourceIndex": 18,
+          "claim": "The transcript workflow does not define whether system-duty transcripts are eligible inputs, leaving automatic summarizer activation exposed to processing its own successive sessions.",
+          "location": "CURRENT-DESIGN.md: Bootstrap and system-duty seats; DESIGN-NOTES.md:236–259",
+          "category": "failure-mode",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Graph observes native session/transcript lifecycle and the summarizer is an 'ordinary role/seat'; when processing is needed and no occupant is running, graph activates it automatically. No source selection or recursion boundary excludes its own sessions or identifies who handles them. If a summarizer session closes after processing, its own newly closed transcript can require another activation; closing that session yields another candidate. This need not happen under a chosen filtering or routing policy, but that policy is absent and ordinary session treatment alone does not terminate this chain."
+        },
+        {
+          "sourceIndex": 24,
+          "claim": "Automatic transcript processing has no stated eligibility rule that prevents summarizer or processing-subagent transcripts from creating further automatic processing work.",
+          "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:241,247-258",
+          "category": "feasibility",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "The summarizer is an ordinary seat, graph detects transcript processing work and automatically activates an absent summarizer, and the occupant dispatches subagents. The shared contract records coverage and results but does not define which sessions enter this pipeline. If system-duty sessions or their subagents are eligible, finishing or closing processing conversations creates fresh inputs; repeatedly retiring and reactivating the summarizer can sustain work after all user conversations have stopped. This is conditional on eligibility, not a claim that recursion is inevitable. An explicit exclusion or bounded eligibility/coalescing policy would resolve it without adding a worker pool."
+        },
+        {
+          "sourceIndex": 32,
+          "claim": "The automatic transcript-processing workflow has no eligibility or termination rule for the summarizer's own conversations and processing subagents, leaving a possible self-generating stream of summary requests.",
+          "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:241, 247–258",
+          "category": "domain:agent-session-and-messaging-integration",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "The design makes the summarizer an ordinary seat, has graph detect transcript work and automatically activate an absent summarizer, and has that occupant dispatch transcript processing to subagents. It does not say whether service-seat or helper transcripts are eligible inputs. If they are, processing a transcript creates another eligible conversation; closing the summarizer can itself create the work that immediately activates it again. If they are excluded, the exclusion and its scope have not been selected. This is a missing stopping condition, not a claim that the unimplemented observer necessarily processes every transcript. An ordinary-role implementation can keep the policy in instance configuration/instructions without adding a special worker pool."
+        }
+      ]
+    },
+    "votes": [
+      {
+        "id": "F08",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete conditional path: (1) A user session closes, creating transcript work under DESIGN-NOTES.md:241 and CURRENT-DESIGN.md:32. (2) With no occupant, graph activates the ordinary summarizer seat and posts a durable request (CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:247-258). (3) Its occupant dispatches processing and reports completion, then its own native session closes. The design tracks native sessions and never defines whether this ordinary seat's transcript is ineligible (CURRENT-DESIGN.md:7,10,32-34; DESIGN-NOTES.md:241,253-259). If eligible, that closure creates a fresh request; graph reactivates the unoccupied summarizer, and each later closure repeats even though user work is complete. This contradicts the intended cheap dormancy and no recurring reasoning for ordinary bookkeeping (HERDR-GRAPH-VISION.md:60,133; SOFTWARE-FACTORY-VISION.md:93). Recursion is conditional, not an observed runtime failure. Choosing exclusion, routing, or another finite eligibility rule is an acknowledged unfinished transcript-lifecycle design detail, but is material to the approved automatic-activation path.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F08-reproduce.json"
+      },
+      {
+        "id": "F08",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Whole-artifact search found no equivalent source-eligibility, service-session exclusion, or finite stopping rule. CURRENT-DESIGN.md:32-34 says graph detects transcript work, activates the ordinary summarizer seat, and its occupant dispatches subagents; DESIGN-NOTES.md:241,247-258 adds closure-triggered requests and durable completion but leaves detection/identity details open. (b) Accepted tradeoffs put dispatch in role instructions and omit periodic model wakes or a plugin worker pool (DESIGN-NOTES.md:248-250); none decides which closed transcripts create new requests. (c) A bounded eligibility policy fits the approved transcript workflow and does not demand a new worker architecture. (d) If summarizer/helper sessions qualify, processing can create further eligible sessions and repeatedly reactivate the seat after user work ends, conflicting with useful dormancy in HERDR-GRAPH-VISION.md, Principles to preserve. This is a material conditional design gap, not a claim that recursion is inevitable or currently implemented. No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F08-refute.json"
+      },
+      {
+        "id": "F08",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to the summarizer's own native session; subagent transcript eligibility is not established. CURRENT-DESIGN.md:7 says native sessions occupy clones; :32-34 makes the summarizer an ordinary seat, automatically activates an absent occupant for transcript work, and tracks transcript coverage. DESIGN-NOTES.md:241 proposes observing session closure; :247-259 approves automatic activation and durable processing, but lists closure detection and retry details without a rule selecting eligible source sessions. I searched all four reviewed documents for eligibility, exclusions, source filters, self-processing, and stopping boundaries; none supplies an equivalent. Conditional failure path: if the summarizer's own closed session qualifies, its completion produces another processing request, which can activate a new occupant after the previous one leaves; the next session can repeat the cycle. This conflicts with bounded, useful dormant-seat operation (SOFTWARE-FACTORY-VISION.md:93) and the stated processing purpose. It is an acknowledged design-stage gap, not a claim of an inevitable runtime loop or implemented failure; an explicit finite eligibility policy is needed before this workflow is specified.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F08-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Stable template-member IDs alone do not settle repeated composition, so two applications of the same group can still collapse roles or propagate exclusions to the wrong seats.",
+      "location": "CURRENT-DESIGN.md, Templates; DESIGN-NOTES.md:217-219,293-303",
+      "category": "premortem",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Member IDs survive copying and renaming; local retirement excludes a template member; instantiated seats have independent IDs; 'Exact scoping for multiple applications/composition of the same template remains to design.' Failure story: auth and billing feature groups in one team each contain an engineer from the same template. Retiring the auth engineer records an exclusion whose correspondence scope is not defined, or switching only one group to a copied template matches both engineers. Either billing staffing changes unexpectedly or the retired auth role is recreated. Independent seat identity solves identity derivation, but does not itself identify which declaration application an override or live reconciliation targets.",
+      "id": "F09",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        9
+      ],
+      "sourceCategories": [
+        "premortem"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F09",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Acknowledged gap, narrowed to repeated applications in one destination. DESIGN-NOTES.md:75 permits composing a group into an existing team without a group runtime node. Apply the same feature-group template twice there (auth and billing): both engineer declarations carry the same stable member ID across applications, while each engineer has a distinct independent seat ID (DESIGN-NOTES.md:293-296,300-302). Retire only auth's engineer. The contract requires a local exclusion so live reconciliation does not recreate that seat, while preserving the other application (CURRENT-DESIGN.md:23-26; DESIGN-NOTES.md:217-219). Yet exclusions are specified as referencing member IDs, and exact scope/correspondence for multiple applications is expressly unresolved (DESIGN-NOTES.md:294,296). A member-ID-only exclusion would also suppress billing's engineer; an unbound exclusion would allow auth's engineer to reappear. Switching just auth to a copied template has the same unresolved target mapping (DESIGN-NOTES.md:295-296). Either outcome violates the specified local exclusion and distinct-instance behavior. This is a required design decision before supporting repeated composition, not a claim that the draft already implements either failure.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F09-reproduce.json"
+      },
+      {
+        "id": "F09",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanisms: independent seat IDs (CURRENT-DESIGN.md:8,25; DESIGN-NOTES.md:300-302), member IDs across copies (DESIGN-NOTES.md:293-296), and grouped action provenance (CURRENT-DESIGN.md:25; DESIGN-NOTES.md:302) preserve identity/history, but none specifies application-scoped correspondence for effective live template state or exclusions. DESIGN-NOTES.md:296 and CURRENT-DESIGN.md:26 explicitly leave repeated-composition scoping open. (b) The contract accepts case-by-case hydration reuse (DESIGN-NOTES.md:39-40) and best-effort missed manual observations (CURRENT-DESIGN.md:16), but does not accept cross-application exclusions or role collapse; it requires local retirement to stay excluded (CURRENT-DESIGN.md:23-24; DESIGN-NOTES.md:217-219). (c) Repeated group composition is within scope (DESIGN-NOTES.md:75; HERDR-GRAPH-VISION.md:68-70; SOFTWARE-FACTORY-VISION.md:61-65), with live template reconciliation required (DESIGN-NOTES.md:207-213). (d) If the same declaration is applied twice in one team, an exclusion keyed only by member correspondence has no specified application target; a later live reconciliation or explicit template switch could affect the other seat or recreate the retired one, changing intended staffing. This is a significant acknowledged design gap before implementation, not proof that an implementation currently collapses seats; the latter wording should be narrowed. No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F09-refute.json"
+      },
+      {
+        "id": "F09",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:23-26 commits to live structural reconciliation, local exclusions, stable member/seat identities, and explicitly says repeated composition/correspondence still needs specification. DESIGN-NOTES.md:217-219,293-296 says exclusions reference member IDs and copied templates preserve those IDs, while multiple applications remain unscoped; :300-302 clarifies seat IDs are independent and grouped action records can name seats for undo/provenance, but does not define which application a live override, exclusion, or template switch addresses. Full-text search across all four reviewed documents for template/composition/hydration/correspondence/exclusion/provenance/action-record equivalents found no operative repeated-application mapping. The claimed failure is a prospective ambiguity, not observed collapse: when one team receives the same group twice, member ID alone cannot distinguish the two declarations' instantiated seats for ongoing reconciliation. This materially affects the agreed composable, live-template behavior (DESIGN-NOTES.md:75,209; HERDR-GRAPH-VISION.md:68-70), though the omission is acknowledged and is not proof of implementation data loss. No separate durable group identity is required by this vote.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F09-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Live reconciliation of template defaults lacks a transition rule for model or harness defaults that differ from the configuration of an already running native session.",
+      "location": "CURRENT-DESIGN.md:23,41; DESIGN-NOTES.md:202-203,209-212,227",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Newly exposed contract gap: current design says 'defaults AND structural edits affect current instances and reconcile automatically'; the explicit default example is a template model changing from X to Z, with only an explicit override preserving Y. The notes separately explain that instruction changes are learned on load, but do not say whether a changed model/harness default applies only at next activation, marks current sessions stale, or causes replacement. Session replacement/termination authority is explicitly unresolved. Without a runtime-configuration distinction, 'reconciled' is ambiguous and a default edit could be interpreted as permission to interrupt work. This is not a request for hidden template pinning or a graph-enforced factory approval gate.",
+      "id": "F10",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        12
+      ],
+      "sourceCategories": [
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F10",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete path: (1) a clone has a running native session launched with template model X (DESIGN-NOTES.md:11,62,202-203). (2) The live template changes its model default to Z, with no seat override; that makes Z the seat's effective desired configuration and calls for automatic reconciliation of the current instance (CURRENT-DESIGN.md:15,23; DESIGN-NOTES.md:202-203,209-211). (3) The already-running native session remains an X occupant until some runtime transition occurs; the only stated learn-on-load boundary addresses instructions, not model/harness changes (DESIGN-NOTES.md:212), while authority for native-session replacement remains explicitly open (CURRENT-DESIGN.md:41). (4) The design gives reconciliation no rule to distinguish 'desired Z, running X, pending authorized transition' from 'fully applied Z', nor a rule for when/how to perform that transition. Treating the graph edit alone as completed reconciliation would misstate the live effect, contrary to the required distinction between desired and observed/applied effects and truthful operation status (DESIGN-NOTES.md:152-153; HERDR-GRAPH-VISION.md:72,92-94). This is an acknowledged design-stage contract gap; it supports defining transition/status semantics, not automatic termination or any claim of actual lost work.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F10-reproduce.json"
+      },
+      {
+        "id": "F10",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent transition rule found. CURRENT-DESIGN.md:23 and DESIGN-NOTES.md:202-203,209-212 make changed template defaults effective for existing seats; DESIGN-NOTES.md:212 and HERDR-GRAPH-VISION.md:76 cover instruction rereads, not a running session's model/harness. SOFTWARE-FACTORY-VISION.md:143 discusses replacing an occupant while preserving seat history, but gives no trigger or policy for a template edit. (b) The accepted tradeoff is live templates and delayed agent understanding of prose, not an explicit choice between keeping, reconfiguring, or replacing an occupant after an effective runtime default changes. (c) This is within scope: the model default is the design's own example at DESIGN-NOTES.md:203, and graph activates native sessions. (d) The distinction materially affects whether an active occupant continues under old runtime configuration or is interrupted, and how reconciliation truthfully reports current versus desired state; CURRENT-DESIGN.md:41 expressly leaves native-session termination authority open. Narrowing: this confirms a transition/status rule is needed before applying such defaults; it does not demand automatic session killing or immediate adoption of the new model. The open issue is acknowledged in the draft, not an implementation failure.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F10-refute.json"
+      },
+      {
+        "id": "F10",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowly confirmed as an acknowledged runtime-transition gap, not evidence that reconciliation may kill a session. CURRENT-DESIGN.md:23 says template defaults affect current instances and reconcile automatically; DESIGN-NOTES.md:202-203 uses a model default change as its example, and :209-212 derives current desired state from the live template while specifying only how live agents learn changed instructions. A full-text search across all four reviewed documents for model/harness, launch/relaunch, reload, restart, replace/terminate/kill, activation and runtime equivalents found no rule for an occupied session when its effective model or harness changes. CURRENT-DESIGN.md:41 and SOFTWARE-FACTORY-VISION.md:113 explicitly leave session replacement authority open. HERDR-GRAPH-VISION.md:76 addresses instruction uptake, not runtime configuration. The missing boundary matters to the stated live-default reconciliation and continuity contract: it cannot distinguish a pending next-activation default from an authorized replacement of a running occupant. This is a design detail to resolve, not a claim of actual data loss or an implementation-readiness blocker.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F10-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The undo flow requires current-pane adoption for every candidate even though undoing a template edit or hydration can have no restored pane or seat into which to adopt it.",
+      "location": "CURRENT-DESIGN.md:46-49; DESIGN-NOTES.md:265,273,278,285-289",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "A scope mismatch introduced by expanding the earlier closure-restoration flow: the current common flow always includes 'adoption of the command's current terminal pane', but hydration undo retires created objects and template undo reverses configuration. Neither necessarily restores a runtime arrangement. The acknowledged multi-object-adoption question covers how to choose among restoration targets, but not the zero-restoration-target case or the case where the command runs inside an object being undone. The design should delimit when adoption applies and what remains available to show results when the command's current scope is retired.",
+      "id": "F11",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        13
+      ],
+      "sourceCategories": [
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F11",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:46 requires every selected action's concrete undo plan to include adoption of the command's current terminal pane; :47-48 includes hydration and template edits in that same flow. Reproduce: hydrate a new team with new seat/clone (DESIGN-NOTES.md:188-192, 278-282), run undo from its clone, then choose that hydration. The approved inverse retires the newly created objects and reverses added relationships (CURRENT-DESIGN.md:48; DESIGN-NOTES.md:285-289), so the selected action restores no pane/seat arrangement into which that current pane can be adopted. Keeping or rebinding it would need a separate retention/target rule and could contradict the required inverse; omitting adoption contradicts the unconditional preview instruction at :46. Template-edit undo likewise changes live configuration with no necessary runtime restoration (:23, :48). The multi-object mapping acknowledged at :49 does not settle the zero-target case. Narrow finding: specify when adoption applies and how an undo command in a pane being retired presents/completes the result. This is a design gap, not an assertion of implemented data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F11-reproduce.json",
+        "originalSeat": "REPRODUCE"
+      },
+      {
+        "id": "F11",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent conditional adoption rule appears in the four reviewed documents: CURRENT-DESIGN.md:46 and DESIGN-NOTES.md:273 prescribe a preview including where the command's current pane is adopted, while DESIGN-NOTES.md:265 describes adoption specifically into a restored pane/tab/workspace arrangement. (b) The accepted uncertainty in CURRENT-DESIGN.md:49 concerns multi-object mapping and launch/resume, not a zero-restoration target; no tradeoff accepts forcing adoption for every action. (c) Template-update and hydration undo are expressly in initial scope (CURRENT-DESIGN.md:47-48; DESIGN-NOTES.md:278,285-288). A template edit can reverse configuration alone; hydration undo can retire created objects, including the command's current scope, without restoring an object. (d) Thus the required concrete preview cannot specify an adoption destination for these valid candidates, and applying one from inside a retiring object leaves the command's result location unspecified. This affects the promised usable undo flow, not merely wording. The design is explicitly unfinished, so this identifies a contract to settle, not actual data loss or implementation failure.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F11-refute.json"
+      },
+      {
+        "id": "F11",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to an unqualified CLI contract, not a claim of proven runtime failure. CURRENT-DESIGN.md:46 requires every selected undo preview to include adoption of the command's current terminal pane; :47-48 includes hydration and template updates. DESIGN-NOTES.md:265,273 repeats adoption into a restored arrangement, but :285-288 specifies that hydration undo retires created objects/reverses relationships and template undo reverses an edit, neither necessarily restoring a pane/tab/workspace. A template-only edit is a concrete in-scope action with no adoption destination, so its required concrete preview cannot be constructed as worded. Full-text searches across all four reviewed docs for undo/adoption, restoration, current pane/scope, output/result and retirement found no conditional-adoption or zero-target rule. CURRENT-DESIGN.md:49 acknowledges multi-object adoption and dependency conflicts, not this case. If the CLI runs in a seat created by the hydration being undone, the command scope also needs explicit handling; no assertion is made that an actual terminal will close. Clarify that adoption applies only when restoration has a target and define the preview/result path when no target exists or the caller's object is retired.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F11-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The single graph writer's persistence boundary is unresolved for the adopted shared Beads database housed in the same graph-instance repository.",
+      "location": "CURRENT-DESIGN.md:9,14,56; DESIGN-NOTES.md:27-28,134,149-150,239",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Acknowledged unresolved integration contract, not a contradiction or readiness claim: the notes place a shared Beads database across projects in the graph repository, state Beads owns tracked work, later make the plugin the sole graph-state writer AND Git committer, and retain the serialized write/commit rule for graph-repository files. CURRENT-DESIGN explicitly lists the graph-owned versus external persistence boundary as future work. A concrete owner is still needed for Beads-generated changes and their commits, especially during graph renames/commits. This gap should be tracked before relying on the shared work record; resolving it must not turn graph into the project task engine.",
+      "id": "F12",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        14
+      ],
+      "sourceCategories": [
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F12",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrow confirmed gap, already acknowledged: DESIGN-NOTES.md:27 places the shared Beads database in the graph-instance repository, while :28 and :186-187 assign project work to Beads rather than graph; :150 makes the plugin the only Git committer, and :239 applies serialized write/commit rules to graph-repository files. Reproduction: an agent records a new work assignment in Beads (the work record must track ownership/dependencies, SOFTWARE-FACTORY-VISION.md:31,59,71). That changes the shared database in the same checkout, but the design specifies neither how that Beads-owned change enters the plugin's sole-committer queue nor who owns its Git representation and commit boundary (DESIGN-NOTES.md:134; CURRENT-DESIGN.md:56). Committing it directly would breach the sole-committer rule; sending it through the plugin needs an as-yet undefined handoff. Thus the stated shared, durable work-record flow cannot be implemented from the current contract across sessions (SOFTWARE-FACTORY-VISION.md:31,59; HERDR-GRAPH-VISION.md:9,125,139). This is a material design dependency, not evidence that current code loses data or that graph must own project tasks.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F12-reproduce.json"
+      },
+      {
+        "id": "F12",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent commit boundary found: CURRENT-DESIGN.md:14 gives the plugin a serialized writer for graph state, while DESIGN-NOTES.md:27-28 place the shared Beads database in the same repository but give Beads ownership of work; DESIGN-NOTES.md:134 explicitly asks how graph/Beads updates are coordinated in Git, and CURRENT-DESIGN.md:56 still lists the persistence boundary as future design. DESIGN-NOTES.md:150 makes the plugin the sole graph-state writer and Git committer, without saying how Beads-owned changes enter its queue or are committed. (b) The accepted separation of work tracking from graph (CURRENT-DESIGN.md:9; DESIGN-NOTES.md:186-187; HERDR-GRAPH-VISION.md:125) resolves task ownership, not same-checkout persistence. (c) The claim stays within the adopted shared-repository scope in DESIGN-NOTES.md:27 and SOFTWARE-FACTORY-VISION.md:59; it asks for a commit ownership/interface contract, not for graph to run project tasks. (d) It is material to the stated shared work record and cross-session continuity (SOFTWARE-FACTORY-VISION.md:31,149), because the design does not yet say how work-record changes coexist with graph's single Git committer. This is an acknowledged design-stage gap, not evidence of actual data loss or a claim that implementation is ready.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F12-refute.json"
+      },
+      {
+        "id": "F12",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Internal premises hold: DESIGN-NOTES.md:27-28 places shared Beads data in the graph-instance Git repository while assigning work ownership to Beads; :149-150 makes the plugin the sole graph-state writer and Git committer; :239 extends serialized write/commit rules to graph-repository files. CURRENT-DESIGN.md:14 repeats the sole-committer rule, and :56 explicitly lists graph-owned versus external persistence boundaries as future design. A full-text search for Beads/database/storage, writer/commit/queue, and coordination/persistence equivalents found only open questions at DESIGN-NOTES.md:27-29,134 and HERDR-GRAPH-VISION.md:149, not a contract for committing Beads-owned changes in that shared checkout. This is material to the stated durable shared work record and continuity across sessions (SOFTWARE-FACTORY-VISION.md:59; HERDR-GRAPH-VISION.md:137-139). The gap is an acknowledged design question, not evidence of current data loss or implementation unreadiness; it can be resolved without making graph the work tracker. No external-product behavior is needed for this finding.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F12-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Named composed groups have a promised collective list/retire/resurrect experience but no current rule for reconstructing their membership after later additions, removals, reuse, or template switches.",
+      "location": "DESIGN-NOTES.md:39,75,285-286,295-302; CURRENT-DESIGN.md:25-26",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Acknowledged unresolved contract: the earlier agreed direction permits a named hydration whose seats and threads can be listed, retired, and resurrected together. The latest clarification correctly makes seats independent identities and says a separate runtime group identity remains unspecified, while grouped action records retain created/reused seat IDs for undo. An action's historical create/reuse set does not by itself settle a living group's membership after subsequent composition or edits. A durable extra group node is not required, but the collective operations still need membership semantics or an explicit scope reduction; retaining independent seat IDs does not answer that experience question.",
+      "id": "F13",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        15
+      ],
+      "sourceCategories": [
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F13",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "DESIGN-NOTES.md:39 states the intended named composed hydration can have its seats and threads listed, retired, and resurrected together, while acknowledging its exact lifecycle is open. Reproduce: hydrate a named feature group with seats A/B and thread X; later add seat C for that feature, retire B locally, or switch to a copied template with corresponding member IDs (DESIGN-NOTES.md:74-75,293-296; CURRENT-DESIGN.md:23-26). On a later 'list/retire/resurrect this group' request, the grouped hydration action records only the seats created/reused by that action for undo (DESIGN-NOTES.md:285-286,300-302); independent seat IDs and member correspondence do not specify whether C or retired B is a current member, or whether the later template state changes membership. Applying only the original action set omits C; applying current template members may recreate/exclude B or misclassify reused seats. Thus the collective operation cannot be determined from the stated contract, contrary to the named-group experience in line 39. This is an acknowledged open design contract; it does not require an extra runtime group node, only defined membership semantics. No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F13-reproduce.json"
+      },
+      {
+        "id": "F13",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanisms found but incomplete: stable seat IDs and template-member correspondence (CURRENT-DESIGN.md:8,25-26; DESIGN-NOTES.md:291-303) identify seats; grouped hydration action records list created/reused IDs for undo (CURRENT-DESIGN.md:26,53-55; DESIGN-NOTES.md:283-286,302). Those records describe a historical action, not the scope of later named-group list/retire/resurrect. (b) The approved tradeoff is no required extra per-seat hydration identity or group node (DESIGN-NOTES.md:300-302; :75), not abandonment of the named collective experience promised at :39. Hydration undo's explicit preserve-reused rule (:286) covers undo, not ordinary group retirement. (c) Collective lifecycle is within stated scope: DESIGN-NOTES.md:39 and HERDR-GRAPH-VISION.md:120; SOFTWARE-FACTORY-VISION.md:64,149 expects a temporary feature group to join and retire. (d) Material ambiguity: if named group A reuses an existing seat, then adds or excludes another seat, its historical hydration record cannot alone determine which seats and threads a later group retirement should affect; treating reused seats as members could retire a responsibility belonging to another group, while ignoring current additions could strand part of the intended group. Current design explicitly leaves repeated composition/correspondence open (CURRENT-DESIGN.md:27; DESIGN-NOTES.md:296). Narrowing: the design need not automatically include every later team addition, nor add a durable group node; it needs an explicit membership/scope rule for collective operations. This is an acknowledged design-stage gap, not evidence of implemented loss. No external premise is used.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F13-refute.json"
+      },
+      {
+        "id": "F13",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "DESIGN-NOTES.md:39 expressly offers a named composed hydration whose seats and threads can be listed, retired, and resurrected together; :74-75 permit later seats and composition within an existing team. CURRENT-DESIGN.md:24-26 defines persistent additions/exclusions, stable seat IDs, and explicitly leaves repeated composition/correspondence open. DESIGN-NOTES.md:285-286 and :302 make action records sufficient for hydration undo provenance, but do not define a living group membership set; :295-296 leaves multiple applications/composition scoping open and :302 explicitly leaves runtime group identity unspecified. Full-text search of all four reviewed documents for group/instance membership, composition, provenance, collective lifecycle, and equivalent mechanisms found no rule deciding whether later-added, removed, reused, or template-switched seats belong to a named group. Thus listing or retiring that group can select different seats despite the stated collective operation. This is an acknowledged design-stage gap, not a demand for a new group node; specifying membership semantics or narrowing the collective promise is needed. Internal-only claim; no external premise.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F13-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The factory's continuity promise still lacks a default instance-owned convention for locating live commitments and recording transfer when a temporary seat retires.",
+      "location": "CURRENT-DESIGN.md:9,17,56; DESIGN-NOTES.md:104-105,185-194,228-239",
+      "category": "completeness",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Proposed future factory capability and acknowledged open instance work, not a graph defect: the design explicitly says persistent threads alone cannot recover outstanding commitments, retrieves work according to instance instructions, and preserves only graph operations on requester retirement. Project commitments stay in Beads, wikis, and conversations; Beads attribution/accepted-milestone metadata is still proposed and exact multiple-contributor representation remains open. Therefore the foundation's concrete survival path for graph requests does not yet provide the factory's promised 'remaining commitments have an owner' behavior. The next instance design needs a minimal authoritative convention for current owner, acceptance/transfer state, and lookup from a retired seat; it need not import those records into graph or add mandatory approval machinery.",
+      "id": "F14",
+      "suggestedSeverity": "FYI",
+      "sourceIndices": [
+        16
+      ],
+      "sourceCategories": [
+        "completeness"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F14",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowly confirmed as an acknowledged factory-instance design gap, not a graph obligation or evidence of actual lost work. Concrete path: a temporary feature seat accepts a project follow-up in a Bead or conversation; those commitments stay outside graph (CURRENT-DESIGN.md:9; DESIGN-NOTES.md:185-194; SOFTWARE-FACTORY-VISION.md:59). The seat retires, so graph archives its organizational state, while its special survival/discovery rule covers unresolved graph operations only (CURRENT-DESIGN.md:17-18; DESIGN-NOTES.md:185-187). The factory calls for accepted assignments and remaining work to be findable by successors (SOFTWARE-FACTORY-VISION.md:95-99), a load brief identifying live commitments (:75), and temporary seats retiring only once remaining commitments have an owner (:35); its first success requires a temporary group to retire without losing commitments (:147-149). Yet the factory specifies only that task recipes describe ownership/handoff and link work in the project's system (:69-71), while the actual retirement handoff practice remains expressly open (:155-157), the load retrieves external work by unspecified instance instructions (DESIGN-NOTES.md:193-194), and Beads attribution/acceptance representation remains open (:228-229; CURRENT-DESIGN.md:56). Without a selected lookup and owner-transfer convention spanning those external records, the next occupant cannot reliably identify every live commitment of the retired seat or verify transfer, so the stated factory retirement/continuity outcome has no specified path. This calls for a minimal instance convention; it does not justify importing project work into graph.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F14-reproduce.json"
+      },
+      {
+        "id": "F14",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Closest equivalents are factory task recipes with ownership/handoff (SOFTWARE-FACTORY-VISION.md:69-73), a load brief that identifies live commitments (75), and an instruction to record remaining work where successors can find it (97). They state desired behavior but give no default lookup or transfer convention across Beads/wiki/threads. Graph's discoverable retired-requester queue covers only graph mutations (CURRENT-DESIGN.md:17; DESIGN-NOTES.md:185-194). (b) Keeping project work outside graph is an explicit boundary (CURRENT-DESIGN.md:9; SOFTWARE-FACTORY-VISION.md:59), but it does not accept orphaned project commitments. (c) A convention in factory instance rules/work system stays within that boundary; it need not be a graph primitive. (d) The omission matters because temporary seats are promised to retire with remaining commitments owned, and successful feature-group retirement must not lose commitments (SOFTWARE-FACTORY-VISION.md:35,149). The open issue is acknowledged explicitly as future instance design (SOFTWARE-FACTORY-VISION.md:157; CURRENT-DESIGN.md:56), so this is a factory design follow-up before that experience is claimed, not an implementation defect or Blocking graph gap.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F14-refute-panel.json"
+      },
+      {
+        "id": "F14",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to the factory instance, not graph infrastructure. The full-text search for commitments, assignments, owners, handoffs, successors, load/recovery briefs, and Beads finds principles and proposed recipes, but no default convention specifying which external record is authoritative for each live commitment, how a successor finds all work from a retiring seat, or how transfer/acceptance is recorded. SOFTWARE-FACTORY-VISION.md:35 promises temporary seats retire only when remaining commitments have an owner; :69-77 proposes template/task recipes and load/recovery briefs, and :97-99 instructs recording accepted assignments, but :157 explicitly leaves retirement handoff practices to instance design. DESIGN-NOTES.md:104 says thread history alone cannot recover commitments, :185-189 limits durable graph request reassignment to graph operations and keeps project work external, and :193-194 defers project-work retrieval to instance instructions. CURRENT-DESIGN.md:9,17,56 confirms that boundary and lists Beads metadata as a next design topic. Thus the apparent mechanisms are intent, not a complete instance-owned lookup/transfer rule. This is material to the stated multi-session and temporary-seat continuity outcome (SOFTWARE-FACTORY-VISION.md:11,149). No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F14-ground.json"
+      }
+    ],
+    "tier": "promoted",
+    "valid": 3,
+    "spotVote": {
+      "id": "F14",
+      "seat": "refute",
+      "verdict": "CONFIRM",
+      "severity": "Should-fix",
+      "evidence": "(a) Equivalents: SOFTWARE-FACTORY-VISION.md:69-77 proposes template/task recipes and a load brief; :95-99 directs agents to record assignments and remaining work; DESIGN-NOTES.md:193-194 retrieves Beads/wiki context via instance instructions. These establish intended practice but no default authoritative lookup or transfer record for a retiring temporary seat. (b) Contract: CURRENT-DESIGN.md:9,17 and DESIGN-NOTES.md:185-187 explicitly confine graph's surviving-request/reassignment machinery to graph operations; that accepted boundary does not waive the factory's separate project-work continuity promise. (c) Scope: this is instance-owned work-system/skill convention, not a demand to import commitments into graph. (d) Materiality: SOFTWARE-FACTORY-VISION.md:35,75,97,149 promises that temporary seats retire with remaining commitments owned, incoming occupants find live commitments, and the group can retire without losing them. Without a specified lookup/transfer convention, those outcomes depend on ad hoc discovery. SOFTWARE-FACTORY-VISION.md:157 explicitly acknowledges retirement handoff practices still need instance design, so this is a material acknowledged factory gap, not a foundation defect or implementation failure.",
+      "model": "gpt-6-sol",
+      "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F14-refute.json"
+    }
+  },
+  {
+    "f": {
+      "claim": "Cancellation does not specify how outstanding reconciliation is stopped when the cancelled request has already committed the desired state that keeps generating its effects.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation; DESIGN-NOTES.md:177–189; DESIGN-NOTES.md:179,185–189; CURRENT-DESIGN.md — State and reconciliation.",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Source 17 (failure-mode, GAP): The approved policy is to follow 'latest committed intent' and retry transient failures automatically. Separately, cancellation 'ends obsolete work/reminders' without claiming that effects happened or were undone. Consider a committed activation whose Herdr creation fails, followed by cancellation while desired activation remains current: a normal reconciliation still sees an absent desired pane and can issue the same creation again. Cancelling a request must have some specified relationship to desired state, effect suppression, or a superseding mutation; none is selected. This is an unsealed cancellation contract, not evidence that cancellation must undo already-performed effects.\n\nSource 30 (domain:distributed-state-reconciliation, GAP): Reconciliation follows latest committed intent, while approved cancellation 'ends obsolete work/reminders' and does not imply effects were undone. Consider committed activation intent whose pane creation fails while Herdr is unavailable. The user cancels the unresolved graph request, then Herdr recovers. If cancellation only ends the request/retries, the ordinary periodic intent-versus-runtime check still finds the absent desired pane and creates it. If cancellation suppresses the intent, the design needs to say what desired lifecycle/relationship is now authoritative and which already-completed effects remain. The same ambiguity occurs when the requested desired state comes from a live template. This needs a cancellation state transition or a clearly bounded cancellation scope, not automatic rollback of external effects.",
+      "id": "F15",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        17,
+        30
+      ],
+      "sourceCategories": [
+        "failure-mode",
+        "domain:distributed-state-reconciliation"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ],
+      "sources": [
+        {
+          "sourceIndex": 17,
+          "claim": "Cancellation does not specify how outstanding reconciliation is stopped when the cancelled request has already committed the desired state that keeps generating its effects.",
+          "location": "CURRENT-DESIGN.md: State and reconciliation; DESIGN-NOTES.md:177–189",
+          "category": "failure-mode",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "The approved policy is to follow 'latest committed intent' and retry transient failures automatically. Separately, cancellation 'ends obsolete work/reminders' without claiming that effects happened or were undone. Consider a committed activation whose Herdr creation fails, followed by cancellation while desired activation remains current: a normal reconciliation still sees an absent desired pane and can issue the same creation again. Cancelling a request must have some specified relationship to desired state, effect suppression, or a superseding mutation; none is selected. This is an unsealed cancellation contract, not evidence that cancellation must undo already-performed effects."
+        },
+        {
+          "sourceIndex": 30,
+          "claim": "Cancellation has no defined effect on already committed desired state, so it is unclear how cancelling an unresolved request stops the reconciler from reconstructing the same work.",
+          "location": "DESIGN-NOTES.md:179,185–189; CURRENT-DESIGN.md — State and reconciliation.",
+          "category": "domain:distributed-state-reconciliation",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Reconciliation follows latest committed intent, while approved cancellation 'ends obsolete work/reminders' and does not imply effects were undone. Consider committed activation intent whose pane creation fails while Herdr is unavailable. The user cancels the unresolved graph request, then Herdr recovers. If cancellation only ends the request/retries, the ordinary periodic intent-versus-runtime check still finds the absent desired pane and creates it. If cancellation suppresses the intent, the design needs to say what desired lifecycle/relationship is now authoritative and which already-completed effects remain. The same ambiguity occurs when the requested desired state comes from a live template. This needs a cancellation state transition or a clearly bounded cancellation scope, not automatic rollback of external effects."
+        }
+      ]
+    },
+    "votes": [
+      {
+        "id": "F15",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete sequence: (1) activation commits a desired seat before creating its Herdr pane (DESIGN-NOTES.md:152; CURRENT-DESIGN.md:15); (2) Herdr is unavailable, so the external effect remains unresolved and reconciliation retries transient failures (DESIGN-NOTES.md:172; CURRENT-DESIGN.md:17); (3) the responsible agent explicitly cancels that unresolved graph request, an approved operation whose stated result is to end obsolete work/reminders (DESIGN-NOTES.md:185,189; HERDR-GRAPH-VISION.md:98); (4) no specified cancellation mutation removes or supersedes the still-current activation intent, while periodic reconciliation follows latest committed intent and drives missing effects (DESIGN-NOTES.md:165,179; CURRENT-DESIGN.md:15-16). When Herdr recovers, the same pane creation remains due and can occur despite cancellation, defeating the stated end to the cancelled work. The text explicitly leaves cancellation details open (DESIGN-NOTES.md:151; HERDR-GRAPH-VISION.md:149). This is a missing cancellation-to-desired-state contract, not a demand to undo effects already completed. The gap also matters for live template-derived intent, which needs an instance exclusion or other superseding state if cancellation is to suppress creation (CURRENT-DESIGN.md:23-24; DESIGN-NOTES.md:217-219).",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F15-reproduce.json"
+      },
+      {
+        "id": "F15",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "REFUTE checks: (a) No equivalent transition appears: CURRENT-DESIGN.md:15-17 and DESIGN-NOTES.md:152-153,165,172,179 make committed desired state the reconciler's input, while DESIGN-NOTES.md:185,189 approve cancellation of unresolved graph requests without saying whether it supersedes that state. Instance exclusions (CURRENT-DESIGN.md:24; DESIGN-NOTES.md:217-219) prevent recreation after explicit retirement but are not specified as the result of cancelling a request. (b) The accepted tradeoff is that cancellation does not assert external effects happened or were undone (DESIGN-NOTES.md:189; HERDR-GRAPH-VISION.md:98); it does not resolve whether still-pending effects remain desired. (c) This is within graph's own structural/reconciliation scope (DESIGN-NOTES.md:187), not external project-task cancellation. (d) Material case: activation is committed; pane creation fails during a transient Herdr outage; the unresolved graph request is cancelled; Herdr recovers. With unchanged desired activation, periodic reconciliation still calls for the pane under DESIGN-NOTES.md:165,172,179, despite the promise that cancellation ends obsolete work (line 189). A superseding mutation could settle this, but none is prescribed. Narrow finding: define whether cancellation affects committed intent or only a pending/revision request, and how the former supersedes current desired state. This is an acknowledged open detailed contract (HERDR-GRAPH-VISION.md:149), so Should-fix design gap, not proof of implementation failure or data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F15-refute.json"
+      },
+      {
+        "id": "F15",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Internal premises verified. CURRENT-DESIGN.md:15-17 and DESIGN-NOTES.md:152-153,164-165,172,179 specify commit desired state first, then reconcile external effects after changes/events/periodic checks, retrying transient failures against latest committed intent. DESIGN-NOTES.md:185,189 approves cancellation of unresolved graph requests and says it ends obsolete work/reminders, while not claiming external effects happened or were undone. A full-text search across all four reviewed docs for cancellation, withdrawal/revocation, suppression, supersession, desired state, and reconciliation found no rule making cancellation of an already committed yet unresolved request change/suppress its still-current desired state, or defining that such a request cannot be cancelled. Thus after a failed pane creation, merely cancelling its operation/reminders leaves desired activation current; periodic reconciliation can create the pane after Herdr recovers, contrary to the approved cancellation outcome. This is an acknowledged detailed-contract gap (HERDR-GRAPH-VISION.md:149), not a claim of actual data loss or a need for rollback.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F15-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Automatic activation of an unoccupied summarizer has no defined precedence against an explicit retirement of that same seat.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation and Bootstrap and system-duty seats; DESIGN-NOTES.md:147,179,247–258",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Manual tab closure retires the corresponding seat, reconciliation follows latest committed intent, and graph activates an 'unoccupied summarizer' through ordinary activation whenever transcript processing is needed. The notes expressly say this does not establish auto-resurrection for arbitrary retired seats, but do not distinguish retired from dormant for the summarizer itself. A user closing the summarizer while transcript requests are pending therefore has no defined outcome: automatically resurrect the retired seat, leave requests discoverable, or use another seat. An ordinary activation operation does not by itself settle this precedence.",
+      "id": "F16",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        19
+      ],
+      "sourceCategories": [
+        "failure-mode"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F16",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete path: (1) A summarizer has pending transcript work; pending requests survive occupant loss (DESIGN-NOTES.md:251,255-258; CURRENT-DESIGN.md:32-34). (2) The human closes its live tab. That observed closure commits retirement and archives the seat, rather than merely leaving an active seat without an occupant (CURRENT-DESIGN.md:16,18; DESIGN-NOTES.md:147,197-198). (3) The transcript workflow still sees work and no running occupant. Its approved rule says to activate an unoccupied summarizer through ordinary activation before posting requests (DESIGN-NOTES.md:247,250,258; CURRENT-DESIGN.md:32). Applying that rule to the retired seat recreates/rehydrates it despite the later retirement intent, contrary to latest-committed-intent reconciliation (CURRENT-DESIGN.md:16; DESIGN-NOTES.md:179) and the promised distinction between retirement and dormancy (DESIGN-NOTES.md:102,197-198). Skipping activation instead leaves the approved automatic-processing rule inapplicable with no specified disposition beyond request discoverability. The design expressly limits any inference that all retired seats auto-resurrect (DESIGN-NOTES.md:250), but never resolves this summarizer-specific collision. Narrow finding: define lifecycle eligibility/precedence for a deliberately retired summarizer and its pending requests; it does not demand auto-resurrection or uninterrupted processing after retirement.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F16-reproduce.json"
+      },
+      {
+        "id": "F16",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent precedence rule found: CURRENT-DESIGN.md:16 says reconciliation follows latest committed intent, but does not decide whether transcript work creates new activation intent after retirement; :18 says manual tab closure retires the seat; :32 says an absent occupant is activated for processing. DESIGN-NOTES.md:197-198 distinguishes never-activated/active/retired lifecycle, while :247-250 and :258 approve activation of an 'unoccupied summarizer' without defining whether that includes retired. (b) Best-effort missed observations (:179-180) do not resolve an observed/committed retirement, and :250 bounds auto-resurrection of arbitrary seats but does not settle the summarizer itself. (c) The question is within agreed mechanical transcript scope (CURRENT-DESIGN.md:10,32-34), not a request for general scheduling. (d) Material: after the user closes the summarizer tab with processing pending, automatic activation could recreate the deliberately retired seat, whereas suppression leaves pending requests with no specified processing path. The contract must define retirement versus summarizer activation precedence; this is an acknowledged lifecycle detail, not an implementation defect or data-loss claim.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F16-refute.json"
+      },
+      {
+        "id": "F16",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Premises hold after full-text search for activation, retirement, resurrection, dormant/unoccupied seats, exclusions, and latest intent across all four reviewed docs. CURRENT-DESIGN.md:18 says closing a live tab retires its seat; :32 says transcript work activates an absent summarizer occupant; :16 says reconcile latest committed intent. DESIGN-NOTES.md:197 distinguishes never-activated absence from retirement; :247 and :258 approve unqualified activation for an unoccupied summarizer, while :250 explicitly leaves the retired/unoccupied boundary unresolved for arbitrary seats. DESIGN-NOTES.md:217 and CURRENT-DESIGN.md:24 protect locally retired template members from recreation, but neither states whether summarizer-triggered activation may override that retirement or must leave durable requests for reassignment/discovery. Thus a deliberately retired summarizer and pending/new transcript processing produce competing instructions without a specified outcome. Narrowing: this is a summarizer-specific lifecycle precedence gap, not a claim that retired seats generally auto-resurrect or that transcript requests are lost.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F16-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Notification-driven whole-seat leave has no specified protection against a delayed agent instruction applying after a newer whole-seat join.",
+      "location": "DESIGN-NOTES.md:13,57,177–179; CURRENT-DESIGN.md: Threads and policy; DESIGN-NOTES.md:13, 57, 179; CURRENT-DESIGN.md, State and reconciliation / Threads and policy",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Source 20 (failure-mode, GAP): Whole-seat leave removes intent and posts instructions telling other clones to leave individually, preserving pending work for unavailable clones. Individual leave can create a persistent clone opt-out, while latest-intent reconciliation stops obsolete effects. If a clone handles an old leave instruction after a later whole-seat join, acting on the instruction can remove current membership and potentially preserve that removal as a new opt-out. Stopping plugin retries does not retract instructions already stored in threads. The contract does not say how these agent-executed instructions carry intent revisions, are checked on execution, or are distinguished from a new voluntary clone leave. This is separate from the already acknowledged question of how new joins treat genuine existing opt-outs.\n\nSource 33 (domain:agent-session-and-messaging-integration, GAP): Whole-seat leave removes participation intent and publishes an instruction for other clones to leave individually, preserving pending work for unavailable clones. Latest-intent reconciliation stops obsolete retries and checks intent before external actions, but the design does not carry a participation revision in already-published agent instructions or require recipients to recheck it before leaving. Reproduction at the contract level: clone B is unavailable during leave L; join J subsequently commits and B joins; B then consumes L and calls threads leave. The plugin's own latest-intent check cannot retract an agent's previously delivered command. Define how a recipient identifies an obsolete instruction and how its delayed completion is reconciled; this is separate from the acknowledged question about retaining clone opt-outs on a new join.",
+      "id": "F17",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        20,
+        33
+      ],
+      "sourceCategories": [
+        "failure-mode",
+        "domain:agent-session-and-messaging-integration"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ],
+      "sources": [
+        {
+          "sourceIndex": 20,
+          "claim": "Notification-driven whole-seat leave has no specified protection against a delayed agent instruction applying after a newer whole-seat join.",
+          "location": "DESIGN-NOTES.md:13,57,177–179; CURRENT-DESIGN.md: Threads and policy",
+          "category": "failure-mode",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Whole-seat leave removes intent and posts instructions telling other clones to leave individually, preserving pending work for unavailable clones. Individual leave can create a persistent clone opt-out, while latest-intent reconciliation stops obsolete effects. If a clone handles an old leave instruction after a later whole-seat join, acting on the instruction can remove current membership and potentially preserve that removal as a new opt-out. Stopping plugin retries does not retract instructions already stored in threads. The contract does not say how these agent-executed instructions carry intent revisions, are checked on execution, or are distinguished from a new voluntary clone leave. This is separate from the already acknowledged question of how new joins treat genuine existing opt-outs."
+        },
+        {
+          "sourceIndex": 33,
+          "claim": "Notification-driven whole-seat leave lacks a recipient-side supersession rule, so a delayed leave instruction can undo a newer join after graph has already reconciled the latest intent.",
+          "location": "DESIGN-NOTES.md:13, 57, 179; CURRENT-DESIGN.md, State and reconciliation / Threads and policy",
+          "category": "domain:agent-session-and-messaging-integration",
+          "external": false,
+          "kind": "GAP",
+          "evidence": "Whole-seat leave removes participation intent and publishes an instruction for other clones to leave individually, preserving pending work for unavailable clones. Latest-intent reconciliation stops obsolete retries and checks intent before external actions, but the design does not carry a participation revision in already-published agent instructions or require recipients to recheck it before leaving. Reproduction at the contract level: clone B is unavailable during leave L; join J subsequently commits and B joins; B then consumes L and calls threads leave. The plugin's own latest-intent check cannot retract an agent's previously delivered command. Define how a recipient identifies an obsolete instruction and how its delayed completion is reconciled; this is separate from the acknowledged question about retaining clone opt-outs on a new join."
+        }
+      ]
+    },
+    "votes": [
+      {
+        "id": "F17",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Reproduction: (1) A whole-seat leave L removes seat-wide intent and publishes a seat-system-channel instruction for other clones to leave individually; completion may lag and unavailable clones keep pending work (DESIGN-NOTES.md:57; CURRENT-DESIGN.md:40). (2) A newer whole-seat join J commits before clone B handles L; seat-wide intent is inherited by clones, and actual membership may temporarily differ from graph intent (DESIGN-NOTES.md:13-14; CURRENT-DESIGN.md:38). (3) B subsequently handles L as an individual leave; that operation records a clone-specific opt-out, so load does not immediately undo it (DESIGN-NOTES.md:13). No recipient-side instruction revision/current-intent check is specified in the whole-seat leave contract (DESIGN-NOTES.md:57; CURRENT-DESIGN.md:40); the external-action check in latest-intent reconciliation applies to graph-driven effects, not to a later agent submission of an old instruction (DESIGN-NOTES.md:179). (4) B can therefore remain outside the thread despite J being the newer committed whole-seat intent, contrary to the explicit requirement to follow latest committed intent and reconcile performed effects toward it (CURRENT-DESIGN.md:16; DESIGN-NOTES.md:179; HERDR-GRAPH-VISION.md:98). This is an acknowledged open detail only in the different sense of how a later join treats genuine preexisting opt-outs (DESIGN-NOTES.md:13). The finding establishes a design gap, not observed implementation data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F17-reproduce.json"
+      },
+      {
+        "id": "F17",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanisms: CURRENT-DESIGN.md:16 and DESIGN-NOTES.md:179 fence obsolete reconciler retries/external actions, but do not specify a validity check on an already published instruction when a clone acts on it. DESIGN-NOTES.md:53,58 and CURRENT-DESIGN.md:14 leave expected revision/precondition semantics proposed/open, not an established protection. (b) Contract: DESIGN-NOTES.md:57 accepts lagging completion and pending work for unavailable clones; that does not expressly accept a leave instruction from superseded seat intent taking effect after a later join. (c) Scope: clone membership and whole-seat intent are core graph responsibilities (CURRENT-DESIGN.md:38-40; DESIGN-NOTES.md:13-14), so this is in scope. (d) Materiality: after leave L publishes an instruction, newer join J restores seat intent and clone B's membership; B later obeys L by issuing individual leave, which DESIGN-NOTES.md:13 says records a clone opt-out. That new mutation can defeat J for B, and the latest-intent reconciler cannot identify it as the obsolete L effect from the specified contract. The distinct question of how J handles pre-existing genuine opt-outs remains open (DESIGN-NOTES.md:13), but does not resolve this delayed-instruction race. Design-stage gap, not a claim of observed implementation failure or data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F17-refute.json"
+      },
+      {
+        "id": "F17",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Internal premises hold. DESIGN-NOTES.md:13 makes individual leave a durable clone opt-out, while :57 specifies a seat-system-channel instruction for other clones to leave and explicitly preserves pending work for unavailable clones. CURRENT-DESIGN.md:38-40 repeats the intent/membership split and lagging completion. DESIGN-NOTES.md:179 and CURRENT-DESIGN.md:16 say reconciliation checks latest committed intent, but full-text searches for leave/join, supersession, revision, stale instructions, notification, and equivalent mechanisms in all four reviewed documents found no rule for a recipient to validate a previously published leave instruction against a later join, nor a way to distinguish its delayed execution from a fresh voluntary clone leave. The latest-intent rule fences reconciler external actions, but does not expressly fence an agent executing a durable notification. Thus a leave notice pending while a clone is unavailable can be acted on after a newer seat join and create an opt-out under the stated API semantics, contradicting current seat participation. This is distinct from the acknowledged question at DESIGN-NOTES.md:13 of how a later join treats pre-existing genuine opt-outs. No outside-world premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F17-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Hydration undo does not define the fate of members created later by live-template reconciliation, so its recorded creation set is insufficient to describe the current inverse.",
+      "location": "CURRENT-DESIGN.md: Templates and Undo; DESIGN-NOTES.md:207–219,283–302",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "An approved hydration action records the independent IDs it created/reused, and undo retires 'objects created by that action' and reverses relationships it added. Live templates subsequently add structure to current instances automatically. Example: hydration H creates member A in an existing team; a later template edit creates B for that same application; undo H then has to decide whether B remains, retires, or constitutes a dependency conflict, and must remove the source of desired membership so reconciliation does not recreate the undone group. The original action's before/after and created-object list do not answer that. Repeated-composition identity and exact dependency checks are acknowledged open areas; this is a concrete lifecycle consequence, not a claim that the design already promised a safe inverse for every history.",
+      "id": "F18",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        21
+      ],
+      "sourceCategories": [
+        "failure-mode"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F18",
+        "seat": "reproduce",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "The example is possible, but the reproduction cannot reach a stated-requirement violation. CURRENT-DESIGN.md:22-25 makes live structural template changes and reconciliation explicit; :47-49 and DESIGN-NOTES.md:283-289 require hydration undo to retire H-created objects/reverse H-added relationships, preserve reused objects/unrelated work, preview the plan, and send conflicting later edits to an agent rather than guess. DESIGN-NOTES.md:291-302 records seat/template provenance while explicitly leaving multiple composition identity open; CURRENT-DESIGN.md:49,55 acknowledges exact dependency checks and undo/cascade semantics as unfinished. After H creates A and a later template edit adds B, the spec does not prescribe silently retaining or retiring B: B's dependence on H can be surfaced as a conflict and repaired. The finding assumes an automatic inverse must be fully determined by H's original creation list, but the selected contract includes current-state preview and conflict repair. No concrete outcome in the example contradicts that contract. This remains an acknowledged design detail, not a reproduced failure.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F18-reproduce.json"
+      },
+      {
+        "id": "F18",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent rule found: CURRENT-DESIGN.md:23-26 establishes live structural reconciliation and member provenance; :47-49 and DESIGN-NOTES.md:283-289 define undo by the original action's created objects/added relationships, preview, and conflict handoff, but do not classify later template-derived members. (b) The conflict handoff is an accepted fallback, not an explicit decision that every later derived member is a conflict; DESIGN-NOTES.md:274,289 expressly leave dependency checks open. (c) Hydration undo and live templates are both in scope (CURRENT-DESIGN.md:23,47-48). (d) Material: hydrate H into an existing team, then a template edit adds B through H's live reference (DESIGN-NOTES.md:209,219). B was not created by H, while undo must reverse H's contribution and preserve unrelated work (CURRENT-DESIGN.md:47-48). The design does not establish whether B survives, retires, or blocks undo, so it cannot yet classify or preview this ordinary history consistently. This confirms the narrow acknowledged dependency/cascade design gap, not that the draft promises unconditional safe inversion or that the recorded creation set is the sole available evidence; CURRENT-DESIGN.md:49,55 already flags exact dependency checks and cascade restoration as open.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F18-refute.json"
+      },
+      {
+        "id": "F18",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Internal premises hold. CURRENT-DESIGN.md:23-26 and DESIGN-NOTES.md:207-219 say live structural template edits reconcile into existing instances and effective state derives from current template plus durable instance additions/exclusions; DESIGN-NOTES.md:283-289 and CURRENT-DESIGN.md:47-49 promise grouped hydration undo that retires its created objects, reverses its added relationships, and preserves reused objects/unrelated work. DESIGN-NOTES.md:300-302 says the original action can reference seat IDs it created/reused, while multiple-composition identity remains open at :296,302. Full-text search for undo/inverse/dependency/provenance/application/exclusion finds no rule classifying a member B introduced by later template edit into H's existing application. For H creating A then a template edit adding B, the original created-ID set omits B, and the approved text does not state whether undo H should retire B, preserve B independently, or present B as a dependency conflict; it also does not specify how the template application is removed so latest-intent reconciliation (:209; CURRENT-DESIGN.md:15-16) does not recreate the undone membership. The general conflict/repair fallback (:289; CURRENT-DESIGN.md:49) acknowledges open exact dependency checks but does not resolve this ordinary case. This is an acknowledged, material detail for the explicitly in-scope hydration undo (:278,285-288), not evidence of current data loss or a claim that every historical action must be invertible. No external-fact premise.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F18-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The serialized writer has no specified crash-recovery boundary between journal admission, checkout mutation, Git commit, and recording operation completion.",
+      "location": "CURRENT-DESIGN.md: State and reconciliation and Useful next design topics; DESIGN-NOTES.md:150–153,159",
+      "category": "failure-mode",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Mutation requests enter a durable journaled queue, one worker writes and commits, admission differs from completion, and reconciliation must use latest committed intent. A crash after files are changed but before Git commits leaves readable checkout contents ahead of committed intent; a crash after commit but before recording completion leaves the admitted request apparently unfinished. No selected recovery rule identifies the authoritative commit for an operation or prevents applying that mutation twice during replay. Serial execution eliminates simultaneous writers but not these interrupted transitions. The document explicitly lists mutation/journal contracts as future design; this finding identifies the concrete local failure boundary that remains to be settled rather than contradicting an implementation-readiness claim.",
+      "id": "F19",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        23
+      ],
+      "sourceCategories": [
+        "failure-mode"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F19",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete interruption: a create-seat mutation is durably admitted, then the sole worker writes the shared checkout and crashes before Git commit; alternatively it commits and crashes before recording completion. Admission and completion are expressly distinct (DESIGN-NOTES.md:150), while graph state is Git-backed (DESIGN-NOTES.md:28) and reconciliation must follow latest committed intent (CURRENT-DESIGN.md:14-16; DESIGN-NOTES.md:179). On restart the first case leaves checkout files ahead of committed intent, and the second leaves an admitted request without a completion record. The design specifies neither how startup restores/ignores uncommitted checkout changes nor how a committed mutation is correlated to its journal request before replay or status reporting; mutation/journal contracts are explicitly next design work (CURRENT-DESIGN.md:53; DESIGN-NOTES.md:159 labels inspectable operation status a proposal). If the first checkout is treated as intent, reconciliation may drive an uncommitted seat; if the second request is replayed or left pending without commit correlation, the operation can be applied twice or reported unfinished. Either path conflicts with latest-committed-intent reconciliation and the stated visible, repairable partial-operation promise (HERDR-GRAPH-VISION.md:92-98,139). This is a material acknowledged design gap, not evidence that an implementation already loses data or that the draft claims implementation readiness (CURRENT-DESIGN.md:58).",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F19-reproduce.json"
+      },
+      {
+        "id": "F19",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent mechanism: CURRENT-DESIGN.md:14-17 specifies a durable queued single writer and external-effect inspection/retries; DESIGN-NOTES.md:150-153,159 distinguishes admission from completion and authoritative Git state, but neither identifies how a crashed writer resolves a modified checkout before commit or a commit before completion is recorded. The unknown-outcome rule in DESIGN-NOTES.md:174 is expressly for external effects, so it does not settle this local boundary. (b) The accepted best-effort/non-atomic tradeoff concerns external Herdr/threads effects (DESIGN-NOTES.md:152-153,179-180), not graph repository mutation integrity. (c) The finding is within the graph's own writer/journal scope (HERDR-GRAPH-VISION.md:62,92,98; CURRENT-DESIGN.md:14-16); it does not require production-grade guarantees or an implemented design. (d) Without a selected committed-operation identity and interrupted-write recovery rule, restart can leave checkout contents inconsistent with latest committed intent or make an already committed request appear pending; that affects the promised durable organization and partial-operation repair path (HERDR-GRAPH-VISION.md:9,139). CURRENT-DESIGN.md:53 explicitly leaves mutation/journal contracts open. This confirms an acknowledged design gap, not observed data loss or implementation unreadiness.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F19-refute.json"
+      },
+      {
+        "id": "F19",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Internal premises hold: CURRENT-DESIGN.md:14 specifies a durable journaled queue, one writer and Git commits; DESIGN-NOTES.md:150 separates admission from completion, :159 proposes inspectable operation status, and :152 plus CURRENT-DESIGN.md:15-16 make committed intent the reconciliation basis. Full-text search for journal/queue/commit/crash/recovery/replay/idempotency/operation identity across all four reviewed docs found no selected rule that associates a journal operation with its commit, handles dirty checkout state after interruption, or repairs status after commit-before-completion. DESIGN-NOTES.md:68 calls durable operation identity and unknown outcomes unsettled; CURRENT-DESIGN.md:53 explicitly leaves mutation/journal contracts for later design. The external-effect unknown-outcome rule (CURRENT-DESIGN.md:17; DESIGN-NOTES.md:174) does not specify local writer crash recovery. Thus interruption can leave ambiguous local state/status and undermine the stated durable, inspectable, latest-committed-intent workflow. This is an acknowledged but material design gap; it establishes risk, not actual data loss or a claim of implementation readiness.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F19-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The ordinary-seat summarizer design depends on a native occupant continuing to receive and act on durable thread requests across busy and idle states, but no end-to-end qualification of that service behavior is supplied.",
+      "location": "CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:248-250,258",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The design says role instructions tell the summarizer to wait for requests, concurrently dispatch helpers, and report results; graph reuses an existing occupant without requiring it to be idle and activates only an absent occupant. Durable request storage proves recoverability, not that an existing native session consumes a newly arrived request after its prior turn finishes. The documents qualify launch flags but supply no corresponding busy/idle service trace. This finding asserts an unverified dependency, not that either supported harness cannot do it.",
+      "spike": {
+        "question": "Can an ordinary native summarizer service successive requests without a human continuation prompt or periodic model wake?",
+        "cheapest_test": "Use the existing threads integration and a minimal summarizer instruction file in each intended harness. Send one request while its previous subagent is active and another after its main turn has ended; then restart the occupant with one pending request. Record request receipt, dispatch and graph completion separately.",
+        "kill_criteria": "Reject the assumed unattended service contract for a harness if any request needs human prompting or an undeclared wake mechanism to progress. Keep the ordinary-seat model, but specify and prove the missing generic wake/resume path before relying on it."
+      },
+      "id": "F20",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        25
+      ],
+      "sourceCategories": [
+        "feasibility"
+      ],
+      "sourceKinds": [
+        "UNVERIFIED-ASSUMPTION"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F20",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrow confirmation of an acknowledged service-contract assumption, not a claim that either harness fails. CURRENT-DESIGN.md:32-34 and DESIGN-NOTES.md:248-258 require graph to reuse an existing summarizer occupant, post durable thread requests without waiting for prior summaries, have that occupant accept/dispatch/report them, and recover pending requests after occupant loss; they select no periodic model wake. Reproduction if an occupant's main turn ends after request A: graph sees it still present, so does not take the approved absent-occupant activation path; it posts request B, but the text specifies no bridge from a newly durable thread message to a fresh native turn or continuing receive loop. B remains pending with no dispatch/result, contrary to the approved ordinary summarizer's request-processing role (DESIGN-NOTES.md:247-258; CURRENT-DESIGN.md:32-34). A request posted while a helper is active has the same unresolved receive boundary. Herdr does offer a possible external prompt surface: https://herdr.dev/docs/agent-automation/ says 'agent prompt submits text plus encoded Enter' and 'It can prompt an agent that is already working' (lines 132-138), but the design does not choose this or qualify a thread-driven equivalent. The cheapest closure is an end-to-end busy/idle/restart trace per intended harness, then specify a generic wake/resume path if needed. Durable pending storage prevents lost work; it does not itself make an existing idle occupant act.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F20-reproduce.json"
+      },
+      {
+        "id": "F20",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent search: CURRENT-DESIGN.md:32-34 and DESIGN-NOTES.md:247-259 specify ordinary activation only when no occupant runs, durable thread requests, role instructions to wait/dispatch, and pending-request discovery after crashes; none specifies how an existing occupant receives and acts on a request after its main turn ends. The reconciliation periodic checks in CURRENT-DESIGN.md:15 concern graph/Herdr state, and DESIGN-NOTES.md:240 and CURRENT-DESIGN.md:33 select no periodic model wake. (b) Best-effort missed manual observations (DESIGN-NOTES.md:179-180) are an accepted tradeoff, but stalled transcript requests are not; explicit completion and processed-through coverage are required (DESIGN-NOTES.md:255-258). (c) Mechanical transcript processing is current scope (CURRENT-DESIGN.md:10,32-34), though this is design-stage qualification, not an assertion that a harness cannot do it or a demand for production guarantees. (d) If a request arrives after an occupant's prior turn and nothing resumes it, the request persists without dispatch or completion, frustrating the selected processing workflow. Narrow finding: qualify/specify the generic delivery/resume path for busy and idle occupants before relying on unattended summarization. No claim about actual Codex/Claude runtime capability is made.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F20-refute.json"
+      },
+      {
+        "id": "F20",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to a design qualification gap, not a claim that either native harness lacks the capability. CURRENT-DESIGN.md:32-34 requires graph to post durable requests to an ordinary occupant, whose instructions accept and dispatch them, with no periodic model wake. DESIGN-NOTES.md:247-250,258 explicitly reuses a running occupant even when it is busy and delegates reception/dispatch to role instructions; :241 and :250 acknowledge the mechanical boundary is still to specify. Full-text search across all four reviewed docs for wake, idle/busy, incoming requests, receive, poll, resume, activation, and pending work found durable request storage and absent-occupant activation (CURRENT-DESIGN.md:32-34; DESIGN-NOTES.md:256-259), but no mechanism or qualification showing an occupied native session acts on a request arriving during active subagent work or after its main turn ends. The approved automatic transcript-processing flow depends on that handoff, so this acknowledged omission is material before the service behavior is relied upon. No external claim of native-session support or lack thereof is used for this vote.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F20-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The core continuity promise assumes agent-led retrieval and opaque memory practices recover live obligations accurately enough that replacing an occupant reduces human reconstruction, but that assumption has not been demonstrated.",
+      "location": "HERDR-GRAPH-VISION.md:23,37,139; CURRENT-DESIGN.md:9-10,30; SOFTWARE-FACTORY-VISION.md:75-77",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The first promised demonstration is recovering responsibility, outstanding work and evidence without a human rebuilding the story. Current design correctly leaves project work in Beads, sessions and wikis and has the agent discover applicable state itself, without a generated semantic brief. Those boundaries mean durable identity and transcript coverage alone do not establish correct recovery of outstanding obligations or current authorization. A factory recipe could provide that recovery; the four documents do not yet show evidence that one does. This is a product feasibility hypothesis, not a demand for graph to own a second commitment database.",
+      "spike": {
+        "question": "Can a replacement recover what matters from the chosen external records without the human repairing its account?",
+        "cheapest_test": "Prepare one small seat fixture containing an unfinished commitment, a superseded decision, an unresolved disagreement and a closed bead lacking acceptance, distributed across the intended stores. Give a fresh occupant only the planned /seat instructions and links. Compare its account and next action with a short human-authored answer key, and measure corrections and retrieval effort against the current manual workflow.",
+        "kill_criteria": "Do not claim the continuity recipe succeeds if the replacement misses a live obligation, treats obsolete direction as current, or requires as much human reconstruction as the baseline. Repair the instance retrieval/handoff practice before expanding the organization."
+      },
+      "id": "F21",
+      "suggestedSeverity": "FYI",
+      "sourceIndices": [
+        26
+      ],
+      "sourceCategories": [
+        "feasibility"
+      ],
+      "sourceKinds": [
+        "UNVERIFIED-ASSUMPTION"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F21",
+        "seat": "refute",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "(a) Equivalent recovery practice is present: a returning occupant uses durable instructions and linked records (HERDR-GRAPH-VISION.md:37,60-64); the approved load flow links relevant context and retrieves project work under instance instructions (DESIGN-NOTES.md:193-194), while the newer /seat decision has the agent read applicable state itself (CURRENT-DESIGN.md:30). The factory specifies recording assignments/decisions/remaining work for successors and a brief covering live commitments, authorization, evidence and recurring-job inspection (SOFTWARE-FACTORY-VISION.md:75-77,95-99). (b) The design explicitly treats a brief as orientation requiring fresh checks, and says transcript history alone cannot recover all commitments (DESIGN-NOTES.md:98,104); it makes no guarantee of perfect retrieval. (c) Graph deliberately does not own a second project-work or knowledge ledger (CURRENT-DESIGN.md:9-10; DESIGN-NOTES.md:186-194), so a demand for graph-held semantic obligations is outside scope. (d) Replacement continuity matters (HERDR-GRAPH-VISION.md:139), but this finding identifies only the absence of a completed empirical demonstration, which a design-stage proposal does not claim. The visions explicitly call continuity a future demonstration/product hypothesis and propose measurement (HERDR-GRAPH-VISION.md:139,145; SOFTWARE-FACTORY-VISION.md:147-157). A fixture trial is useful evaluation, but its absence is not a surviving material design gap.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F21-refute.json"
+      }
+    ],
+    "tier": "spot",
+    "valid": 1
+  },
+  {
+    "f": {
+      "claim": "The concurrent-clone product scenario assumes a design decision in one conversation reaches and changes another conversation before it continues incompatible work, but the factory supplies no concrete decision-adoption practice to validate that outcome.",
+      "location": "HERDR-GRAPH-VISION.md:29,110,139; SOFTWARE-FACTORY-VISION.md:35,105-109; CURRENT-DESIGN.md:37-40",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The product explicitly offers design discussion in one clone while another executes and says relevant decisions are recorded and communicated. The texts correctly distinguish membership, receipt, and adoption and do not pretend shared seat identity means shared knowledge. Nevertheless the only proposed adoption practice is general lesson-sharing guidance; there is no worked case defining which current decision record an executing clone checks or how a conflicting in-flight action is reconsidered. The distinctive multi-clone benefit can otherwise produce concurrent work based on different accepted directions even when message transport is correct. This belongs to factory instructions and evaluation, not mandatory graph scheduling or locking.",
+      "spike": {
+        "question": "Does the proposed instance practice keep simultaneous design and execution coherent without making the human relay decisions?",
+        "cheapest_test": "Run two ordinary conversations for one seat. Let the executing clone begin a small reversible task, then have the human change an accepted requirement through the design clone. Use only planned records and threads, and observe whether the executing clone identifies the changed decision, reports already performed effects and adjusts remaining work.",
+        "kill_criteria": "Do not count concurrent clones as a demonstrated product advantage if the human must relay the decision or the executor reports completion against the superseded requirement. Specify and retest the instance decision-adoption practice."
+      },
+      "id": "F22",
+      "suggestedSeverity": "FYI",
+      "sourceIndices": [
+        27
+      ],
+      "sourceCategories": [
+        "feasibility"
+      ],
+      "sourceKinds": [
+        "UNVERIFIED-ASSUMPTION"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F22",
+        "seat": "refute",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "(a) An equivalent practice exists: SOFTWARE-FACTORY-VISION.md:33 says relevant decisions are recorded and communicated; :97 says to record decisions and distinguish receipt from agreement/acceptance; :107 says to preserve scoped findings in shared knowledge/instructions, notify affected peers, and have recipients assess, adjust, and report adoption or deferral. HERDR-GRAPH-VISION.md:29,35 supplies the same cross-conversation pattern, and DESIGN-NOTES.md:81-83 places behavioral rules in instance instructions. (b) HERDR-GRAPH-VISION.md:29 expressly disclaims shared context or instantaneous agreement; thus the asserted guarantee that the other clone changes course before continuing is outside the stated contract. (c) CURRENT-DESIGN.md:8 and DESIGN-NOTES.md:3 mark this as a design-stage draft; SOFTWARE-FACTORY-VISION.md:157 leaves exact instance practices to design, and HERDR-GRAPH-VISION.md:139-145 frames concurrent operation as a future demonstration, not a completed trial. (d) A worked in-flight requirement-change scenario would improve evaluation, but its absence does not establish a material contradiction or missing adoption practice. A completed empirical trial is not required of this draft.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F22-refute.json"
+      }
+    ],
+    "tier": "spot",
+    "valid": 1
+  },
+  {
+    "f": {
+      "claim": "Cross-seat reload assumes a continuing native conversation can adopt a destination seat without carrying incompatible source-seat instructions or unfinished actions into that responsibility, and the design has not qualified that assumption.",
+      "location": "CURRENT-DESIGN.md:19; DESIGN-NOTES.md:148",
+      "category": "feasibility",
+      "external": false,
+      "kind": "UNVERIFIED-ASSUMPTION",
+      "evidence": "The adopted initial behavior detects a cross-tab move and requires destination-seat reload while preserving the old transcript/context. The notes explicitly acknowledge that the model does not forget its earlier instructions. They do not show how the initial reload behavior is expected to treat an unfinished source-seat task, a running helper, or conflicting old role instructions. This is a cooperative correctness concern, not an adversarial authorization claim, and it does not invalidate the deliberate decision to preserve history.",
+      "spike": {
+        "question": "Can the initial reload convention reliably separate preserved source history from destination responsibility?",
+        "cheapest_test": "Use two seats with intentionally different project paths and responsibilities. Move a native conversation after it has accepted a source task and dispatched a helper, then perform the proposed reload. Check its next tool target, attribution and treatment of the late helper result.",
+        "kill_criteria": "Reject transparent continuation for this case if it executes source work as destination work or attributes the late result to the new seat. Define a source-work handoff or fresh-session option for such moves; do not require erasing history."
+      },
+      "id": "F23",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        28
+      ],
+      "sourceCategories": [
+        "feasibility"
+      ],
+      "sourceKinds": [
+        "UNVERIFIED-ASSUMPTION"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F23",
+        "seat": "reproduce",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "The strongest case is: a source seat accepts work, its pane moves, /seat reloads destination state, and a late helper result appears in the preserved transcript. CURRENT-DESIGN.md:19 and DESIGN-NOTES.md:148 explicitly retain that transcript while changing applicable graph state, so the situation is real. But the decisive step—continuing source work as destination work or falsely attributing the helper result—does not follow from either document. DESIGN-NOTES.md:148 expressly disclaims automatic forgetting; CURRENT-DESIGN.md:9 and DESIGN-NOTES.md:149 preserve session/transcript attribution, while DESIGN-NOTES.md:186-188 place project tasks in Beads/native sessions rather than graph. No stated contract says a move cancels an accepted source task or guarantees transparent execution of it by the destination seat. A source-work handoff convention may be useful, but this finding has no end-to-end contradiction of a stated requirement without assuming how an unspecified native session behaves.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F23-reproduce.json"
+      },
+      {
+        "id": "F23",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent search: /seat reads destination templates/rules and resolves binding (CURRENT-DESIGN.md:30; DESIGN-NOTES.md:193,238), and Beads/session attribution records prior work (CURRENT-DESIGN.md:9; DESIGN-NOTES.md:149,186), but none specifies what a moved conversation does with an accepted source-seat task, pending helper result, or conflicting old role instruction. (b) The accepted tradeoff is preserved transcript/context, explicitly without automatic forgetting (DESIGN-NOTES.md:148); this does not explicitly permit continuing source work under destination responsibility. (c) Cross-tab moves and eventual clone transfer are stated scope (CURRENT-DESIGN.md:19; DESIGN-NOTES.md:148). (d) The gap matters to promised continuity and truthful responsibility/attribution (HERDR-GRAPH-VISION.md:9,23,139; SOFTWARE-FACTORY-VISION.md:97): a move during unfinished source work has no defined handoff, defer, or fresh-session boundary before the same conversation acts as destination seat. Narrow finding: qualify this transition and in-flight work handling; preserving history itself is approved. This is a structural contract gap, not a claim that a native model will in fact obey stale instructions or misattribute a result, so no external capability premise is relied on.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F23-refute.json"
+      },
+      {
+        "id": "F23",
+        "seat": "ground",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "Load-bearing premise fails: the adopted initial move requires a destination reload but explicitly retains the old transcript/context (CURRENT-DESIGN.md:19), and the detailed decision expressly says this does not claim the live model forgets prior instructions (DESIGN-NOTES.md:148). The reload reads current templates, rules and seat/clone configuration (DESIGN-NOTES.md:193); work commitments live in Beads/native sessions rather than graph state (CURRENT-DESIGN.md:9; DESIGN-NOTES.md:186), with general instructions to route out-of-responsibility work and preserve handoffs (SOFTWARE-FACTORY-VISION.md:87,97,117). Full-text search for move/reload/transfer/handoff/helper/unfinished-work equivalents found no cross-tab source-task handoff procedure, so that narrower edge case is open. But the finding alleges an unqualified assumption of clean adoption; the spec acknowledges preserved old context and does not promise transparent completion of in-flight source work. No external native-session behavior is needed for this judgment.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F23-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The design gives writers serialization but gives readers no committed-snapshot contract, leaving /seat and reconciliation able to consume a partially applied multi-file graph mutation.",
+      "location": "CURRENT-DESIGN.md — State and reconciliation; Bootstrap and system-duty seats. DESIGN-NOTES.md:150,164,238–239.",
+      "category": "domain:distributed-state-reconciliation",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The shared checkout has one serialized writer; reconciliation is separate and must follow 'latest committed intent'; /seat's agent 'discovers/reads its applicable state directly.' A writer updating a template, seat overrides and renamed paths can expose its first file change before the remaining changes and Git commit. Neither writer serialization nor mutation preconditions specifies how concurrent readers choose one committed graph revision. A periodic reconciliation or /seat load during that interval can combine old overrides with new defaults, see transiently missing bindings, or drive an effect from intent that never commits. This is a read-side contract gap distinct from the explicitly acknowledged stale-write semantics. Define a coherent committed read view or a read/retry boundary for graph consumers; the existing single-writer direction need not change.",
+      "id": "F24",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        29
+      ],
+      "sourceCategories": [
+        "domain:distributed-state-reconciliation"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F24",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed: the design does state reconciliation's latest-committed-intent behavioral contract (CURRENT-DESIGN.md:15-16; DESIGN-NOTES.md:177-179), so the gap is its missing read boundary, plus /seat's. Reproduction: (1) graph state, templates, overrides, and seat/clone state live in human-readable files in one shared checkout (CURRENT-DESIGN.md:9-10,14,23-25; DESIGN-NOTES.md:28,149-150,202,219). (2) A serialized worker applies a multi-file template/override or name/path mutation and commits it (CURRENT-DESIGN.md:14,23-25; DESIGN-NOTES.md:17-18,58,150); serialization controls writers, but no cited section gives concurrent readers a revision-pinned view or says to wait/retry during that mutation. (3) Separately triggered reconciliation or /seat can read after one file/path changes and before the grouped update commits (CURRENT-DESIGN.md:15,30; DESIGN-NOTES.md:164-165,193,238-239). (4) It can therefore act on a mixture of old and new desired state, or /seat can load an interim path/configuration. Acting on that mixture contradicts the explicit latest committed intent rule (CURRENT-DESIGN.md:16; DESIGN-NOTES.md:179); a /seat load using interim state also fails its latest applicable template/override/rule requirement (CURRENT-DESIGN.md:30; DESIGN-NOTES.md:193,202). This is a possible design-permitted failure, not a claim that the unbuilt implementation already loses data. A coherent committed read or equivalent wait/retry contract remains to specify.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F24-reproduce.json"
+      },
+      {
+        "id": "F24",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalent: CURRENT-DESIGN.md:15-16 and DESIGN-NOTES.md:179 require reconciliation to follow latest committed intent, so reconciliation has a semantic boundary; no section gives /seat or direct multi-file readers a coherent revision/read-retry mechanism. CURRENT-DESIGN.md:30 and DESIGN-NOTES.md:238-239 instead have the agent read applicable state directly from human-browsable files; DESIGN-NOTES.md:149-150 specifies separate seat/clone files and one serialized writer. (b) Accepted tradeoffs in DESIGN-NOTES.md:153,180 concern non-atomic external effects and missed manual observations, not seeing half of one graph commit. (c) The issue is within scope because load and reconciliation are core operations (HERDR-GRAPH-VISION.md:60,92-98). (d) During a grouped template/rename update (CURRENT-DESIGN.md:23,30), /seat can read a changed file and an unchanged related file before the writer commits, yielding a binding/configuration that matches no committed graph revision; that can misorient a seat or trigger wrong participation. Narrowing: the claim overstates absence of any committed-intent contract for reconciliation; the missing piece is an explicit coherent read boundary for direct readers and a way for reconciliation to satisfy its existing latest-committed rule. This is an acknowledged design-stage contract detail, but material to the stated continuity and correct organizational state outcomes, without claiming actual data loss.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F24-refute.json"
+      },
+      {
+        "id": "F24",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:14-16 specifies one serialized writer, a separate reconciler, and latest committed intent; :30 makes /seat read applicable state/templates/overrides/rules itself. DESIGN-NOTES.md:149-150,164-165,238-239 confirms separate files, a shared checkout, independent reconciliation, and direct agent reads. Full-text search across all four reviewed docs for snapshot, consistent/coherent read, isolation, lock, retry, commit/revision view and equivalents found no reader boundary; DESIGN-NOTES.md:179's external-action current-intent check states an outcome but no coherent read mechanism. Git's glossary says the working tree contains HEAD 'plus any local changes that you have made but not yet committed' (https://git-scm.com/docs/gitglossary.html); thus a reader of the shared checkout can see one changed file before its related files and commit. A template/override/relationship mutation can be read mid-write, causing /seat to orient from mismatched state or reconciliation to act on intent that is not yet committed, contrary to latest-committed-intent and recoverable-operation requirements (HERDR-GRAPH-VISION.md:92-98). This is an acknowledged design-stage detail, not evidence of actual data loss; specify how readers obtain one committed revision or retry across a write.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F24-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Hydration undo does not define whether later reuse of an originally created object or relationship blocks its retirement, despite promising to preserve unrelated later work.",
+      "location": "DESIGN-NOTES.md:285–289; CURRENT-DESIGN.md — Undo.",
+      "category": "domain:distributed-state-reconciliation",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The approved rule says 'Undo hydration retires objects created by that action and reverses relationships it added; preserve objects merely reused and external project work.' Suppose hydration A creates a seat and participation relationship, and hydration B later explicitly reuses both without changing their fields. Undo A still categorizes the seat as created-by-A and the relationship as added-by-A. Applying that inverse retires the live seat relied on by B; preserving objects reused by A does not protect later reusers of A's creations. Same-field edit conflicts are cited, and exact dependency checks are explicitly left open, but later reuse must be a dependency even where no field differs from A's after-state. Define whether undo rejects, retains, or transfers such shared ownership; creation provenance alone cannot decide a safe inverse.",
+      "id": "F25",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        31
+      ],
+      "sourceCategories": [
+        "domain:distributed-state-reconciliation"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F25",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Concrete sequence: hydration A creates seat S and adds relationship R; grouped provenance records created/reused seat IDs (DESIGN-NOTES.md:285-286,302). A later, independently selected hydration B reuses S and R without changing a field, which the design permits case by case (DESIGN-NOTES.md:39-40,285-286). The stated inverse for A retires objects A created and reverses relationships A added (DESIGN-NOTES.md:286; CURRENT-DESIGN.md:47-48). Applied literally, it retires S and removes R despite B's continuing use, contradicting the requirement that undo preserve unrelated later work (CURRENT-DESIGN.md:47; DESIGN-NOTES.md:279,287-289). Same-field edit conflict handling does not catch this dependency because B made no edit. Exact dependency conflict checks are acknowledged as unfinished (CURRENT-DESIGN.md:49; DESIGN-NOTES.md:274,289). The finding concerns the missing later-reuse rule, not a claim that the draft implementation already loses state.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F25-reproduce.json"
+      },
+      {
+        "id": "F25",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent rule resolves later reuse of an object or relationship created by the selected hydration. DESIGN-NOTES.md:285-289 and CURRENT-DESIGN.md:46-49 record provenance, preview, and agent repair for conflicts, but never say whether reuse without a field edit is a conflict or whether it retains/transfers ownership. DESIGN-NOTES.md:274 expressly leaves exact dependency conflicts open. (b) Best-effort external reconciliation (CURRENT-DESIGN.md:15-17) does not accept loss of unrelated later graph work during undo; the undo contract says preserve it (line 47). (c) Hydration undo is explicitly in initial scope (CURRENT-DESIGN.md:47-48). (d) If A creates seat S and relationship R, then B reuses S and R unchanged, retiring A's creations removes B's still-desired organization. The generic conflict route only helps if this dependency is recognized. This is an acknowledged, material design gap, not evidence of an existing implementation defect.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F25-refute.json"
+      },
+      {
+        "id": "F25",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Grounded, with narrowing: CURRENT-DESIGN.md:25 and DESIGN-NOTES.md:302 say grouped hydration actions reference created/reused seat IDs; CURRENT-DESIGN.md:47-49 and DESIGN-NOTES.md:285-289 approve creation-provenance undo, preserving unrelated work, concrete preview, and routing conflicts for repair. DESIGN-NOTES.md:274,280 and CURRENT-DESIGN.md:49 explicitly leave dependency conflict checks/resolution open. Full-text searches across all four reviewed documents for undo, reuse, dependency, conflict, ownership, adoption, and equivalent mechanisms found no rule for A-created seat/relationship later reused by B without a field edit. If A is undone, the literal create/add inverse can retire a seat and relationship B still relies on; no same-field conflict need exist. This is a material acknowledged design gap in safe hydration undo, not evidence of actual data loss or a demand for a completed implementation. The spec does record B's reused seat ID, so the gap is deciding how that dependency affects preview/inversion, not a claim that detection is impossible; relationship-level reuse/provenance is less explicit. No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F25-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "Preserving a native transcript while transferring its clone between seats requires historical scope segments, but the attribution contract only names identities and does not define the cutover that separates old-seat work from new-seat work.",
+      "location": "CURRENT-DESIGN.md, Identity and scope / State and reconciliation; DESIGN-NOTES.md:16, 148–149, 230, 256",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The design explicitly preserves transcript/context on cross-tab movement while changing applicable seat state, requires native participants to map to clones, and requires historical attribution to remain traceable after moves. A single clone and native transcript can therefore cover work performed for seat A and then seat B. Looking up only the clone's current seat cannot attribute both parts correctly. The design does not select an occupancy/scope history keyed to transcript positions or an equivalent immutable attribution on contributions, nor say whether scope changes at observed move, committed rebind, or successful reload. This is ordinary supported movement, not the accepted risk of a completely unobserved manual action. The transcript request/result coverage also needs to retain that distinction when summaries span the move.",
+      "id": "F26",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        34
+      ],
+      "sourceCategories": [
+        "domain:agent-session-and-messaging-integration"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F26",
+        "seat": "reproduce",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "The end-to-end demonstration breaks at the proposed single current-seat lookup: the spec does not require that lookup for historical attribution. CURRENT-DESIGN.md:9 explicitly requires attribution including teamspace/seat/clone/native session/transcript; DESIGN-NOTES.md:16 says Beads and other work carry seat, clone, and agentic-session attribution, and :149 preserves that after the revised model. For a transcript that spans A then B, per-contribution work records can retain A and B without transcript-position scope segments. CURRENT-DESIGN.md:19 and DESIGN-NOTES.md:148 specify that the destination seat's applicable state changes on reload while the old transcript remains. DESIGN-NOTES.md:230 calls for historical traceability after moves, but does not prescribe a particular index. The finding does expose an implementation detail to settle around a move before reload, yet it never demonstrates that the existing attribution contract cannot satisfy the stated requirement. The shared processing request contract at CURRENT-DESIGN.md:34 and DESIGN-NOTES.md:255-259 promises transcript identity and coverage, not seat-segmented summaries.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F26-reproduce.json"
+      },
+      {
+        "id": "F26",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) Equivalents: stable IDs and provenance exist (CURRENT-DESIGN.md:7-10,15-19; DESIGN-NOTES.md:147-149,230), and work records must carry seat/clone/session attribution (DESIGN-NOTES.md:16,149). Those provisions do not bind portions of a retained native transcript to the seat in effect when produced. The system-duty result contract names transcript identity and processed-through coverage, but no seat scope or source interval (DESIGN-NOTES.md:255-259). (b) The accepted tradeoff is missed manual observations (CURRENT-DESIGN.md:16; DESIGN-NOTES.md:179-180), whereas the initial supported cross-tab move is detected and requires reload (CURRENT-DESIGN.md:19; DESIGN-NOTES.md:148). Reload suggests when new scope applies but does not specify an immutable attribution boundary in the unchanged transcript. (c) This is within scope: historical attribution after moves is expressly required (DESIGN-NOTES.md:230), and transcript indexing/processing is in scope (CURRENT-DESIGN.md:10,34). (d) It matters when one clone/session transcript spans seat A and seat B: a later lookup through its current seat misattributes old work, and a summary of the whole transcript has no defined split. Confirm the missing cutover/attribution contract, not a requirement for any particular position-keyed segment schema; this is an acknowledged draft-design detail, not an implementation defect or actual data-loss claim.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F26-refute.json"
+      },
+      {
+        "id": "F26",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Narrowed to transcript-derived history: CURRENT-DESIGN.md:9,19 requires seat/clone/session/transcript attribution and preserves a clone's old transcript through a cross-tab move while changing applicable state. DESIGN-NOTES.md:148-149,230 requires prior work/history traceable after the move; :255-257 defines transcript identity and processed-through position for summary results. Thus one continuing transcript can cover seat A and seat B; mapping its clone only to its present seat would relabel the A portion, and a result covering both portions has no defined scope attribution. Full-text search of all four reviewed documents for segment/interval/epoch/cutover/boundary, move/rebind/reload, position/coverage and per-contribution attribution found no transcript-position scope history, immutable per-turn seat label, or rule for whether cutover is move observation, committed transfer, or reload. DESIGN-NOTES.md:16,31 and SOFTWARE-FACTORY-VISION.md:97 do specify direct attribution for work records, so the gap does not apply to independently tagged Beads/contributions. The precise representation is an acknowledged open design detail, but resolving this boundary is material to the stated historical-attribution promise for supported clone moves. Internal claim only; no external premise.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F26-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The transcript result contract cannot yet distinguish a fully summarized prefix from disjoint completed ranges, so accepting an out-of-order processed-through result can conceal an unprocessed gap.",
+      "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:248, 251, 256–259",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Results reference transcript identity, a processed-through position and an output artifact; resumed transcripts generate processing for newly appended portions, and the summarizer dispatches concurrently. The notes explicitly leave concurrent/out-of-order result handling open. Concrete case: request A covers the existing prefix through position 100; a resume adds positions 101–200 and request B completes first. If the stored frontier becomes 200, A's missing prefix is hidden; if it stays below 100, graph needs some other record of B's completed range to avoid rescheduling or losing its artifact. Before choosing an implementation, define bounded source ranges or snapshot identities per request and whether the aggregate frontier means contiguous verified coverage. This makes the already-acknowledged open contract concrete; it does not imply the design claims readiness or that special graph scheduling is needed.",
+      "id": "F27",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        35
+      ],
+      "sourceCategories": [
+        "domain:agent-session-and-messaging-integration"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F27",
+        "seat": "reproduce",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "Acknowledged design gap, conditional failure rather than observed data loss. DESIGN-NOTES.md:256-258 requires durable requests, explicit completion tied to input coverage, processing of a resumed transcript's newly appended portion, and dispatch without waiting for earlier summaries; :248 permits concurrent subagents. Suppose A processes positions 1-100 and B processes only newly appended 101-200. B reports first with transcript identity, processed-through=200, and summary path, the result fields specified at :256. If graph interprets 200 as a completed prefix, it conceals the unfinished 1-100 and violates explicit coverage/completion at :251,256-257; if it declines to advance the prefix, it must retain B's disjoint completed range and artifact to prevent redundant work. Neither request bounds nor contiguous-frontier/result aggregation semantics are specified; DESIGN-NOTES.md:259 and CURRENT-DESIGN.md:34 explicitly leave out-of-order results open. Durable per-request pending status could keep A visible, so the finding does not prove an inevitable loss; it shows the required coverage semantics remain unresolved before the promised transcript completion record can be truthful. This is material to recovery continuity (HERDR-GRAPH-VISION.md:9,37,139), but the draft disclaims implementation readiness (CURRENT-DESIGN.md:58), so Should-fix rather than Blocking.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F27-reproduce.json"
+      },
+      {
+        "id": "F27",
+        "seat": "refute",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "(a) No equivalent bounded-range or contiguous-frontier rule appears in the four reviewed documents. CURRENT-DESIGN.md:34 names transcript identity, processed-through coverage, and output references; DESIGN-NOTES.md:256-259 specifies the same fields while explicitly leaving concurrent/out-of-order handling open. Durable request status (DESIGN-NOTES.md:251,257) can preserve a pending A, but the design has not defined how a completed B for a newly appended portion is represented as disjoint coverage or later combined with A. (b) Best-effort missed manual Herdr observations are an accepted tradeoff (DESIGN-NOTES.md:179-180); skipped transcript coverage is not. Explicit completion must link source coverage and artifact (DESIGN-NOTES.md:251,256), and dispatch alone does not count. (c) Mechanical transcript processing requests and indexing are expressly in scope (CURRENT-DESIGN.md:10,32-34), though semantic summarization remains delegated. (d) With concurrent dispatch (DESIGN-NOTES.md:248,258), B can complete for positions 101-200 while A for 1-100 remains pending. A single processed-through value of 200 cannot by itself establish a complete prefix; treating it as such would hide A's gap, contrary to explicit source-coverage completion and durable pending-work semantics. This is an acknowledged material contract gap to settle before implementation, not evidence of actual data loss or a claim that the draft has chosen the unsafe frontier algorithm.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F27-refute.json"
+      },
+      {
+        "id": "F27",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "CURRENT-DESIGN.md:32-34 specifies concurrent summarizer dispatch, processed-through coverage, resumed append work, and expressly leaves out-of-order results open. DESIGN-NOTES.md:248,251,255-259 requires explicit completion tied to source coverage and artifact, permits newly appended processing and dispatch without waiting, and expressly leaves concurrent/out-of-order result handling and request identity/deduplication to design. A full-text search across all four reviewed documents for transcript/coverage/frontier/range/prefix/snapshot/cursor/offset/checkpoint/dedup/result found no bounded range or contiguous-frontier rule elsewhere. If a result for appended positions 101-200 advances a single processed-through value to 200 before 1-100 completes, the remaining gap can be concealed; preserving each request/result identity or range could prevent that, but is not yet specified. This is a material acknowledged contract gap for reliable transcript processing, not a claim that the draft currently implements the faulty update or is implementation-ready. No external premise is needed.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F27-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The factory promises that the human need not keep conversations alive, but leaves project-work supervision without a defined owner or wake/recovery contract once a worker or foreman stops responding.",
+      "location": "SOFTWARE-FACTORY-VISION.md:11,39-49,71-77; CURRENT-DESIGN.md: State and reconciliation / Bootstrap and system-duty seats",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The factory promise includes not having to 'keep every conversation alive'; standing roles need not run continuously. Its recurring-work recovery brief covers resurrected monitors, but not who observes delegated work completion, distinguishes waiting from stalled work, or wakes an unavailable coordinator. Current graph reconciliation covers organizational effects and the explicitly approved summarizer activation path, not all project jobs. Firstmate documents an event watcher and declared-wait/liveness distinctions: https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md (Event-driven supervision, retrieved 2026-10-01). This is a factory/execution-adapter gap, not a request to add a graph model scheduler.",
+      "id": "F28",
+      "suggestedSeverity": "Should-fix",
+      "sourceIndices": [
+        36
+      ],
+      "sourceCategories": [
+        "domain:agentic-software-factory-product-parity"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F28",
+        "seat": "reproduce",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "Reproduction attempt: a delegated engineer stops responding while its foreman is dormant. The task and its owner remain in the work system (SOFTWARE-FACTORY-VISION.md:71), and the foreman remains accountable for coordination (lines 43,49). The alleged failure requires an additional promise that a live watcher detects worker stalls and automatically wakes the foreman, but the stated contract instead begins human-led (line 25), says standing roles need not run continuously (line 39), gives activation to the human or another agent (DESIGN-NOTES.md:72), and explicitly has no recurring model-wake schedule (DESIGN-NOTES.md:240); CURRENT-DESIGN.md:58 cautions against inferring project-work machinery. Thus the final step does not contradict a stated requirement: 'not keep every conversation alive' (SOFTWARE-FACTORY-VISION.md:11) is satisfied by durable ownership, records and resumption, without implying unattended liveness supervision. External comparison verified by fetching Firstmate's primary architecture page, https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md, which says 'A zero-token bash watcher ... wakes the first mate only when something is actionable' (Event-driven supervision, lines 196-200). That valid competitor mechanism is an optional product idea, not evidence this design has promised it.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F28-reproduce.json"
+      },
+      {
+        "id": "F28",
+        "seat": "refute",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "(a) Ownership is present under different terms: SOFTWARE-FACTORY-VISION.md:43 assigns the foreman to 'account for outcomes'; :71 assigns task recipes ownership and completion/handoff conditions, with progress owned by the work system; :97 requires remaining work to be recorded for successors. :75-77 describes load and recovery of live commitments and recurring jobs. (b) The contract makes dormancy normal (:39, :93) and says automation/delegation grows by explicit project choice (:25, :153); the promise at :11 does not specify continuous liveness surveillance. (c) CURRENT-DESIGN.md:9,58 and DESIGN-NOTES.md:183-187 explicitly keep project tasks out of graph; graph reconciliation and summarizer activation (:15-17, :32-34) are limited to their stated operations, so a general project-worker wake contract cannot be demanded of graph. (d) A factory-level stalled-work practice could be useful later, but absent a promised unattended-supervision SLA or specified first-project workflow, its omission does not contradict the draft's continuing ownership and recoverable-context outcomes. External comparison verified by fetching the current primary source https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md : 'A zero-token bash watcher ... wakes the first mate only when something is actionable' (Event-driven supervision, lines 196-200). This establishes Firstmate's alternative mechanism, not a parity requirement. Narrowing: the claim that no owner is defined is false; detailed stalled-work detection remains an open future factory/instance design choice.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F28-refute.json"
+      },
+      {
+        "id": "F28",
+        "seat": "ground",
+        "verdict": "CONFIRM",
+        "severity": "Should-fix",
+        "evidence": "NARROWED: Foreman ownership is defined (SOFTWARE-FACTORY-VISION.md:43,49), so the claim's 'without a defined owner' premise is overbroad. The material gap is a project-work liveness and recovery contract: the factory promises the human need not keep conversations alive and work reaches evidenced outcomes (SOFTWARE-FACTORY-VISION.md:11,29-35), while its task recipes specify ownership/completion criteria but no observation or wake when a delegated worker or the foreman goes silent (71-77). Its recovery brief applies to recurring monitoring on resurrection (77), and scheduling/measurement is explicitly future instance design (131). CURRENT-DESIGN.md:15-17 reconciles graph/Herdr/threads effects; 32-34 defines an approved, specific transcript-summarizer activation path, not general project-work supervision; 9 keeps project tasks in external systems. DESIGN-NOTES.md:132 explicitly leaves surfacing unattended incoming work open; 183-187 excludes project tasks from graph bookkeeping. Concrete failure: a worker accepts a Beads task, stops responding before completion, and no defined observer distinguishes declared waiting from a stall or wakes the foreman/successor; the human must discover/restart it, contrary to the factory promise. This is a factory/work-system design gap, not a demand that graph own a scheduler. Primary current competitor source fetched 2026-10-01: https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md ('A zero-token bash watcher ... wakes the first mate only when something is actionable'; 'stale panes whose crew is not provably working'). The competitor example establishes feasibility, not a required exact implementation.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F28-ground.json"
+      }
+    ],
+    "tier": "panel",
+    "valid": 3
+  },
+  {
+    "f": {
+      "claim": "The proposed factory has no concrete attention digest or decision-inbox interaction spanning its work systems, so the promise of knowing which questions remain open still relies on querying and reconstructing distributed records.",
+      "location": "SOFTWARE-FACTORY-VISION.md:21-23,43-45,95-99; absent product interaction for outstanding decisions and returning-human recap",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The secretary is tasked with making activity understandable and preserving commitments, and work stays in Beads/wikis/threads, but the vision only describes an occupant load brief and final outcome report. It does not describe a bounded human recap, ownership of unanswered decisions, or a way to distinguish items requiring human attention from routine progress. Firstmate's current README documents /ahoy for unanswered decisions and /bearings for a bounded fleet digest: https://github.com/kunchenguid/firstmate (Built-in skills, retrieved 2026-10-01). A factory skill could supply this without making graph a work tracker.",
+      "id": "F29",
+      "suggestedSeverity": "FYI",
+      "sourceIndices": [
+        37
+      ],
+      "sourceCategories": [
+        "domain:agentic-software-factory-product-parity"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F29",
+        "seat": "refute",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "(a) The claimed missing interaction has an equivalent conversational form: the human can ask what is happening (SOFTWARE-FACTORY-VISION.md:11-13), the foreman is the project front door and routes questions while the secretary preserves decisions/commitments and makes activity understandable (:43-45), and the foreman has a compact account of current commitments, recent decisions and unresolved work (HERDR-GRAPH-VISION.md:27). The factory requires recording relevant decisions and remaining work where successors can find them (SOFTWARE-FACTORY-VISION.md:95-99). (b) Distributed work records are deliberate: project knowledge/tasks/commitments remain in wikis, work trackers and conversations, and product skills compose the experience (:57-59); CURRENT-DESIGN.md:4 and DESIGN-NOTES.md:183-194 reaffirm this boundary. CURRENT-DESIGN.md:30 supersedes any assumption of a plugin-generated semantic brief; the agent reads applicable state itself. (c) A dedicated cross-system digest or decision-inbox command is not a stated first-product requirement; factory knowledge format and shared services remain open instance design (SOFTWARE-FACTORY-VISION.md:155-157). (d) The missing named command does not show that the human must reconstruct records personally: the foreman/secretary are assigned to do that work through the existing conversational front door. Firstmate's primary README does document an alternative: https://github.com/kunchenguid/firstmate , Built-in skills: '/ahoy' says 'visibly unanswered captain decisions' and '/bearings' says 'Generate a concise four-section chat digest from bounded fleet state' (fetched 2026-10-01). That precedent is real, but does not make the same UI a material requirement here.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F29-refute.json"
+      }
+    ],
+    "tier": "spot",
+    "valid": 1
+  },
+  {
+    "f": {
+      "claim": "The factory does not describe onboarding and verifying a project's execution environment before assigning engineers, leaving a practical capability gap between creating a team and having one able to reproduce, build, and test the project.",
+      "location": "SOFTWARE-FACTORY-VISION.md:29-31,55-77,129; absent project execution-environment onboarding recipe",
+      "category": "domain:agentic-software-factory-product-parity",
+      "external": true,
+      "kind": "GAP",
+      "evidence": "The vision links projects, worktrees, recipes and evidence but has no project setup/readiness recipe or named adapter responsible for reproducing the tooling environment. Devin's official environment setup describes reusable blueprints and machine snapshots for preparing session machines: https://docs.devin.ai/onboard-devin/environment (retrieved 2026-10-01). This is a factory onboarding/execution-adapter feature gap; it does not imply graph should provision VMs, store credentials, or replace native harness capabilities.",
+      "id": "F30",
+      "suggestedSeverity": "FYI",
+      "sourceIndices": [
+        38
+      ],
+      "sourceCategories": [
+        "domain:agentic-software-factory-product-parity"
+      ],
+      "sourceKinds": [
+        "GAP"
+      ]
+    },
+    "votes": [
+      {
+        "id": "F30",
+        "seat": "refute",
+        "verdict": "REJECT",
+        "severity": "FYI",
+        "evidence": "External premise verified: Devin's official https://docs.devin.ai/onboard-devin/environment says 'Configure Devin’s environment so sessions start with repos, tools, dependencies, environment variables, and secrets ready' and 'Without one, Devin can’t build your project, can’t run your tests'. REFUTE (a): SOFTWARE-FACTORY-VISION.md:69-75 already defines project-adaptable team/task recipes with useful inputs, evidence and occupant context; a project can put environment prerequisites there. (b): SOFTWARE-FACTORY-VISION.md:31,71-73,99,127-129 expects engineers and meaningful verification but leaves the particular checks and practice to projects. (c): HERDR-GRAPH-VISION.md:112 explicitly separates repository-specific tests and deployment infrastructure from graph; SOFTWARE-FACTORY-VISION.md:59,145 leaves artifacts in project repositories/work systems. (d): No reviewed document promises a preconfigured, verified environment before an engineer is assigned; SOFTWARE-FACTORY-VISION.md:157 says the first project and instance practice remain to be designed, and CURRENT-DESIGN.md:58 disclaims implementation readiness. The absence of a dedicated environment-onboarding recipe is a reasonable product idea, but the finding does not establish a material contradiction of the current stated contract.",
+        "model": "gpt-6-sol",
+        "sourceVoteFile": "/tmp/herdr-graph-roast-20261001/votes/F30-refute.json"
+      }
+    ],
+    "tier": "spot",
+    "valid": 1
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "id": "F15",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Internal premises verified. CURRENT-DESIGN.md:15-17 and DESIGN-NOTES.md:152-153,164-165,172,179 specify commit desired state first, then reconcile external effects after changes/events/periodic checks, retrying transient failures against latest committed intent. DESIGN-NOTES.md:185,189 approves cancellation of unresolved graph requests and says it ends obsolete work/reminders, while not claiming external effects happened or were undone. A full-text search across all four reviewed docs for cancellation, withdrawal/revocation, suppression, supersession, desired state, and reconciliation found no rule making cancellation of an already committed yet unresolved request change/suppress its still-current desired state, or defining that such a request cannot be cancelled. Thus after a failed pane creation, merely cancelling its operation/reminders leaves desired activation current; periodic reconciliation can create the pane after Herdr recovers, contrary to the approved cancellation outcome. This is an acknowledged detailed-contract gap (HERDR-GRAPH-VISION.md:149), not a claim of actual data loss or a need for rollback."
+}

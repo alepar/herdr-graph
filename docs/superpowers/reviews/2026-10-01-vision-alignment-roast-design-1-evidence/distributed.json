@@ -1,0 +1,26 @@
+[
+  {
+    "claim": "The design gives writers serialization but gives readers no committed-snapshot contract, leaving /seat and reconciliation able to consume a partially applied multi-file graph mutation.",
+    "location": "CURRENT-DESIGN.md — State and reconciliation; Bootstrap and system-duty seats. DESIGN-NOTES.md:150,164,238–239.",
+    "category": "domain:distributed-state-reconciliation",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "The shared checkout has one serialized writer; reconciliation is separate and must follow 'latest committed intent'; /seat's agent 'discovers/reads its applicable state directly.' A writer updating a template, seat overrides and renamed paths can expose its first file change before the remaining changes and Git commit. Neither writer serialization nor mutation preconditions specifies how concurrent readers choose one committed graph revision. A periodic reconciliation or /seat load during that interval can combine old overrides with new defaults, see transiently missing bindings, or drive an effect from intent that never commits. This is a read-side contract gap distinct from the explicitly acknowledged stale-write semantics. Define a coherent committed read view or a read/retry boundary for graph consumers; the existing single-writer direction need not change."
+  },
+  {
+    "claim": "Cancellation has no defined effect on already committed desired state, so it is unclear how cancelling an unresolved request stops the reconciler from reconstructing the same work.",
+    "location": "DESIGN-NOTES.md:179,185–189; CURRENT-DESIGN.md — State and reconciliation.",
+    "category": "domain:distributed-state-reconciliation",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "Reconciliation follows latest committed intent, while approved cancellation 'ends obsolete work/reminders' and does not imply effects were undone. Consider committed activation intent whose pane creation fails while Herdr is unavailable. The user cancels the unresolved graph request, then Herdr recovers. If cancellation only ends the request/retries, the ordinary periodic intent-versus-runtime check still finds the absent desired pane and creates it. If cancellation suppresses the intent, the design needs to say what desired lifecycle/relationship is now authoritative and which already-completed effects remain. The same ambiguity occurs when the requested desired state comes from a live template. This needs a cancellation state transition or a clearly bounded cancellation scope, not automatic rollback of external effects."
+  },
+  {
+    "claim": "Hydration undo does not define whether later reuse of an originally created object or relationship blocks its retirement, despite promising to preserve unrelated later work.",
+    "location": "DESIGN-NOTES.md:285–289; CURRENT-DESIGN.md — Undo.",
+    "category": "domain:distributed-state-reconciliation",
+    "external": false,
+    "kind": "GAP",
+    "evidence": "The approved rule says 'Undo hydration retires objects created by that action and reverses relationships it added; preserve objects merely reused and external project work.' Suppose hydration A creates a seat and participation relationship, and hydration B later explicitly reuses both without changing their fields. Undo A still categorizes the seat as created-by-A and the relationship as added-by-A. Applying that inverse retires the live seat relied on by B; preserving objects reused by A does not protect later reusers of A's creations. Same-field edit conflicts are cited, and exact dependency checks are explicitly left open, but later reuse must be a dependency even where no field differs from A's after-state. Define whether undo rejects, retains, or transfers such shared ownership; creation provenance alone cannot decide a safe inverse."
+  }
+]

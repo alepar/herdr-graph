@@ -1,0 +1,41 @@
+
+============================================================
+CITATION VERIFICATION: RESEARCH.md
+============================================================
+
+Found 21 citations
+
+  [1] URL accessible ✓
+  [2] URL accessible ✓
+  [3] URL accessible ✓
+  [4] URL accessible ✓
+  [5] URL accessible ✓
+  [6] URL accessible ✓
+  [7] URL accessible ✓
+  [8] URL accessible ✓
+  [9] URL accessible ✓
+  [10] URL accessible ✓
+  [11] URL accessible ✓
+  [12] URL accessible ✓
+  [13] URL accessible ✓
+  [14] URL accessible ✓
+  [15] URL accessible ✓
+  [16] URL accessible ✓
+  [17] URL accessible ✓
+  [21] URL accessible ✓
+
+============================================================
+VERIFICATION SUMMARY
+============================================================
+
+DOI Verified: 0/21
+URL Verified: 18/21
+Suspicious: 0/21
+Unverified: 3/21
+
+UNVERIFIED CITATIONS (Could not check):
+  [18] URL check failed: HTTP 405
+  [19] URL check failed: HTTP 405
+  [20] URL check failed: HTTP 405
+
+CITATION VERIFICATION PASSED

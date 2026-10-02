@@ -1,0 +1,7 @@
+{
+  "id": "F16",
+  "seat": "reproduce",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Concrete path: (1) A summarizer has pending transcript work; pending requests survive occupant loss (DESIGN-NOTES.md:251,255-258; CURRENT-DESIGN.md:32-34). (2) The human closes its live tab. That observed closure commits retirement and archives the seat, rather than merely leaving an active seat without an occupant (CURRENT-DESIGN.md:16,18; DESIGN-NOTES.md:147,197-198). (3) The transcript workflow still sees work and no running occupant. Its approved rule says to activate an unoccupied summarizer through ordinary activation before posting requests (DESIGN-NOTES.md:247,250,258; CURRENT-DESIGN.md:32). Applying that rule to the retired seat recreates/rehydrates it despite the later retirement intent, contrary to latest-committed-intent reconciliation (CURRENT-DESIGN.md:16; DESIGN-NOTES.md:179) and the promised distinction between retirement and dormancy (DESIGN-NOTES.md:102,197-198). Skipping activation instead leaves the approved automatic-processing rule inapplicable with no specified disposition beyond request discoverability. The design expressly limits any inference that all retired seats auto-resurrect (DESIGN-NOTES.md:250), but never resolves this summarizer-specific collision. Narrow finding: define lifecycle eligibility/precedence for a deliberately retired summarizer and its pending requests; it does not demand auto-resurrection or uninterrupted processing after retirement."
+}

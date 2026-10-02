@@ -1,0 +1,7 @@
+{
+  "id": "F13",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "DESIGN-NOTES.md:39 expressly offers a named composed hydration whose seats and threads can be listed, retired, and resurrected together; :74-75 permit later seats and composition within an existing team. CURRENT-DESIGN.md:24-26 defines persistent additions/exclusions, stable seat IDs, and explicitly leaves repeated composition/correspondence open. DESIGN-NOTES.md:285-286 and :302 make action records sufficient for hydration undo provenance, but do not define a living group membership set; :295-296 leaves multiple applications/composition scoping open and :302 explicitly leaves runtime group identity unspecified. Full-text search of all four reviewed documents for group/instance membership, composition, provenance, collective lifecycle, and equivalent mechanisms found no rule deciding whether later-added, removed, reused, or template-switched seats belong to a named group. Thus listing or retiring that group can select different seats despite the stated collective operation. This is an acknowledged design-stage gap, not a demand for a new group node; specifying membership semantics or narrowing the collective promise is needed. Internal-only claim; no external premise."
+}

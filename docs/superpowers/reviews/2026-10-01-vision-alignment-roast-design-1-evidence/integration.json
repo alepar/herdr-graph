@@ -1,0 +1,36 @@
+{
+  "findings": [
+    {
+      "claim": "The automatic transcript-processing workflow has no eligibility or termination rule for the summarizer's own conversations and processing subagents, leaving a possible self-generating stream of summary requests.",
+      "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:241, 247–258",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The design makes the summarizer an ordinary seat, has graph detect transcript work and automatically activate an absent summarizer, and has that occupant dispatch transcript processing to subagents. It does not say whether service-seat or helper transcripts are eligible inputs. If they are, processing a transcript creates another eligible conversation; closing the summarizer can itself create the work that immediately activates it again. If they are excluded, the exclusion and its scope have not been selected. This is a missing stopping condition, not a claim that the unimplemented observer necessarily processes every transcript. An ordinary-role implementation can keep the policy in instance configuration/instructions without adding a special worker pool."
+    },
+    {
+      "claim": "Notification-driven whole-seat leave lacks a recipient-side supersession rule, so a delayed leave instruction can undo a newer join after graph has already reconciled the latest intent.",
+      "location": "DESIGN-NOTES.md:13, 57, 179; CURRENT-DESIGN.md, State and reconciliation / Threads and policy",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Whole-seat leave removes participation intent and publishes an instruction for other clones to leave individually, preserving pending work for unavailable clones. Latest-intent reconciliation stops obsolete retries and checks intent before external actions, but the design does not carry a participation revision in already-published agent instructions or require recipients to recheck it before leaving. Reproduction at the contract level: clone B is unavailable during leave L; join J subsequently commits and B joins; B then consumes L and calls threads leave. The plugin's own latest-intent check cannot retract an agent's previously delivered command. Define how a recipient identifies an obsolete instruction and how its delayed completion is reconciled; this is separate from the acknowledged question about retaining clone opt-outs on a new join."
+    },
+    {
+      "claim": "Preserving a native transcript while transferring its clone between seats requires historical scope segments, but the attribution contract only names identities and does not define the cutover that separates old-seat work from new-seat work.",
+      "location": "CURRENT-DESIGN.md, Identity and scope / State and reconciliation; DESIGN-NOTES.md:16, 148–149, 230, 256",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "The design explicitly preserves transcript/context on cross-tab movement while changing applicable seat state, requires native participants to map to clones, and requires historical attribution to remain traceable after moves. A single clone and native transcript can therefore cover work performed for seat A and then seat B. Looking up only the clone's current seat cannot attribute both parts correctly. The design does not select an occupancy/scope history keyed to transcript positions or an equivalent immutable attribution on contributions, nor say whether scope changes at observed move, committed rebind, or successful reload. This is ordinary supported movement, not the accepted risk of a completely unobserved manual action. The transcript request/result coverage also needs to retain that distinction when summaries span the move."
+    },
+    {
+      "claim": "The transcript result contract cannot yet distinguish a fully summarized prefix from disjoint completed ranges, so accepting an out-of-order processed-through result can conceal an unprocessed gap.",
+      "location": "CURRENT-DESIGN.md, Bootstrap and system-duty seats; DESIGN-NOTES.md:248, 251, 256–259",
+      "category": "domain:agent-session-and-messaging-integration",
+      "external": false,
+      "kind": "GAP",
+      "evidence": "Results reference transcript identity, a processed-through position and an output artifact; resumed transcripts generate processing for newly appended portions, and the summarizer dispatches concurrently. The notes explicitly leave concurrent/out-of-order result handling open. Concrete case: request A covers the existing prefix through position 100; a resume adds positions 101–200 and request B completes first. If the stored frontier becomes 200, A's missing prefix is hidden; if it stays below 100, graph needs some other record of B's completed range to avoid rescheduling or losing its artifact. Before choosing an implementation, define bounded source ranges or snapshot identities per request and whether the aggregate frontier means contiguous verified coverage. This makes the already-acknowledged open contract concrete; it does not imply the design claims readiness or that special graph scheduling is needed."
+    }
+  ]
+}

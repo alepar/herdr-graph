@@ -1,0 +1,72 @@
+{
+  "mode": "design",
+  "iteration": 1,
+  "profile": "Internal single-human-led design-stage tool. No graph implementation, production deployment, or regulatory obligations are asserted. Intended operations affect real native agent sessions and linked project work; continuity and recovery matter, while general model scheduling, project tracking, and behavioral authorization remain external or instance-owned.",
+  "inputs": [
+    "CURRENT-DESIGN.md",
+    "DESIGN-NOTES.md",
+    "HERDR-GRAPH-VISION.md",
+    "SOFTWARE-FACTORY-VISION.md"
+  ],
+  "triageDead": false,
+  "scoutsDispatched": 8,
+  "scoutsDead": 0,
+  "scoutNames": [
+    "premortem",
+    "completeness",
+    "yagni",
+    "failure-mode",
+    "feasibility",
+    "distributed",
+    "integration",
+    "competitors"
+  ],
+  "scoutFindings": {
+    "premortem": 9,
+    "completeness": 7,
+    "yagni": 0,
+    "failure-mode": 7,
+    "feasibility": 5,
+    "distributed": 3,
+    "integration": 4,
+    "competitors": 3
+  },
+  "raw": 38,
+  "deduped": 30,
+  "dedupeDead": false,
+  "beyondCap": 0,
+  "beyondPanelCap": 0,
+  "remainderCap": 50,
+  "panelCap": null,
+  "independence": "same-family (OpenAI GPT-6) — seat-differentiated panel",
+  "modelAdaptation": "Workflow unavailable; manual fanout. Claude tiers unavailable; triage/judges use gpt-6-sol, scouts/dedupe/reporter use gpt-6-astra. Each judge handles one finding in a fresh isolated context. Author consulted separately, not used as a judge.",
+  "rawFindings": 38,
+  "dedupedFindings": 30,
+  "panelCount": 25,
+  "spotCount": 4,
+  "initialSpotCount": 5,
+  "promotedCount": 1,
+  "judgeCompletionPct": 100,
+  "judgeSeatsDispatched": 83,
+  "judgeSeatsCompleted": 83,
+  "judgePacketVotes": 82,
+  "judgeSeatFailures": 0,
+  "judgeSeatRetries": 0,
+  "judgeUnverifiedVotes": 0,
+  "judgeModels": {
+    "gpt-6-sol": 83
+  },
+  "materialDissentIds": [
+    "F03",
+    "F06",
+    "F18",
+    "F23",
+    "F26",
+    "F28"
+  ],
+  "externalFetchEvidence": {
+    "F28": true,
+    "F29": true,
+    "F30": true
+  }
+}

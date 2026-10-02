@@ -1,0 +1,7 @@
+{
+  "id": "F21",
+  "seat": "refute",
+  "verdict": "REJECT",
+  "severity": "FYI",
+  "evidence": "(a) Equivalent recovery practice is present: a returning occupant uses durable instructions and linked records (HERDR-GRAPH-VISION.md:37,60-64); the approved load flow links relevant context and retrieves project work under instance instructions (DESIGN-NOTES.md:193-194), while the newer /seat decision has the agent read applicable state itself (CURRENT-DESIGN.md:30). The factory specifies recording assignments/decisions/remaining work for successors and a brief covering live commitments, authorization, evidence and recurring-job inspection (SOFTWARE-FACTORY-VISION.md:75-77,95-99). (b) The design explicitly treats a brief as orientation requiring fresh checks, and says transcript history alone cannot recover all commitments (DESIGN-NOTES.md:98,104); it makes no guarantee of perfect retrieval. (c) Graph deliberately does not own a second project-work or knowledge ledger (CURRENT-DESIGN.md:9-10; DESIGN-NOTES.md:186-194), so a demand for graph-held semantic obligations is outside scope. (d) Replacement continuity matters (HERDR-GRAPH-VISION.md:139), but this finding identifies only the absence of a completed empirical demonstration, which a design-stage proposal does not claim. The visions explicitly call continuity a future demonstration/product hypothesis and propose measurement (HERDR-GRAPH-VISION.md:139,145; SOFTWARE-FACTORY-VISION.md:147-157). A fixture trial is useful evaluation, but its absence is not a surviving material design gap."
+}

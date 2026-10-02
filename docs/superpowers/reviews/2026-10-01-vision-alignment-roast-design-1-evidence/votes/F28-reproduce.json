@@ -1,0 +1,7 @@
+{
+  "id": "F28",
+  "seat": "reproduce",
+  "verdict": "REJECT",
+  "severity": "FYI",
+  "evidence": "Reproduction attempt: a delegated engineer stops responding while its foreman is dormant. The task and its owner remain in the work system (SOFTWARE-FACTORY-VISION.md:71), and the foreman remains accountable for coordination (lines 43,49). The alleged failure requires an additional promise that a live watcher detects worker stalls and automatically wakes the foreman, but the stated contract instead begins human-led (line 25), says standing roles need not run continuously (line 39), gives activation to the human or another agent (DESIGN-NOTES.md:72), and explicitly has no recurring model-wake schedule (DESIGN-NOTES.md:240); CURRENT-DESIGN.md:58 cautions against inferring project-work machinery. Thus the final step does not contradict a stated requirement: 'not keep every conversation alive' (SOFTWARE-FACTORY-VISION.md:11) is satisfied by durable ownership, records and resumption, without implying unattended liveness supervision. External comparison verified by fetching Firstmate's primary architecture page, https://github.com/kunchenguid/firstmate/blob/main/docs/architecture.md, which says 'A zero-token bash watcher ... wakes the first mate only when something is actionable' (Event-driven supervision, lines 196-200). That valid competitor mechanism is an optional product idea, not evidence this design has promised it."
+}

@@ -1,0 +1,7 @@
+{
+  "id": "F10",
+  "seat": "ground",
+  "verdict": "CONFIRM",
+  "severity": "Should-fix",
+  "evidence": "Narrowly confirmed as an acknowledged runtime-transition gap, not evidence that reconciliation may kill a session. CURRENT-DESIGN.md:23 says template defaults affect current instances and reconcile automatically; DESIGN-NOTES.md:202-203 uses a model default change as its example, and :209-212 derives current desired state from the live template while specifying only how live agents learn changed instructions. A full-text search across all four reviewed documents for model/harness, launch/relaunch, reload, restart, replace/terminate/kill, activation and runtime equivalents found no rule for an occupied session when its effective model or harness changes. CURRENT-DESIGN.md:41 and SOFTWARE-FACTORY-VISION.md:113 explicitly leave session replacement authority open. HERDR-GRAPH-VISION.md:76 addresses instruction uptake, not runtime configuration. The missing boundary matters to the stated live-default reconciliation and continuity contract: it cannot distinguish a pending next-activation default from an authorized replacement of a running occupant. This is a design detail to resolve, not a claim of actual data loss or an implementation-readiness blocker."
+}
