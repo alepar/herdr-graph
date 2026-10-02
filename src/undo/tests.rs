@@ -1,6 +1,6 @@
 //! Undo tests: a real writer, git store, journal, plan engine, core + template + undo kinds and the observer's
 //! cascade mutation, so cascades are produced by committing `observed.cascade` requests directly.
-use super::adopt::admit_adopted_binding;
+use super::adopt::ADOPT_BINDING_KEY;
 use super::candidates::{list_candidates, render_list};
 use super::preview::CLOSES_PANE_WARNING;
 use super::register_kinds;
@@ -23,7 +23,7 @@ use crate::model::{
 };
 use crate::observe::classify::CascadeRule;
 use crate::observe::mutations::cascade_request;
-use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
+use crate::plan::commands::{PlanDeps, admit_apply, admit_apply_with, create_plan};
 use crate::plan::core_kinds::register_core_kinds;
 use crate::plan::kind::KindRegistry;
 use crate::plan::store::PlanStore;
@@ -144,6 +144,18 @@ fn plan_err(fx: &Fx, change: &str) -> String {
 
 fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
     let op = admit_apply(&fx.deps, &caller(None), sp.plan.id.as_str(), Some(&sp.hash), "relay")
+        .unwrap_or_else(|e| panic!("admit: {}", e.message));
+    fx.w.drain().unwrap();
+    fx.w.journal().get(&op).unwrap().unwrap()
+}
+
+/// Apply from the caller's pane: `observed` is the binding `undo.apply` read from Herdr's snapshot.
+fn apply_plan_from_pane(fx: &Fx, sp: &StoredPlan, pane: &str, observed: Option<&Binding>) -> OpRow {
+    let mut extra = serde_json::Map::new();
+    if let Some(b) = observed {
+        extra.insert(ADOPT_BINDING_KEY.into(), serde_json::to_value(b).unwrap());
+    }
+    let op = admit_apply_with(&fx.deps, &caller(Some(pane)), sp.plan.id.as_str(), Some(&sp.hash), "relay", extra)
         .unwrap_or_else(|e| panic!("admit: {}", e.message));
     fx.w.drain().unwrap();
     fx.w.journal().get(&op).unwrap().unwrap()
@@ -409,7 +421,15 @@ fn adoption_preview_with_bound_caller_pane() {
     assert_eq!(retire.detail["displaced_by_undo"], json!(true));
     assert!(sp.plan.warnings.iter().any(|w| w.contains("last active clone")), "{:?}", sp.plan.warnings);
 
-    let row = apply_plan(&fx, &sp);
+    let observed = Binding {
+        token: None,
+        workspace_id: Some(HerdrWorkspaceId("w9".into())),
+        tab_id: Some(HerdrTabId("t9".into())),
+        pane_id: Some(HerdrPaneId("p-caller".into())),
+        terminal_id: Some(crate::model::HerdrTerminalId("term-caller".into())),
+        incarnation: crate::model::common::Incarnation { generation: 7, server_pid: Some(42), server_started: None },
+    };
+    let row = apply_plan_from_pane(&fx, &sp, "p-caller", Some(&observed));
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     let displaced = clone_by_id(&fx, &x.id);
     assert_eq!(displaced.lifecycle, CloneLifecycle::Retired);
@@ -417,18 +437,30 @@ fn adoption_preview_with_bound_caller_pane() {
     assert!(displaced.runtime.bound.is_none(), "the pane is no longer the displaced clone's");
     let adopted = clone_by_id(&fx, &f_clone.id);
     assert_eq!(adopted.lifecycle, CloneLifecycle::Active);
-    let bound = adopted.runtime.bound.clone().expect("the adopted clone holds the caller's pane");
-    assert_eq!(bound.pane_id, Some(HerdrPaneId("p-caller".into())));
-    assert_eq!(bound.token, None, "the reconciler stamps the new clone's token on its next step");
-    assert_eq!(adopted.runtime.availability, Availability::Unknown, "no second pane before the binding is confirmed");
-    assert_eq!(seat_by_id(&fx, &foreman.id).lifecycle, Lifecycle::Active);
-
-    // After the op commits the binding write is admitted.
-    let undo_act = action_of(&fx, &row);
-    assert!(admit_adopted_binding(&*fx.store, &*fx.w, &undo_act.id).unwrap());
-    fx.w.drain().unwrap();
-    let adopted = clone_by_id(&fx, &f_clone.id);
+    // The undo commit itself holds the whole binding: nothing is left to admit after the commit, so the
+    // reconciler woken by it finds a clone with a live pane.
     assert_eq!(adopted.runtime.availability, Availability::Present);
+    assert_eq!(adopted.runtime.bound, Some(observed.clone()), "the caller's pane exactly as observed, no token yet");
+    let foreman_now = seat_by_id(&fx, &foreman.id);
+    assert_eq!(foreman_now.lifecycle, Lifecycle::Active);
+    assert_eq!(foreman_now.activation.last_op, Some(row.op.clone()), "the adopted pane's StampToken gets a fresh effect id");
+    let undo_act = action_of(&fx, &row);
+    assert_eq!(undo_act.compensation["adopt"]["clone"].as_str(), Some(f_clone.id.to_string().as_str()));
+    assert_eq!(undo_act.compensation["adopt"]["pane"].as_str(), Some("p-caller"));
+    assert_eq!(undo_act.compensation["adopt"]["displaced"].as_str(), Some(x.id.to_string().as_str()));
+    assert_eq!(undo_act.compensation["adopt"]["binding"]["tab_id"].as_str(), Some("t9"));
+}
+
+#[test]
+fn adoption_without_an_observed_pane_stays_unknown_until_the_observer_looks() {
+    let fx = fx();
+    let (_, f_clone, _, act) = adoption_fixture(&fx, "p-caller");
+    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
+    // Herdr did not list the pane when the undo was applied: nothing is claimed about it.
+    let row = apply_plan_from_pane(&fx, &sp, "p-caller", None);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let adopted = clone_by_id(&fx, &f_clone.id);
+    assert_eq!(adopted.runtime.availability, Availability::Unknown);
     assert_eq!(adopted.runtime.bound.unwrap().pane_id, Some(HerdrPaneId("p-caller".into())));
 }
 

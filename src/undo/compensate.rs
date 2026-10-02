@@ -1,6 +1,6 @@
 //! The `undo` organizational kind (spec §6): previews and applies compensating operations. An undo is its
 //! own action (`kind = undo`, `undoes = <act_>`); the original action's `undone_by` records the op.
-use super::adopt::adoption;
+use super::adopt::{ADOPT_BINDING_KEY, adoption};
 use super::candidates::{is_undoable, read_action};
 use super::preview::{
     Inverse, closes_caller, compute_restore, read_application, read_clone, restore_preview, template_edit_args,
@@ -11,7 +11,7 @@ use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
 use crate::model::change::RequestKind;
 use crate::model::clone::CloneRecord;
-use crate::model::common::{AppLifecycle, Availability, CloneLifecycle, Lifecycle, RetireMechanism, Retirement, Runtime};
+use crate::model::common::{AppLifecycle, Binding, CloneLifecycle, Lifecycle, RetireMechanism, Retirement, Runtime};
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::template::Relationship;
@@ -220,6 +220,10 @@ fn restore_mutate(
     caller_pane: Option<&str>,
     plan: &Plan,
 ) -> Result<(), MutationError> {
+    // The caller's pane as Herdr showed it when `undo.apply` admitted the op: an observed input carried in the
+    // request envelope (`_` keys are outside the plan's args), not a recomputed effect.
+    let observed: Option<Binding> =
+        cx.request.args.get(ADOPT_BINDING_KEY).and_then(|v| serde_json::from_value(v.clone()).ok());
     let mut reserved = plan.reserved.clone();
     let r = compute_restore(&cx.tree, orig, &mut reserved).map_err(mm)?;
     let runtime = r.runtime_clones(&cx.tree).map_err(mm)?;
@@ -311,14 +315,20 @@ fn restore_mutate(
             .tree
             .read_record(&loc.record_path)?
             .ok_or_else(|| MutationError::Bug(format!("adopted clone {} vanished", a.clone)))?;
-        // Bound but `unknown` keeps the reconciler from opening a second pane before the observer confirms
-        // this one; the binding write after commit makes it `present`.
-        rec.runtime = Runtime { availability: Availability::Unknown, bound: Some(a.binding()), observed_at: Some(cx.now) };
+        // The adopted clone commits with the caller's pane bound and `present`: the commit that wakes the
+        // reconciler already holds the binding, so there is no restored clone without a pane to create one for.
+        let (availability, binding) = a.committed_runtime(observed.as_ref());
+        rec.runtime = Runtime { availability, bound: Some(binding), observed_at: Some(cx.now) };
+        let mut seat = read_seat(&cx.tree, &rec.seat).map_err(mm)?;
+        seat.rec.activation.last_op = Some(cx.op.clone());
+        cx.tree.put_record(seat.loc.record_path.clone(), &mut seat.rec)?;
         cx.tree.put_record(loc.record_path, &mut rec)?;
         let mut t = toml::Table::new();
         t.insert("clone".into(), toml::Value::String(a.clone.to_string()));
         t.insert("pane".into(), toml::Value::String(a.pane.clone()));
-        if let Ok(b) = toml::Value::try_from(a.binding()) {
+        if let Some(rt) = &rec.runtime.bound
+            && let Ok(b) = toml::Value::try_from(rt)
+        {
             t.insert("binding".into(), b);
         }
         if let Some((x, _)) = &a.displaced {

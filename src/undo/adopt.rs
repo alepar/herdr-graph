@@ -1,11 +1,14 @@
 //! Caller-pane adoption (spec §6): when an undo restores runtime presence, the pane the caller is typing
 //! in becomes one of the restored clones instead of a second pane being opened next to it.
+use crate::model::CloneId;
 use crate::model::common::{Availability, Binding, CloneLifecycle, HerdrPaneId, Occupant};
-use crate::model::{ActionId, CloneId};
-use crate::ports::store::{Store, StoreError};
-use crate::ports::writer::{Writer, WriterError};
+use crate::ports::herdr::HerdrSnapshot;
+use crate::ports::store::StoreError;
 use crate::store::layout;
-use crate::store::tree::{CommitView, TreeRead};
+use crate::store::tree::TreeRead;
+
+/// Request-envelope key (outside the confirmed plan's args) carrying the caller's pane binding.
+pub const ADOPT_BINDING_KEY: &str = "_adopt_binding";
 
 /// The restored clone that takes over the caller's pane, and the clone that held the pane until now.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +54,19 @@ impl Adoption {
         }
     }
 
+    /// What the adopted clone's runtime is committed as. `observed` is the caller's pane as Herdr showed it when
+    /// the undo was applied: the clone is `present` and bound to it, so nothing creates a second pane. Without
+    /// it (the pane was not listed) the clone stays `unknown` with the pane-only binding, which blocks creates
+    /// until the observer has looked.
+    pub fn committed_runtime(&self, observed: Option<&Binding>) -> (Availability, Binding) {
+        match observed {
+            Some(b) if b.pane_id.as_ref().is_some_and(|p| p.0 == self.pane) => {
+                (Availability::Present, Binding { token: None, ..b.clone() })
+            }
+            _ => (Availability::Unknown, self.binding()),
+        }
+    }
+
     /// Why the adoption cannot go ahead: the pane's current clone (`described`) is occupied by a running session.
     pub fn conflict(&self, described: &str) -> Option<String> {
         let (clone, occ) = self.displaced.as_ref()?;
@@ -64,22 +80,19 @@ impl Adoption {
     }
 }
 
-/// Admit the binding write for the adopted pane after the undo op committed: reads the adoption the undo
-/// recorded in its action's compensation. Returns whether a binding write was admitted (false when the
-/// action adopted nothing).
-pub fn admit_adopted_binding(store: &dyn Store, writer: &dyn Writer, action: &ActionId) -> Result<bool, WriterError> {
-    let head = store.head().map_err(|e| WriterError::Invalid(e.to_string()))?;
-    let view = CommitView { store, at: head };
-    let rec = super::candidates::read_action(&view, action).map_err(|e| WriterError::Invalid(e.to_string()))?;
-    let Some(adopt) = rec.and_then(|r| r.compensation.get("adopt").and_then(|v| v.as_table().cloned())) else {
-        return Ok(false);
-    };
-    let Some(clone) = adopt.get("clone").and_then(|v| v.as_str()).and_then(|s| s.parse::<CloneId>().ok()) else {
-        return Ok(false);
-    };
-    let Some(binding) = adopt.get("binding").cloned().and_then(|v| v.try_into::<Binding>().ok()) else {
-        return Ok(false);
-    };
-    crate::reconcile::bookkeeping::admit_binding(writer, &clone.to_any(), &binding, Availability::Present)?;
-    Ok(true)
+/// The caller's pane as `snap` shows it: the binding the adopted clone commits with (no token: the reconciler
+/// stamps the clone's token on its next step). None when Herdr does not list the pane.
+pub fn caller_binding(snap: &HerdrSnapshot, pane: &str) -> Option<Binding> {
+    snap.workspaces.iter().find_map(|w| {
+        w.tabs.iter().find_map(|t| {
+            t.panes.iter().find(|p| p.id.0 == pane).map(|p| Binding {
+                token: None,
+                workspace_id: Some(w.id.clone()),
+                tab_id: Some(t.id.clone()),
+                pane_id: Some(p.id.clone()),
+                terminal_id: p.terminal_id.clone(),
+                incarnation: snap.incarnation.clone(),
+            })
+        })
+    })
 }

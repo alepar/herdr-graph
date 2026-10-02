@@ -361,6 +361,15 @@ pub fn plan_effects(
                     if tab.moved_out || tab.is_unknown() {
                         continue;
                     }
+                    // A clone adopted into a pane outside the seat's own tab (undo from the caller's pane) is bound
+                    // to a live pane already: it needs its token, and no tab of its own.
+                    for p in &panes {
+                        if let Some(lp) = idx.pane(&p.clone)
+                            && !lp.stamped
+                        {
+                            o.mk(EffectKind::StampToken, p.clone.to_any(), p.rev, vec![], None, vec![]);
+                        }
+                    }
                     let missing = idx.missing_clones(&tab.seat);
                     let Some(first) = missing.first() else { continue };
                     let ct = o.mk(

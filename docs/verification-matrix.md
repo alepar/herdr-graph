@@ -36,7 +36,7 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 | close a tab: seat and all its clones retire, folder archived, undoable "tab closure" | 4.3, 6 | verified-real | `e2e_close_tab_retires_seat_and_clones` |
 | close a workspace: every seat of the teamspace retires, dormant ones included, teamspace retires, nothing recreated | 4.3 | verified-real | `e2e_close_workspace_retires_all_incl_dormant` |
 | undo a tab closure: seat and clones active again, restored in a NEW tab | 6 | verified-real | `e2e_undo_tab_close_restores_in_new_tab` |
-| undo run from a pane of the private Herdr adopts that pane as the restored clone (pane-closure and tab-closure variants) | 6 | assumed | DEFECT D1: `e2e_undo_from_pane_adopts_caller_pane`, `e2e_undo_tab_close_from_pane_adopts_caller_pane` (both `#[ignore]`); the undo commits but the caller pane is never bound |
+| undo run from a pane of the private Herdr adopts that pane as the restored clone (pane-closure and tab-closure variants) | 6 | verified | D1 (fixed by hg-zmi.51): `e2e_undo_from_pane_adopts_caller_pane`, `e2e_undo_tab_close_from_pane_adopts_caller_pane` |
 | template edit adding a member opens exactly one new tab, existing members untouched | 5 | verified-real | `e2e_template_edit_adds_member_new_tab` |
 | application retire closes the application's exclusive seats and their tabs, a bystander seat stays | 5 | verified-real | `e2e_application_retire_closes_exclusive_seats` |
 | events withheld from the daemon (SIGSTOP burst: 60 renames, final rename, pane close) converge from a fresh snapshot | 4.3.1 | verified-real | `e2e_event_loss_reconnect_converges`; whether Herdr buffers or drops the withheld events was not distinguished, so a truly dropped event is not shown at this tier (tier 2: `src/observe/tests.rs`) |
@@ -115,12 +115,15 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 These are product defects, reported to the coordinator, not fixed here (task 19 changes no source). Each has an
 `#[ignore]`d test that reproduces it: `cargo test --features private-herdr --test e2e_private_herdr -- --ignored <name>`.
 
-- **D1: undo adoption of the caller's pane loses a race with the reconciler.** `undo` run from a pane commits with
+- **D1 (fixed by hg-zmi.51): undo adoption of the caller's pane lost a race with the reconciler.** `undo` run from a pane commits with
   `undo.adopt_pane pane=<caller>`; the daemon admits the adopted binding only after the op has committed, but the
   commit wakes the reconciler, which sees the restored clone without a live pane and creates one (a `split_pane`
   after a pane closure, a new tab after a tab closure). The new pane takes the token and the binding; the caller's
-  pane stays unbound. Seen in both variants. Code: `src/undo/adopt.rs` (`admit_adopted_binding`, called from
-  `src/undo/commands.rs`), `src/reconcile/planner.rs` (`missing_clones`).
+  pane stays unbound. Seen in both variants. Fix (hg-zmi.51): `undo.apply` reads the caller pane from Herdr's
+  snapshot and the undo commit itself writes the adopted clone as `present` with the full binding (the post-commit
+  `admit_adopted_binding` watcher is gone); `src/reconcile/planner.rs` stamps the token of a bound live pane
+  outside the seat's own tab instead of creating a tab. Code: `src/undo/adopt.rs`, `src/undo/commands.rs`,
+  `src/undo/compensate.rs`.
 - **D2: no token re-stamp after `clone rebind`.** The reconciler emits `stamp_token` with the clone's creation rev, so
   the effect id (`EffectRecord::identity(op, object, kind, rev)`) equals the original, already `done` effect and nothing
   runs. The binding names the pane but Herdr's pane metadata stays empty, so `LiveIndex::pane` works only through
