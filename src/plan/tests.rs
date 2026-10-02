@@ -1310,3 +1310,22 @@ mod effective {
         assert!(!resume(Harness::Shell, Harness::Shell), "shell has no resume");
     }
 }
+
+#[test]
+fn corrupt_plan_store_entry_fails_the_op() {
+    let fx = fx();
+    let broken = plan(&fx, "teamspace create beta");
+    let good = plan(&fx, "teamspace create gamma");
+    let admit = |sp: &StoredPlan| {
+        admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap()
+    };
+    let bad_op = admit(&broken);
+    let good_op = admit(&good);
+    std::fs::write(fx.root.join(format!(".graph-local/plans/{}.json", broken.plan.id)), "{not json").unwrap();
+    fx.w.drain().unwrap();
+    let bad = fx.w.journal().get(&bad_op).unwrap().unwrap();
+    assert_eq!(bad.state, OpState::Failed);
+    assert!(bad.rejection.unwrap().reason.contains("corrupt"), "reason names the corruption");
+    assert_eq!(fx.w.journal().get(&good_op).unwrap().unwrap().state, OpState::Committed);
+    assert_eq!(fx.w.journal().meta_get(crate::writer::WRITER_HALTED).unwrap(), None);
+}

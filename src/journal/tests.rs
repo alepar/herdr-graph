@@ -276,3 +276,31 @@ fn journal_pragmas_wal_and_full() {
     let sync: i64 = conn.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
     assert_eq!((mode.as_str(), sync), ("wal", 2));
 }
+
+#[test]
+fn finish_committed_superseding_is_atomic() {
+    let (_t, j) = open();
+    let old = j.admit(&req("old"), t0()).unwrap();
+    j.begin_applying(&old, t0()).unwrap();
+    j.finish_committed(&old, &CommitId("c0".into()), None, t0()).unwrap();
+    let new = j.admit(&req("new"), t0()).unwrap();
+    j.begin_applying(&new, t0()).unwrap();
+    let c1 = CommitId("c1".into());
+
+    j.execute_batch_for_test(
+        "CREATE TRIGGER t BEFORE UPDATE OF state ON ops WHEN NEW.state='superseded' \
+         BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+    )
+    .unwrap();
+    assert!(j.finish_committed_superseding(&new, &c1, None, Some(&old), t0()).is_err());
+    let r = j.get(&new).unwrap().unwrap();
+    assert_eq!((r.state, r.commit), (OpState::Applying, None), "the commit half rolled back");
+    assert_eq!(j.get(&old).unwrap().unwrap().state, OpState::Committed);
+
+    j.execute_batch_for_test("DROP TRIGGER t;").unwrap();
+    j.finish_committed_superseding(&new, &c1, None, Some(&old), t0()).unwrap();
+    let r = j.get(&new).unwrap().unwrap();
+    assert_eq!((r.state, r.commit), (OpState::Committed, Some(c1)));
+    let o = j.get(&old).unwrap().unwrap();
+    assert_eq!((o.state, o.superseded_by), (OpState::Superseded, Some(new)));
+}

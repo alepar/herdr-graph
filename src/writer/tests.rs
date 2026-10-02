@@ -123,6 +123,13 @@ impl Mutation for TestBug {
     }
 }
 
+struct TestCorrupt;
+impl Mutation for TestCorrupt {
+    fn apply(&self, _: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        Err(MutationError::Store(StoreError::Corrupt { path: "teamspaces/x/teamspace.toml".into(), reason: "bad toml".into() }))
+    }
+}
+
 /// Fails with an infrastructure error the first `n` times.
 struct TestFlaky(std::sync::atomic::AtomicU32);
 impl Mutation for TestFlaky {
@@ -154,6 +161,7 @@ fn fx_with(cfg: WriterConfig) -> Fx {
     reg.register("bookkeeping.move", Arc::new(TestMove));
     reg.register("bookkeeping.panic", Arc::new(TestPanic));
     reg.register("bookkeeping.bug", Arc::new(TestBug));
+    reg.register("bookkeeping.corrupt", Arc::new(TestCorrupt));
     reg.register("bookkeeping.flaky", Arc::new(TestFlaky(std::sync::atomic::AtomicU32::new(5))));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
@@ -723,4 +731,134 @@ async fn run_loop_processes_admitted_ops_and_stops_on_shutdown() {
     assert_eq!(state, Some(OpState::Committed));
     tx.send(true).unwrap();
     tokio::time::timeout(Duration::from_secs(3), handle).await.unwrap().unwrap();
+}
+
+fn trigger(fx: &Fx, state: &str) {
+    fx.w.journal()
+        .execute_batch_for_test(&format!(
+            "CREATE TRIGGER t BEFORE UPDATE OF state ON ops WHEN NEW.state='{state}' \
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;"
+        ))
+        .unwrap();
+}
+
+fn drop_trigger(fx: &Fx) {
+    fx.w.journal().execute_batch_for_test("DROP TRIGGER t;").unwrap();
+}
+
+#[test]
+fn corrupt_data_fails_only_that_op() {
+    let fx = fx();
+    let bad = fx.w.admit(book("corrupt", json!({}))).unwrap();
+    let good = fx.w.admit(pair(1)).unwrap();
+    let out = fx.w.drain().unwrap();
+    assert!(matches!(out[..], [StepOutcome::Failed(..), StepOutcome::Committed(..)]), "{out:?}");
+    let r = row(&fx, &bad);
+    assert_eq!(r.state, OpState::Failed);
+    assert!(r.rejection.unwrap().reason.contains("corrupt"));
+    assert_eq!(row(&fx, &good).state, OpState::Committed);
+    assert_eq!(fx.w.infra_failures.load(Ordering::SeqCst), 0);
+    assert_eq!(fx.w.journal().meta_get(WRITER_HALTED).unwrap(), None);
+}
+
+#[test]
+fn begin_applying_journal_error_counts_and_halts() {
+    let fx = fx_with(WriterConfig { infra_backoff: Duration::from_millis(5), ..Default::default() });
+    fx.w.admit(pair(1)).unwrap();
+    trigger(&fx, "applying");
+    for i in 1..=WriterConfig::default().infra_retries {
+        assert!(matches!(fx.w.step(), Err(WriterError::Journal(_))));
+        assert_eq!(fx.w.infra_failures.load(Ordering::SeqCst), i);
+    }
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    rt.block_on(async {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(fx.w.clone().run(rx));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while fx.w.journal().meta_get(WRITER_HALTED).unwrap().is_none() {
+            assert!(std::time::Instant::now() < deadline, "writer never halted");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tx.send(true).unwrap();
+        task.await.unwrap();
+    });
+    let reason = fx.w.journal().meta_get(WRITER_HALTED).unwrap().unwrap();
+    assert!(reason.contains("infrastructure failures"), "{reason}");
+}
+
+#[test]
+fn poison_finish_failed_error_counts() {
+    let fx = fx();
+    let op = fx.w.admit(pair(1)).unwrap();
+    for _ in 1..=3 {
+        fx.w.journal().begin_applying(&op, t0()).unwrap();
+        fx.w.journal().requeue(&op, true, t0()).unwrap();
+    }
+    trigger(&fx, "failed");
+    assert!(matches!(fx.w.step(), Err(WriterError::Journal(_))));
+    assert_eq!(fx.w.infra_failures.load(Ordering::SeqCst), 1);
+    assert_eq!(row(&fx, &op).state, OpState::Applying, "not failed: the journal write was refused");
+}
+
+#[test]
+fn post_cas_journal_failure_halts_and_resume_completes() {
+    let fx = fx();
+    let op = fx.w.admit(pair(1)).unwrap();
+    trigger(&fx, "committed");
+    let err = fx.w.step().unwrap_err();
+    assert!(matches!(&err, WriterError::Halted(m) if m.contains(op.as_str())), "{err:?}");
+    assert_eq!(trailer_count(&fx, &op), 1);
+    assert_eq!(row(&fx, &op).state, OpState::Applying);
+    assert!(fx.w.journal().meta_get(WRITER_HALTED).unwrap().unwrap().contains(op.as_str()));
+    drop_trigger(&fx);
+    fx.w.resume().unwrap();
+    assert_eq!(row(&fx, &op).state, OpState::Committed);
+    assert_eq!(trailer_count(&fx, &op), 1);
+    assert_eq!(fx.w.drain().unwrap(), vec![], "the committed op is not applied again");
+}
+
+fn superseding_pair(fx: &Fx) -> (OpId, OpId) {
+    let first = fx.w.admit(rename(&fx.seed.a, "one", Some(1))).unwrap();
+    fx.w.drain().unwrap();
+    let mut again = rename(&fx.seed.a, "two", Some(2));
+    again.supersedes = Some(first.clone());
+    let second = fx.w.admit(again).unwrap();
+    (first, second)
+}
+
+#[test]
+fn supersede_failure_rolls_back_commit_completion() {
+    let fx = fx();
+    let (first, second) = superseding_pair(&fx);
+    trigger(&fx, "superseded");
+    assert!(matches!(fx.w.step(), Err(WriterError::Halted(_))));
+    assert_eq!(row(&fx, &second).state, OpState::Applying, "commit completion rolled back with the supersede");
+    assert_eq!(row(&fx, &first).state, OpState::Committed);
+    drop_trigger(&fx);
+    fx.w.resume().unwrap();
+    assert_eq!(row(&fx, &second).state, OpState::Committed);
+    let a = row(&fx, &first);
+    assert_eq!((a.state, a.superseded_by), (OpState::Superseded, Some(second)));
+}
+
+#[test]
+fn recovery_reapplies_missing_supersede() {
+    let fx = fx();
+    let base = fx.w.store().head().unwrap();
+    let (first, second) = superseding_pair(&fx);
+    fx.w.drain().unwrap();
+    assert_eq!(row(&fx, &first).state, OpState::Superseded);
+    // The old two-write crash: committed, but the supersede never landed.
+    fx.w.journal()
+        .execute_batch_for_test(&format!(
+            "UPDATE ops SET state='committed', superseded_by=NULL WHERE op_id='{first}'"
+        ))
+        .unwrap();
+    fx.w.journal().set_checkpoint(&base).unwrap();
+    let report = fx.w.recover().unwrap();
+    assert_eq!(report.resuperseded, vec![second.clone()]);
+    assert!(report.marked_committed.is_empty());
+    let a = row(&fx, &first);
+    assert_eq!((a.state, a.superseded_by), (OpState::Superseded, Some(second)));
+    assert!(fx.w.recover().unwrap().resuperseded.is_empty(), "idempotent");
 }

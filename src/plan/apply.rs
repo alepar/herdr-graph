@@ -6,6 +6,7 @@ use super::store::PlanStore;
 use super::types::{PlanEffect, StoredPlan};
 use crate::model::PlanId;
 use crate::model::operation::Confirmation;
+use crate::ports::store::StoreError;
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, Reject};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,7 +61,13 @@ impl Mutation for OrgMutation {
         let stored = self
             .plans
             .get(&plan_id)
-            .map_err(|e| MutationError::Store(e.into()))?
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::InvalidData => MutationError::Store(StoreError::Corrupt {
+                    path: format!("plans/{plan_id}.json"),
+                    reason: e.to_string(),
+                }),
+                _ => MutationError::Store(e.into()),
+            })?
             .ok_or_else(|| reject("unknown_plan", format!("plan {plan_id} is not in the plan store")))?;
 
         // 2. the confirmation names exactly this plan
