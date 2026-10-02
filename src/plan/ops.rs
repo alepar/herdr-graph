@@ -560,6 +560,7 @@ mod tests {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         let op = fx.w.admit(req).unwrap();
         reassign(j(&fx), &*fx.store, &op, &two.id, t0()).unwrap();
