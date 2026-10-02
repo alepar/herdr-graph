@@ -84,11 +84,6 @@ pub fn main() -> ExitCode {
     }
 }
 
-/// Placeholder result for command groups whose bead has not landed yet.
-pub fn not_implemented(what: &str) -> anyhow::Result<ExitCode> {
-    anyhow::bail!("`herdr-graph {what}` is not implemented yet")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,12 +136,5 @@ mod tests {
             let full: Vec<&str> = std::iter::once("herdr-graph").chain(argv.iter().copied()).collect();
             Cli::try_parse_from(&full).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         }
-    }
-
-    #[test]
-    fn stub_commands_report_not_implemented() {
-        let cli = Cli::try_parse_from(["herdr-graph", "session-report", "--from-hook", "claude"]).unwrap();
-        let err = run(cli).unwrap_err();
-        assert!(err.to_string().contains("not implemented"));
     }
 }

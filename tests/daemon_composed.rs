@@ -674,12 +674,23 @@ mod subprocess {
             assert!(Instant::now() < deadline, "workspace and tab never created; log: {}", f.daemon_log());
             std::thread::sleep(Duration::from_millis(50));
         }
+        // Let every effect of phase 1 finish: one still pending at shutdown would run first in phase 2 and take
+        // the armed failpoint instead of the worker's CreateTab.
+        loop {
+            let status = f.client().call("status", json!({})).unwrap();
+            let r = &status["components"]["reconciler"];
+            if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "phase 1 effects never settled: {status}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut first);
         assert_eq!(f.fake_count("create_tab"), 1, "only the keeper's tab so far");
 
         // Phase 2: activating the seat dispatches CreateTab, and the daemon dies before it records the result.
-        let mut doomed = f.spawn_daemon(Some("reconcile.mid_effect=exit:42"));
+        let mut doomed = f.spawn_daemon(Some("reconcile.mid_effect.create_tab=exit:42"));
         let _ = f.apply(&f.plan(&["seat", "activate", "worker"]));
         assert_eq!(wait_exit(&mut doomed).code(), Some(42), "{}", f.daemon_log());
         assert_eq!(f.fake_count("create_tab"), 2, "the worker's CreateTab reached Herdr before the crash");
