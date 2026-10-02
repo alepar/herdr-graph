@@ -1064,3 +1064,53 @@ async fn multiple_clones_split_into_one_tab() {
     let tab = snap.workspaces.iter().flat_map(|w| &w.tabs).find(|t| t.label == "foreman").unwrap();
     assert_eq!(tab.panes.len(), 2);
 }
+
+#[tokio::test]
+async fn adopted_pane_of_retired_clone_is_not_closed() {
+    use super::planner::{LiveRef, live_ref, set_live_ref};
+    let fx = fx();
+    activate(&fx, "shell");
+    step(&fx).await;
+    let a = only_clone(&fx, "foreman");
+    let pa = pane_of(&fx, &a);
+    commit(&fx, "clone add foreman --name second");
+    let s = seat(&fx, "foreman");
+    let b = clones_of(&fx, &s.id).into_iter().find(|c| c.id != a.id).unwrap();
+    commit(&fx, &format!("clone retire {}", a.id));
+
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let (ws, tab, pane) = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter().map(move |t| (w, t)))
+        .flat_map(|(w, t)| t.panes.iter().map(move |p| (w, t, p)))
+        .find(|(_, _, p)| p.id == pa)
+        .unwrap();
+    // The undo's adoption: B's committed binding names PA, which still carries hg=<A>, and the journal still
+    // holds the live ref the original create of A left behind.
+    set_live_ref(
+        &fx.journal,
+        &a.id.to_any(),
+        &LiveRef { workspace: Some(ws.id.clone()), tab: Some(tab.id.clone()), pane: Some(pa.clone()), incarnation: snap.incarnation.clone() },
+    );
+    let binding = Binding {
+        token: None,
+        workspace_id: Some(ws.id.clone()),
+        tab_id: Some(tab.id.clone()),
+        pane_id: Some(pa.clone()),
+        terminal_id: pane.terminal_id.clone(),
+        incarnation: snap.incarnation.clone(),
+    };
+    admit_binding(&*fx.w, &b.id.to_any(), &binding, Availability::Present).unwrap();
+    fx.w.drain().unwrap();
+
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(_))), 0, "{:?}", calls(&fx));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SplitPane(_) | FakeCall::CreateTab(_))), 0, "{:?}", calls(&fx));
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let live = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).find(|p| p.id == pa).expect("PA survives");
+    assert_eq!(live.metadata.get("hg"), Some(&format!("hg={}", b.id)));
+    assert_eq!(live_ref(&fx.journal, &a.id.to_any()), None);
+}

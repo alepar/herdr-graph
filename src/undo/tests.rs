@@ -452,6 +452,20 @@ fn adoption_preview_with_bound_caller_pane() {
 }
 
 #[test]
+fn adoption_preview_from_bound_pane_does_not_warn_pane_closes() {
+    let fx = fx();
+    let (_, f_clone, x, act) = adoption_fixture(&fx, "p-caller");
+    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
+    assert!(!sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING), "the pane is adopted, not closed: {:?}", sp.plan.warnings);
+    let adopt = sp.plan.effects.iter().find(|e| e.kind == "undo.adopt_pane").expect("the adoption is named");
+    assert_eq!(adopt.object, f_clone.id.to_any());
+    assert_eq!(adopt.detail["displaced_clone"], json!(x.id));
+    let retire = sp.plan.effects.iter().find(|e| e.kind == "clone.retire").unwrap();
+    assert_eq!((retire.object.clone(), &retire.detail["displaced_by_undo"]), (x.id.to_any(), &json!(true)));
+    assert_eq!(retire.detail["binding"]["pane_id"], json!("p-caller"), "the displaced clone's binding is shown");
+}
+
+#[test]
 fn adoption_without_an_observed_pane_stays_unknown_until_the_observer_looks() {
     let fx = fx();
     let (_, f_clone, _, act) = adoption_fixture(&fx, "p-caller");

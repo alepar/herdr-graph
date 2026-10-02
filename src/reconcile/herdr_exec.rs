@@ -4,7 +4,9 @@ use super::ReconcilerConfig;
 use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
-use super::planner::{LiveIndex, LiveRef, TOKEN_KEY, launched_key, plan_effects, set_live_ref, token_of};
+use super::planner::{
+    LiveIndex, LiveRef, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects, set_live_ref, token_of,
+};
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
@@ -300,6 +302,12 @@ impl HerdrExecutor {
         if let Err(err) = cx.herdr.report_pane_metadata(&pane.id, TOKEN_KEY, &token).await {
             return transient_or_failed(err);
         }
+        // Any other clone's live ref that still names this pane is stale now (the pane was adopted).
+        for c in d.clones.keys().filter(|c| **c != clone) {
+            if live_ref(&self.journal, &c.to_any()).is_some_and(|l| l.pane.as_ref() == Some(&pane.id)) {
+                delete_live_ref(&self.journal, &c.to_any());
+            }
+        }
         self.write_binding(
             cx,
             &e.object,
@@ -456,7 +464,13 @@ impl EffectExecutor for HerdrExecutor {
                 idempotent(cx.herdr.rename_pane(&lp.pane.id, &p.name).await)
             }
             EffectKind::ClosePane => {
-                let Some(lp) = clone_of(e).and_then(|c| idx.pane(&c)) else { return ExecOutcome::Done };
+                let Some(clone) = clone_of(e) else { return ExecOutcome::Done };
+                let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Done };
+                if idx.pane_claimed_by(&lp.pane.id, &clone).is_some() {
+                    // The pane belongs to another clone's committed binding now (adopted by an undo).
+                    delete_live_ref(&self.journal, &clone.to_any());
+                    return ExecOutcome::Obsolete;
+                }
                 close_outcome(cx.herdr.close_pane(&lp.pane.id).await)
             }
             EffectKind::CloseTab => {

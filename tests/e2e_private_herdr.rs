@@ -579,8 +579,15 @@ fn e2e_undo_tab_close_restores_in_new_tab() {
 /// Returns the pane id and waits until the undo op committed.
 fn undo_from_new_pane(rig: &E2e) -> String {
     let caller = rig.plain_pane("caller");
+    undo_from_pane(rig, &caller);
+    caller
+}
+
+/// `herdr-graph undo` run in `caller` (picks the newest action, confirms) until the undo committed. Returns the
+/// text the command printed, preview included.
+fn undo_from_pane(rig: &E2e, caller: &str) -> String {
     let log = rig.herdr.root.join("undo-pane.log");
-    rig.pane_sh(&caller, &format!("HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}", rig.instance.display(), log.display()));
+    rig.pane_sh(caller, &format!("HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}", rig.instance.display(), log.display()));
     let read = || std::fs::read_to_string(&log).unwrap_or_default();
     rig.wait_until("the action list", WAIT, |_| read().contains("Select action number"));
     rig.raw_ok("pane.send_text", json!({ "pane_id": caller, "text": "1\n" }));
@@ -588,7 +595,41 @@ fn undo_from_new_pane(rig: &E2e) -> String {
     rig.raw_ok("pane.send_text", json!({ "pane_id": caller, "text": "y\n" }));
     rig.wait_until("the undo to commit", WAIT, |_| read().contains("committed"));
     rig.wait_settled();
-    caller
+    read()
+}
+
+/// F2 (hg-zmi.54): undo run from a pane bound to another clone A adopts that pane for the restored clone B. A is
+/// retired with its history, and the pane is never closed (no new pane, no closed pane).
+#[test]
+fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {
+    let rig = rig!();
+    let (_, clones) = seat_with_clones(&rig, "t", "foreman", 1);
+    let (a, b) = (&clones[0], &clones[1]);
+    let a_pane = rig.pane_of(&a.id).unwrap().id.0;
+    let b_pane = rig.pane_of(&b.id).unwrap().id.0;
+    rig.raw_ok("pane.close", json!({ "pane_id": b_pane }));
+    rig.wait_until("B to retire", WAIT, |r| r.show(&b.id)["lifecycle"].as_str() == Some("retired"));
+    rig.wait_settled();
+    let sessions_a = rig.show(&a.id).get("sessions").cloned();
+    let panes_before = pane_infos(&rig.snapshot()).len();
+
+    let log = undo_from_pane(&rig, &a_pane);
+    rig.wait_until("A's pane to carry the restored clone's token", WAIT, |r| r.pane_of(&b.id).is_some_and(|p| p.id.0 == a_pane));
+    rig.wait_settled();
+
+    assert!(pane_infos(&rig.snapshot()).iter().any(|p| p.id.0 == a_pane), "the adopted pane survives");
+    assert_eq!(pane_infos(&rig.snapshot()).len(), panes_before, "no pane created, none closed");
+    let (b_now, a_now) = (rig.show(&b.id), rig.show(&a.id));
+    assert_eq!(b_now["lifecycle"].as_str(), Some("active"));
+    assert_eq!(tstr(&b_now, "runtime.bound.pane_id"), a_pane, "B is bound to the adopted pane");
+    assert_eq!(a_now["lifecycle"].as_str(), Some("retired"));
+    assert_eq!(tstr(&a_now, "retired.mechanism"), "undo");
+    assert_eq!(a_now.get("sessions").cloned(), sessions_a, "the displaced clone keeps its history");
+    assert!(!log.contains("closes your pane"), "the preview must not warn about closing the pane: {log}");
+    // Later observations do not retire B either.
+    std::thread::sleep(Duration::from_secs(2));
+    rig.wait_settled();
+    assert_eq!(rig.show(&b.id)["lifecycle"].as_str(), Some("active"));
 }
 
 /// D1 regression (hg-zmi.51): undo run from a pane commits with `undo.adopt_pane pane=<caller>` and the undo commit
