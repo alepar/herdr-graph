@@ -922,6 +922,12 @@ impl OrgKind for SeatRename {
         if f.rec.lifecycle == Lifecycle::Active {
             effects.push(PlanEffect::new("runtime.rename_tab", f.rec.id.clone(), json!({ "name": a.name })));
         }
+        // The threads source skips seats that are not active, so this is safe for dormant seats.
+        effects.push(PlanEffect::new(
+            "threads.notify_rename",
+            f.rec.id.clone(),
+            json!({ "seat": f.rec.id, "from": f.rec.name, "to": a.name, "path_from": from.as_str(), "path_to": to.as_str() }),
+        ));
         Ok(PlanBody {
             effects,
             relied_on: vec![rev_of(f.rec.id.clone(), f.rec.rev)],

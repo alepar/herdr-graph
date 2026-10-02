@@ -112,6 +112,7 @@ fn fx() -> Fx {
     kinds.register_mutations(&mut reg, plans.clone());
     crate::reconcile::register_mutations(&mut reg);
     register_mutations(&mut reg);
+    crate::observe::register_mutations(&mut reg);
     reg.register("bookkeeping.test_set_occupant", Arc::new(SetOccupant));
     reg.register("bookkeeping.test_clear_occupant", Arc::new(ClearOccupant));
     reg.register("bookkeeping.test_set_reload", Arc::new(SetReload));
@@ -146,6 +147,21 @@ fn bookkeeping(fx: &Fx, sub: &str, mut args: serde_json::Value) {
     let req = ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None };
     fx.w.admit(req).unwrap();
     fx.w.drain().unwrap();
+}
+
+fn observed(fx: &Fx, req: ChangeRequest) {
+    let op = fx.w.admit(req).unwrap();
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+}
+
+fn observed_rename(fx: &Fx, object: crate::model::AnyId, new: &str) {
+    observed(fx, crate::observe::mutations::rename_request(&object, new, crate::ports::clock::Clock::now(&*fx.clock), None));
+}
+
+fn notes_on(fx: &Fx, t: &ThreadRef) -> Vec<super::fake::FakeNotification> {
+    fx.threads.notifications().into_iter().filter(|n| &n.thread == t).collect()
 }
 
 fn view(fx: &Fx) -> crate::store::tree::CommitView<'_> {
@@ -598,6 +614,80 @@ async fn rename_notifies_seat_channels() {
     }
     steps(&fx, 2).await;
     assert_eq!(fx.threads.notifications().len(), 2, "once per seat");
+}
+
+#[tokio::test]
+async fn seat_rename_notifies_its_channel_with_the_new_path() {
+    let fx = fx();
+    base(&fx).await;
+    steps(&fx, 2).await;
+    let t = thread_of_seat(&fx, "foreman");
+    plan_and_apply(&fx, "seat rename foreman chief");
+    steps(&fx, 3).await;
+    let notes = notes_on(&fx, &t);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    let b = &notes[0].body;
+    assert!(b.contains("foreman") && b.contains("chief") && b.contains("teamspaces/alpha/seats/chief"), "{b}");
+    steps(&fx, 2).await;
+    assert_eq!(notes_on(&fx, &t).len(), 1);
+}
+
+#[tokio::test]
+async fn observed_seat_rename_notifies_its_channel() {
+    let fx = fx();
+    base(&fx).await;
+    steps(&fx, 2).await;
+    let t = thread_of_seat(&fx, "foreman");
+    observed_rename(&fx, seat(&fx, "foreman").id.to_any(), "chief");
+    steps(&fx, 3).await;
+    let notes = notes_on(&fx, &t);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    let b = &notes[0].body;
+    assert!(
+        b.contains("foreman") && b.contains("chief") && b.contains("in Herdr") && b.contains("teamspaces/alpha/seats/chief"),
+        "{b}"
+    );
+    steps(&fx, 2).await;
+    assert_eq!(notes_on(&fx, &t).len(), 1);
+}
+
+#[tokio::test]
+async fn observed_teamspace_rename_notifies_every_seat_channel() {
+    let fx = fx();
+    base(&fx).await;
+    plan_and_apply(&fx, "seat create second --teamspace alpha --active --harness shell");
+    steps(&fx, 3).await;
+    observed_rename(&fx, teamspace(&fx).id.to_any(), "beta");
+    steps(&fx, 3).await;
+    for name in ["foreman", "second"] {
+        let notes = notes_on(&fx, &thread_of_seat(&fx, name));
+        assert_eq!(notes.len(), 1, "{name}: {notes:?}");
+        let b = &notes[0].body;
+        assert!(b.contains("\"alpha\"") && b.contains("\"beta\"") && b.contains("teamspaces/beta"), "{b}");
+    }
+    assert_eq!(fx.threads.notifications().len(), 2);
+}
+
+#[tokio::test]
+async fn observed_clone_rename_notifies_its_seat_channel() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    steps(&fx, 2).await;
+    observed_rename(&fx, clone.id.to_any(), "twin");
+    steps(&fx, 3).await;
+    let notes = notes_on(&fx, &thread_of_seat(&fx, "foreman"));
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].body.contains("\"twin\"") && notes[0].body.contains("/clones/"), "{}", notes[0].body);
+}
+
+#[tokio::test]
+async fn noop_observed_rename_notifies_nobody() {
+    let fx = fx();
+    base(&fx).await;
+    steps(&fx, 2).await;
+    observed_rename(&fx, seat(&fx, "foreman").id.to_any(), "foreman");
+    steps(&fx, 3).await;
+    assert!(fx.threads.notifications().iter().all(|n| !n.body.contains("was renamed")), "{:?}", fx.threads.notifications());
 }
 
 #[tokio::test]

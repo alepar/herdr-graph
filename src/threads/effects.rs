@@ -9,7 +9,7 @@ use super::mapping::PaneSeatMap;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{CloneRecord, Invitation, InvitationState, InviteConstraint, ThreadsLink};
-use crate::model::common::{Channel, CloneLifecycle, CommitId, Lifecycle};
+use crate::model::common::{Channel, CloneLifecycle, CommitId, Lifecycle, NameSource};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
@@ -439,7 +439,7 @@ impl ThreadsSource {
         let mut out = Vec::new();
         let rows = journal.list(&[OpState::Committed], INTENT_SCAN).unwrap_or_default();
         for row in rows {
-            if !matches!(row.request.kind, RequestKind::TeamspaceRename | RequestKind::ParticipationLeave)
+            if !matches!(row.request.kind, RequestKind::TeamspaceRename | RequestKind::SeatRename | RequestKind::ParticipationLeave)
                 || row.updated_at < now - INTENT_WINDOW
             {
                 continue;
@@ -457,13 +457,22 @@ impl ThreadsSource {
                 let text = |k: &str| e.detail.get(k).and_then(|v| v.as_str()).unwrap_or("?").to_owned();
                 let (purpose, body) = match e.kind.as_str() {
                     "threads.notify_rename" => {
-                        let mut body = format!("Teamspace {:?} was renamed to {:?}.", text("from"), text("to"));
-                        if let Some((from, to)) = &moved
-                            && from != to
-                        {
-                            body.push_str(&format!(" Its repository folder moved from {from} to {to}."));
+                        if e.detail.get("seat").is_some() {
+                            let mut body = format!("Seat {:?} was renamed to {:?}.", text("from"), text("to"));
+                            let (from, to) = (text("path_from"), text("path_to"));
+                            if from != to {
+                                body.push_str(&format!(" Its folder moved from {from} to {to}."));
+                            }
+                            ("rename", body)
+                        } else {
+                            let mut body = format!("Teamspace {:?} was renamed to {:?}.", text("from"), text("to"));
+                            if let Some((from, to)) = &moved
+                                && from != to
+                            {
+                                body.push_str(&format!(" Its repository folder moved from {from} to {to}."));
+                            }
+                            ("rename", body)
                         }
-                        ("rename", body)
                     }
                     "participation.leave_instruction" => {
                         let seat = text("seat");
@@ -506,6 +515,94 @@ impl ThreadsSource {
         }
         out
     }
+
+    /// Observed renames (a tab, workspace or pane relabelled in Herdr) of recently committed ops -> a rename
+    /// notice, with the new folder path, to each affected active seat channel. The old name comes from the
+    /// committed `name_history` entry this op wrote; an op that recorded nothing (same name, retired object)
+    /// notifies nobody.
+    fn observed_rename_wants(&self, g: &Graph, tree: &dyn TreeRead, journal: &Journal, now: Timestamp) -> Vec<Want> {
+        let mut out = Vec::new();
+        let rows = journal.list(&[OpState::Committed], INTENT_SCAN).unwrap_or_default();
+        for row in rows {
+            let args = &row.request.args;
+            if row.request.kind != RequestKind::Observed
+                || args.get("sub").and_then(|v| v.as_str()) != Some("rename")
+                || row.updated_at < now - INTENT_WINDOW
+            {
+                continue;
+            }
+            let Some(object) = args.get("object").and_then(|v| serde_json::from_value::<AnyId>(v.clone()).ok()) else { continue };
+            let Some(new) = args.get("new").and_then(|v| v.as_str()) else { continue };
+            let Some(observed_at) = args.get("observed_at").and_then(|v| serde_json::from_value::<Timestamp>(v.clone()).ok())
+            else {
+                continue;
+            };
+            let history = |h: &[crate::model::common::NameChange]| {
+                h.iter()
+                    .rev()
+                    .find(|c| c.source == NameSource::Observed && c.new == new && c.observed_at == observed_at)
+                    .map(|c| c.old.clone())
+            };
+            let path_of = |id: &AnyId| layout::locate(tree, id).ok().flatten().map(|l| l.folder.as_str().to_owned());
+            let mut notes: Vec<(&SeatRecord, String)> = Vec::new();
+            match object.kind() {
+                IdKind::Teamspace => {
+                    let Some(ts) = TeamspaceId::parse(object.as_str()).ok().and_then(|i| g.teamspaces.get(&i)) else { continue };
+                    let Some(old) = history(&ts.name_history) else { continue };
+                    let Some(ts_path) = path_of(&object) else { continue };
+                    for seat in g.seats.values().filter(|s| s.teamspace == ts.id && g.seat_active(s)) {
+                        let Some(seat_path) = path_of(&seat.id.to_any()) else { continue };
+                        notes.push((
+                            seat,
+                            format!(
+                                "Teamspace {old:?} was renamed to {new:?} in Herdr. Its folder is now {ts_path}; this seat's folder is now {seat_path}."
+                            ),
+                        ));
+                    }
+                }
+                IdKind::Seat => {
+                    let Some(seat) = SeatId::parse(object.as_str()).ok().and_then(|i| g.seats.get(&i)) else { continue };
+                    let Some(old) = history(&seat.name_history) else { continue };
+                    if !g.seat_active(seat) {
+                        continue;
+                    }
+                    let Some(path) = path_of(&object) else { continue };
+                    notes.push((seat, format!("Seat {old:?} was renamed to {new:?} in Herdr. Its folder is now {path}.")));
+                }
+                IdKind::Clone => {
+                    let Some(clone) = CloneId::parse(object.as_str()).ok().and_then(|i| g.clones.get(&i)) else { continue };
+                    let Some(old) = history(&clone.name_history) else { continue };
+                    let Some(seat) = g.seats.get(&clone.seat).filter(|s| g.seat_active(s)) else { continue };
+                    let Some(path) = path_of(&object) else { continue };
+                    notes.push((
+                        seat,
+                        format!("Clone {old:?} of this seat was renamed to {new:?} in Herdr. Its folder is now {path}."),
+                    ));
+                }
+                _ => continue,
+            }
+            out.extend(notes.into_iter().map(|(seat, body)| rename_want(seat, &row.op, body)));
+        }
+        out
+    }
+}
+
+/// A rename notice for one seat channel; once per (op, seat) through the effect identity.
+fn rename_want(seat: &SeatRecord, op: &OpId, body: String) -> Want {
+    Want {
+        kind: EffectKind::Notify,
+        object: seat.id.to_any(),
+        op: op.clone(),
+        identity_rev: 0,
+        fencing_rev: seat.rev,
+        payload: Payload::Notify {
+            purpose: "rename".into(),
+            severity: Severity::Info,
+            body,
+            key: format!("notify:rename:{op}:{}", seat.id),
+        },
+        after: seat.channel.thread_id.is_none().then(|| After::Ensure(seat.id.to_any())).into_iter().collect(),
+    }
 }
 
 fn payload_key(id: &EffectId) -> String {
@@ -538,6 +635,7 @@ impl EffectSource for ThreadsSource {
         let mut wants = system_wants(&g, cx.journal);
         wants.extend(reload_wants(&g, cx.journal));
         wants.extend(self.intent_wants(&g, cx.journal, cx.now));
+        wants.extend(self.observed_rename_wants(&g, cx.tree, cx.journal, cx.now));
         wants.extend(self.dirty_wants(&g, cx.tree));
 
         // First pass: identities, dropping wants that an open row already covers.
