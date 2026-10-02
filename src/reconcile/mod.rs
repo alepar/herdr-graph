@@ -133,6 +133,14 @@ pub fn consume_prediction(journal: &Journal, ef: &EffectId) {
 
 const MAX_PASSES: usize = 32;
 
+/// A revision bump must not duplicate a waiting effect, except for families whose rows are keyed by payload.
+fn merges_into_open(kind: &EffectKind) -> bool {
+    !matches!(
+        kind,
+        EffectKind::Invite | EffectKind::ReleaseRequirement | EffectKind::Notify | EffectKind::Custom(_)
+    )
+}
+
 pub struct Reconciler {
     store: Arc<dyn Store>,
     journal: Arc<Journal>,
@@ -173,6 +181,16 @@ impl Reconciler {
             sources: RwLock::new(Vec::new()),
             executors: RwLock::new(vec![Arc::new(exec)]),
         })
+    }
+
+    /// The effect journal (components that key payloads to effect ids keep them in its `meta` table).
+    pub fn journal(&self) -> &Arc<Journal> {
+        &self.journal
+    }
+
+    /// The graph instance root this reconciler works on.
+    pub fn instance(&self) -> &std::path::Path {
+        &self.cfg.instance
     }
 
     /// Another component's effect family (threads, delivery): its diff runs with every step.
@@ -251,9 +269,15 @@ impl Reconciler {
                 canonical.insert(id.clone(), id.clone());
                 continue;
             }
-            let open = self.journal.effects_for_object(&p.record.object).unwrap_or_default().into_iter().find(|r| {
-                r.kind == p.record.kind && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
-            });
+            // Payload-keyed families (threads invites, releases, notifies, custom effects) carry their identity
+            // in the payload, so several open rows of one kind on one object are distinct work.
+            let open = merges_into_open(&p.record.kind)
+                .then(|| {
+                    self.journal.effects_for_object(&p.record.object).unwrap_or_default().into_iter().find(|r| {
+                        r.kind == p.record.kind && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
+                    })
+                })
+                .flatten();
             match open {
                 Some(r) => {
                     canonical.insert(id.clone(), r.id);

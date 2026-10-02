@@ -35,6 +35,26 @@ pub struct Invitation {
     pub thread: String,
     pub constraint: InviteConstraint,
     pub state: InvitationState,
+    /// Which threads seat was invited, for which occupant, and the ids threads reported (hg-zmi.11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<ThreadsLink>,
+}
+
+/// Threads-side identity of an invitation: enough to release a requirement after the occupant is gone and to
+/// print the exact `accept-required` command (spec §7.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThreadsLink {
+    /// The threads seat (mapped from the clone's pane) that was invited.
+    pub seat: String,
+    /// Native session record of the occupant the invitation was issued for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invitation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
