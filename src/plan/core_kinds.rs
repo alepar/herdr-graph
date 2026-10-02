@@ -16,7 +16,7 @@ use crate::model::harness::Harness;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{
-    ActionId, AnyId, CloneId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId,
+    ActionId, AnyId, AppId, CloneId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId,
 };
 use crate::ports::store::{ObjectLocation, RepoPath};
 use crate::store::layout;
@@ -240,6 +240,9 @@ pub(crate) struct Acc {
     pub(crate) retired: Vec<AnyId>,
     pub(crate) already: Vec<AnyId>,
     pub(crate) affected: Vec<AffectedObject>,
+    /// Application exclusions this retirement added, `(seat, application, member)`; recorded in the
+    /// action's compensation so resurrect/undo removes exactly these.
+    pub(crate) exclusions_added: Vec<(SeatId, AppId, MemberId)>,
 }
 
 impl Acc {
@@ -253,8 +256,22 @@ pub(crate) fn write_action(
     act: &ActionId,
     kind: ActionKind,
     acc: Acc,
-    compensation: toml::Table,
+    mut compensation: toml::Table,
 ) -> Result<(), MutationError> {
+    if !acc.exclusions_added.is_empty() && !compensation.contains_key("exclusions_added") {
+        let rows = acc
+            .exclusions_added
+            .iter()
+            .map(|(seat, app, member)| {
+                let mut t = toml::Table::new();
+                push_toml_str(&mut t, "seat", &seat.to_string());
+                push_toml_str(&mut t, "application", &app.to_string());
+                push_toml_str(&mut t, "member", &member.to_string());
+                toml::Value::Table(t)
+            })
+            .collect();
+        compensation.insert("exclusions_added".into(), toml::Value::Array(rows));
+    }
     let mut rec = ActionRecord {
         schema: SCHEMA_VERSION,
         id: act.clone(),
@@ -335,8 +352,42 @@ pub(crate) fn do_retire_seat(
     cx.tree.move_dir(&f.loc.folder, &archive)?;
     if exclusions {
         for (loc, mut app, member) in app_exclusions(&cx.tree, &f.rec).map_err(mm)? {
-            app.exclusions.push(member);
+            app.exclusions.push(member.clone());
             cx.tree.put_record(loc.record_path, &mut app)?;
+            acc.exclusions_added.push((f.rec.id.clone(), app.id.clone(), member));
+        }
+    }
+    Ok(())
+}
+
+/// Remove the application exclusions `seat`'s retirement `action` recorded, and only those.
+fn remove_recorded_exclusions(
+    cx: &mut MutationCx<'_>,
+    seat: &SeatId,
+    action: Option<&ActionId>,
+) -> Result<(), MutationError> {
+    let Some(action) = action else { return Ok(()) };
+    let Some(loc) = layout::locate(&cx.tree, &action.to_any())? else { return Ok(()) };
+    let Some(rec) = read_toml::<ActionRecord>(&cx.tree, &loc.record_path)? else {
+        return Ok(());
+    };
+    let rows = rec.compensation.get("exclusions_added").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for e in &rows {
+        let s = |k: &str| e.get(k).and_then(|v| v.as_str());
+        if s("seat") != Some(seat.to_string().as_str()) {
+            continue;
+        }
+        let (Some(app), Some(member)) = (s("application"), s("member")) else { continue };
+        let (Ok(app), Ok(member)) = (AppId::parse(app), MemberId::parse(member)) else { continue };
+        let Some(aloc) = layout::locate(&cx.tree, &app.to_any())? else { continue };
+        let Some(mut arec) = read_toml::<ApplicationRecord>(&cx.tree, &aloc.record_path)?
+        else {
+            continue;
+        };
+        let before = arec.exclusions.len();
+        arec.exclusions.retain(|m| *m != member);
+        if arec.exclusions.len() != before {
+            cx.tree.put_record(aloc.record_path, &mut arec)?;
         }
     }
     Ok(())
@@ -352,6 +403,7 @@ pub(crate) fn do_resurrect_seat(
 ) -> Result<(), MutationError> {
     let f = read_seat(&cx.tree, seat).map_err(mm)?;
     let action = f.rec.retired.as_ref().and_then(|r| r.action.clone());
+    remove_recorded_exclusions(cx, seat, action.as_ref())?;
     let mut clone_ids = Vec::new();
     for (loc, c) in &f.clones {
         if c.lifecycle != CloneLifecycle::Retired
