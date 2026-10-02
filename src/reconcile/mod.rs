@@ -389,6 +389,9 @@ impl Reconciler {
 
                 let outcome = exec.execute(&cx, &row).await;
                 crate::failpoint!("reconcile.mid_effect");
+                // The same point per effect kind: effect order within an op is by hash, so a crash test that
+                // needs "right after the CreateTab" arms `reconcile.mid_effect.create_tab`, not the generic name.
+                crate::failpoint!(&format!("reconcile.mid_effect.{}", row.kind.as_str()));
                 ran.insert(row.id.clone());
                 let now = self.clock.now();
                 row.attempts += 1;

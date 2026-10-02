@@ -727,7 +727,10 @@ fn effective_structure_reflects_exclusions_mapping_and_pending_members() {
 
 #[test]
 fn document_roundtrip_and_diff_paths() {
-    let (a, b, c) = (MemberId::new(), MemberId::new(), MemberId::new());
+    // `diff` orders members by id, and ULIDs minted in one millisecond are not ordered: sort them so a < b < c.
+    let mut ids = [MemberId::new(), MemberId::new(), MemberId::new()];
+    ids.sort();
+    let [a, b, c] = ids;
     let text = format!(
         r#"
 name = "tpl"
