@@ -5,7 +5,7 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{LiveIndex, LiveRef, TOKEN_KEY, launched_key, plan_effects, set_live_ref, token_of};
-use super::session::{Relaunch, advance_replacement, start_outcome, transient_or_failed};
+use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
@@ -147,7 +147,10 @@ impl HerdrExecutor {
                 clone_of(e).and_then(|c| d.pane(&c)).is_some_and(|p| p.occupant.is_none())
             }
             EffectKind::ReplaceSession => clone_of(e).and_then(|c| d.pane(&c).map(|p| (c, p))).is_some_and(|(c, p)| {
-                p.occupant.is_some() && self.launched(&c).is_some_and(|l| l != p.launch_shape())
+                // A replacement that has begun is finished even though the observer already recorded the old
+                // occupant as gone; one whose start response was lost (`Unknown`) has cleared its state.
+                (p.occupant.is_some() || e.status == EffectStatus::Unknown || session::has_state(&self.journal, &e.id))
+                    && self.launched(&c).is_some_and(|l| l != p.launch_shape())
             }),
             EffectKind::ClosePane => clone_of(e).is_some_and(|c| d.pane(&c).is_none()),
             EffectKind::CloseTab => seat_of(e).is_some_and(|s| d.tab(&s).is_none()),
@@ -356,8 +359,16 @@ impl HerdrExecutor {
         else {
             return ExecOutcome::Obsolete;
         };
+        // A start whose response was lost: the new agent is already on the pane, never send it the exit keys.
+        if e.status == EffectStatus::Unknown && !session::has_state(&self.journal, &e.id) && lp.pane.agent.is_some() {
+            self.record_launch(p);
+            return ExecOutcome::Done;
+        }
         let to_prof = profile(p.harness);
-        let resume = (from == p.harness && to_prof.supports_resume()).then(|| p.occupant_native_id.clone()).flatten();
+        // Once the observer has recorded the occupancy end, `p.resume` is the session that just ended.
+        let resume = (from == p.harness && to_prof.supports_resume())
+            .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
+            .flatten();
         let to = to_prof
             .agent_kind
             .map(|kind| Relaunch { kind, args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args) });

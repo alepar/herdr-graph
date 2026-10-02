@@ -48,6 +48,8 @@ pub struct ReconcilerConfig {
     pub instance: PathBuf,
     /// Send the exit fallback if the agent is still running this long after the exit sequence (3 s).
     pub exit_followup: Duration,
+    /// How soon a `Deferred` effect is looked at again when no Herdr event arrives.
+    pub deferred_recheck: Duration,
 }
 
 impl ReconcilerConfig {
@@ -59,6 +61,7 @@ impl ReconcilerConfig {
             relaunch_grace: Duration::from_secs(90),
             instance,
             exit_followup: Duration::from_secs(3),
+            deferred_recheck: Duration::from_secs(2),
         }
     }
 }
@@ -316,6 +319,31 @@ impl Reconciler {
         if let Err(e) = self.journal.upsert_effect(row) {
             eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
         }
+        // An effect that ended leaves no per-effect meta behind.
+        if !matches!(status, EffectStatus::Pending | EffectStatus::Unknown) {
+            let _ = self.journal.meta_delete(&format!("retry_at:{}", row.id));
+            let _ = self.journal.meta_delete(&format!("wake_at:{}", row.id));
+            session::clear_state(&self.journal, &row.id);
+        }
+    }
+
+    fn meta_time(&self, key: String) -> Option<Timestamp> {
+        let raw = self.journal.meta_get(&key).ok().flatten()?;
+        chrono::DateTime::parse_from_rfc3339(&raw).ok().map(|t| t.to_utc())
+    }
+
+    /// The earliest time an open effect (`Pending`/`Unknown`) needs another look: its backoff expiry or its
+    /// deferred recheck. The loop sleeps until then instead of waiting for the periodic tick. Times already
+    /// past are ignored: the step that just ran has looked at those rows, and one that is still waiting is
+    /// blocked on something else (a dependency), which a wake would not help.
+    pub fn next_wake(&self) -> Option<Timestamp> {
+        let now = self.clock.now();
+        let rows = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_default();
+        rows.iter()
+            .flat_map(|r| [self.meta_time(format!("retry_at:{}", r.id)), self.meta_time(format!("wake_at:{}", r.id))])
+            .flatten()
+            .filter(|t| *t > now)
+            .min()
     }
 
     async fn run_pending(&self, snap: &HerdrSnapshot, report: &mut StepReport) {
@@ -439,6 +467,8 @@ impl Reconciler {
                         row.attempts -= 1;
                         row.last_error = Some(why);
                         let _ = self.journal.upsert_effect(&row);
+                        let at = now + chrono::Duration::from_std(self.cfg.deferred_recheck).unwrap_or_default();
+                        let _ = self.journal.meta_set(&format!("wake_at:{}", row.id), &at.to_rfc3339());
                         ran.remove(&row.id);
                         waiting.insert(row.id.clone());
                         continue;
