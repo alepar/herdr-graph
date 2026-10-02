@@ -1,8 +1,10 @@
 //! `doctor`: installation and instance diagnostics (spec §10).
 use super::client::{Client, hello};
 use crate::config::{Env, InstanceSource, plugin_config_dir_via_herdr, socket_path};
+use crate::threads::discovery::{DiscoveryInputs, Source, resolve_state_dir};
 use serde::Serialize;
-use std::path::Path;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +37,32 @@ pub fn read_worktree_dirty(file: &Path) -> Vec<String> {
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["path"].as_str().map(str::to_owned))
         .collect()
+}
+
+/// The `threads` check: where the herdr-threads state dir was found (or why not), then the daemon's own view
+/// of the connection. With a daemon, `ok` is its `connected`; without one, `ok` is "the state dir was found".
+fn threads_check(resolved: Result<Option<(PathBuf, Source)>, String>, component: Option<&Value>) -> Check {
+    let (found, mut detail) = match &resolved {
+        Ok(Some((dir, source))) => (true, format!("state dir {} ({source})", dir.display())),
+        Ok(None) => (
+            false,
+            "not found (no herdr-threads state directory in the default places; install/start herdr-threads or set \
+             threads_state_dir in config.toml)"
+                .to_string(),
+        ),
+        Err(why) => (false, format!("not found ({why})")),
+    };
+    let Some(c) = component else {
+        return check("threads", found, detail);
+    };
+    let connected = c["connected"].as_bool().unwrap_or(false);
+    if connected {
+        detail.push_str(&format!("; daemon connected, capability {}", c["capability"]));
+    } else {
+        let why = c["error"].as_str().or(c["note"].as_str()).unwrap_or("no reason reported");
+        detail.push_str(&format!("; daemon not connected: {why}"));
+    }
+    check("threads", connected, detail)
 }
 
 pub fn doctor(env: &Env) -> DoctorReport {
@@ -98,10 +126,14 @@ pub fn doctor(env: &Env) -> DoctorReport {
         }
         None => checks.push(check("writer", true, "not reported by daemon")),
     }
-    match comp("threads") {
-        Some(t) => checks.push(check("threads", true, t.to_string())),
-        None => checks.push(check("threads", true, "not wired")),
-    }
+    let inputs = DiscoveryInputs {
+        env_state_dir: env.threads_state_dir.clone(),
+        config_state_dir: crate::config::read_threads_state_dir(env, &plugin_config_dir_via_herdr),
+        own_plugin_state_dir: env.plugin_state_dir.clone(),
+        xdg_state_home: env.xdg_state_home.clone(),
+        home: env.home.clone(),
+    };
+    checks.push(threads_check(resolve_state_dir(&inputs), comp("threads").as_ref()));
     match comp("journal") {
         Some(j) => checks.push(check("journal", true, j.to_string())),
         None => checks.push(check("journal", true, "no counts reported")),
@@ -124,6 +156,35 @@ mod tests {
         .unwrap();
         assert_eq!(read_worktree_dirty(&f), vec!["teamspaces/a/ts.toml", "b"]);
         assert!(read_worktree_dirty(&t.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn threads_check_connected_ok() {
+        let found = Ok(Some((PathBuf::from("/s/herdr-threads"), Source::HomeDefault)));
+        let c = threads_check(found, Some(&serde_json::json!({"connected": true, "capability": "service_ack"})));
+        assert!(c.ok, "{c:?}");
+        assert!(c.detail.contains("state dir /s/herdr-threads"), "{}", c.detail);
+        assert!(c.detail.contains("daemon connected"), "{}", c.detail);
+        // No daemon: ok follows the discovery result.
+        assert!(threads_check(Ok(Some((PathBuf::from("/s"), Source::EnvVar))), None).ok);
+    }
+
+    #[test]
+    fn threads_check_not_found_fails_with_hint() {
+        let c = threads_check(Ok(None), None);
+        assert!(!c.ok);
+        assert!(c.detail.contains("not found") && c.detail.contains("threads_state_dir"), "{}", c.detail);
+        let c = threads_check(Err("both a and b exist".into()), None);
+        assert!(!c.ok);
+        assert!(c.detail.contains("both a and b exist"), "{}", c.detail);
+    }
+
+    #[test]
+    fn threads_check_daemon_disconnected_fails() {
+        let found = Ok(Some((PathBuf::from("/s/herdr-threads"), Source::XdgDefault)));
+        let c = threads_check(found, Some(&serde_json::json!({"connected": false, "error": "refused"})));
+        assert!(!c.ok, "a found dir does not make a disconnected daemon ok");
+        assert!(c.detail.contains("refused") && c.detail.contains("/s/herdr-threads"), "{}", c.detail);
     }
 
     #[test]

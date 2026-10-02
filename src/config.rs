@@ -18,6 +18,11 @@ pub struct Env {
     pub pane_id: Option<String>,
     pub graph_clone: Option<String>,
     pub graph_seat: Option<String>,
+    /// `HERDR_GRAPH_THREADS_STATE_DIR`.
+    pub threads_state_dir: Option<PathBuf>,
+    /// `HERDR_PLUGIN_STATE_DIR` (herdr-graph's own plugin state dir under Herdr).
+    pub plugin_state_dir: Option<PathBuf>,
+    pub xdg_state_home: Option<PathBuf>,
 }
 
 fn var(name: &str) -> Option<String> {
@@ -34,6 +39,9 @@ impl Env {
             pane_id: var("HERDR_PANE_ID"),
             graph_clone: var("HERDR_GRAPH_CLONE"),
             graph_seat: var("HERDR_GRAPH_SEAT"),
+            threads_state_dir: var("HERDR_GRAPH_THREADS_STATE_DIR").map(PathBuf::from),
+            plugin_state_dir: var("HERDR_PLUGIN_STATE_DIR").map(PathBuf::from),
+            xdg_state_home: var("XDG_STATE_HOME").map(PathBuf::from),
         }
     }
 }
@@ -100,10 +108,27 @@ pub fn plugin_config_dir_via_herdr(env: &Env) -> Option<PathBuf> {
 
 /// `instance = "<abs path>"` from a config.toml; None when missing, unparsable, empty or relative.
 pub fn read_instance_key(config_toml: &Path) -> Option<PathBuf> {
+    read_config_path_key(config_toml, "instance")
+}
+
+/// An absolute-path string key of a config.toml; None when missing, unparsable, empty or relative.
+pub fn read_config_path_key(config_toml: &Path, key: &str) -> Option<PathBuf> {
     let text = std::fs::read_to_string(config_toml).ok()?;
     let table: toml::Table = text.parse().ok()?;
-    let p = PathBuf::from(table.get("instance")?.as_str()?);
+    let p = PathBuf::from(table.get(key)?.as_str()?);
     (p.is_absolute() && !p.as_os_str().is_empty()).then_some(p)
+}
+
+/// First hit of `threads_state_dir` in `<plugin config dir>/config.toml`, then in the user config
+/// (the same two files `locate_instance` reads).
+pub fn read_threads_state_dir(env: &Env, plugin_config_dir: &dyn Fn(&Env) -> Option<PathBuf>) -> Option<PathBuf> {
+    const KEY: &str = "threads_state_dir";
+    if let Some(dir) = plugin_config_dir(env)
+        && let Some(p) = read_config_path_key(&dir.join("config.toml"), KEY)
+    {
+        return Some(p);
+    }
+    read_config_path_key(&user_config_path(env.home.as_ref()?), KEY)
 }
 
 pub fn user_config_path(home: &Path) -> PathBuf {
@@ -238,5 +263,40 @@ mod tests {
         assert_ne!(p, socket_path(&other));
         let name = p.file_name().unwrap().to_str().unwrap();
         assert_eq!(name.len(), 16 + ".sock".len());
+    }
+
+    #[test]
+    fn threads_state_dir_from_plugin_config_then_user_config() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("home");
+        let plugin = t.path().join("plugin");
+        std::fs::create_dir_all(home.join(".config/herdr-graph")).unwrap();
+        std::fs::create_dir_all(&plugin).unwrap();
+        std::fs::write(user_config_path(&home), "threads_state_dir = \"/abs/user\"\n").unwrap();
+        let env = Env { home: Some(home), ..Default::default() };
+        let p = plugin.clone();
+        let via = move |_: &Env| Some(p.clone());
+        // Only the user config has the key: it is used.
+        assert_eq!(read_threads_state_dir(&env, &via), Some(PathBuf::from("/abs/user")));
+        // The plugin config wins once it has the key.
+        std::fs::write(plugin.join("config.toml"), "threads_state_dir = \"/abs/plugin\"\n").unwrap();
+        assert_eq!(read_threads_state_dir(&env, &via), Some(PathBuf::from("/abs/plugin")));
+        // No plugin config dir: the user config is still read; with neither file, None.
+        assert_eq!(read_threads_state_dir(&env, &|_: &Env| None).as_deref(), Some(Path::new("/abs/user")));
+        std::fs::remove_file(user_config_path(env.home.as_ref().unwrap())).unwrap();
+        assert_eq!(read_threads_state_dir(&env, &|_: &Env| None), None);
+    }
+
+    #[test]
+    fn threads_state_dir_relative_rejected() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join("config.toml");
+        std::fs::write(&f, "threads_state_dir = \"rel/dir\"\n").unwrap();
+        assert_eq!(read_config_path_key(&f, "threads_state_dir"), None);
+        std::fs::write(&f, "threads_state_dir = \"\"\n").unwrap();
+        assert_eq!(read_config_path_key(&f, "threads_state_dir"), None);
+        // A different key's value is never returned.
+        std::fs::write(&f, "instance = \"/abs/i\"\n").unwrap();
+        assert_eq!(read_config_path_key(&f, "threads_state_dir"), None);
     }
 }

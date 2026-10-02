@@ -58,6 +58,20 @@ herdr-graph undo
 
 herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). The threads amendment epic `ht-5nb` was accepted 2026-10-02 but has not landed. Until it does, delivery uses the Notify fallback: ACK lives in graph, not threads. The cargo feature `threads-service-ack` switches to service ACK once it lands.
 
+### herdr-threads discovery
+
+The daemon finds the herdr-threads state directory on every call (threads may be installed or started after graph), using the same rules herdr-threads itself uses. First hit wins:
+
+1. `HERDR_GRAPH_THREADS_STATE_DIR` (absolute path).
+2. `threads_state_dir = "/abs/path"` in `~/.config/herdr-graph/config.toml` (or the `config.toml` of the plugin config dir; the plugin config dir is read first).
+3. The `herdr-threads` sibling of herdr-graph's own plugin state dir (`HERDR_PLUGIN_STATE_DIR` ending in `herdr-graph`, e.g. `<root>/herdr/plugins/herdr-threads`).
+4. `$XDG_STATE_HOME/herdr/plugins/herdr-threads`, if it exists.
+5. `~/.local/state/herdr/plugins/herdr-threads`, if it exists.
+
+If both 4 and 5 exist and differ, discovery refuses to guess: set `threads_state_dir`. Relative paths are ignored. The daemon socket and instance inside the state directory are derived from the Herdr socket, as herdr-threads does. To skip discovery entirely, set `HERDR_GRAPH_THREADS_SOCKET` and `HERDR_GRAPH_THREADS_INSTANCE` (the daemon socket and the instance UUID).
+
+`herdr-graph doctor` prints a `threads` line: `state dir <path> (<where it was found>)` or `not found (<reason>)`, followed by whether the running daemon is connected to threads (its capability, or the error). The check fails while the daemon reports it is not connected.
+
 ### Re-pointing `third_party/herdr-threads`
 
 ```sh
