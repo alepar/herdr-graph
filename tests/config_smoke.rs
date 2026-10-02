@@ -191,7 +191,6 @@ impl Rig {
         cfg.idle_timeout = Duration::from_secs(60);
         cfg.exit_timeout = Duration::from_secs(20);
         cfg.exit_followup = Duration::from_secs(3);
-        cfg.poll_interval = Duration::from_millis(500);
         cfg.relaunch_grace = Duration::from_secs(0);
         let rec = Reconciler::new(store.clone(), journal.clone(), writer.clone(), client.clone(), clock, Arc::new(LogNotifier), cfg);
         Some(Rig { herdr, client, deps, writer, store, journal, rec, instance })

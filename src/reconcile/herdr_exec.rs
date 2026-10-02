@@ -5,7 +5,7 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{LiveIndex, LiveRef, TOKEN_KEY, launched_key, plan_effects, set_live_ref, token_of};
-use super::session::{Relaunch, replace_session, start_outcome, transient_or_failed};
+use super::session::{Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
@@ -361,7 +361,7 @@ impl HerdrExecutor {
         let to = to_prof
             .agent_kind
             .map(|kind| Relaunch { kind, args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args) });
-        let out = replace_session(cx.herdr, &self.cfg, &lp.pane.id, from, to).await;
+        let out = advance_replacement(cx.herdr, &self.cfg, &self.journal, &e.id, &lp.pane.id, from, to, cx.now).await;
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
         }

@@ -220,8 +220,7 @@ fn fx_with(wrap: impl FnOnce(Arc<FakeThreads>) -> Arc<dyn ThreadsPort>, setup: i
     let dw = Arc::new(DrainingWriter(w.clone()));
     let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root.clone() };
     let herdr = FakeHerdr::new();
-    let mut cfg = ReconcilerConfig::new(root.clone());
-    cfg.poll_interval = Duration::from_millis(5);
+    let cfg = ReconcilerConfig::new(root.clone());
     let rec = Reconciler::new(store.clone(), journal.clone(), dw.clone(), herdr.clone(), clock.clone(), Arc::new(Quiet), cfg);
     let threads = Arc::new(FakeThreads::new());
     let map = Arc::new(FakePaneSeatMap::new());

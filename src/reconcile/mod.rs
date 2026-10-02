@@ -46,8 +46,6 @@ pub struct ReconcilerConfig {
     /// No relaunch `start_agent` this long after a Herdr incarnation change (r2).
     pub relaunch_grace: Duration,
     pub instance: PathBuf,
-    /// Poll interval of the idle and exit waits (2 s).
-    pub poll_interval: Duration,
     /// Send the exit fallback if the agent is still running this long after the exit sequence (3 s).
     pub exit_followup: Duration,
 }
@@ -60,7 +58,6 @@ impl ReconcilerConfig {
             exit_timeout: Duration::from_secs(30),
             relaunch_grace: Duration::from_secs(90),
             instance,
-            poll_interval: Duration::from_secs(2),
             exit_followup: Duration::from_secs(3),
         }
     }
