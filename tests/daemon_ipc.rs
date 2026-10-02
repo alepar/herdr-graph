@@ -1,5 +1,7 @@
 //! Daemon/IPC integration: spawns the real binary against a temp instance and a fake Herdr socket.
 //! Never touches a live Herdr session: every child runs with a cleared environment.
+mod support;
+
 use herdr_graph::config::{InstancePaths, socket_path};
 use herdr_graph::daemon::client::Client;
 use herdr_graph::daemon::lock;
@@ -9,10 +11,13 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
+use support::isolated::TestRoot;
+
+const BIN: &str = env!("CARGO_BIN_EXE_herdr-graph");
 
 struct Fixture {
-    _dir: tempfile::TempDir,
-    home: PathBuf,
+    /// Dropped first: shuts the daemon down and sweeps every process carrying its marker.
+    root: TestRoot,
     instance: PathBuf,
     herdr_socket: PathBuf,
     _listener: UnixListener,
@@ -24,29 +29,22 @@ impl Fixture {
     }
 
     fn with_instance_subdir(sub: Option<&str>) -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().join("home");
-        std::fs::create_dir_all(&home).unwrap();
+        let root = TestRoot::new();
         let instance = match sub {
-            Some(s) => dir.path().join(s).join("instance"),
-            None => dir.path().join("instance"),
+            Some(s) => root.path().join(s).join("instance"),
+            None => root.instance(),
         };
         init_instance(&instance).unwrap();
-        let herdr_socket = dir.path().join("herdr.sock");
+        let herdr_socket = root.herdr_socket();
         let listener = UnixListener::bind(&herdr_socket).unwrap();
         let l2 = listener.try_clone().unwrap();
         std::thread::spawn(move || for _conn in l2.incoming() {});
-        Fixture { _dir: dir, home, instance, herdr_socket, _listener: listener }
+        Fixture { root, instance, herdr_socket, _listener: listener }
     }
 
     fn cmd(&self, args: &[&str]) -> Command {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_herdr-graph"));
-        c.args(args)
-            .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("HOME", &self.home)
-            .env("HERDR_GRAPH_INSTANCE", &self.instance)
-            .env("HERDR_SOCKET_PATH", &self.herdr_socket);
+        let mut c = self.root.command(BIN);
+        c.args(args).env("HERDR_GRAPH_INSTANCE", &self.instance);
         c
     }
 
@@ -60,29 +58,6 @@ impl Fixture {
 
     fn lock_pid(&self) -> u32 {
         lock::read_info(&InstancePaths::new(&self.instance).lock).expect("lock info").pid
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let sock = self.sock();
-        if let Ok(mut c) = Client::connect(&sock, Duration::from_secs(2)) {
-            let _ = c.call("shutdown", serde_json::json!({}));
-        }
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while sock.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if sock.exists()
-            && let Some(info) = lock::read_info(&InstancePaths::new(&self.instance).lock)
-        {
-            // Only signal a pid that is verifiably this test binary's daemon.
-            let ps = Command::new("ps").args(["-o", "command=", "-p", &info.pid.to_string()]).output().unwrap();
-            let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
-            if cmdline.contains(env!("CARGO_BIN_EXE_herdr-graph")) && cmdline.contains(" daemon") {
-                let _ = Command::new("kill").args(["-TERM", &info.pid.to_string()]).status();
-            }
-        }
     }
 }
 
@@ -171,7 +146,7 @@ fn daemon_refuses_without_herdr_socket() {
 #[test]
 fn daemon_refuses_unreachable_herdr_socket() {
     let f = Fixture::new();
-    let dead = f.home.join("dead.sock");
+    let dead = f.root.home().join("dead.sock");
     let out = f.cmd(&["daemon"]).env("HERDR_SOCKET_PATH", &dead).output().unwrap();
     assert!(!out.status.success());
     assert!(stderr(&out).contains("not reachable"), "{}", stderr(&out));
@@ -240,6 +215,13 @@ fn shutdown_command_stops_daemon_and_removes_socket() {
         std::thread::sleep(Duration::from_millis(50));
     }
     assert!(!sock.exists(), "socket file must be removed on graceful shutdown");
+    // The daemon removes the socket before it drops its lock; wait for the lock so a fresh ensure does not
+    // find a holder that is about to exit (flaky under a parallel run).
+    let lock_path = InstancePaths::new(&f.instance).lock;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while lock::is_held(&lock_path) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     // A fresh ensure after shutdown starts a new daemon.
     let out = f.run(&["daemon", "--ensure"]);
     assert!(out.status.success(), "{}", stderr(&out));
@@ -290,13 +272,9 @@ fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
             .unwrap_or(0)
     };
     let run_hook = || {
-        let mut c = Command::new("sh");
+        let mut c = f.root.command("sh");
         c.args(["-c", &command])
-            .env_clear()
-            .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .env("HOME", &f.home)
             .env("HERDR_GRAPH_INSTANCE", &f.instance)
-            .env("HERDR_SOCKET_PATH", &f.herdr_socket)
             .env("HERDR_GRAPH", "1")
             .env("HERDR_GRAPH_CLONE", "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV")
             .stdin(Stdio::piped())
@@ -322,16 +300,15 @@ fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
     assert_eq!(spooled(), 1, "the report was spooled; stderr: {}", stderr(&out));
 
     // A daemon that is still composing.
-    let log = std::fs::File::create(f._dir.path().join("daemon.out")).unwrap();
-    let mut daemon = f
-        .cmd(&["daemon"])
-        .env("HG_TEST_FAKE_SERVICES", "1")
-        .env("HG_TEST_COMPOSE_DELAY_MS", "4000")
-        .stdin(Stdio::null())
-        .stdout(log.try_clone().unwrap())
-        .stderr(log)
-        .spawn()
-        .unwrap();
+    let log = std::fs::File::create(f.root.path().join("daemon.out")).unwrap();
+    let mut daemon = f.root.spawn(
+        f.cmd(&["daemon"])
+            .env("HG_TEST_FAKE_SERVICES", "1")
+            .env("HG_TEST_COMPOSE_DELAY_MS", "4000")
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    );
     let deadline = Instant::now() + Duration::from_secs(30);
     while herdr_graph::daemon::client::hello(&f.sock()).is_none() {
         assert!(Instant::now() < deadline, "daemon did not answer hello");
@@ -352,7 +329,7 @@ fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
     if let Ok(mut c) = Client::connect(&f.sock(), Duration::from_secs(5)) {
         let _ = c.call("shutdown", serde_json::json!({}));
     }
-    let _ = daemon.wait();
+    assert!(daemon.wait_timeout(Duration::from_secs(10)).is_some(), "daemon did not exit after shutdown");
 }
 
 #[cfg(feature = "test-support")]

@@ -37,6 +37,11 @@ impl std::fmt::Display for Source {
     }
 }
 
+/// Every candidate state dir trips the isolation guard before it is probed.
+fn trip(p: &Path) {
+    crate::herdr::isolation::tripwire(p, "threads state dir candidate");
+}
+
 fn absolute(p: &Option<PathBuf>) -> Option<&Path> {
     p.as_deref().filter(|p| p.is_absolute() && !p.as_os_str().is_empty())
 }
@@ -58,9 +63,11 @@ impl DiscoveryInputs {
 /// Ok(None): nothing found (threads not installed / never started). Err: ambiguous (both defaults exist).
 pub fn resolve_state_dir(i: &DiscoveryInputs) -> Result<Option<(PathBuf, Source)>, String> {
     if let Some(p) = absolute(&i.env_state_dir) {
+        trip(p);
         return Ok(Some((p.to_path_buf(), Source::EnvVar)));
     }
     if let Some(p) = absolute(&i.config_state_dir) {
+        trip(p);
         return Ok(Some((p.to_path_buf(), Source::Config)));
     }
     if let Some(own) = absolute(&i.own_plugin_state_dir)
@@ -68,16 +75,23 @@ pub fn resolve_state_dir(i: &DiscoveryInputs) -> Result<Option<(PathBuf, Source)
         && let Some(parent) = own.parent()
     {
         let sibling = parent.join(THREADS_PLUGIN_ID);
+        trip(&sibling);
         if sibling.is_dir() {
             return Ok(Some((sibling, Source::PluginSibling)));
         }
     }
     let xdg = absolute(&i.xdg_state_home)
         .map(|x| x.join("herdr/plugins").join(THREADS_PLUGIN_ID))
-        .filter(|p| p.is_dir());
+        .filter(|p| {
+            trip(p);
+            p.is_dir()
+        });
     let home = absolute(&i.home)
         .map(|h| h.join(".local/state/herdr/plugins").join(THREADS_PLUGIN_ID))
-        .filter(|p| p.is_dir());
+        .filter(|p| {
+            trip(p);
+            p.is_dir()
+        });
     match (xdg, home) {
         (Some(x), Some(h)) if x != h => {
             Err(format!("both {} and {} exist; set threads_state_dir in config.toml", x.display(), h.display()))

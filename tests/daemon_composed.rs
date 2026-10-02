@@ -1,6 +1,8 @@
 //! The composed daemon (hg-zmi.18): every component built by `compose_with` against FakeHerdr / FakeThreads /
 //! ManualClock and a real temp instance, served over a real Unix socket. The subprocess group at the bottom runs
 //! the real binary (feature `test-support`). Nothing here touches a live Herdr, live threads or the memory observer.
+mod support;
+
 use herdr_graph::config::InstancePaths;
 use herdr_graph::daemon::DaemonCtx;
 use herdr_graph::daemon::client::{Client, ClientError};
@@ -46,6 +48,7 @@ fn ctx_for(root: &Path) -> DaemonCtx {
         paths: InstancePaths::new(root),
         herdr_socket: root.join("no-herdr.sock"),
         started_at: chrono::Utc::now(),
+        claude_root: root.join("claude"),
     }
 }
 
@@ -709,40 +712,30 @@ mod subprocess {
     use super::*;
     use herdr_graph::daemon::lock;
     use std::os::unix::net::UnixListener;
-    use std::process::{Child, Command, Output, Stdio};
+    use std::process::{Command, Output, Stdio};
+    use support::isolated::{ChildGuard, TestRoot};
 
     struct Fixture {
-        _dir: tempfile::TempDir,
-        home: PathBuf,
+        /// Dropped first (it is the first field): shuts the daemon down and sweeps its marker.
+        root: TestRoot,
         instance: PathBuf,
-        herdr_socket: PathBuf,
         _listener: UnixListener,
-        children: std::cell::RefCell<Vec<Child>>,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let home = dir.path().join("home");
-            std::fs::create_dir_all(&home).unwrap();
-            let instance = dir.path().join("instance");
+            let root = TestRoot::new();
+            let instance = root.instance();
             init_instance(&instance).unwrap();
-            let herdr_socket = dir.path().join("herdr.sock");
-            let listener = UnixListener::bind(&herdr_socket).unwrap();
+            let listener = UnixListener::bind(root.herdr_socket()).unwrap();
             let l2 = listener.try_clone().unwrap();
             std::thread::spawn(move || for _conn in l2.incoming() {});
-            Fixture { _dir: dir, home, instance, herdr_socket, _listener: listener, children: Default::default() }
+            Fixture { root, instance, _listener: listener }
         }
 
         fn cmd(&self, args: &[&str]) -> Command {
-            let mut c = Command::new(env!("CARGO_BIN_EXE_herdr-graph"));
-            c.args(args)
-                .env_clear()
-                .env("PATH", std::env::var("PATH").unwrap_or_default())
-                .env("HOME", &self.home)
-                .env("HERDR_GRAPH_INSTANCE", &self.instance)
-                .env("HERDR_SOCKET_PATH", &self.herdr_socket)
-                .env("HG_TEST_FAKE_SERVICES", "1");
+            let mut c = self.root.command(env!("CARGO_BIN_EXE_herdr-graph"));
+            c.args(args).env("HG_TEST_FAKE_SERVICES", "1");
             c
         }
 
@@ -759,13 +752,13 @@ mod subprocess {
         }
 
         /// A foreground daemon child (so its exit status is observable), optionally with failpoints armed.
-        fn spawn_daemon(&self, failpoints: Option<&str>) -> Child {
+        fn spawn_daemon(&self, failpoints: Option<&str>) -> ChildGuard {
             let mut c = self.cmd(&["daemon"]);
             if let Some(fp) = failpoints {
                 c.env("HG_FAILPOINTS", fp);
             }
-            let log = std::fs::OpenOptions::new().create(true).append(true).open(self._dir.path().join("daemon.out")).unwrap();
-            let child = c.stdin(Stdio::null()).stdout(log.try_clone().unwrap()).stderr(log).spawn().unwrap();
+            let log = std::fs::OpenOptions::new().create(true).append(true).open(self.root.path().join("daemon.out")).unwrap();
+            let child = self.root.spawn(c.stdin(Stdio::null()).stdout(log.try_clone().unwrap()).stderr(log));
             let deadline = Instant::now() + WAIT_SECS;
             while herdr_graph::daemon::client::hello(&self.paths().socket).is_none() {
                 assert!(Instant::now() < deadline, "daemon did not come up; log: {}", self.daemon_log());
@@ -799,7 +792,7 @@ mod subprocess {
         }
 
         fn daemon_log(&self) -> String {
-            std::fs::read_to_string(self._dir.path().join("daemon.out")).unwrap_or_default()
+            std::fs::read_to_string(self.root.path().join("daemon.out")).unwrap_or_default()
         }
 
         fn plan(&self, words: &[&str]) -> Value {
@@ -832,34 +825,8 @@ mod subprocess {
 
     const WAIT_SECS: Duration = Duration::from_secs(30);
 
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            if let Ok(mut c) = Client::connect(&self.paths().socket, Duration::from_secs(2)) {
-                let _ = c.call("shutdown", json!({}));
-            }
-            for mut child in self.children.borrow_mut().drain(..) {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                if child.try_wait().ok().flatten().is_none() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-            }
-            let _ = std::fs::remove_file(self.paths().socket);
-        }
-    }
-
-    fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
-        let deadline = Instant::now() + WAIT_SECS;
-        loop {
-            if let Some(s) = child.try_wait().unwrap() {
-                return s;
-            }
-            assert!(Instant::now() < deadline, "daemon did not exit");
-            std::thread::sleep(Duration::from_millis(50));
-        }
+    fn wait_exit(child: &mut ChildGuard) -> std::process::ExitStatus {
+        child.wait_timeout(WAIT_SECS).expect("daemon did not exit")
     }
 
     fn pid_alive(pid: u32) -> bool {

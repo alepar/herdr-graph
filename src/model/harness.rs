@@ -138,9 +138,11 @@ pub fn claude_project_slug(cwd: &Path) -> String {
 
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn claude_config_root(claude_config_dir: Option<&Path>, home: &Path) -> PathBuf {
-    claude_config_dir
+    let root = claude_config_dir
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| home.join(".claude"))
+        .unwrap_or_else(|| home.join(".claude"));
+    crate::herdr::isolation::tripwire(&root, "claude_config_root");
+    root
 }
 
 /// Primary Claude transcript candidate: `<root>/projects/<slug(cwd)>/<id>.jsonl`.

@@ -398,6 +398,8 @@ impl Drop for E2e {
                 }
             }
         }
+        // Everything else that inherited the root marker (pane shells, startup-hook daemons, stopped processes).
+        support::isolated::reap_root(&self.herdr.root);
     }
 }
 
@@ -1247,7 +1249,7 @@ fn e2e_resurrect_retired_seat() {
 fn e2e_plugin_link_status_action_single_daemon() {
     let Some(mut rig) = E2e::start_without_daemon() else { return };
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let build = Command::new(repo.join("scripts/build.sh")).current_dir(repo).output().unwrap();
+    let build = Command::new(repo.join("scripts/build.sh")).current_dir(repo).output().unwrap(); // isolation-ok: cargo build of this crate
     assert!(build.status.success(), "scripts/build.sh: {}", stderr(&build));
     let bin = repo.join("bin/herdr-graph");
     assert!(bin.is_file(), "{} was not built", bin.display());
@@ -1259,7 +1261,7 @@ fn e2e_plugin_link_status_action_single_daemon() {
     // `herdr` with exactly the private env (so it talks to the private socket) and the plugin's state dir.
     let (herdr_path, env, root) = (rig.herdr.herdr_path().to_path_buf(), rig.herdr.env.clone(), rig.herdr.root.clone());
     let herdr = move |args: &[&str]| -> Output {
-        Command::new(&herdr_path).env_clear().envs(env.iter().cloned()).env("HERDR_PLUGIN_STATE_DIR", &state).current_dir(&root).args(args).output().unwrap()
+        Command::new(&herdr_path).env_clear().envs(env.iter().cloned()).env("HERDR_PLUGIN_STATE_DIR", &state).current_dir(&root).args(args).output().unwrap() // isolation-ok: plugin state dir under the private root
     };
     let link = herdr(&["plugin", "link", repo.to_str().unwrap()]);
     assert!(link.status.success(), "plugin link failed: {}", stderr(&link));

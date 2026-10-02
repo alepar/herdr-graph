@@ -174,6 +174,7 @@ pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Service
         paths.clone(),
         Duration::from_secs(60),
         Some(writer.subscribe()),
+        ctx.claude_root.clone(),
     );
     let transcripts = Transcripts::new(
         store.clone(),

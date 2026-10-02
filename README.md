@@ -18,10 +18,10 @@ Never run tests against your live Herdr session: all tests use private servers a
 ## Create an instance
 
 ```sh
-herdr-graph init <path> [--with-examples]
+herdr-graph init <path> [--with-examples] [--no-user-config]
 ```
 
-The instance is located by, in order: `HERDR_GRAPH_INSTANCE`, the plugin config dir, then `~/.config/herdr-graph/config.toml`.
+The instance is located by, in order: `HERDR_GRAPH_INSTANCE`, the plugin config dir, then `~/.config/herdr-graph/config.toml`. `init` prints where it wrote the user config (or that it left one alone); `--no-user-config` writes nothing under `$HOME`, so probes can create an instance and point at it with `HERDR_GRAPH_INSTANCE`.
 
 ## Claude setup
 
@@ -100,6 +100,8 @@ ln -sfn <path-to-herdr-threads> third_party/herdr-threads
 | 5 real threads | `HG_REAL_THREADS=1 cargo test` |
 
 All tiers use private servers and isolated state. The release-build packaging test is ignored by default: `cargo test --test packaging -- --ignored build_script_places_binary`.
+
+Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) goes through `tests/support/isolated.rs` (`TestRoot`) or `PrivateHerdr`. Each gets its own temp root with HOME, the XDG dirs, `CLAUDE_CONFIG_DIR`, the Herdr plugin dirs, the Herdr socket and `HERDR_GRAPH_INSTANCE` all inside it, and `HG_TEST_ROOT=<root>` as a marker. A child that resolves a path outside its root exits 97 and fails the test; an in-process test that resolves the real `~/.config/herdr-graph`, `~/.claude` or the live Herdr socket panics. When a test ends (pass, fail, panic, timeout) its children are signalled and every process still carrying the marker is swept. `tests/test_isolation.rs` pins all of this.
 
 ## Verification matrix
 

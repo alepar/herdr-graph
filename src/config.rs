@@ -1,4 +1,5 @@
 //! Instance location chain (HERDR_GRAPH_INSTANCE → plugin config-dir → ~/.config/herdr-graph) (spec §1). Owned by hg-zmi.4.
+use crate::herdr::isolation::tripwire;
 use sha2::{Digest, Sha256};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -59,11 +60,21 @@ pub fn locate_instance(
     env: &Env,
     plugin_config_dir: &dyn Fn(&Env) -> Option<PathBuf>,
 ) -> Option<(PathBuf, InstanceSource)> {
+    let found = locate_instance_untripped(env, plugin_config_dir)?;
+    tripwire(&found.0, "locate_instance: instance root");
+    Some(found)
+}
+
+fn locate_instance_untripped(
+    env: &Env,
+    plugin_config_dir: &dyn Fn(&Env) -> Option<PathBuf>,
+) -> Option<(PathBuf, InstanceSource)> {
     if let Some(i) = &env.instance {
         return Some((PathBuf::from(i), InstanceSource::EnvVar));
     }
     if let Some(dir) = plugin_config_dir(env) {
         let cfg = dir.join("config.toml");
+        tripwire(&cfg, "locate_instance: plugin config");
         if let Some(root) = read_instance_key(&cfg) {
             return Some((root, InstanceSource::PluginConfig(cfg)));
         }
@@ -103,7 +114,9 @@ pub fn plugin_config_dir_via_herdr(env: &Env) -> Option<PathBuf> {
     let mut out = String::new();
     std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
     let out = out.trim();
-    (!out.is_empty()).then(|| PathBuf::from(out))
+    let dir = (!out.is_empty()).then(|| PathBuf::from(out))?;
+    tripwire(&dir, "plugin_config_dir_via_herdr");
+    Some(dir)
 }
 
 /// `instance = "<abs path>"` from a config.toml; None when missing, unparsable, empty or relative.
@@ -132,7 +145,9 @@ pub fn read_threads_state_dir(env: &Env, plugin_config_dir: &dyn Fn(&Env) -> Opt
 }
 
 pub fn user_config_path(home: &Path) -> PathBuf {
-    home.join(".config/herdr-graph/config.toml")
+    let p = home.join(".config/herdr-graph/config.toml");
+    tripwire(&p, "user_config_path");
+    p
 }
 
 #[derive(Debug, Clone)]

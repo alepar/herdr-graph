@@ -1,5 +1,8 @@
 //! Packaging checks: plugin manifest, build script, README structure (spec §12).
 
+#[cfg(feature = "private-herdr")]
+mod support;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -48,40 +51,27 @@ fn build_script_is_executable() {
 #[ignore = "runs a release build; run with: cargo test --test packaging -- --ignored build_script_places_binary"]
 fn build_script_places_binary() {
     let bin_dir = root().join("bin");
-    let out = Command::new(root().join("scripts/build.sh")).output().unwrap();
+    let out = Command::new(root().join("scripts/build.sh")).output().unwrap(); // isolation-ok: release build / --version only
     assert!(out.status.success(), "build.sh failed: {}", String::from_utf8_lossy(&out.stderr));
     let bin = bin_dir.join("herdr-graph");
-    let ver = Command::new(&bin).arg("--version").output();
+    let ver = Command::new(&bin).arg("--version").output(); // isolation-ok: release build / --version only
     let _ = std::fs::remove_dir_all(&bin_dir);
     let ver = ver.unwrap();
     assert!(ver.status.success(), "--version failed: {}", String::from_utf8_lossy(&ver.stderr));
 }
 
-/// Links the plugin into a PRIVATE, isolated Herdr configuration (own XDG dirs and socket
-/// under a temp root, `--disabled` so no build/startup runs). Never touches the live session.
+/// Links the plugin into a PRIVATE, isolated Herdr configuration (a `TestRoot`: own HOME, XDG dirs and socket,
+/// `--disabled` so no build/startup runs). Never touches the live session.
 #[cfg(feature = "private-herdr")]
 #[test]
 fn plugin_links_into_private_herdr() {
-    // Short root: macOS sockaddr_un path limit.
-    let private = tempfile::Builder::new().prefix("hg").tempdir_in("/tmp").unwrap();
-    let p = private.path();
-    for d in ["config", "state", "runtime"] {
-        std::fs::create_dir_all(p.join(d)).unwrap();
-    }
-    let socket = p.join("s.sock");
+    let private = support::isolated::TestRoot::new();
+    let socket = private.herdr_socket();
     let herdr = |args: &[&str]| {
-        Command::new("herdr")
+        private
+            .command("herdr")
             .args(args)
-            .env("XDG_CONFIG_HOME", p.join("config"))
-            .env("XDG_STATE_HOME", p.join("state"))
-            .env("XDG_RUNTIME_DIR", p.join("runtime"))
-            .env("HERDR_CONFIG_PATH", p.join("absent-config.toml"))
-            .env("HERDR_SOCKET_PATH", &socket)
-            .env("HERDR_PLUGIN_STATE_DIR", p.join("state"))
-            .env_remove("HERDR_ENV")
-            .env_remove("HERDR_CLIENT_SOCKET_PATH")
-            .env_remove("HERDR_SESSION")
-            .env_remove("HERDR_PANE_ID")
+            .env("HERDR_CONFIG_PATH", private.path().join("absent-config.toml"))
             .output()
             .unwrap()
     };

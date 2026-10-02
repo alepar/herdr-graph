@@ -1,6 +1,6 @@
 use super::client::{HerdrClient, RECONNECTED_EVENT};
 use super::fake::{FakeCall, Fault, FakeHerdr};
-use super::isolation::{IsolationError, IsolationGuard, live_resources_from, scrubbed_env_from};
+use super::isolation::{IsolationError, IsolationGuard, live_resources_from, scrubbed_env_from, tripwire_verdict};
 use super::{incarnation, wire};
 use crate::model::harness::StartOutcome;
 use crate::model::{HerdrPaneId, HerdrTabId, HerdrTerminalId, HerdrWorkspaceId};
@@ -768,12 +768,14 @@ fn scrubbed_env_drops_inherited_herdr_and_claude_vars() {
     }
     for k in [
         "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
-        "HERDR_CONFIG_PATH", "HERDR_SOCKET_PATH", "HERDR_PLUGIN_STATE_DIR", "CLAUDE_CONFIG_DIR", "HERDR_GRAPH_INSTANCE",
+        "HERDR_CONFIG_PATH", "HERDR_SOCKET_PATH", "HERDR_PLUGIN_STATE_DIR", "HERDR_PLUGIN_CONFIG_DIR", "CLAUDE_CONFIG_DIR",
+        "HERDR_GRAPH_INSTANCE", "HG_TEST_ROOT",
     ] {
         let v = get(k).unwrap_or_else(|| panic!("{k} missing"));
         assert!(Path::new(v).starts_with(root), "{k}={v} is not under the private root");
     }
     assert_eq!(get("PATH"), Some("/usr/bin"));
+    assert_eq!(get("HG_TEST_ROOT"), Some("/private/tmp/hg-ut-root"), "the marker is the root itself");
     // No variable appears twice.
     let mut names: Vec<_> = env.iter().map(|(k, _)| k.as_str()).collect();
     names.sort_unstable();
@@ -801,6 +803,14 @@ fn scrubbed_env_passes_only_explicit_credentials() {
     }
     let none = scrubbed_env_from(Path::new("/private/tmp/hg-ut-root"), vars(&[]));
     assert!(none.iter().all(|(k, _)| k != "ANTHROPIC_API_KEY" && k != "OPENAI_API_KEY"));
+    // A host-provided plugin config dir or test-root marker is replaced, never passed through.
+    let host = scrubbed_env_from(
+        Path::new("/private/tmp/hg-ut-root"),
+        vars(&[("HERDR_PLUGIN_CONFIG_DIR", "/Users/real/plugin-cfg"), ("HG_TEST_ROOT", "/Users/real")]),
+    );
+    let get = |k: &str| host.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    assert_eq!(get("HERDR_PLUGIN_CONFIG_DIR"), Some("/private/tmp/hg-ut-root/plugin-config"));
+    assert_eq!(get("HG_TEST_ROOT"), Some("/private/tmp/hg-ut-root"));
 }
 
 #[test]
@@ -823,4 +833,57 @@ fn live_resources_cover_the_users_default_session_threads_claude_and_observer() 
     ] {
         assert!(has(p), "{p} should be a live resource");
     }
+}
+
+// ---------------------------------------------------------------- tripwire (hg-zmi.77)
+
+fn live_for_x() -> Vec<(PathBuf, &'static str)> {
+    live_resources_from(vars(&[("HOME", "/Users/x"), ("HERDR_SOCKET_PATH", "/Users/x/.config/herdr/herdr.sock")]))
+}
+
+#[test]
+fn tripwire_root_mode_rejects_outside_root() {
+    let p = Path::new("/Users/x/.config/herdr-graph/config.toml");
+    let root = Path::new("/private/tmp/hgt-r");
+    let err = tripwire_verdict(p, Some(root), &[]).unwrap_err();
+    assert!(err.contains("/Users/x/.config/herdr-graph/config.toml"), "{err}");
+    assert!(err.contains("/private/tmp/hgt-r"), "{err}");
+}
+
+#[test]
+fn tripwire_root_mode_allows_inside_root() {
+    let p = Path::new("/private/tmp/hgt-r/home/.config/herdr-graph/config.toml");
+    assert_eq!(tripwire_verdict(p, Some(Path::new("/private/tmp/hgt-r")), &[]), Ok(()));
+}
+
+#[test]
+fn tripwire_live_mode_rejects_user_graph_config_and_herdr_socket() {
+    let live = live_for_x();
+    let cfg = tripwire_verdict(Path::new("/Users/x/.config/herdr-graph/config.toml"), None, &live).unwrap_err();
+    assert!(cfg.contains("the user's herdr-graph config"), "{cfg}");
+    let sock = tripwire_verdict(Path::new("/Users/x/.config/herdr/herdr.sock"), None, &live).unwrap_err();
+    assert!(sock.contains("Herdr"), "{sock}");
+    let claude = tripwire_verdict(Path::new("/Users/x/.claude/settings.json"), None, &live).unwrap_err();
+    assert!(claude.contains("Claude"), "{claude}");
+    assert_eq!(tripwire_verdict(Path::new("/private/tmp/hg-ut-root/x"), None, &live), Ok(()));
+}
+
+#[test]
+fn armed_unit_tests_panic_on_real_home_config() {
+    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else { // isolation-ok: the tripwire must see the real HOME
+        eprintln!("HOME unset: skipping");
+        return;
+    };
+    let r = std::panic::catch_unwind(|| crate::config::user_config_path(Path::new(&home)));
+    assert!(r.is_err(), "resolving the real ~/.config/herdr-graph must trip the armed tripwire");
+}
+
+#[test]
+fn armed_unit_tests_panic_on_real_herdr_socket() {
+    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else { // isolation-ok: the tripwire must see the real HOME
+        eprintln!("HOME unset: skipping");
+        return;
+    };
+    let r = std::panic::catch_unwind(|| HerdrClient::new(PathBuf::from(&home).join(".config/herdr/herdr.sock")));
+    assert!(r.is_err(), "constructing a client for the user's live socket must trip the armed tripwire");
 }

@@ -262,6 +262,7 @@ impl Reader {
 impl HerdrClient {
     /// Request timeout 10 s.
     pub fn new(socket: PathBuf) -> Self {
+        super::isolation::tripwire(&socket, "HerdrClient::new");
         Self {
             socket,
             timeout: Duration::from_secs(10),

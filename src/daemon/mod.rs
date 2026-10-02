@@ -19,6 +19,8 @@ pub struct DaemonCtx {
     pub paths: InstancePaths,
     pub herdr_socket: PathBuf,
     pub started_at: Timestamp,
+    /// `${CLAUDE_CONFIG_DIR:-~/.claude}`, resolved once by `run_foreground`; tests pass `<temp root>/claude`.
+    pub claude_root: PathBuf,
 }
 
 /// Foreground daemon (spec §1): require a reachable Herdr socket (UnixStream::connect) else error
@@ -66,7 +68,12 @@ pub fn run_foreground(instance: &Path, herdr_socket: Option<&Path>) -> anyhow::R
         Err(e) => return Err(e).context("removing stale socket"),
     }
 
-    let ctx = DaemonCtx { paths: paths.clone(), herdr_socket: herdr_socket.to_path_buf(), started_at };
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let claude_root = crate::model::harness::claude_config_root(
+        std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).as_deref(),
+        &home,
+    );
+    let ctx = DaemonCtx { paths: paths.clone(), herdr_socket: herdr_socket.to_path_buf(), started_at, claude_root };
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     let result = rt.block_on(run_async(ctx));
     let _ = std::fs::remove_file(&paths.socket);
