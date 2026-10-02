@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod daemon;
 pub mod failpoint;
+pub mod fsutil;
 pub mod herdr;
 pub mod ipc;
 pub mod journal;
