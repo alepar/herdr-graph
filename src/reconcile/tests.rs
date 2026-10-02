@@ -82,6 +82,23 @@ impl Mutation for TestSetOccupant {
     }
 }
 
+/// Test-only stand-in for the observer's occupancy end: clears the occupant and ends its session.
+struct TestEndOccupant;
+impl Mutation for TestEndOccupant {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let clone: CloneId = cx.request.args["clone"].as_str().unwrap().parse().unwrap();
+        let native = cx.request.args["native"].as_str().unwrap();
+        let loc = cx.tree.locate(&clone.to_any())?.unwrap();
+        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        rec.occupant = None;
+        for ns in rec.sessions.iter_mut().filter(|n| n.native_session_id == native) {
+            ns.ended = Some(cx.now);
+        }
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied { summary: "end occupant".into(), action: None })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     deps: PlanDeps,
@@ -115,6 +132,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     register_mutations(&mut reg);
     reg.register("bookkeeping.test_set_model", Arc::new(TestSetModel));
     reg.register("bookkeeping.test_set_occupant", Arc::new(TestSetOccupant));
+    reg.register("bookkeeping.test_end_occupant", Arc::new(TestEndOccupant));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -624,6 +642,148 @@ async fn replacement_state_survives_restart() {
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision, "the timer counts from the persisted start, not the restart");
     assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
+}
+
+fn non_shell() -> ProcessInfo {
+    ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["claude".into()], is_shell: false }
+}
+
+fn shell() -> ProcessInfo {
+    ProcessInfo { foreground_pid: None, foreground_argv: vec!["zsh".into()], is_shell: true }
+}
+
+fn send_keys_count(fx: &Fx) -> usize {
+    count_calls(fx, |c| matches!(c, FakeCall::SendKeys(..)))
+}
+
+fn start_calls(fx: &Fx) -> Vec<crate::ports::herdr::StartAgent> {
+    calls(fx).into_iter().filter_map(|c| if let FakeCall::StartAgent(s) = c { Some(s) } else { None }).collect()
+}
+
+#[tokio::test]
+async fn replacement_late_step_sends_fallback_before_timing_out() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, non_shell());
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 2);
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+
+    // One late step, past both the follow-up and the timeout: the fallback still goes out first.
+    fx.clock.advance(ms(150));
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 3);
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert!(fx.notes.messages().is_empty());
+
+    fx.clock.advance(ms(20));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    assert_eq!(ef.last_error.as_deref(), Some("occupant did not exit"));
+    assert!(start_calls(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn replacement_resumes_after_occupant_cleared() {
+    let fx = fx();
+    let (s, c, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, non_shell());
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 2);
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+
+    // The agent exits and the observer records the occupancy end; only then does the shell show.
+    fx.herdr.set_agent(&pane, None);
+    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    fx.herdr.set_process(&pane, shell());
+    step(&fx).await;
+
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::Done, "{ef:?}");
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
+    let launched: serde_json::Value =
+        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    assert_eq!(launched["model"], "opus-x");
+    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None);
+}
+
+#[tokio::test]
+async fn replacement_unknown_start_is_not_exited_again() {
+    let fx = fx();
+    let (s, c, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, non_shell());
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    fx.herdr.set_agent(&pane, None);
+    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    fx.herdr.set_process(&pane, shell());
+    // The start goes through but its response is lost: the new agent is on the pane.
+    fx.herdr.fail_next("agent.start", Fault::LostResponse);
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Unknown);
+    assert_eq!(start_calls(&fx).len(), 1);
+
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Done);
+    assert_eq!(send_keys_count(&fx), 0, "the new agent must not be sent the exit keys: {:?}", calls(&fx));
+    assert!(start_calls(&fx).is_empty());
+    let launched: serde_json::Value =
+        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    assert_eq!(launched["model"], "opus-x");
+}
+
+#[tokio::test]
+async fn terminal_effect_clears_its_meta() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap().is_some(), "waiting state is kept");
+    assert!(fx.journal.meta_get(&format!("wake_at:{}", ef.id)).unwrap().is_some());
+    fx.journal.meta_set(&format!("retry_at:{}", ef.id), &fx.clock.now().to_rfc3339()).unwrap();
+
+    fx.clock.advance(ms(100));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    for key in ["replace", "wake_at", "retry_at"] {
+        assert_eq!(fx.journal.meta_get(&format!("{key}:{}", ef.id)).unwrap(), None, "{key} leaked");
+    }
+}
+
+#[tokio::test]
+async fn next_wake_reports_earliest_deferred_or_retry() {
+    let fx = fx_with(|cfg| {
+        cfg.idle_timeout = Duration::from_secs(600);
+        cfg.deferred_recheck = Duration::from_secs(5);
+    });
+    assert_eq!(fx.rec.next_wake(), None);
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    assert_eq!(fx.rec.next_wake(), Some(t0() + ms(5000)));
+
+    // A transient failure of another effect backs off for less than the recheck.
+    commit(&fx, "seat rename foreman zwei");
+    fx.herdr.fail_next("tab.rename", Fault::Unavailable);
+    step(&fx).await;
+    let rename = rows(&fx, EffectKind::RenameTab).into_iter().find(|r| r.status == EffectStatus::Pending).expect("pending rename row");
+    let retry = fx.journal.meta_get(&format!("retry_at:{}", rename.id)).unwrap().expect("retry_at");
+    let retry = chrono::DateTime::parse_from_rfc3339(&retry).unwrap().to_utc();
+    assert!(retry < t0() + ms(5000), "backoff {retry} must be shorter than the recheck for this test");
+    assert_eq!(fx.rec.next_wake(), Some(retry));
 }
 
 #[tokio::test]

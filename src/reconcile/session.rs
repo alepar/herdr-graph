@@ -48,7 +48,12 @@ fn key_input(step: KeyStep) -> Vec<KeyInput> {
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum ReplacePhase {
     WaitingIdle { since: Timestamp, had_agent: bool },
-    Exiting { since: Timestamp, fallback_sent: bool },
+    Exiting {
+        since: Timestamp,
+        fallback_sent: bool,
+        #[serde(default)]
+        fallback_at: Option<Timestamp>,
+    },
 }
 
 fn state_key(effect: &EffectId) -> String {
@@ -66,6 +71,16 @@ fn save(journal: &Journal, effect: &EffectId, st: &ReplacePhase) {
 
 fn clear(journal: &Journal, effect: &EffectId) {
     let _ = journal.meta_delete(&state_key(effect));
+}
+
+/// Has the replacement of `effect` begun (a `replace:<effect>` phase is persisted)?
+pub fn has_state(journal: &Journal, effect: &EffectId) -> bool {
+    journal.meta_get(&state_key(effect)).ok().flatten().is_some()
+}
+
+/// Forget the replacement state of `effect` (it ended).
+pub fn clear_state(journal: &Journal, effect: &EffectId) {
+    clear(journal, effect);
 }
 
 fn elapsed(now: Timestamp, since: Timestamp, limit: std::time::Duration) -> bool {
@@ -121,7 +136,7 @@ pub async fn advance_replacement(
                 return transient_or_failed(e);
             }
         }
-        save(journal, effect, &ReplacePhase::Exiting { since: now, fallback_sent: false });
+        save(journal, effect, &ReplacePhase::Exiting { since: now, fallback_sent: false, fallback_at: None });
         return match herdr.process_info(pane).await {
             Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to).await,
             Ok(_) => ExecOutcome::Deferred("waiting for the occupant to exit".into()),
@@ -130,24 +145,28 @@ pub async fn advance_replacement(
     }
 
     // 3. Wait for the shell; after a short while send the fallback if the agent is still there.
-    let ReplacePhase::Exiting { since, fallback_sent } = state else { unreachable!("WaitingIdle handled above") };
+    let ReplacePhase::Exiting { since, fallback_sent, fallback_at } = state else { unreachable!("WaitingIdle handled above") };
     match herdr.process_info(pane).await {
         Ok(p) if p.is_shell => return start(herdr, journal, effect, pane, to).await,
         Ok(_) => {}
         Err(e) => return transient_or_failed(e),
     }
-    if elapsed(now, since, cfg.exit_timeout) {
-        clear(journal, effect);
-        return ExecOutcome::NeedsRevision("occupant did not exit".into());
-    }
-    if !fallback_sent
+    // The follow-up goes out before the timeout is judged, so a late step never skips it.
+    let fallback = profile(from).exit.and_then(|s| s.if_still_running);
+    if let Some(step) = fallback
+        && !fallback_sent
         && elapsed(now, since, cfg.exit_followup)
-        && let Some(step) = profile(from).exit.and_then(|s| s.if_still_running)
     {
         if let Err(e) = herdr.send_keys(pane, &key_input(step)).await {
             return transient_or_failed(e);
         }
-        save(journal, effect, &ReplacePhase::Exiting { since, fallback_sent: true });
+        save(journal, effect, &ReplacePhase::Exiting { since, fallback_sent: true, fallback_at: Some(now) });
+        return ExecOutcome::Deferred("waiting for the occupant to exit".into());
+    }
+    let followup_settled = fallback.is_none() || !fallback_sent || fallback_at.is_none_or(|f| elapsed(now, f, cfg.exit_followup));
+    if elapsed(now, since, cfg.exit_timeout) && followup_settled {
+        clear(journal, effect);
+        return ExecOutcome::NeedsRevision("occupant did not exit".into());
     }
     ExecOutcome::Deferred("waiting for the occupant to exit".into())
 }

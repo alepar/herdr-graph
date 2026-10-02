@@ -129,6 +129,7 @@ fn fx() -> Fx {
     cfg.idle_timeout = Duration::from_millis(100);
     cfg.exit_timeout = Duration::from_millis(100);
     cfg.exit_followup = Duration::from_millis(20);
+    cfg.deferred_recheck = Duration::from_millis(50);
     let rec = Reconciler::new(store.clone(), journal.clone(), dw.clone(), herdr.clone(), clock.clone(), Arc::new(QuietNotifier), cfg);
     let lp = new_loop(&herdr, &store, &dw, &journal, &rec, &clock, &root);
     Fx { _tmp: tmp, root, deps, w, dw, store, journal, herdr, clock, rec, lp }
@@ -1118,6 +1119,111 @@ async fn observation_proceeds_while_replacement_waits() {
     tokio::time::timeout(Duration::from_secs(2), step(&fx)).await.expect("the step must not wait for the occupant");
     assert_eq!(seat(&fx, "renamed").name, "renamed");
     assert_eq!(calls(&fx).iter().filter(|c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))).count(), 0, "the working occupant was never touched");
+}
+
+fn replace_rows(fx: &Fx) -> Vec<EffectRecord> {
+    use EffectStatus::*;
+    fx.journal
+        .effects_with_status(&[Pending, Done, Obsolete, Failed, Unknown, NeedsRevision, BlockedNeedsHuman])
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.kind == EffectKind::ReplaceSession)
+        .collect()
+}
+
+fn start_calls(fx: &Fx, pane: &HerdrPaneId) -> Vec<Vec<String>> {
+    calls(fx)
+        .into_iter()
+        .filter_map(|c| match c {
+            FakeCall::StartAgent(s) if &s.pane == pane => Some(s.args),
+            _ => None,
+        })
+        .collect()
+}
+
+fn shell_process() -> ProcessInfo {
+    ProcessInfo { foreground_pid: None, foreground_argv: vec!["zsh".into()], is_shell: true }
+}
+
+fn claude_process() -> ProcessInfo {
+    ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["claude".into()], is_shell: false }
+}
+
+/// A claude seat whose clone holds an observed idle occupant `sess-1`, then a model override. Returns the
+/// clone and its pane, with the override committed but not yet reconciled.
+async fn observed_occupant(fx: &Fx) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    settle(fx).await;
+    let c = only_clone(fx, "foreman");
+    let pane = pane_of(fx, &c);
+    fx.herdr.set_agent(&pane, claude_agent(Some("sess-1")));
+    fx.herdr.set_process(&pane, claude_process());
+    step(fx).await;
+    assert!(clone_by_id(fx, &c.id).occupant.is_some(), "the occupant is observed");
+    commit(fx, "seat override foreman --model fancy");
+    fx.herdr.clear_calls();
+    (c, pane)
+}
+
+#[tokio::test]
+async fn replacement_survives_observed_occupancy_end_and_resumes() {
+    let fx = fx();
+    let (c, pane) = observed_occupant(&fx).await;
+    step(&fx).await;
+    let sent = calls(&fx).iter().filter(|x| matches!(x, FakeCall::SendKeys(..))).count();
+    assert!(sent >= 2, "the exit keys were sent: {:?}", calls(&fx));
+    assert!(start_calls(&fx, &pane).is_empty());
+    assert_eq!(replace_rows(&fx).remove(0).status, EffectStatus::Pending);
+
+    // The old agent exits; the next step's observer commits the occupancy end before the reconciler runs.
+    fx.herdr.set_agent(&pane, None);
+    fx.herdr.set_process(&pane, shell_process());
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert!(after.occupant.is_none());
+    let ns = after.sessions.iter().find(|n| n.native_session_id == "sess-1").unwrap();
+    assert!(ns.ended.is_some(), "the observer ended the session");
+    assert_eq!(start_calls(&fx, &pane), vec![vec!["--resume", "sess-1", "--model", "fancy"]]);
+    let ef = replace_rows(&fx).remove(0);
+    assert_eq!(ef.status, EffectStatus::Done, "{ef:?}");
+    let launched: serde_json::Value =
+        serde_json::from_str(&fx.journal.meta_get(&crate::reconcile::planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    assert_eq!(launched["model"], "fancy");
+    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None);
+
+    step(&fx).await;
+    assert_eq!(start_calls(&fx, &pane).len(), 1, "the replacement is not started twice");
+}
+
+#[tokio::test]
+async fn run_loop_wakes_for_deferred_effect() {
+    let fx = fx();
+    let (_c, pane) = observed_occupant(&fx).await;
+
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(fx.lp.clone().run(rx));
+    let mut keys = false;
+    for _ in 0..300 {
+        if calls(&fx).iter().any(|x| matches!(x, FakeCall::SendKeys(..))) {
+            keys = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(keys, "the loop sent the exit keys");
+    // `set_process` emits no Herdr event: only the deferred wake can trigger the next step (the tick is 60 s).
+    fx.herdr.set_process(&pane, shell_process());
+    let mut started = false;
+    for _ in 0..300 {
+        if !start_calls(&fx, &pane).is_empty() {
+            started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tx.send(true).unwrap();
+    task.await.unwrap();
+    assert!(started, "the loop woke for the deferred replacement: {:?}", calls(&fx));
 }
 
 // =================================================================================================

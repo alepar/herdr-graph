@@ -541,8 +541,14 @@ impl RuntimeLoop {
                 eprintln!("herdr-graph: observe: step failed: {e:#}");
             }
             let resubscribe = events.is_none();
+            // Deferred or backed-off effects need another look at their own time, not only on the tick.
+            let wake = self
+                .reconciler
+                .next_wake()
+                .map(|t| (t - self.clock.now()).to_std().unwrap_or_default().clamp(Duration::from_millis(20), self.tick));
             tokio::select! {
                 _ = shutdown.changed() => {}
+                _ = async { match wake { Some(d) => tokio::time::sleep(d).await, None => std::future::pending::<()>().await } } => {}
                 _ = ticker.tick() => {}
                 _ = async { if resubscribe { tokio::time::sleep(Duration::from_secs(5)).await } else { std::future::pending::<()>().await } } => {}
                 ev = async {
