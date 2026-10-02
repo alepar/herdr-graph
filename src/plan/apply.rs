@@ -3,6 +3,8 @@
 use super::hash::{plan_hash, same_effects};
 use super::kind::{KindRegistry, PlanCx, PlanError, make_plan};
 use super::store::PlanStore;
+use crate::journal::Journal;
+use crate::model::AnyId;
 use super::types::{PlanEffect, StoredPlan};
 use crate::ports::store::StoreError;
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, Reject};
@@ -64,6 +66,24 @@ impl Mutation for OrgMutation {
         let args = req.args.clone();
         if args != stored.plan.request.args || req.kind != stored.plan.request.kind {
             return Err(reject("confirmation_mismatch", format!("request does not match plan {plan_id}")));
+        }
+
+        // 2b. a confirmed plan applies at most once: its id already names a committed op, or an id it
+        // reserved already exists (a replacement of an applied plan carries the same reserved ids).
+        // Runs before the recompute so no replacement plan is ever stored.
+        let journal = Journal::open(&Journal::path_in(&self.instance))
+            .map_err(|e| MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string()))))?;
+        let prior = journal
+            .committed_op_for_plan(&plan_id)
+            .map_err(|e| MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string()))))?;
+        if let Some(op) = prior {
+            return Err(reject("already_applied", format!("plan {plan_id} was already applied by {op}")));
+        }
+        for v in stored.plan.reserved.0.values() {
+            let Ok(id) = v.parse::<AnyId>() else { continue };
+            if cx.tree.locate(&id)?.is_some() {
+                return Err(reject("already_applied", format!("plan {plan_id} was already applied: {id} already exists")));
+            }
         }
 
         // 3. recompute against the committed revision this apply runs on

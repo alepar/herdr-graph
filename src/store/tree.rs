@@ -68,12 +68,12 @@ fn under(dir: &RepoPath, p: &RepoPath) -> Option<String> {
 pub struct Overlay<'a> {
     base: CommitView<'a>,
     edits: EditSet,
-    base_revs: RefCell<HashMap<AnyId, u64>>,
+    base_cache: RefCell<HashMap<AnyId, (u64, Option<RepoPath>)>>,
 }
 
 impl<'a> Overlay<'a> {
     pub fn new(store: &'a dyn Store, base: CommitId) -> Self {
-        Self { base: CommitView { store, at: base }, edits: EditSet::default(), base_revs: RefCell::new(HashMap::new()) }
+        Self { base: CommitView { store, at: base }, edits: EditSet::default(), base_cache: RefCell::new(HashMap::new()) }
     }
     pub fn base(&self) -> &CommitId {
         &self.base.at
@@ -91,29 +91,42 @@ impl<'a> Overlay<'a> {
         }
     }
 
-    /// rev of `id` at the BASE commit (0 if the object does not exist there).
-    fn base_rev(&self, id: &AnyId) -> Result<u64, StoreError> {
-        if let Some(r) = self.base_revs.borrow().get(id) {
-            return Ok(*r);
+    /// rev (0 if the object does not exist there) and record path of `id` at the BASE commit.
+    fn base_info(&self, id: &AnyId) -> Result<(u64, Option<RepoPath>), StoreError> {
+        if let Some(r) = self.base_cache.borrow().get(id) {
+            return Ok(r.clone());
         }
-        let rev = match self.base.store.locate(&self.base.at, id)? {
-            None => 0,
+        let info = match self.base.store.locate(&self.base.at, id)? {
+            None => (0, None),
             Some(loc) => match self.base.read_file(&loc.record_path)? {
-                None => 0,
+                None => (0, Some(loc.record_path)),
                 Some(b) => {
                     let t: toml::Table = parse_toml(&loc.record_path, &b)?;
-                    t.get("rev").and_then(|v| v.as_integer()).map_or(0, |v| v as u64)
+                    (t.get("rev").and_then(|v| v.as_integer()).map_or(0, |v| v as u64), Some(loc.record_path))
                 }
             },
         };
-        self.base_revs.borrow_mut().insert(id.clone(), rev);
-        Ok(rev)
+        self.base_cache.borrow_mut().insert(id.clone(), info.clone());
+        Ok(info)
     }
 
     /// Writer-incremented rev (spec §2.3): rev = (rev of this id at the BASE commit, or 0) + 1, so several
     /// writes of one object in one op bump it once. Serializes to TOML and puts the file.
     pub fn put_record<R: Record>(&mut self, p: RepoPath, rec: &mut R) -> Result<(), StoreError> {
-        let rev = self.base_rev(&rec.any_id())? + 1;
+        let id = rec.any_id();
+        let (base_rev, base_path) = self.base_info(&id)?;
+        // A record whose id already lives at another, still-present path would be a second record for
+        // one id. Moves stay legal: `move_dir` deletes the old path in the overlay before the rewrite.
+        if let Some(b) = base_path
+            && b != p
+            && self.read_file(&b)?.is_some()
+        {
+            return Err(StoreError::Corrupt {
+                path: p.as_str().into(),
+                reason: format!("duplicate id {id}: already recorded at {}", b.as_str()),
+            });
+        }
+        let rev = base_rev + 1;
         rec.set_rev(rev);
         let bytes = to_toml_bytes(rec).map_err(|e| match e {
             StoreError::Corrupt { reason, .. } => StoreError::Corrupt { path: p.as_str().into(), reason },

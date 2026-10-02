@@ -1402,3 +1402,109 @@ fn corrupt_plan_store_entry_fails_the_op() {
     assert_eq!(fx.w.journal().get(&good_op).unwrap().unwrap().state, OpState::Committed);
     assert_eq!(fx.w.journal().meta_get(crate::writer::WRITER_HALTED).unwrap(), None);
 }
+
+// ---------------------------------------------------------------------------------------------
+// hg-zmi.71: a confirmed plan applies at most once
+// ---------------------------------------------------------------------------------------------
+
+fn plan_files(fx: &Fx) -> usize {
+    std::fs::read_dir(fx.root.join(".graph-local/plans")).unwrap().count()
+}
+
+#[test]
+fn reapplying_a_committed_create_plan_is_already_applied() {
+    let fx = fx();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create foreman --teamspace alpha --active --harness shell");
+    let first = apply_plan(&fx, &sp);
+    assert_eq!(first.state, OpState::Committed, "{:?}", first.rejection);
+    let head = fx.store.head().unwrap();
+    let second = apply_plan(&fx, &sp);
+    assert_eq!(second.state, OpState::Rejected);
+    let r = second.rejection.expect("rejection");
+    assert_eq!(r.reason, "already_applied", "{r:?}");
+    assert!(r.explanation.contains(first.op.as_str()), "names the op: {}", r.explanation);
+    assert_eq!(fx.store.head().unwrap(), head, "nothing committed");
+    let seats = layout::all_seats(&view(&fx)).unwrap();
+    let planned: SeatId = sp.plan.reserved.get("seat").unwrap();
+    assert_eq!(seats.iter().filter(|(_, s)| s.id == planned).count(), 1);
+    assert_eq!(clones_of(&fx, &planned).len(), 1);
+}
+
+#[test]
+fn reapplying_teamspace_create_and_clone_add_is_already_applied() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create foreman --teamspace alpha --active --harness shell");
+    for change in ["teamspace create beta", "clone add foreman --name second"] {
+        let sp = plan(&fx, change);
+        let first = apply_plan(&fx, &sp);
+        assert_eq!(first.state, OpState::Committed, "{change}: {:?}", first.rejection);
+        let head = fx.store.head().unwrap();
+        let second = apply_plan(&fx, &sp);
+        assert_eq!(second.state, OpState::Rejected, "{change}");
+        assert_eq!(second.rejection.expect("rejection").reason, "already_applied", "{change}");
+        assert_eq!(fx.store.head().unwrap(), head, "{change}: nothing committed");
+    }
+    assert_eq!(layout::list_teamspaces(&view(&fx)).unwrap().iter().filter(|(_, t)| t.name == "beta").count(), 1);
+    let clones = layout::all_clones(&view(&fx)).unwrap();
+    let mut ids: Vec<_> = clones.iter().map(|(_, c)| c.id.clone()).collect();
+    let n = ids.len();
+    ids.sort_by_key(|i| i.to_string());
+    ids.dedup();
+    assert_eq!(ids.len(), n, "no duplicate clone ids");
+    assert_eq!(n, 2);
+}
+
+#[test]
+fn reapplying_a_plan_without_reserved_ids_is_already_applied() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    let sp = plan(&fx, "seat rename one uno");
+    assert!(sp.plan.reserved.0.is_empty());
+    let first = apply_plan(&fx, &sp);
+    assert_eq!(first.state, OpState::Committed, "{:?}", first.rejection);
+    let second = apply_plan(&fx, &sp);
+    assert_eq!(second.state, OpState::Rejected);
+    let r = second.rejection.expect("rejection");
+    assert_eq!(r.reason, "already_applied", "{r:?}");
+    assert!(r.explanation.contains(first.op.as_str()), "{}", r.explanation);
+}
+
+#[test]
+fn already_applied_writes_no_replacement_plan() {
+    let fx = fx();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create foreman --teamspace alpha --active --harness shell");
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    let before = plan_files(&fx);
+    let second = apply_plan(&fx, &sp);
+    assert_eq!(second.rejection.expect("rejection").reason, "already_applied");
+    assert_eq!(plan_files(&fx), before, "no replacement plan stored");
+}
+
+#[test]
+fn replacement_of_an_applied_stale_plan_is_already_applied() {
+    let fx = fx();
+    alpha(&fx);
+    let p = plan(&fx, "seat create foreman --teamspace alpha --active --harness shell");
+    // A conflicting change makes P stale: the slug `foreman` is now taken, so the effects differ.
+    commit(&fx, "seat create foreman --teamspace alpha");
+    let stale = apply_plan(&fx, &p);
+    let rej = stale.rejection.expect("rejection");
+    assert_eq!(rej.reason, "stale_plan", "{rej:?}");
+    let new_id = rej.explanation.split("new plan ").nth(1).unwrap().split_whitespace().next().unwrap();
+    let r = fx.deps.plans.get(&new_id.parse().unwrap()).unwrap().expect("replacement plan stored");
+    let applied = apply_plan(&fx, &r);
+    assert_eq!(applied.state, OpState::Committed, "{:?}", applied.rejection);
+    let before = plan_files(&fx);
+    let again = apply_plan(&fx, &p);
+    assert_eq!(again.state, OpState::Rejected);
+    let rej = again.rejection.expect("rejection");
+    assert_eq!(rej.reason, "already_applied", "{rej:?}");
+    assert_eq!(plan_files(&fx), before, "no second replacement plan");
+    let planned: SeatId = p.plan.reserved.get("seat").unwrap();
+    let seats = layout::all_seats(&view(&fx)).unwrap();
+    assert_eq!(seats.iter().filter(|(_, s)| s.id == planned).count(), 1);
+}
