@@ -108,6 +108,9 @@ mod tests {
             &["status"],
             &["doctor"],
             &["setup", "claude"],
+            &["setup", "claude", "--uninstall"],
+            &["seat", "--hook-prompt"],
+            &["init", "/tmp/x", "--with-examples"],
             &["seat"],
             &["seat", "--json"],
             &["show", "st_x"],
@@ -142,7 +145,7 @@ mod tests {
 
     #[test]
     fn stub_commands_report_not_implemented() {
-        let cli = Cli::try_parse_from(["herdr-graph", "show", "st_x"]).unwrap();
+        let cli = Cli::try_parse_from(["herdr-graph", "session-report", "--from-hook", "claude"]).unwrap();
         let err = run(cli).unwrap_err();
         assert!(err.to_string().contains("not implemented"));
     }

@@ -1,0 +1,17 @@
+schema = 1
+id = "tpl_01KRA9GVDGVFPFJVDPV2MSX542"
+rev = 1
+name = "feature-team"
+
+[defaults]
+harness = "claude"
+
+[[members]]
+id = "mem_01K0KCWYRN3JV8937QADKKRJ2P"
+name = "engineer"
+startup = "active"
+
+[[members]]
+id = "mem_01K86QZWV2PJ83MA80F95YQ4PG"
+name = "reviewer"
+startup = "deferred"

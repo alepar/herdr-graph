@@ -7,17 +7,26 @@ use std::process::ExitCode;
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Create a graph instance (git repo) at PATH.
-    Init { path: PathBuf },
+    Init {
+        path: PathBuf,
+        /// Also copy the shipped example templates into the instance.
+        #[arg(long)]
+        with_examples: bool,
+    },
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
-        Commands::Init { path } => {
+        Commands::Init { path, with_examples } => {
             std::fs::create_dir_all(&path)?;
             let path = path.canonicalize()?;
             let commit = init_instance(&path)?;
             println!("instance: {}", path.display());
             println!("commit:   {}", commit.0);
+            if with_examples {
+                let examples = crate::bootstrap::examples::install_examples(&path)?;
+                println!("examples: {} (commit {})", crate::bootstrap::examples::EXAMPLES_DIR, examples.0);
+            }
             let home = std::env::var_os("HOME").map(PathBuf::from);
             match home.map(|h| write_user_config(&h, &path)).transpose()? {
                 Some(UserConfigOutcome::Written(c)) => println!("config:   wrote {}", c.display()),
