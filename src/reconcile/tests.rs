@@ -599,6 +599,21 @@ async fn deactivated_seat_closes_its_tab() {
 }
 
 #[tokio::test]
+async fn reactivated_seat_starts_agent_again() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    commit(&fx, "seat deactivate foreman");
+    step(&fx).await;
+    commit(&fx, "seat activate foreman");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
 async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
     let fx = fx();
     activate(&fx, "claude");

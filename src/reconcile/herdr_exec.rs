@@ -112,6 +112,11 @@ impl HerdrExecutor {
         let _ = self.journal.meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
     }
 
+    /// A new pane for `clone` is a bare shell: forget the previous pane's launch so `start_needed` fires again.
+    fn clear_launch(&self, clone: &CloneId) {
+        let _ = self.journal.meta_delete(&launched_key(clone));
+    }
+
     fn open_pane_id(&self, idx: &LiveIndex<'_>, clone: &CloneId) -> Option<HerdrPaneId> {
         idx.pane(clone).map(|lp| lp.pane.id.clone())
     }
@@ -209,6 +214,7 @@ impl HerdrExecutor {
             return ExecOutcome::Done;
         }
         let Some(first) = missing.first() else { return ExecOutcome::Obsolete };
+        self.clear_launch(&first.clone);
         match cx
             .herdr
             .create_tab(CreateTab { workspace: ws.ws.id.clone(), label, cwd: first.cwd.clone(), env: first.env.clone() })
@@ -250,6 +256,7 @@ impl HerdrExecutor {
                 return ExecOutcome::Done;
             }
         }
+        self.clear_launch(&clone);
         let target = tab.panes.iter().find(|x| token_of(&x.metadata).is_some()).or(tab.panes.first());
         let Some(target) = target else { return ExecOutcome::Transient("seat tab has no pane to split".into()) };
         match cx
