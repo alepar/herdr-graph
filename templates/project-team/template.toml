@@ -1,0 +1,22 @@
+schema = 1
+id = "tpl_01KHS8ZFFCQ84VXR0V2E9ZWGAT"
+rev = 1
+name = "project-team"
+
+[defaults]
+harness = "claude"
+
+[[members]]
+id = "mem_01KGPCQ8FZD22PNBJCA7EA4V2W"
+name = "foreman"
+startup = "active"
+
+[[members]]
+id = "mem_01KN508K7TKH4YQ20MN9ZYEDJ2"
+name = "researcher"
+startup = "deferred"
+
+[[relationships]]
+kind = "thread_participation"
+thread = "team"
+members = "all"
