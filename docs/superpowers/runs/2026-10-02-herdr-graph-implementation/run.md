@@ -27,12 +27,12 @@ graph-pass: depth 11→11 · width 1.8→1.8 · applied 0 · parked 2
 designRoastExit: converged at round 2 — Should-fix (14 confirmed) [converged], 0 Blocking; punch list of 14 applied inline to spec + beads (no re-roast per loop rule); 2 new escalations parked above
 
 codeBuckets:
-  completed: hg-zmi.1–.20, hg-zmi.46–.52
+  completed: hg-zmi.1–.20, hg-zmi.46–.55 (pass 3: .53–.55 F1–F3)
   escalated:
   pendingRetry:
   parked:
   stalled: false
-  review: pass 1 not ready (9 must-fix → hg-zmi.46–.52 + .20 re-entry, all completed in pass 2); pass 2 not ready (F1, F2 must-fix; F3 should-fix → hg-zmi.53–.55, epic reopened, super-code pass 3)
+  review: pass 1 not ready (9 must-fix → hg-zmi.46–.52 + .20 re-entry, all completed in pass 2); pass 2 not ready (F1, F2 must-fix; F3 should-fix → hg-zmi.53–.55, epic reopened, super-code pass 3); pass 3 not ready (A 2s polling, red doctor test, C exclusion undo, B rename Notify → hg-zmi.56–.59, pass 4)
   sweep: SWEEP DEFERRED (caller-owned)
   slowness: []
   stopReason: ready-drained (pass 1); root-closed (pass 2)
