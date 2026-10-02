@@ -422,6 +422,7 @@ dependencies = [
  "git2",
  "herdr-threads",
  "libc",
+ "libgit2-sys",
  "proptest",
  "rusqlite",
  "serde",

@@ -114,7 +114,7 @@ pub fn fast_forward(
                 if let Some(parent) = disk.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::write(&disk, blob.content())?;
+                crate::fsutil::write_atomic_in(&local_dir(root).join("tmp"), &disk, blob.content())?;
                 report.updated.push(rel.to_owned());
             }
             _ => {}
@@ -124,7 +124,8 @@ pub fn fast_forward(
     // Folders that disappeared from `new` but still hold files (untracked or dirty leftovers).
     let gone: Vec<&String> =
         deleted_dirs.iter().filter(|d| new_tree.get_path(Path::new(d.as_str())).is_err()).collect();
-    let orphan_root = local_dir(root).join("orphans").join(op.map_or("recovery", |o| o.as_str()));
+    let key = op.map_or_else(|| format!("recovery-{}", now.format("%Y%m%dT%H%M%S%.6fZ")), |o| o.as_str().to_owned());
+    let orphan_root = local_dir(root).join("orphans").join(key);
     for dir in gone {
         let abs = root.join(dir);
         if !abs.is_dir() {
@@ -134,7 +135,7 @@ pub fn fast_forward(
         collect_files(&abs, &mut files)?;
         for f in files {
             let rel = f.strip_prefix(root).map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?;
-            let dest = orphan_root.join(rel);
+            let dest = crate::fsutil::unique_path(&orphan_root.join(rel));
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
             }
@@ -158,7 +159,7 @@ pub fn fast_forward(
             writeln!(f, "{line}")?;
         }
     }
-    std::fs::write(view_rev_file(root), &commit.0)?;
+    crate::fsutil::write_atomic(&view_rev_file(root), commit.0.as_bytes())?;
     Ok(report)
 }
 
@@ -228,5 +229,116 @@ mod tests {
         std::fs::write(dirty_file(tmp.path()), text).unwrap();
         assert_eq!(read_dirty_all(tmp.path()), lines.to_vec());
         assert_eq!(read_dirty(tmp.path()).len(), 2, "the deduping reader still collapses by path");
+    }
+
+    fn tree_of(repo: &Repository, files: &[(&str, &str)]) -> Oid {
+        let mut idx = repo.index().unwrap();
+        idx.clear().unwrap();
+        for (path, content) in files {
+            let entry = git2::IndexEntry {
+                ctime: git2::IndexTime::new(0, 0),
+                mtime: git2::IndexTime::new(0, 0),
+                dev: 0,
+                ino: 0,
+                mode: 0o100644,
+                uid: 0,
+                gid: 0,
+                file_size: 0,
+                id: Oid::zero(),
+                flags: 0,
+                flags_extended: 0,
+                path: path.as_bytes().to_vec(),
+            };
+            idx.add_frombuffer(&entry, content.as_bytes()).unwrap();
+        }
+        idx.write_tree().unwrap()
+    }
+
+    fn at(sec: u32) -> Timestamp {
+        chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, sec).unwrap()
+    }
+
+    fn files_under(dir: &Path) -> Vec<(PathBuf, String)> {
+        let mut v = Vec::new();
+        if dir.exists() {
+            let mut all = Vec::new();
+            collect_files(dir, &mut all).unwrap();
+            for f in all {
+                v.push((f.clone(), std::fs::read_to_string(f).unwrap()));
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn orphan_collision_preserves_both_copies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let old = tree_of(&repo, &[("dir/x.md", "x"), ("keep.md", "k")]);
+        let new = tree_of(&repo, &[("keep.md", "k")]);
+        let c = CommitId("c".into());
+        for (n, content) in [(1u32, "first copy"), (2, "second copy")] {
+            std::fs::create_dir_all(root.join("dir")).unwrap();
+            std::fs::write(root.join("dir/x.md"), "x").unwrap();
+            std::fs::write(root.join("keep.md"), "k").unwrap();
+            std::fs::write(root.join("dir/notes.md"), content).unwrap();
+            let r = fast_forward(&repo, root, Some(old), new, &c, None, at(n)).unwrap();
+            assert_eq!(r.orphaned.len(), 1, "run {n}: {r:?}");
+            assert!(!root.join("dir").exists());
+        }
+        let mut copies: Vec<String> =
+            files_under(&local_dir(root).join("orphans")).into_iter().map(|(_, c)| c).collect();
+        copies.sort();
+        assert_eq!(copies, vec!["first copy".to_owned(), "second copy".to_owned()]);
+    }
+
+    #[test]
+    fn orphan_destination_collision_gets_suffix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let old = tree_of(&repo, &[("dir/x.md", "x"), ("keep.md", "k")]);
+        let new = tree_of(&repo, &[("keep.md", "k")]);
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::write(root.join("dir/x.md"), "x").unwrap();
+        std::fs::write(root.join("keep.md"), "k").unwrap();
+        std::fs::write(root.join("dir/notes.md"), "new copy").unwrap();
+        let op = OpId::new();
+        let dest = local_dir(root).join("orphans").join(op.as_str()).join("dir/notes.md");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, "original").unwrap();
+        let r = fast_forward(&repo, root, Some(old), new, &CommitId("c".into()), Some(&op), at(1)).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "original");
+        let suffixed = PathBuf::from(format!("{}.1", dest.display()));
+        assert_eq!(std::fs::read_to_string(&suffixed).unwrap(), "new copy");
+        assert_eq!(r.orphaned[0].1, suffixed.to_string_lossy());
+    }
+
+    #[test]
+    fn interrupted_ff_rerun_converges() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let old = tree_of(&repo, &[("a.md", "old a"), ("b.md", "old b")]);
+        let new = tree_of(&repo, &[("a.md", "new a"), ("b.md", "new b")]);
+        let (c_old, c_new) = (CommitId("old".into()), CommitId("new".into()));
+        fast_forward(&repo, root, None, old, &c_old, None, at(1)).unwrap();
+        // crash point (a): a.md still old (crash before rename); crash point (b): b.md already new, view_rev old.
+        std::fs::write(root.join("b.md"), "new b").unwrap();
+        assert_eq!(view_rev(root), Some(c_old.clone()));
+        let r = fast_forward(&repo, root, Some(old), new, &c_new, None, at(2)).unwrap();
+        assert_eq!(r.updated, vec!["a.md".to_owned()], "{r:?}");
+        assert!(r.dirty.is_empty(), "no torn or half-applied file is classified as a user edit: {r:?}");
+        assert_eq!(std::fs::read_to_string(root.join("a.md")).unwrap(), "new a");
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "new b");
+        assert_eq!(view_rev(root), Some(c_new));
+        let mut all = Vec::new();
+        collect_files(root, &mut all).unwrap();
+        let leftovers: Vec<_> = all
+            .iter()
+            .filter(|p| !p.starts_with(root.join(".git")) && p.extension().is_some_and(|e| e == "tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }

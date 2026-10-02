@@ -28,6 +28,7 @@ pub fn graph_signature() -> Result<git2::Signature<'static>, git2::Error> {
 impl GitStore {
     /// Open an instance: a git repo whose refs/heads/main tree has graph.toml. Else StoreError::NoInstance(root).
     pub fn open(root: &Path) -> Result<Self, StoreError> {
+        crate::fsutil::enable_git_fsync();
         let no_instance = || StoreError::NoInstance(root.to_path_buf());
         let repo = Repository::open(root).map_err(|_| no_instance())?;
         let has_graph = (|| -> Result<bool, git2::Error> {

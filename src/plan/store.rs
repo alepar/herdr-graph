@@ -1,7 +1,6 @@
 //! Plan store: `<instance>/.graph-local/plans/<pl_id>.json` (spec §3.3).
 use super::types::StoredPlan;
 use crate::model::{PlanId, Timestamp};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub struct PlanStore {
@@ -26,17 +25,11 @@ impl PlanStore {
         self.dir.join(format!("{id}.json"))
     }
 
-    /// Write via a temp file in the same directory, then rename.
+    /// Crash-atomic write (temp + fsync + rename + directory fsync).
     pub fn put(&self, p: &StoredPlan) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let bytes = serde_json::to_vec_pretty(p).map_err(std::io::Error::other)?;
-        let tmp = self.dir.join(format!(".{}.{}.tmp", p.plan.id, std::process::id()));
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(&bytes)?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, self.path(&p.plan.id))
+        crate::fsutil::write_atomic(&self.path(&p.plan.id), &bytes)
     }
 
     pub fn get(&self, id: &PlanId) -> std::io::Result<Option<StoredPlan>> {

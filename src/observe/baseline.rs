@@ -3,7 +3,6 @@
 use crate::model::{Incarnation, Timestamp};
 use crate::ports::herdr::HerdrSnapshot;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,12 +28,6 @@ pub fn save(path: &Path, b: &Baseline) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec(b).map_err(std::io::Error::other)?;
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(&bytes)?;
-        f.sync_all()?;
-    }
-    std::fs::rename(&tmp, path)
+    crate::fsutil::write_atomic(path, &bytes)
 }
