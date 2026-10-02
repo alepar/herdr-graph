@@ -1,0 +1,817 @@
+//! Reconciler tests against FakeHerdr, a real writer/journal/git store and the plan engine.
+use super::bookkeeping::{admit_binding, admit_runtime};
+use super::*;
+use crate::herdr::fake::{FakeCall, FakeHerdr, Fault};
+use crate::model::clone::CloneRecord;
+use crate::model::common::{Availability, Binding, Lifecycle, Occupant};
+use crate::model::effect::{ContainerKind, EndState};
+use crate::model::harness::{Harness, StartOutcome};
+use crate::model::native_session::NativeSession;
+use crate::model::seat::SeatRecord;
+use crate::model::{AnyId, HerdrPaneId, NsId, SeatId};
+use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
+use crate::plan::core_kinds::register_core_kinds;
+use crate::plan::kind::KindRegistry;
+use crate::plan::store::PlanStore;
+use crate::plan::types::StoredPlan;
+use crate::daemon::registry::CallerInfo;
+use crate::model::operation::OpState;
+use crate::ports::clock::ManualClock;
+use crate::ports::herdr::{AgentInfo, AgentStatus, KeyInput, ProcessInfo};
+use crate::store::init::init_instance;
+use crate::store::layout;
+use crate::store::GitStore;
+use crate::writer::{Applied, Mutation, MutationCx, MutationError, WriterConfig, WriterCore};
+use chrono::TimeZone;
+use serde_json::json;
+use std::sync::Mutex;
+
+fn t0() -> Timestamp {
+    chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap()
+}
+
+#[derive(Default)]
+struct RecordingNotifier(Mutex<Vec<(OpId, Severity, String)>>);
+impl RecordingNotifier {
+    fn messages(&self) -> Vec<String> {
+        self.0.lock().unwrap().iter().map(|m| m.2.clone()).collect()
+    }
+}
+impl RequesterNotifier for RecordingNotifier {
+    fn notify(&self, op: &OpId, severity: Severity, text: &str) {
+        self.0.lock().unwrap().push((op.clone(), severity, text.to_owned()));
+    }
+}
+
+/// Test-only mutations: the real `seat override` and occupant observation belong to other tasks.
+struct TestSetModel;
+impl Mutation for TestSetModel {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let seat: SeatId = cx.request.args["seat"].as_str().unwrap().parse().unwrap();
+        let loc = cx.tree.locate(&seat.to_any())?.unwrap();
+        let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        rec.overrides.model = cx.request.args["model"].as_str().map(str::to_owned);
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied { summary: "set model".into(), action: None })
+    }
+}
+
+struct TestSetOccupant;
+impl Mutation for TestSetOccupant {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let clone: CloneId = cx.request.args["clone"].as_str().unwrap().parse().unwrap();
+        let native = cx.request.args["native"].as_str().unwrap().to_owned();
+        let harness: Harness = serde_json::from_value(cx.request.args["harness"].clone()).unwrap();
+        let loc = cx.tree.locate(&clone.to_any())?.unwrap();
+        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        let ns = NativeSession {
+            id: NsId::new(),
+            harness,
+            native_session_id: native,
+            transcript_path: None,
+            transcript: None,
+            cwd: "/".into(),
+            started: cx.now,
+            ended: None,
+            end_reason: None,
+        };
+        rec.occupant = Some(Occupant { native_session: ns.id.clone(), harness, since: cx.now });
+        rec.sessions.push(ns);
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied { summary: "set occupant".into(), action: None })
+    }
+}
+
+struct Fx {
+    _tmp: tempfile::TempDir,
+    deps: PlanDeps,
+    w: Arc<WriterCore>,
+    store: Arc<GitStore>,
+    journal: Arc<Journal>,
+    herdr: Arc<FakeHerdr>,
+    clock: Arc<ManualClock>,
+    notes: Arc<RecordingNotifier>,
+    rec: Arc<Reconciler>,
+}
+
+fn fx() -> Fx {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("inst");
+    init_instance(&root).unwrap();
+    let mut kinds = KindRegistry::default();
+    register_core_kinds(&mut kinds);
+    let kinds = Arc::new(kinds);
+    let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
+    let mut reg = crate::writer::MutationRegistry::default();
+    kinds.register_mutations(&mut reg, plans.clone());
+    register_mutations(&mut reg);
+    reg.register("bookkeeping.test_set_model", Arc::new(TestSetModel));
+    reg.register("bookkeeping.test_set_occupant", Arc::new(TestSetOccupant));
+    let store = Arc::new(GitStore::open(&root).unwrap());
+    let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
+    let clock = Arc::new(ManualClock::new(t0()));
+    let w = WriterCore::new(store.clone(), journal.clone(), Arc::new(reg), clock.clone(), WriterConfig::default());
+    let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root.clone() };
+    let herdr = FakeHerdr::new();
+    let notes = Arc::new(RecordingNotifier::default());
+    let mut cfg = ReconcilerConfig::new(root);
+    cfg.idle_timeout = Duration::from_millis(100);
+    cfg.exit_timeout = Duration::from_millis(100);
+    cfg.exit_followup = Duration::from_millis(20);
+    cfg.poll_interval = Duration::from_millis(5);
+    let rec = Reconciler::new(store.clone(), journal.clone(), w.clone(), herdr.clone(), clock.clone(), notes.clone(), cfg);
+    Fx { _tmp: tmp, deps, w, store, journal, herdr, clock, notes, rec }
+}
+
+fn words(s: &str) -> Vec<String> {
+    s.split_whitespace().map(str::to_owned).collect()
+}
+
+fn plan(fx: &Fx, change: &str) -> StoredPlan {
+    let v = create_plan(&fx.deps, &CallerInfo::default(), words(change)).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+    let id: crate::model::PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
+    fx.deps.plans.get(&id).unwrap().unwrap()
+}
+
+/// Plan and apply one change; it must commit.
+fn commit(fx: &Fx, change: &str) {
+    let sp = plan(fx, change);
+    let op = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
+        .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{change}: {:?}", row.rejection);
+}
+
+fn view(fx: &Fx) -> crate::store::tree::CommitView<'_> {
+    crate::store::tree::CommitView { store: &*fx.store, at: fx.store.head().unwrap() }
+}
+
+fn seat(fx: &Fx, name: &str) -> SeatRecord {
+    let mut found: Vec<_> = layout::all_seats(&view(fx)).unwrap().into_iter().filter(|(_, s)| s.name == name).collect();
+    assert_eq!(found.len(), 1, "seat {name}");
+    found.remove(0).1
+}
+
+fn clones_of(fx: &Fx, seat: &SeatId) -> Vec<CloneRecord> {
+    layout::all_clones(&view(fx)).unwrap().into_iter().map(|(_, c)| c).filter(|c| &c.seat == seat).collect()
+}
+
+fn only_clone(fx: &Fx, seat_name: &str) -> CloneRecord {
+    let s = seat(fx, seat_name);
+    let mut cs = clones_of(fx, &s.id);
+    assert_eq!(cs.len(), 1);
+    cs.remove(0)
+}
+
+/// One loop step: reconcile at the current head, then let the writer commit the write-backs.
+async fn step(fx: &Fx) -> StepReport {
+    let r = fx.rec.step_fresh().await;
+    fx.w.drain().unwrap();
+    r
+}
+
+/// A teamspace `alpha` and an active seat `foreman` of the given harness.
+fn activate(fx: &Fx, harness: &str) {
+    commit(fx, "teamspace create alpha");
+    commit(fx, &format!("seat create foreman --teamspace alpha --active --harness {harness}"));
+}
+
+fn calls(fx: &Fx) -> Vec<FakeCall> {
+    fx.herdr.calls()
+}
+
+fn count_calls(fx: &Fx, pred: impl Fn(&FakeCall) -> bool) -> usize {
+    calls(fx).iter().filter(|c| pred(c)).count()
+}
+
+fn rows(fx: &Fx, kind: EffectKind) -> Vec<EffectRecord> {
+    let all = [
+        EffectStatus::Pending,
+        EffectStatus::Done,
+        EffectStatus::Obsolete,
+        EffectStatus::Failed,
+        EffectStatus::Unknown,
+        EffectStatus::NeedsRevision,
+        EffectStatus::BlockedNeedsHuman,
+    ];
+    fx.journal.effects_with_status(&all).unwrap().into_iter().filter(|r| r.kind == kind).collect()
+}
+
+fn pane_of(fx: &Fx, c: &CloneRecord) -> HerdrPaneId {
+    let fresh = clones_of(fx, &c.seat).into_iter().find(|x| x.id == c.id).unwrap();
+    fresh.runtime.bound.expect("clone is bound").pane_id.expect("bound to a pane")
+}
+
+fn agent(status: AgentStatus) -> Option<AgentInfo> {
+    Some(AgentInfo { kind: "claude".into(), status, session: None })
+}
+
+fn admit_bookkeeping(fx: &Fx, args: serde_json::Value) {
+    use crate::ports::writer::Writer;
+    fx.w
+        .admit(crate::model::change::ChangeRequest {
+            kind: crate::model::change::RequestKind::Bookkeeping,
+            args,
+            relied_on: vec![],
+            requester: Default::default(),
+            supersedes: None,
+        })
+        .unwrap();
+    fx.w.drain().unwrap();
+}
+
+fn set_occupant(fx: &Fx, c: &CloneRecord, native: &str) {
+    admit_bookkeeping(fx, json!({"sub": "test_set_occupant", "clone": c.id, "native": native, "harness": "claude"}));
+}
+
+fn set_model(fx: &Fx, s: &SeatRecord, model: &str) {
+    admit_bookkeeping(fx, json!({"sub": "test_set_model", "seat": s.id, "model": model}));
+}
+
+// -------------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn activate_seat_creates_tab_pane_agent_in_order() {
+    let fx = fx();
+    activate(&fx, "claude");
+    let report = step(&fx).await;
+    assert!(report.executed.iter().all(|(_, s)| *s == EffectStatus::Done), "{report:?}");
+
+    let c = only_clone(&fx, "foreman");
+    let s = seat(&fx, "foreman");
+    let log = calls(&fx);
+    let shape: Vec<&str> = log
+        .iter()
+        .map(|c| match c {
+            FakeCall::CreateWorkspace(_) => "create_workspace",
+            FakeCall::ReportWorkspaceMetadata(..) => "stamp_workspace",
+            FakeCall::RenameWorkspace(..) => "rename_workspace",
+            FakeCall::CreateTab(_) => "create_tab",
+            FakeCall::ReportPaneMetadata(..) => "stamp_pane",
+            FakeCall::RenameTab(..) => "rename_tab",
+            FakeCall::StartAgent(_) => "start_agent",
+            other => panic!("unexpected call {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        ["create_workspace", "stamp_workspace", "rename_workspace", "create_tab", "stamp_pane", "rename_tab", "start_agent"]
+    );
+    let FakeCall::CreateWorkspace(ws) = &log[0] else { unreachable!() };
+    assert!(ws.label.starts_with("alpha ·"), "nonce label: {}", ws.label);
+    let FakeCall::CreateTab(tab) = &log[3] else { unreachable!() };
+    assert!(tab.label.starts_with("foreman ·"), "nonce label: {}", tab.label);
+    let env: std::collections::BTreeMap<_, _> = tab.env.iter().cloned().collect();
+    assert_eq!(env["HERDR_GRAPH"], "1");
+    assert_eq!(env["HERDR_GRAPH_SEAT"], s.id.to_string());
+    assert_eq!(env["HERDR_GRAPH_CLONE"], c.id.to_string());
+    assert!(env.contains_key("HERDR_GRAPH_INSTANCE"));
+    let FakeCall::ReportPaneMetadata(_, key, value) = &log[4] else { unreachable!() };
+    assert_eq!((key.as_str(), value.as_str()), ("hg", format!("hg={}", c.id).as_str()));
+    let FakeCall::RenameTab(_, plain) = &log[5] else { unreachable!() };
+    assert_eq!(plain, "foreman");
+    let FakeCall::StartAgent(start) = &log[6] else { unreachable!() };
+    assert_eq!(start.kind, "claude");
+    assert!(start.args.is_empty());
+
+    // Binding written back as a bookkeeping mutation.
+    let bound = clones_of(&fx, &s.id).remove(0).runtime;
+    assert_eq!(bound.availability, Availability::Present);
+    let b = bound.bound.expect("clone bound");
+    assert_eq!(b.token.as_deref(), Some(format!("hg={}", c.id).as_str()));
+    assert!(b.pane_id.is_some() && b.tab_id.is_some() && b.workspace_id.is_some());
+    assert!(seat(&fx, "foreman").runtime.bound.is_some());
+
+    // Level-triggered: a second step on the settled state does nothing.
+    let before = calls(&fx).len();
+    let again = step(&fx).await;
+    assert_eq!(calls(&fx).len(), before, "no further herdr calls: {again:?}");
+    assert!(again.planned.is_empty() && again.executed.is_empty(), "{again:?}");
+}
+
+#[tokio::test]
+async fn shell_harness_starts_no_agent() {
+    let fx = fx();
+    activate(&fx, "shell");
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+    assert!(rows(&fx, EffectKind::StartAgent).is_empty());
+    let c = only_clone(&fx, "foreman");
+    assert!(fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn retire_after_queued_create_is_obsolete() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("tab.create", Fault::Unavailable);
+    let first = step(&fx).await;
+    let queued = rows(&fx, EffectKind::CreateTab);
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].status, EffectStatus::Pending);
+    assert!(first.executed.contains(&(queued[0].id.clone(), EffectStatus::Pending)), "{first:?}");
+
+    commit(&fx, "seat retire foreman");
+    let second = step(&fx).await;
+    assert!(second.obsolete.contains(&queued[0].id), "{second:?}");
+    assert_eq!(fx.journal.get_effect(&queued[0].id).unwrap().unwrap().status, EffectStatus::Obsolete);
+    // The failed attempt is the only create_tab call, and no tab exists for the seat.
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert!(snap.workspaces.iter().flat_map(|w| &w.tabs).all(|t| !t.label.starts_with("foreman")));
+    // Its dependents were dropped with it.
+    assert!(rows(&fx, EffectKind::StartAgent).iter().all(|r| r.status == EffectStatus::Obsolete));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+}
+
+#[tokio::test]
+async fn transient_failure_retried_with_backoff() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("tab.create", Fault::Unavailable);
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::CreateTab).remove(0);
+    assert_eq!(ef.status, EffectStatus::Pending);
+    assert_eq!(ef.attempts, 1);
+    assert!(ef.last_error.is_some());
+
+    // Not before the backoff has elapsed.
+    let early = step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
+    assert!(early.deferred.contains(&ef.id), "{early:?}");
+
+    fx.clock.advance(chrono::Duration::seconds(5));
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 2);
+    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+}
+
+#[tokio::test]
+async fn lost_response_create_adopted_by_nonce() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("tab.create", Fault::LostResponse);
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::CreateTab).remove(0);
+    assert_eq!(ef.status, EffectStatus::Unknown);
+
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1, "adopted, not duplicated");
+    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    // Adoption stamped the token, dropped the nonce and bound the clone.
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let tabs: Vec<_> = snap.workspaces.iter().flat_map(|w| &w.tabs).filter(|t| t.label.starts_with("foreman")).collect();
+    assert_eq!(tabs.len(), 1);
+    assert_eq!(tabs[0].label, "foreman");
+    assert!(tabs[0].panes[0].metadata.contains_key("hg"));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+    assert!(only_clone(&fx, "foreman").runtime.bound.is_some());
+}
+
+#[tokio::test]
+async fn unknown_start_outcome_is_inspected_not_duplicated() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::LostResponse);
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(ef.status, EffectStatus::Unknown);
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    assert!(fx.journal.meta_get(&planner::launched_key(&only_clone(&fx, "foreman").id)).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn unknown_object_gets_no_create() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(&fx, "seat create other --teamspace alpha --active --harness shell");
+    let c = only_clone(&fx, "foreman");
+    let b = Binding { pane_id: Some(HerdrPaneId("p9".into())), ..Default::default() };
+    admit_binding(&*fx.w, &c.id.to_any(), &b, Availability::Unknown).unwrap();
+    fx.w.drain().unwrap();
+    step(&fx).await;
+    // Nothing is created for the unknown clone ...
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SplitPane(_) | FakeCall::StartAgent(_))), 0);
+    let tabs: Vec<_> = calls(&fx).into_iter().filter_map(|c| if let FakeCall::CreateTab(t) = c { Some(t.label) } else { None }).collect();
+    assert_eq!(tabs.len(), 1, "{tabs:?}");
+    assert!(tabs[0].starts_with("other ·"), "{tabs:?}");
+    // ... while never-bound objects still are.
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateWorkspace(_))), 1);
+}
+
+#[tokio::test]
+async fn unknown_only_clone_creates_nothing_at_all() {
+    let fx = fx();
+    activate(&fx, "claude");
+    let c = only_clone(&fx, "foreman");
+    let b = Binding { pane_id: Some(HerdrPaneId("p9".into())), ..Default::default() };
+    admit_binding(&*fx.w, &c.id.to_any(), &b, Availability::Unknown).unwrap();
+    fx.w.drain().unwrap();
+    let report = step(&fx).await;
+    assert!(calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(report.planned.is_empty(), "{report:?}");
+}
+
+#[tokio::test]
+async fn moved_out_seat_gets_no_create_tab() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(&fx, "seat create other --teamspace alpha --active --harness shell");
+    let s = seat(&fx, "foreman");
+    admit_runtime(&*fx.w, &s.id.to_any(), Availability::Absent, Some(true)).unwrap();
+    fx.w.drain().unwrap();
+    assert!(seat(&fx, "foreman").moved_out);
+    step(&fx).await;
+    let tabs: Vec<_> = calls(&fx).into_iter().filter_map(|c| if let FakeCall::CreateTab(t) = c { Some(t.label) } else { None }).collect();
+    assert_eq!(tabs.len(), 1, "{tabs:?}");
+    assert!(tabs[0].starts_with("other ·"), "{tabs:?}");
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+}
+
+#[tokio::test]
+async fn start_agent_needs_shell_foreground() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::Unavailable);
+    step(&fx).await;
+    let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
+    fx.herdr.set_process(&pane, ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["vim".into()], is_shell: false });
+    fx.clock.advance(chrono::Duration::seconds(5));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    assert_eq!(ef.last_error.as_deref(), Some("pane foreground is not the shell"));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1, "the refused start never reached herdr");
+    let msgs = fx.notes.messages();
+    assert_eq!(msgs.len(), 1);
+    assert!(msgs[0].contains("not the shell"), "{msgs:?}");
+}
+
+#[tokio::test]
+async fn blocked_needs_human_outcome() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(ef.status, EffectStatus::BlockedNeedsHuman);
+    assert_eq!(fx.notes.messages().len(), 1);
+    // Not retried: the blocked agent is the occupant now.
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+}
+
+/// Launch a claude seat, then give its clone an occupant with native session `abc`.
+async fn occupied(fx: &Fx) -> (SeatRecord, CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step(fx).await;
+    let c = only_clone(fx, "foreman");
+    set_occupant(fx, &c, "abc");
+    (seat(fx, "foreman"), only_clone(fx, "foreman"), pane_of(fx, &c))
+}
+
+#[tokio::test]
+async fn model_change_on_occupied_clone_replaces_with_resume() {
+    let fx = fx();
+    let (s, c, pane) = occupied(&fx).await;
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    let report = step(&fx).await;
+    assert!(report.executed.iter().any(|(_, st)| *st == EffectStatus::Done), "{report:?}");
+
+    let log = calls(&fx);
+    let ctrl_c = FakeCall::SendKeys(pane.clone(), vec![KeyInput::Key("ctrl+c".into())]);
+    assert_eq!(log.iter().filter(|c| **c == ctrl_c).count(), 2, "{log:?}");
+    let starts: Vec<_> = log.iter().filter_map(|c| if let FakeCall::StartAgent(s) = c { Some(s) } else { None }).collect();
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].pane, pane);
+    assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
+    // Exit keys come before the restart.
+    let first_start = log.iter().position(|c| matches!(c, FakeCall::StartAgent(_))).unwrap();
+    assert!(log[..first_start].iter().filter(|c| **c == ctrl_c).count() == 2);
+
+    let launched: serde_json::Value =
+        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    assert_eq!(launched["model"], "opus-x");
+
+    // Level-triggered and idempotent: nothing more to do.
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert!(calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).len(), 1);
+}
+
+#[tokio::test]
+async fn adopted_occupant_without_launch_record_not_replaced() {
+    let fx = fx();
+    let (s, c, _) = occupied(&fx).await;
+    fx.journal.meta_delete(&planner::launched_key(&c.id)).unwrap();
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert!(calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(rows(&fx, EffectKind::ReplaceSession).is_empty());
+}
+
+#[tokio::test]
+async fn replacement_busy_occupant_needs_revision() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
+    assert!(calls(&fx).is_empty(), "a working agent is never interrupted: {:?}", calls(&fx));
+    assert!(fx.notes.messages().iter().any(|m| m.contains("occupant busy")));
+}
+
+#[tokio::test]
+async fn replacement_exit_timeout_starts_no_agent() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["claude".into()], is_shell: false });
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    assert_eq!(ef.last_error.as_deref(), Some("occupant did not exit"));
+    let log = calls(&fx);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0, "{log:?}");
+    // The fallback `/exit` followed the two ctrl+c presses.
+    let sent: Vec<_> = log.iter().filter_map(|c| if let FakeCall::SendKeys(_, k) = c { Some(k.clone()) } else { None }).collect();
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert_eq!(sent[2], vec![KeyInput::Text("/exit".into()), KeyInput::Key("enter".into())]);
+}
+
+#[tokio::test]
+async fn close_effects_predict_induced_closures() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    // Herdr's own default tab goes, so the seat tab is the workspace's last.
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let default_tab = snap.workspaces[0].tabs.iter().find(|t| t.label == "1").unwrap().id.clone();
+    fx.herdr.user_close_tab(&default_tab);
+
+    let c = only_clone(&fx, "foreman");
+    let s = seat(&fx, "foreman");
+    commit(&fx, &format!("clone retire {}", c.id));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+
+    let ef = rows(&fx, EffectKind::ClosePane).remove(0);
+    assert_eq!(ef.status, EffectStatus::Done);
+    let ts = s.teamspace.to_any();
+    let p = |object: AnyId, container, induced| PredictedEnd { object, container, end: EndState::Closed, induced };
+    assert_eq!(ef.predicted.len(), 3, "{:?}", ef.predicted);
+    assert!(ef.predicted.contains(&p(c.id.to_any(), ContainerKind::Pane, false)));
+    assert!(ef.predicted.contains(&p(s.id.to_any(), ContainerKind::Tab, true)));
+    assert!(ef.predicted.contains(&p(ts, ContainerKind::Workspace, true)));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(_))), 1);
+    // The reconciler never creates anything for the retired clone again.
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert!(calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn deactivated_seat_closes_its_tab() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    commit(&fx, "seat deactivate foreman");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CloseTab(_))), 1);
+    let ef = rows(&fx, EffectKind::CloseTab).remove(0);
+    assert_eq!(ef.status, EffectStatus::Done);
+    assert!(ef.predicted.iter().any(|p| p.container == ContainerKind::Tab && !p.induced));
+    assert!(ef.predicted.iter().any(|p| p.container == ContainerKind::Pane && p.induced));
+}
+
+#[tokio::test]
+async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = pane_of(&fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    let authority = OpId::new();
+    let ef = fx.rec.request_relaunch(&c.id, &authority).unwrap();
+    let row = fx.journal.get_effect(&ef).unwrap().unwrap();
+    assert_eq!((row.kind.clone(), row.op.clone(), row.status), (EffectKind::RelaunchOccupant, authority, EffectStatus::Pending));
+    // Enqueueing twice is the same effect.
+    assert_eq!(fx.rec.request_relaunch(&c.id, &row.op).unwrap(), ef);
+
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")), 1);
+    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().status, EffectStatus::Done);
+}
+
+#[tokio::test]
+async fn relaunch_refused_for_dormant_seat() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    commit(&fx, "seat deactivate foreman");
+    let err = fx.rec.request_relaunch(&c.id, &OpId::new()).unwrap_err();
+    assert!(err.to_string().contains("not an active clone of an active seat"), "{err}");
+    assert!(fx.rec.request_relaunch(&CloneId::new(), &OpId::new()).is_err());
+}
+
+#[tokio::test]
+async fn relaunch_waits_grace_after_incarnation_change() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    // Herdr restarts: new incarnation, pane ids change, tokens survive.
+    fx.herdr.restart(true, true);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let new_pane = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .find(|p| p.metadata.get("hg").is_some_and(|v| v == &format!("hg={}", c.id)))
+        .unwrap()
+        .id
+        .clone();
+    fx.herdr.set_agent(&new_pane, None);
+    let ef = fx.rec.request_relaunch(&c.id, &OpId::new()).unwrap();
+    fx.herdr.clear_calls();
+
+    let early = step(&fx).await;
+    assert!(early.deferred.contains(&ef), "{early:?}");
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().attempts, 0, "waiting is not an attempt");
+
+    fx.clock.advance(chrono::Duration::seconds(60));
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0, "still inside the 90 s grace");
+
+    fx.clock.advance(chrono::Duration::seconds(31));
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(s) if s.pane == new_pane)), 1);
+    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().status, EffectStatus::Done);
+}
+
+#[tokio::test]
+async fn effect_identity_is_deterministic() {
+    let fx = fx();
+    activate(&fx, "claude");
+    // A second reconciler with its own journal and herdr, over the very same committed state.
+    let tmp = tempfile::tempdir().unwrap();
+    let other_journal = Arc::new(Journal::open(&tmp.path().join("other.sqlite3")).unwrap());
+    let other_herdr = FakeHerdr::new();
+    let other = Reconciler::new(
+        fx.store.clone(),
+        other_journal,
+        fx.w.clone(),
+        other_herdr,
+        fx.clock.clone(),
+        Arc::new(RecordingNotifier::default()),
+        ReconcilerConfig::new(fx.deps.instance.clone()),
+    );
+    let a = fx.rec.step_fresh().await;
+    let b = other.step_fresh().await;
+    let mut ids_a = a.planned.clone();
+    let mut ids_b = b.planned.clone();
+    ids_a.sort();
+    ids_b.sort();
+    assert!(!ids_a.is_empty());
+    assert_eq!(ids_a, ids_b);
+}
+
+#[tokio::test]
+async fn bookkeeping_binding_mutation_updates_runtime() {
+    let fx = fx();
+    activate(&fx, "claude");
+    let c = only_clone(&fx, "foreman");
+    let binding = Binding {
+        token: Some(format!("hg={}", c.id)),
+        workspace_id: Some(crate::model::HerdrWorkspaceId("w7".into())),
+        tab_id: Some(crate::model::HerdrTabId("t7".into())),
+        pane_id: Some(HerdrPaneId("p7".into())),
+        terminal_id: None,
+        incarnation: Default::default(),
+    };
+    fx.clock.advance(chrono::Duration::seconds(3));
+    admit_binding(&*fx.w, &c.id.to_any(), &binding, Availability::Present).unwrap();
+    fx.w.drain().unwrap();
+    let after = only_clone(&fx, "foreman");
+    assert_eq!(after.runtime.bound.as_ref(), Some(&binding));
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(after.runtime.observed_at, Some(t0() + chrono::Duration::seconds(3)));
+    assert_eq!(after.rev, c.rev + 1);
+
+    let s = seat(&fx, "foreman");
+    admit_runtime(&*fx.w, &s.id.to_any(), Availability::Absent, Some(true)).unwrap();
+    fx.w.drain().unwrap();
+    let s2 = seat(&fx, "foreman");
+    assert_eq!((s2.runtime.availability, s2.moved_out), (Availability::Absent, true));
+    assert_eq!(s2.lifecycle, Lifecycle::Active, "bookkeeping never changes lifecycle");
+
+    // Unknown objects are rejected by the writer, not invented.
+    let ghost = CloneId::new();
+    admit_runtime(&*fx.w, &ghost.to_any(), Availability::Absent, None).unwrap();
+    fx.w.drain().unwrap();
+    let rejected = fx.journal.list(&[OpState::Rejected], 10).unwrap();
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].rejection.as_ref().unwrap().reason, "object_missing");
+}
+
+#[tokio::test]
+async fn predictions_listed_until_consumed() {
+    let fx = fx();
+    activate(&fx, "shell");
+    step(&fx).await;
+    let preds = predictions(&fx.journal);
+    assert!(preds.iter().any(|(_, p)| p.container == ContainerKind::Workspace && p.end == EndState::Present));
+    assert!(preds.iter().any(|(_, p)| matches!(&p.end, EndState::Renamed { name } if name == "foreman")));
+    let (ef, _) = preds[0].clone();
+    consume_prediction(&fx.journal, &ef);
+    assert!(predictions(&fx.journal).iter().all(|(id, _)| id != &ef));
+}
+
+struct CustomSource(AnyId);
+impl EffectSource for CustomSource {
+    fn effects(&self, cx: &DiffCx<'_>) -> Vec<PlannedEffect> {
+        let kind = EffectKind::Custom("demo.ping".into());
+        let op = OpId::from_ulid(ulid::Ulid::nil());
+        let id = EffectRecord::identity(&op, &self.0, &kind, 1);
+        vec![PlannedEffect {
+            record: EffectRecord {
+                id,
+                op,
+                object: self.0.clone(),
+                kind,
+                object_rev: 1,
+                fencing_rev: 1,
+                status: EffectStatus::Pending,
+                predicted: vec![],
+                nonce_label: None,
+                attempts: 0,
+                last_error: None,
+                updated_at: cx.now,
+            },
+            deps: vec![],
+        }]
+    }
+}
+
+struct CustomExec(Mutex<u32>);
+#[async_trait::async_trait]
+impl EffectExecutor for CustomExec {
+    fn handles(&self, kind: &EffectKind) -> bool {
+        matches!(kind, EffectKind::Custom(k) if k == "demo.ping")
+    }
+    async fn execute(&self, _cx: &ExecCx<'_>, _e: &EffectRecord) -> ExecOutcome {
+        *self.0.lock().unwrap() += 1;
+        ExecOutcome::Done
+    }
+}
+
+#[tokio::test]
+async fn custom_family_registers_source_and_executor() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    let exec = Arc::new(CustomExec(Mutex::new(0)));
+    fx.rec.register_source(Arc::new(CustomSource(SeatId::new().to_any())));
+    fx.rec.register_executor(exec.clone());
+    let report = step(&fx).await;
+    assert_eq!(*exec.0.lock().unwrap(), 1);
+    assert!(report.executed.iter().any(|(_, s)| *s == EffectStatus::Done));
+    step(&fx).await;
+    assert_eq!(*exec.0.lock().unwrap(), 1, "a done effect is not re-run");
+}
+
+#[tokio::test]
+async fn multiple_clones_split_into_one_tab() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    let cs = clones_of(&fx, &s.id);
+    assert_eq!(cs.len(), 2);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SplitPane(_))), 1);
+    let panes: Vec<_> = cs.iter().map(|c| pane_of(&fx, c)).collect();
+    assert_ne!(panes[0], panes[1]);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let tab = snap.workspaces.iter().flat_map(|w| &w.tabs).find(|t| t.label == "foreman").unwrap();
+    assert_eq!(tab.panes.len(), 2);
+}
