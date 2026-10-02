@@ -278,6 +278,85 @@ fn cli_command_during_slow_compose_succeeds_with_one_daemon() {
 
 #[cfg(feature = "test-support")]
 #[test]
+fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let f = Fixture::new();
+    let command = herdr_graph::bootstrap::setup_claude::hook_command(Path::new(env!("CARGO_BIN_EXE_herdr-graph")));
+    let spool = herdr_graph::transcripts::capture::spool_dir(&f.instance);
+    let spooled = || -> usize {
+        std::fs::read_dir(&spool)
+            .map(|rd| rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "json")).count())
+            .unwrap_or(0)
+    };
+    let run_hook = || {
+        let mut c = Command::new("sh");
+        c.args(["-c", &command])
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", &f.home)
+            .env("HERDR_GRAPH_INSTANCE", &f.instance)
+            .env("HERDR_SOCKET_PATH", &f.herdr_socket)
+            .env("HERDR_GRAPH", "1")
+            .env("HERDR_GRAPH_CLONE", "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let began = Instant::now();
+        let mut child = c.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(br#"{"session_id":"s-1","transcript_path":null,"source":"startup"}"#)
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        (out, began.elapsed())
+    };
+
+    // No daemon at all.
+    let (out, took) = run_hook();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(took < Duration::from_secs(2), "hook took {took:?}");
+    assert!(stdout(&out).contains("run /seat"), "{}", stdout(&out));
+    assert_eq!(spooled(), 1, "the report was spooled; stderr: {}", stderr(&out));
+
+    // A daemon that is still composing.
+    let log = std::fs::File::create(f._dir.path().join("daemon.out")).unwrap();
+    let mut daemon = f
+        .cmd(&["daemon"])
+        .env("HG_TEST_FAKE_SERVICES", "1")
+        .env("HG_TEST_COMPOSE_DELAY_MS", "4000")
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().unwrap())
+        .stderr(log)
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while herdr_graph::daemon::client::hello(&f.sock()).is_none() {
+        assert!(Instant::now() < deadline, "daemon did not answer hello");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (out, took) = run_hook();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(took < Duration::from_secs(2), "hook took {took:?} while the daemon was starting");
+    assert!(stdout(&out).contains("run /seat"), "{}", stdout(&out));
+    assert_eq!(spooled(), 2, "stderr: {}", stderr(&out));
+
+    // Once the daemon is up it ingests the spool.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while spooled() > 0 {
+        assert!(Instant::now() < deadline, "spool was never ingested: {} left", spooled());
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    if let Ok(mut c) = Client::connect(&f.sock(), Duration::from_secs(5)) {
+        let _ = c.call("shutdown", serde_json::json!({}));
+    }
+    let _ = daemon.wait();
+}
+
+#[cfg(feature = "test-support")]
+#[test]
 fn hello_reports_starting_during_compose() {
     let f = Fixture::new();
     let began = Instant::now();

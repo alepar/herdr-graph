@@ -89,10 +89,16 @@ pub enum CallMode {
 /// Unavailable("not inside Herdr"); else run ensure (STARTUP_WAIT) once and retry once; still failing → Unavailable(<reason>).
 /// Verifies `hello.herdr_socket` matches this process's HERDR_SOCKET_PATH when both are set (decision 1).
 /// Injects args["_caller"].
-pub fn call_daemon(
+pub fn call_daemon(kind: &str, args: serde_json::Value, mode: CallMode) -> Result<serde_json::Value, ClientError> {
+    call_daemon_with_timeout(kind, args, mode, CALL_TIMEOUT)
+}
+
+/// `call_daemon` with `timeout` bounding every connect-time read and write instead of `CALL_TIMEOUT`.
+pub fn call_daemon_with_timeout(
     kind: &str,
     mut args: serde_json::Value,
     mode: CallMode,
+    timeout: Duration,
 ) -> Result<serde_json::Value, ClientError> {
     let env = Env::from_process();
     let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr).ok_or(ClientError::NoInstance)?;
@@ -100,14 +106,14 @@ pub fn call_daemon(
         return Err(ClientError::Unavailable("not inside Herdr".into()));
     }
     let socket = socket_path(&root);
-    let mut client = match Client::connect(&socket, CALL_TIMEOUT) {
+    let mut client = match Client::connect(&socket, timeout) {
         Ok(c) => c,
         Err(first) => {
             if mode == CallMode::NoEnsure {
                 return Err(ClientError::Unavailable(format!("not running ({first})")));
             }
             super::ensure::ensure(&env, ENSURE_TIMEOUT).map_err(|e| ClientError::Unavailable(format!("{e:#}")))?;
-            Client::connect(&socket, CALL_TIMEOUT)
+            Client::connect(&socket, timeout)
                 .map_err(|e| ClientError::Unavailable(format!("not running after ensure ({e})")))?
         }
     };
