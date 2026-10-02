@@ -429,6 +429,7 @@ mod tests {
                 attempts: 1,
                 last_error: err.map(str::to_owned),
                 updated_at: now + chrono::Duration::seconds(i as i64),
+                sched: Default::default(),
             };
             let n = Notice {
                 key: format!("k{i}"),

@@ -643,7 +643,23 @@ fn full_effect() -> EffectRecord {
         attempts: 2,
         last_error: Some("boom".into()),
         updated_at: ts(),
+        sched: EffectSched {
+            dispatched: Some(Dispatch { attempt: 3, at: ts() }),
+            retry_at: Some(ts()),
+            wake_at: Some(ts()),
+            defer_n: 2,
+            deps: vec![EffectId::new()],
+        },
     }
+}
+
+#[test]
+fn effect_record_without_sched_deserializes() {
+    // A row journaled before the scheduling state moved onto it has no `sched` key.
+    let mut v = serde_json::to_value(full_effect()).unwrap();
+    assert!(v.as_object_mut().unwrap().remove("sched").is_some(), "the full row carries a sched key");
+    let got: EffectRecord = serde_json::from_value(v).unwrap();
+    assert_eq!(got.sched, EffectSched::default());
 }
 
 #[test]

@@ -55,6 +55,8 @@ pub enum ReplacePhase {
         #[serde(default)]
         fallback_at: Option<Timestamp>,
     },
+    /// Saved before `agent.start`: a start was dispatched and its outcome is not known until the pane is inspected.
+    Starting { since: Timestamp },
 }
 
 fn state_key(effect: &EffectId) -> String {
@@ -88,11 +90,24 @@ fn elapsed(now: Timestamp, since: Timestamp, limit: std::time::Duration) -> bool
     chrono::Duration::from_std(limit).is_ok_and(|l| now - since >= l)
 }
 
-async fn start(herdr: &dyn HerdrApi, journal: &Journal, effect: &EffectId, pane: &HerdrPaneId, to: Option<Relaunch<'_>>) -> ExecOutcome {
-    clear(journal, effect);
+async fn start(
+    herdr: &dyn HerdrApi,
+    journal: &Journal,
+    effect: &EffectId,
+    pane: &HerdrPaneId,
+    to: Option<Relaunch<'_>>,
+    now: Timestamp,
+) -> ExecOutcome {
     // The target harness may run no agent.
-    let Some(to) = to else { return ExecOutcome::Done };
-    start_outcome(herdr.start_agent(StartAgent { pane: pane.clone(), kind: to.kind.to_owned(), args: to.args }).await)
+    let Some(to) = to else {
+        clear(journal, effect);
+        return ExecOutcome::Done;
+    };
+    // Write-ahead: with this phase on record, a lost start outcome is recognised instead of repeated.
+    save(journal, effect, &ReplacePhase::Starting { since: now });
+    let started = herdr.start_agent(StartAgent { pane: pane.clone(), kind: to.kind.to_owned(), args: to.args }).await;
+    crate::failpoint!("reconcile.after_call.replace_session");
+    start_outcome(started)
 }
 
 /// Next look for a time-bound replacement wait: the earliest of the polling period and the phase deadlines
@@ -117,6 +132,20 @@ pub async fn advance_replacement(
 ) -> ExecOutcome {
     let dur = |d: Duration| chrono::Duration::from_std(d).unwrap_or_default();
     let state = load(journal, effect).unwrap_or(ReplacePhase::WaitingIdle { since: now, had_agent: false });
+    if let ReplacePhase::Starting { .. } = state {
+        // A start was dispatched and its outcome is unknown: an agent on the pane means it went through; a bare
+        // shell means it never happened; anything else is the new agent coming up.
+        match herdr.agent(pane).await {
+            Ok(Some(_)) => return ExecOutcome::Done,
+            Ok(None) => {}
+            Err(e) => return transient_or_failed(e),
+        }
+        return match herdr.process_info(pane).await {
+            Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to, now).await,
+            Ok(_) => ExecOutcome::DeferredUntil(recheck_at(cfg, now, &[]), "waiting for the started agent to appear".into()),
+            Err(e) => transient_or_failed(e),
+        };
+    }
     if let ReplacePhase::WaitingIdle { since, had_agent: seen } = state {
         // 1. Idle gate: never interrupt a working agent.
         let mut had_agent = seen;
@@ -136,7 +165,7 @@ pub async fn advance_replacement(
         }
         // 2. Exit sequence, unless the pane is already back at the shell (a retry after a transient start failure).
         match herdr.process_info(pane).await {
-            Ok(p) if p.is_shell && !had_agent => return start(herdr, journal, effect, pane, to).await,
+            Ok(p) if p.is_shell && !had_agent => return start(herdr, journal, effect, pane, to, now).await,
             Ok(_) => {}
             Err(e) => return transient_or_failed(e),
         }
@@ -148,7 +177,7 @@ pub async fn advance_replacement(
         }
         save(journal, effect, &ReplacePhase::Exiting { since: now, fallback_sent: false, fallback_at: None });
         return match herdr.process_info(pane).await {
-            Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to).await,
+            Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to, now).await,
             Ok(_) => {
                 let mut deadlines = vec![now + dur(cfg.exit_timeout)];
                 if profile(from).exit.and_then(|s| s.if_still_running).is_some() {
@@ -163,7 +192,7 @@ pub async fn advance_replacement(
     // 3. Wait for the shell; after a short while send the fallback if the agent is still there.
     let ReplacePhase::Exiting { since, fallback_sent, fallback_at } = state else { unreachable!("WaitingIdle handled above") };
     match herdr.process_info(pane).await {
-        Ok(p) if p.is_shell => return start(herdr, journal, effect, pane, to).await,
+        Ok(p) if p.is_shell => return start(herdr, journal, effect, pane, to, now).await,
         Ok(_) => {}
         Err(e) => return transient_or_failed(e),
     }

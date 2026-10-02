@@ -930,6 +930,7 @@ fn done_effect(object: &AnyId, container: ContainerKind, also: Vec<PredictedEnd>
         attempts: 1,
         last_error: None,
         updated_at: t0(),
+        sched: Default::default(),
     }
 }
 

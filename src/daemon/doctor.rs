@@ -532,6 +532,7 @@ mod tests {
             attempts: 1,
             last_error: err.map(str::to_owned),
             updated_at: chrono::Utc::now(),
+            sched: Default::default(),
         }
     }
 

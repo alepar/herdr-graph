@@ -33,6 +33,9 @@ pub enum Fault {
     Rejected(String),
     /// Perform the call but report `Timeout` (lost response).
     LostResponse,
+    /// Perform the call (state change and events), then never return: the caller's future has to be cancelled,
+    /// as the daemon's first-pass timeout does. Honoured by every mutating call and `agent.start`.
+    Hang,
     /// `start_agent` only: return this outcome without starting anything. Ignored by other methods.
     StartOutcome(StartOutcome),
 }
@@ -216,12 +219,12 @@ impl FakeHerdr {
             Some(Fault::Unavailable) => Err(HerdrError::Unavailable("fake: unavailable".into())),
             Some(Fault::Timeout) => Err(HerdrError::Timeout),
             Some(Fault::Rejected(m)) => Err(rejected(method, m)),
-            Some(f @ (Fault::LostResponse | Fault::StartOutcome(_))) => Ok(Some(f)),
+            Some(f @ (Fault::LostResponse | Fault::Hang | Fault::StartOutcome(_))) => Ok(Some(f)),
         }
     }
 
     /// Shared tail of every mutating call: run `f` on the state, emit its events, honour a lost response.
-    fn mutate<T>(
+    async fn mutate<T>(
         &self,
         method: &str,
         call: FakeCall,
@@ -231,6 +234,9 @@ impl FakeHerdr {
         let mut ev = Vec::new();
         let out = f(&mut self.state.lock().unwrap(), &mut ev)?;
         self.emit(ev);
+        if matches!(fault, Some(Fault::Hang)) {
+            std::future::pending::<()>().await;
+        }
         if matches!(fault, Some(Fault::LostResponse)) {
             return Err(HerdrError::Timeout);
         }
@@ -375,7 +381,7 @@ impl HerdrApi for FakeHerdr {
         if let Some(f) = st.faults.get_mut("session.snapshot").and_then(VecDeque::pop_front) {
             return match f {
                 Fault::Unavailable => Err(HerdrError::Unavailable("fake: unavailable".into())),
-                Fault::Timeout | Fault::LostResponse => Err(HerdrError::Timeout),
+                Fault::Timeout | Fault::LostResponse | Fault::Hang => Err(HerdrError::Timeout),
                 Fault::Rejected(m) => Err(rejected("session.snapshot", m)),
                 Fault::StartOutcome(_) => Ok(HerdrSnapshot { incarnation: st.incarnation(), workspaces: st.workspaces.clone() }),
             };
@@ -405,7 +411,7 @@ impl HerdrApi for FakeHerdr {
             ev.push(("tab_created", json!({ "tab_id": tab_id, "workspace_id": ws_id })));
             ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws_id })));
             Ok(Created { workspace: Some(ws_id), tab: Some(tab_id), pane: Some(pane_id) })
-        })
+        }).await
     }
 
     async fn rename_workspace(&self, id: &HerdrWorkspaceId, label: &str) -> Result<(), HerdrError> {
@@ -414,7 +420,7 @@ impl HerdrApi for FakeHerdr {
             ws.label = label.to_owned();
             ev.push(("workspace_renamed", json!({ "workspace_id": id, "label": label })));
             Ok(())
-        })
+        }).await
     }
 
     async fn close_workspace(&self, id: &HerdrWorkspaceId) -> Result<(), HerdrError> {
@@ -422,7 +428,7 @@ impl HerdrApi for FakeHerdr {
             st.find_ws(id).ok_or_else(|| rejected("workspace.close", format!("workspace {id} not found")))?;
             st.remove_ws(id, ev);
             Ok(())
-        })
+        }).await
     }
 
     async fn create_tab(&self, req: CreateTab) -> Result<Created, HerdrError> {
@@ -436,7 +442,7 @@ impl HerdrApi for FakeHerdr {
             ev.push(("tab_created", json!({ "tab_id": tab_id, "workspace_id": ws, "label": req.label })));
             ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws })));
             Ok(Created { workspace: Some(ws), tab: Some(tab_id), pane: Some(pane_id) })
-        })
+        }).await
     }
 
     async fn rename_tab(&self, id: &HerdrTabId, label: &str) -> Result<(), HerdrError> {
@@ -446,7 +452,7 @@ impl HerdrApi for FakeHerdr {
             tab.label = label.to_owned();
             ev.push(("tab_renamed", json!({ "tab_id": id, "workspace_id": ws, "label": label })));
             Ok(())
-        })
+        }).await
     }
 
     async fn close_tab(&self, id: &HerdrTabId) -> Result<(), HerdrError> {
@@ -454,7 +460,7 @@ impl HerdrApi for FakeHerdr {
             st.find_tab(id).ok_or_else(|| rejected("tab.close", format!("tab {id} not found")))?;
             st.remove_tab(id, ev);
             Ok(())
-        })
+        }).await
     }
 
     async fn split_pane(&self, req: SplitPane) -> Result<Created, HerdrError> {
@@ -466,7 +472,7 @@ impl HerdrApi for FakeHerdr {
             st.find_tab(&tab_id).expect("tab").panes.push(pane);
             ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws })));
             Ok(Created { workspace: Some(ws), tab: Some(tab_id), pane: Some(pane_id) })
-        })
+        }).await
     }
 
     async fn rename_pane(&self, id: &HerdrPaneId, label: &str) -> Result<(), HerdrError> {
@@ -475,7 +481,7 @@ impl HerdrApi for FakeHerdr {
             pane.label = Some(label.to_owned());
             ev.push(("pane_updated", json!({ "pane_id": id })));
             Ok(())
-        })
+        }).await
     }
 
     async fn close_pane(&self, id: &HerdrPaneId) -> Result<(), HerdrError> {
@@ -483,7 +489,7 @@ impl HerdrApi for FakeHerdr {
             st.find_pane(id).ok_or_else(|| rejected("pane.close", format!("pane {id} not found")))?;
             st.remove_pane(id, ev);
             Ok(())
-        })
+        }).await
     }
 
     async fn report_pane_metadata(&self, id: &HerdrPaneId, key: &str, value: &str) -> Result<(), HerdrError> {
@@ -493,7 +499,7 @@ impl HerdrApi for FakeHerdr {
             pane.metadata.insert(key.to_owned(), value.to_owned());
             ev.push(("pane_updated", json!({ "pane_id": id })));
             Ok(())
-        })
+        }).await
     }
 
     async fn report_workspace_metadata(&self, id: &HerdrWorkspaceId, key: &str, value: &str) -> Result<(), HerdrError> {
@@ -503,7 +509,7 @@ impl HerdrApi for FakeHerdr {
             ws.metadata.insert(key.to_owned(), value.to_owned());
             ev.push(("workspace_metadata_updated", json!({ "workspace_id": id })));
             Ok(())
-        })
+        }).await
     }
 
     async fn start_agent(&self, req: StartAgent) -> Result<StartOutcome, HerdrError> {
@@ -519,6 +525,9 @@ impl HerdrApi for FakeHerdr {
             ev.push(("pane_agent_detected", json!({ "pane_id": req.pane, "agent": req.kind })));
         }
         self.emit(ev);
+        if matches!(fault, Some(Fault::Hang)) {
+            std::future::pending::<()>().await;
+        }
         if matches!(fault, Some(Fault::LostResponse)) {
             return Err(HerdrError::Timeout);
         }
@@ -535,6 +544,6 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn send_keys(&self, pane: &HerdrPaneId, keys: &[KeyInput]) -> Result<(), HerdrError> {
-        self.mutate("agent.send_keys", FakeCall::SendKeys(pane.clone(), keys.to_vec()), |_, _| Ok(()))
+        self.mutate("agent.send_keys", FakeCall::SendKeys(pane.clone(), keys.to_vec()), |_, _| Ok(())).await
     }
 }

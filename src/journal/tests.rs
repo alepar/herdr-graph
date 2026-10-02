@@ -39,6 +39,7 @@ fn effect(op: &OpId, object: &AnyId, rev: u64, status: EffectStatus) -> EffectRe
         attempts: 0,
         last_error: None,
         updated_at: t0(),
+        sched: Default::default(),
     }
 }
 

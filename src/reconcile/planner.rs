@@ -284,6 +284,7 @@ impl Out<'_> {
                     attempts: 0,
                     last_error: None,
                     updated_at: self.now,
+                    sched: Default::default(),
                 },
                 deps,
             });

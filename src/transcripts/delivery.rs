@@ -230,6 +230,7 @@ impl EffectSource for DeliverySource {
                     attempts: 0,
                     last_error: None,
                     updated_at: cx.now,
+                    sched: Default::default(),
                 },
                 deps: vec![],
             });

@@ -22,6 +22,37 @@ pub struct EffectRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
     pub updated_at: Timestamp,
+    /// Dispatch marker and scheduling state, journaled with the row (one write with the status).
+    #[serde(default)]
+    pub sched: EffectSched,
+}
+
+/// Per-effect execution and scheduling state, journaled on the row itself (one write with the status).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EffectSched {
+    /// Set in the write just before a non-idempotent call; cleared by the write that records its outcome. Found
+    /// set later means the outcome was lost: treat the row as `Unknown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatched: Option<Dispatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wake_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub defer_n: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deps: Vec<EffectId>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// The write-ahead marker of one execution attempt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Dispatch {
+    pub attempt: u32,
+    pub at: Timestamp,
 }
 
 impl EffectRecord {
@@ -57,6 +88,19 @@ pub enum EffectKind {
 }
 
 impl EffectKind {
+    /// Kinds whose Herdr call is not safe to repeat blindly: a lost outcome is resolved from the snapshot.
+    pub fn is_non_idempotent(&self) -> bool {
+        matches!(
+            self,
+            EffectKind::CreateWorkspace
+                | EffectKind::CreateTab
+                | EffectKind::SplitPane
+                | EffectKind::StartAgent
+                | EffectKind::RelaunchOccupant
+                | EffectKind::ReplaceSession
+        )
+    }
+
     /// The snake_case name (or the custom string); the `kind` input of `EffectId::derive`.
     pub fn as_str(&self) -> &str {
         match self {
