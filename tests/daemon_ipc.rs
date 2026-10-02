@@ -240,3 +240,79 @@ fn shutdown_command_stops_daemon_and_removes_socket() {
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(stdout(&out).contains("started"), "{}", stdout(&out));
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn cli_command_during_slow_compose_succeeds_with_one_daemon() {
+    let f = Fixture::new();
+    let spawn_resume = |f: &Fixture| {
+        let mut c = f.cmd(&["writer", "resume"]);
+        c.env("HG_TEST_COMPOSE_DELAY_MS", "12000");
+        std::thread::spawn(move || {
+            let began = Instant::now();
+            let out = c.output().unwrap();
+            (out, began.elapsed())
+        })
+    };
+    let a = spawn_resume(&f);
+    std::thread::sleep(Duration::from_millis(500));
+    let b = spawn_resume(&f);
+    let (out_a, took_a) = a.join().unwrap();
+    let (out_b, _) = b.join().unwrap();
+    for out in [&out_a, &out_b] {
+        assert!(out.status.success(), "stderr: {}\nstdout: {}", stderr(out), stdout(out));
+        assert!(stdout(out).contains("writer was not halted"), "{}", stdout(out));
+    }
+    assert!(took_a >= Duration::from_secs(11), "the command must have waited for compose, took {took_a:?}");
+    let mut c = Client::connect(&f.sock(), Duration::from_secs(5)).unwrap();
+    let hello = c.call("hello", serde_json::json!({})).unwrap();
+    assert_eq!(hello["pid"].as_u64().unwrap() as u32, f.lock_pid(), "one daemon owns the instance");
+    let log = std::fs::read_to_string(InstancePaths::new(&f.instance).log).unwrap_or_default();
+    assert!(!log.contains("already running"), "a second daemon was spawned:\n{log}");
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn hello_reports_starting_during_compose() {
+    let f = Fixture::new();
+    let began = Instant::now();
+    let out = f.cmd(&["daemon", "--ensure"]).env("HG_TEST_COMPOSE_DELAY_MS", "3000").output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(began.elapsed() < Duration::from_millis(2500), "ensure must return before compose ends");
+    assert!(stdout(&out).contains("daemon started"), "{}", stdout(&out));
+    let mut c = Client::connect(&f.sock(), Duration::from_secs(5)).unwrap();
+    let hello = c.call("hello", serde_json::json!({})).unwrap();
+    assert_eq!(hello["state"], "starting", "{hello}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let hello = c.call("hello", serde_json::json!({})).unwrap();
+        if hello["state"] == "ready" {
+            break;
+        }
+        assert!(Instant::now() < deadline, "daemon never became ready: {hello}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+fn ensure_does_not_spawn_while_lock_held() {
+    let f = Fixture::new();
+    let paths = InstancePaths::new(&f.instance);
+    std::fs::create_dir_all(&paths.local).unwrap();
+    let info = lock::LockInfo {
+        pid: 424242,
+        herdr_socket: f.herdr_socket.clone(),
+        socket: paths.socket.clone(),
+        started_at: chrono::Utc::now(),
+    };
+    let _held = lock::DaemonLock::try_acquire(&paths.lock, &info).unwrap().expect("lock");
+    let env = herdr_graph::config::Env {
+        instance: Some(f.instance.to_string_lossy().into_owned()),
+        herdr_socket: Some(f.herdr_socket.clone()),
+        ..Default::default()
+    };
+    let err = herdr_graph::daemon::ensure::ensure(&env, Duration::from_secs(1)).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("424242") && msg.contains("did not answer"), "{msg}");
+    assert!(!paths.log.exists(), "no daemon may have been spawned (it would have opened the log)");
+}

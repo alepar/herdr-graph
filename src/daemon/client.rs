@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const EXIT_NO_INSTANCE: u8 = 2;
-const ENSURE_TIMEOUT: Duration = Duration::from_secs(10);
+const ENSURE_TIMEOUT: Duration = super::ensure::STARTUP_WAIT;
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -86,7 +86,7 @@ pub enum CallMode {
 }
 
 /// Locate instance → connect → on failure with CallMode::Ensure: if HERDR_SOCKET_PATH is unset →
-/// Unavailable("not inside Herdr"); else run ensure (10 s) once and retry once; still failing → Unavailable(<reason>).
+/// Unavailable("not inside Herdr"); else run ensure (STARTUP_WAIT) once and retry once; still failing → Unavailable(<reason>).
 /// Verifies `hello.herdr_socket` matches this process's HERDR_SOCKET_PATH when both are set (decision 1).
 /// Injects args["_caller"].
 pub fn call_daemon(

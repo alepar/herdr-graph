@@ -35,7 +35,7 @@ pub const REMINDER_PERIOD: Duration = Duration::from_secs(60);
 /// How often the threads connection loop re-probes the service.
 const THREADS_PROBE_PERIOD: Duration = Duration::from_secs(30);
 /// A silent Herdr must not keep the daemon from serving: the first pass gives up after this long.
-const FIRST_PASS_LIMIT: Duration = Duration::from_secs(20);
+pub const FIRST_PASS_LIMIT: Duration = Duration::from_secs(20);
 
 /// Startup steps, recorded in journal meta `startup:<n>` in this order.
 pub const STARTUP_STEPS: [&str; 6] = ["open", "registries", "recover", "drain", "first_pass", "loops"];
@@ -108,6 +108,10 @@ pub fn mutation_registry(plans: Arc<PlanStore>) -> (Arc<KindRegistry>, MutationR
 
 /// Registers every component. Production entry point.
 pub async fn compose(reg: &mut Registry, ctx: &DaemonCtx) -> anyhow::Result<()> {
+    #[cfg(feature = "test-support")]
+    if let Some(ms) = std::env::var("HG_TEST_COMPOSE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        tokio::time::sleep(Duration::from_millis(ms)).await;
+    }
     compose_with(reg, ctx, Services::from_env(ctx)?).await
 }
 

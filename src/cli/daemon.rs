@@ -1,10 +1,9 @@
 //! `daemon` — owned by hg-zmi.4.
 use crate::config::{Env, plugin_config_dir_via_herdr};
 use crate::daemon::client::EXIT_NO_INSTANCE;
-use crate::daemon::ensure::{EnsureOutcome, ensure};
+use crate::daemon::ensure::{EnsureOutcome, STARTUP_WAIT, ensure};
 use clap::Subcommand;
 use std::process::ExitCode;
-use std::time::Duration;
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
@@ -19,7 +18,7 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     let Commands::Daemon { ensure: ensure_only } = cmd;
     let env = Env::from_process();
     if ensure_only {
-        match ensure(&env, Duration::from_secs(10))? {
+        match ensure(&env, STARTUP_WAIT)? {
             EnsureOutcome::NoInstance => {}
             EnsureOutcome::AlreadyRunning { pid } => println!("daemon already running (pid {pid})"),
             EnsureOutcome::Started { pid } => println!("daemon started (pid {pid})"),

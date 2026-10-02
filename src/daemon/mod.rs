@@ -23,8 +23,9 @@ pub struct DaemonCtx {
 /// Foreground daemon (spec §1): require a reachable Herdr socket (UnixStream::connect) else error
 /// "daemon unavailable: not inside Herdr" / "Herdr socket <p> not reachable"; GitStore::open(instance) must succeed;
 /// mkdir .graph-local; DaemonLock::try_acquire (held ⇒ print "daemon already running (pid N)" and return Ok);
-/// remove a stale socket file; bind; build a multi-thread tokio runtime; `compose(&mut reg, &ctx).await?`;
-/// spawn every registered loop with a Shutdown; serve until SIGTERM/SIGINT (tokio::signal) or `shutdown`;
+/// remove a stale socket file; bind; build a multi-thread tokio runtime; serve (`hello` answers "starting"
+/// and other requests are held); `compose(&mut reg, &ctx).await?`; spawn every registered loop with a Shutdown;
+/// mark ready (order: bind -> serve (starting) -> compose -> ready); serve until SIGTERM/SIGINT (tokio::signal) or `shutdown`;
 /// then flip shutdown, await loops (5 s timeout each), remove the socket file, drop the lock.
 pub fn run_foreground(instance: &Path, herdr_socket: Option<&Path>) -> anyhow::Result<()> {
     use anyhow::Context;
@@ -79,21 +80,50 @@ async fn run_async(ctx: DaemonCtx) -> anyhow::Result<()> {
     let mut sigterm = signal(SignalKind::terminate())?;
     let mut sigint = signal(SignalKind::interrupt())?;
 
-    let mut reg = registry::Registry::default();
-    compose::compose(&mut reg, &ctx).await?;
     let (tx, mut shutdown) = registry::shutdown_channel();
-    let loops: Vec<_> = reg
-        .take_loops()
-        .into_iter()
-        .map(|(name, f)| (name, tokio::spawn(f(shutdown.clone()))))
-        .collect();
     let builtins = server::Builtins {
         instance: ctx.paths.root.clone(),
         herdr_socket: ctx.herdr_socket.clone(),
         started_at: ctx.started_at,
         shutdown_tx: tx.clone(),
     };
-    let server = tokio::spawn(server::serve(listener, Arc::new(reg), builtins, shutdown.clone()));
+    // Serve before compose: `hello` answers "starting" at once and other requests wait on the gate (hg-zmi.55).
+    let gate = server::StartGate::starting();
+    let server = tokio::spawn(server::serve_gated(
+        listener,
+        gate.clone(),
+        builtins,
+        shutdown.clone(),
+        server::START_HOLD,
+    ));
+
+    let mut reg = registry::Registry::default();
+    let composed = tokio::select! {
+        r = compose::compose(&mut reg, &ctx) => Some(r),
+        _ = sigterm.recv() => None,
+        _ = sigint.recv() => None,
+        _ = shutdown.wait() => None,
+    };
+    let loops: Vec<_> = match composed {
+        None => {
+            gate.fail("daemon stopped during startup");
+            let _ = tx.send(true);
+            let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
+            return Ok(());
+        }
+        Some(Err(e)) => {
+            gate.fail(format!("{e:#}"));
+            let _ = tx.send(true);
+            let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
+            return Err(e);
+        }
+        Some(Ok(())) => reg
+            .take_loops()
+            .into_iter()
+            .map(|(name, f)| (name, tokio::spawn(f(shutdown.clone()))))
+            .collect(),
+    };
+    gate.ready(Arc::new(reg));
 
     tokio::select! {
         _ = sigterm.recv() => {}
