@@ -1516,3 +1516,50 @@ mod service_ack {
         assert!(rq.delivery.attempts[1].retry);
     }
 }
+
+fn replace_file(fx: &Fx, path: &std::path::Path, lines: usize) {
+    let other = fx.dir.join("replacement.jsonl");
+    std::fs::write(&other, LINE.repeat(lines)).unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::fs::rename(&other, path).unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_reports_for_replaced_file_create_one_transcript() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "s1", 5);
+    let ev = finish_session(&fx, &worker, "native-1", &path).await;
+    assert_eq!(all_transcripts(&fx).len(), 1);
+    replace_file(&fx, &path, 2);
+    let report = || fx.tr.request_for(&ev.clone, &ev.ns, Some(path.clone()), None, false);
+    let (a, b) = tokio::join!(report(), report());
+    a.unwrap();
+    b.unwrap();
+    let trs = all_transcripts(&fx);
+    assert_eq!(trs.iter().filter(|t| t.transcript_path == path).count(), 2, "one old plus exactly one new: {trs:#?}");
+}
+
+#[test]
+fn note_identity_reports_a_replaced_file_to_exactly_one_caller() {
+    let fx = fx();
+    let path = write_transcript(&fx, "s1", 3);
+    let state = requests::stat_file(&path).unwrap();
+    assert!(!fx.tr.note_identity(&path, &state), "first sighting is not a change");
+    assert!(!fx.tr.note_identity(&path, &state), "same file is not a change");
+    replace_file(&fx, &path, 3);
+    let state = requests::stat_file(&path).unwrap();
+    let barrier = std::sync::Barrier::new(8);
+    let changed = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                s.spawn(|| {
+                    barrier.wait();
+                    fx.tr.note_identity(&path, &state)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).filter(|c| *c).count()
+    });
+    assert_eq!(changed, 1);
+}

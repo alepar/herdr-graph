@@ -8,7 +8,7 @@ use crate::model::effect::{EffectRecord, EffectStatus};
 use crate::model::operation::{OpState, Rejection};
 use crate::model::{ActionId, AnyId, CommitId, EffectId, OpId, Timestamp};
 use crate::ports::threads::Severity;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
@@ -142,6 +142,14 @@ fn quoted_names<T: Serialize>(items: &[T]) -> Result<String> {
     Ok(names?.join(","))
 }
 
+/// Result of [`Journal::reassign_requester`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReassignOutcome {
+    Reassigned(OpState),
+    NotReassignable(OpState),
+    Unknown,
+}
+
 impl Journal {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
@@ -172,10 +180,14 @@ impl Journal {
     }
 
     pub fn admit_with_id(&self, op: &OpId, req: &ChangeRequest, now: Timestamp) -> Result<()> {
+        Self::admit_on(&self.conn(), op, req, now)
+    }
+
+    fn admit_on(conn: &Connection, op: &OpId, req: &ChangeRequest, now: Timestamp) -> Result<()> {
         let json = serde_json::to_string(req)?;
         let kind = name_of(&req.kind)?;
         let t = ts(now);
-        self.conn().execute(
+        conn.execute(
             "INSERT INTO ops(op_id, seq, kind, request_json, state, attempts, supersedes, admitted_at, updated_at)
              VALUES(?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM ops), ?2, ?3, 'admitted', 0, ?4, ?5, ?5)",
             params![op.as_str(), kind, json, req.supersedes.as_ref().map(OpId::as_str), t],
@@ -371,6 +383,35 @@ impl Journal {
         Ok(())
     }
 
+    /// In one IMMEDIATE transaction: refuse `cancelled`/`superseded`; set the requester; when the op is admitted,
+    /// applying or committed, also admit `follow_up` (the `bookkeeping.reassign` that rewrites the git operation
+    /// record after the op commits). The writer cannot commit the op between the check and the update.
+    pub fn reassign_requester(
+        &self,
+        op: &OpId,
+        requester: &Requester,
+        follow_up: &ChangeRequest,
+        now: Timestamp,
+    ) -> Result<ReassignOutcome> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(row) = Self::get_on(&tx, op)? else { return Ok(ReassignOutcome::Unknown) };
+        if matches!(row.state, OpState::Cancelled | OpState::Superseded) {
+            return Ok(ReassignOutcome::NotReassignable(row.state));
+        }
+        let mut req = row.request;
+        req.requester = requester.clone();
+        tx.execute(
+            "UPDATE ops SET request_json=?2, updated_at=?3 WHERE op_id=?1",
+            params![op.as_str(), serde_json::to_string(&req)?, ts(now)],
+        )?;
+        if matches!(row.state, OpState::Admitted | OpState::Applying | OpState::Committed) {
+            Self::admit_on(&tx, &OpId::new(), follow_up, now)?;
+        }
+        tx.commit()?;
+        Ok(ReassignOutcome::Reassigned(row.state))
+    }
+
     /// Newest first; empty `states` = all.
     pub fn list(&self, states: &[OpState], limit: usize) -> Result<Vec<OpRow>> {
         let filter =
@@ -408,6 +449,19 @@ impl Journal {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    /// Set `key` to `value` and return the value it had, atomically (one IMMEDIATE transaction).
+    pub fn meta_swap(&self, key: &str, value: &str) -> Result<Option<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        tx.commit()?;
+        Ok(old)
     }
 
     pub fn meta_delete(&self, key: &str) -> Result<()> {
