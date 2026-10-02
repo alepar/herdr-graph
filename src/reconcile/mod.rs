@@ -18,7 +18,7 @@ pub use bookkeeping::register_mutations;
 pub use desired::effect_op;
 pub use executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 
-use crate::journal::Journal;
+use crate::journal::{Journal, Notice};
 use crate::model::common::CommitId;
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus, PredictedEnd};
 use crate::model::{CloneId, EffectId, OpId, Timestamp};
@@ -82,8 +82,21 @@ pub struct StepReport {
 }
 
 /// Tells the requester of an op that something needs their attention (`needs_revision`, blocked agents).
+#[async_trait::async_trait]
 pub trait RequesterNotifier: Send + Sync {
     fn notify(&self, op: &OpId, severity: Severity, text: &str);
+    /// Durable delivery of one journaled notice. Ok(true) delivered, Ok(false) nowhere to deliver (logged),
+    /// Err(why) retry later. Default: the synchronous `notify`, counted as delivered.
+    async fn deliver(&self, op: &OpId, severity: Severity, text: &str, _key: &OpKey) -> Result<bool, String> {
+        self.notify(op, severity, text);
+        Ok(true)
+    }
+}
+
+/// The idempotency key of an op's notice with this text.
+fn notice_key(op: &OpId, text: &str) -> OpKey {
+    let digest = Sha256::digest(text.as_bytes());
+    OpKey(format!("{op}:notify:{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]))
 }
 
 /// Default notifier: the requester seat's channel thread through the threads port. No thread: log only.
@@ -104,18 +117,19 @@ impl ThreadsNotifier {
     }
 }
 
+#[async_trait::async_trait]
 impl RequesterNotifier for ThreadsNotifier {
-    fn notify(&self, op: &OpId, severity: Severity, text: &str) {
-        let (Some(thread), Ok(rt)) = (self.thread_for(op), tokio::runtime::Handle::try_current()) else {
+    fn notify(&self, _op: &OpId, _severity: Severity, text: &str) {
+        eprintln!("herdr-graph: reconcile: {text}");
+    }
+
+    async fn deliver(&self, op: &OpId, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
+        let Some(thread) = self.thread_for(op) else {
             eprintln!("herdr-graph: reconcile: {text}");
-            return;
+            return Ok(false);
         };
-        let digest = Sha256::digest(text.as_bytes());
-        let key = OpKey(format!("{op}:notify:{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]));
-        let (threads, text) = (self.threads.clone(), text.to_owned());
-        rt.spawn(async move {
-            let _ = threads.notify(&thread, severity, &text, &key).await;
-        });
+        self.threads.notify(&thread, severity, text, key).await.map_err(|e| e.to_string())?;
+        Ok(true)
     }
 }
 
@@ -247,7 +261,51 @@ impl Reconciler {
         };
         self.upsert(planned, &mut report);
         self.run_pending(snap, &mut report).await;
+        self.deliver_notices().await;
         report
+    }
+
+    /// Deliver every due attention notice (spec §4.1, §4.4). A failed delivery stays journaled and is retried
+    /// with backoff for as long as the effect keeps the attention status; a notice whose effect has left it is voided.
+    pub async fn deliver_notices(&self) {
+        let now = self.clock.now();
+        let due = match self.journal.due_notices(now) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("herdr-graph: reconcile: cannot read notices: {e}");
+                return;
+            }
+        };
+        for n in due {
+            let holds = matches!(
+                self.journal.get_effect(&n.effect),
+                Ok(Some(r)) if matches!(
+                    r.status,
+                    EffectStatus::NeedsRevision | EffectStatus::BlockedNeedsHuman | EffectStatus::Failed
+                )
+            );
+            let done = |state: &str| {
+                if let Err(e) = self.journal.notice_done(&n.key, state, now) {
+                    eprintln!("herdr-graph: reconcile: cannot update notice {}: {e}", n.key);
+                }
+            };
+            if !holds {
+                done("void");
+                continue;
+            }
+            match self.notifier.deliver(&n.op, n.severity, &n.text, &OpKey(n.key.clone())).await {
+                Ok(true) => done("delivered"),
+                Ok(false) => done("logged"),
+                Err(why) => {
+                    let wait = backoff::next(n.attempts.saturating_add(1));
+                    let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
+                    eprintln!("herdr-graph: reconcile: notice {} not delivered (will retry): {why}", n.key);
+                    if let Err(e) = self.journal.notice_retry(&n.key, &why, at, now) {
+                        eprintln!("herdr-graph: reconcile: cannot update notice {}: {e}", n.key);
+                    }
+                }
+            }
+        }
     }
 
     /// A restart of Herdr changes the incarnation; relaunches wait out a grace period after it (r2).
@@ -323,8 +381,42 @@ impl Reconciler {
         if let Err(e) = self.journal.upsert_effect(row) {
             eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
         }
-        // An effect that ended leaves no per-effect meta behind.
-        if !matches!(status, EffectStatus::Pending | EffectStatus::Unknown) {
+        self.clear_effect_meta(row);
+    }
+
+    /// Record an attention status and its notice in one journal write (spec §4.1, §4.4).
+    fn mark_attention(
+        &self,
+        row: &mut EffectRecord,
+        status: EffectStatus,
+        error: Option<String>,
+        severity: Severity,
+        text: String,
+        now: Timestamp,
+    ) {
+        row.status = status;
+        row.last_error = error;
+        row.updated_at = now;
+        let notice = Notice {
+            key: notice_key(&row.op, &text).0,
+            effect: row.id.clone(),
+            op: row.op.clone(),
+            severity,
+            text,
+            state: "pending".into(),
+            attempts: 0,
+            last_error: None,
+            next_at: None,
+        };
+        if let Err(e) = self.journal.upsert_effect_with_notice(row, &notice) {
+            eprintln!("herdr-graph: reconcile: cannot journal effect {} with its notice: {e}", row.id);
+        }
+        self.clear_effect_meta(row);
+    }
+
+    /// An effect that ended leaves no per-effect meta behind.
+    fn clear_effect_meta(&self, row: &EffectRecord) {
+        if !matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown) {
             let _ = self.journal.meta_delete(&format!("retry_at:{}", row.id));
             let _ = self.journal.meta_delete(&format!("wake_at:{}", row.id));
             let _ = self.journal.meta_delete(&format!("defer_n:{}", row.id));
@@ -344,8 +436,10 @@ impl Reconciler {
     pub fn next_wake(&self) -> Option<Timestamp> {
         let now = self.clock.now();
         let rows = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_default();
+        let notice_at = self.journal.next_notice_at().ok().flatten();
         rows.iter()
             .flat_map(|r| [self.meta_time(format!("retry_at:{}", r.id)), self.meta_time(format!("wake_at:{}", r.id))])
+            .chain([notice_at])
             .flatten()
             .filter(|t| *t > now)
             .min()
@@ -443,25 +537,21 @@ impl Reconciler {
                     }
                     ExecOutcome::Unknown => EffectStatus::Unknown,
                     ExecOutcome::NeedsRevision(reason) => {
-                        self.notifier.notify(
-                            &row.op,
-                            Severity::Warn,
-                            &format!("{} for {} needs revision: {reason}", row.kind.as_str(), row.object),
-                        );
-                        self.mark(&mut row, EffectStatus::NeedsRevision, Some(reason), now);
+                        let text = format!("{} for {} needs revision: {reason}", row.kind.as_str(), row.object);
+                        self.mark_attention(&mut row, EffectStatus::NeedsRevision, Some(reason), Severity::Warn, text, now);
                         report.executed.push((row.id.clone(), EffectStatus::NeedsRevision));
                         continue;
                     }
                     ExecOutcome::BlockedNeedsHuman => {
-                        self.notifier.notify(
-                            &row.op,
-                            Severity::Warn,
-                            &format!("agent on {} is waiting for a human (trust or auth dialog)", row.object),
-                        );
-                        EffectStatus::BlockedNeedsHuman
+                        let text = format!("agent on {} is waiting for a human (trust or auth dialog)", row.object);
+                        self.mark_attention(&mut row, EffectStatus::BlockedNeedsHuman, None, Severity::Warn, text, now);
+                        report.executed.push((row.id.clone(), EffectStatus::BlockedNeedsHuman));
+                        continue;
                     }
                     ExecOutcome::Failed(msg) => {
-                        self.mark(&mut row, EffectStatus::Failed, Some(msg), now);
+                        eprintln!("herdr-graph: reconcile: effect {} failed: {msg}", row.id);
+                        let text = format!("{} for {} failed: {msg}", row.kind.as_str(), row.object);
+                        self.mark_attention(&mut row, EffectStatus::Failed, Some(msg), Severity::Warn, text, now);
                         report.executed.push((row.id.clone(), EffectStatus::Failed));
                         continue;
                     }

@@ -7,6 +7,7 @@ use crate::model::change::{ChangeRequest, Requester};
 use crate::model::effect::{EffectRecord, EffectStatus};
 use crate::model::operation::{OpState, Rejection};
 use crate::model::{ActionId, AnyId, CommitId, EffectId, OpId, Timestamp};
+use crate::ports::threads::Severity;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -29,6 +30,11 @@ CREATE TABLE IF NOT EXISTS effects(
 CREATE INDEX IF NOT EXISTS effects_status ON effects(status);
 CREATE INDEX IF NOT EXISTS effects_object ON effects(object_id);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notices(
+  key TEXT PRIMARY KEY, effect_id TEXT NOT NULL, op_id TEXT NOT NULL, severity TEXT NOT NULL, text TEXT NOT NULL,
+  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_at TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS notices_state ON notices(state);
 ";
 
 pub struct Journal {
@@ -49,6 +55,21 @@ pub struct OpRow {
     pub superseded_by: Option<OpId>,
     pub admitted_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// A durable human-attention notice for an effect that reached `NeedsRevision`, `BlockedNeedsHuman` or `Failed`.
+/// `state` is `pending` | `delivered` | `logged` (no channel to deliver to) | `void` (the effect left the status).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notice {
+    pub key: String,
+    pub effect: EffectId,
+    pub op: OpId,
+    pub severity: Severity,
+    pub text: String,
+    pub state: String,
+    pub attempts: u32,
+    pub last_error: Option<String>,
+    pub next_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -465,5 +486,103 @@ impl Journal {
         e.last_error = last_error.map(str::to_owned);
         e.updated_at = now;
         Self::upsert_effect_on(&conn, &e)
+    }
+
+    // Notices table: durable attention notifications, written with the effect status (hg-zmi.63).
+
+    /// The effect row and its attention notice in ONE transaction. The notice is inserted only if its key is new.
+    pub fn upsert_effect_with_notice(&self, e: &EffectRecord, n: &Notice) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        Self::upsert_effect_on(&tx, e)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO notices(key, effect_id, op_id, severity, text, state, attempts, last_error, next_at,
+               created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            params![
+                n.key,
+                n.effect.as_str(),
+                n.op.as_str(),
+                name_of(&n.severity)?,
+                n.text,
+                n.state,
+                n.attempts,
+                n.last_error,
+                n.next_at.map(ts),
+                ts(e.updated_at)
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn notice_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Notice> {
+        Ok(Notice {
+            key: r.get(0)?,
+            effect: parse_id(1, &r.get::<_, String>(1)?)?,
+            op: parse_id(2, &r.get::<_, String>(2)?)?,
+            severity: parse_json(3, &format!("\"{}\"", r.get::<_, String>(3)?))?,
+            text: r.get(4)?,
+            state: r.get(5)?,
+            attempts: r.get(6)?,
+            last_error: r.get(7)?,
+            next_at: r.get::<_, Option<String>>(8)?.map(|s| parse_ts(8, &s)).transpose()?,
+        })
+    }
+
+    const NOTICE_COLS: &'static str = "key, effect_id, op_id, severity, text, state, attempts, last_error, next_at";
+
+    /// Pending notices due at `now` (next_at null or <= now), oldest first.
+    pub fn due_notices(&self, now: Timestamp) -> Result<Vec<Notice>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM notices WHERE state='pending' AND (next_at IS NULL OR next_at <= ?1)
+             ORDER BY created_at, key",
+            Self::NOTICE_COLS
+        ))?;
+        Ok(stmt.query_map([ts(now)], Self::notice_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Earliest `next_at` among pending notices that have one.
+    pub fn next_notice_at(&self) -> Result<Option<Timestamp>> {
+        let raw: Option<String> = self.conn().query_row(
+            "SELECT MIN(next_at) FROM notices WHERE state='pending' AND next_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(raw.map(|s| parse_ts(0, &s)).transpose()?)
+    }
+
+    pub fn get_notice(&self, key: &str) -> Result<Option<Notice>> {
+        Ok(self
+            .conn()
+            .query_row(&format!("SELECT {} FROM notices WHERE key=?1", Self::NOTICE_COLS), [key], Self::notice_row)
+            .optional()?)
+    }
+
+    /// delivered | logged | void.
+    pub fn notice_done(&self, key: &str, state: &str, now: Timestamp) -> Result<()> {
+        self.conn().execute(
+            "UPDATE notices SET state=?2, next_at=NULL, updated_at=?3 WHERE key=?1",
+            params![key, state, ts(now)],
+        )?;
+        Ok(())
+    }
+
+    /// A failed delivery: attempts += 1, remember the error, try again at `next_at`.
+    pub fn notice_retry(&self, key: &str, error: &str, next_at: Timestamp, now: Timestamp) -> Result<()> {
+        self.conn().execute(
+            "UPDATE notices SET attempts=attempts+1, last_error=?2, next_at=?3, updated_at=?4 WHERE key=?1",
+            params![key, error, ts(next_at), ts(now)],
+        )?;
+        Ok(())
+    }
+
+    pub fn notice_counts(&self) -> Result<BTreeMap<String, u64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM notices GROUP BY state")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+        Ok(rows)
     }
 }
