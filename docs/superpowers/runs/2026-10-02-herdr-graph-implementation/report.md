@@ -1,5 +1,5 @@
 status: completed with 0 unresolved Blocking, 7 escalations [degraded: final review: not ready, sweep: FAIL @ 1237eb1 (2563 passed, 1 failed)]
-metrics: pending (upstream-feedback not yet run)
+metrics: docs/superpowers/runs/2026-10-02-herdr-graph-implementation/upstream-feedback-draft.md (parked draft, not filed)
 
 # herdr-graph MVP — super-auto run report (2026-10-02)
 
