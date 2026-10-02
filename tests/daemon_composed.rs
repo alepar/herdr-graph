@@ -771,7 +771,31 @@ mod subprocess {
                 assert!(Instant::now() < deadline, "daemon did not come up; log: {}", self.daemon_log());
                 std::thread::sleep(Duration::from_millis(50));
             }
+            self.wait_ready();
             child
+        }
+
+        /// Block until the daemon reports `state: "ready"`. At that point compose has finished: journal recovery and
+        /// startup convergence are done and the loops run. `hello` answers "starting" as soon as the socket binds
+        /// (hg-zmi.55), and `status` reports no components before ready.
+        fn wait_ready(&self) {
+            let deadline = Instant::now() + WAIT_SECS;
+            loop {
+                if let Some(h) = herdr_graph::daemon::client::hello(&self.paths().socket) {
+                    match h["state"].as_str() {
+                        Some("ready") => return,
+                        Some("failed") => panic!("daemon failed to start: {h}; log: {}{}", self.daemon_log(), self.instance_log()),
+                        _ => {}
+                    }
+                }
+                assert!(Instant::now() < deadline, "daemon did not become ready; log: {}{}", self.daemon_log(), self.instance_log());
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        /// The detached daemon's log (`daemon --ensure` writes to `.graph-local/daemon.log`, not `daemon.out`).
+        fn instance_log(&self) -> String {
+            std::fs::read_to_string(&self.paths().log).unwrap_or_default()
         }
 
         fn daemon_log(&self) -> String {
@@ -848,6 +872,7 @@ mod subprocess {
         let f = Fixture::new();
         let out = f.run(&["daemon", "--ensure"]);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        f.wait_ready();
         let plan = f.plan(&["teamspace", "create", "t"]);
         let applied = f.apply(&plan);
         assert!(applied.status.success(), "{}", String::from_utf8_lossy(&applied.stderr));
@@ -868,7 +893,9 @@ mod subprocess {
 
         let out = f.run(&["daemon", "--ensure"]);
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        f.wait_ready();
         let status = f.client().call("status", json!({})).unwrap();
+        assert_eq!(status["state"], "ready", "{status}");
         assert_eq!(status["components"]["writer"]["ops"]["committed"], 1, "{status}");
         assert_ne!(status["pid"].as_u64().unwrap() as u32, pid);
         assert_eq!(startup_record(&f.journal()), STARTUP_STEPS.to_vec(), "the restart ran the startup order again");
@@ -889,6 +916,7 @@ mod subprocess {
 
         let mut again = f.spawn_daemon(None);
         let status = f.client().call("status", json!({})).unwrap();
+        assert_eq!(status["state"], "ready", "{status}");
         assert_eq!(status["components"]["writer"]["ops"]["committed"], 1, "{status}");
         let store = GitStore::open(&f.instance).unwrap();
         let head = store.head().unwrap();
