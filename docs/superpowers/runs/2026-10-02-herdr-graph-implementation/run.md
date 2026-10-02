@@ -2,7 +2,7 @@
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
 resumeChange: 2026-10-02 · "/goal create working MVP for herdr-graph, pushed to new github.com/alepar/herdr-graph repo" · autonomous=t from here (no further questions; remaining root-brainstorm sections decided Mode B); scope narrowed from Q5 "full contract" to a working MVP across all pillars with listed deferrals; goal adds creating a private GitHub repo alepar/herdr-graph and pushing
-phase: fix-loop
+phase: roast-code
 
 idea: Implement the approved herdr-graph design. Start by reading IMPLEMENTATION-HANDOFF.md, then CURRENT-DESIGN.md and DESIGN-NOTES.md in the documented precedence order. The user explicitly authorized implementation and considers the design converged; historical design-only restrictions are superseded. Preserve approved decisions, resolve routine implementation details, and retain required checkpoints without re-asking settled design questions. Git and local embedded-Dolt Beads have been initialized and the design baseline committed; verify prerequisites. The Herdr skill is installed at .claude/skills/herdr/SKILL.md. Use the handoff for scope, integration evidence and validation expectations. Do not restart the memory observer or disturb existing user sessions.
 spec: 2026-10-02-herdr-graph-mvp-design.md
@@ -13,7 +13,7 @@ branch: super-auto/herdr-graph-implementation
 base: main
 
 roastDesignRound: 2
-roastCodeRound: 1
+roastCodeRound: 2
 
 parked:
 - 2026-10-02-herdr-graph-mvp-roast-design-1.md · escalation · "Herdr 0.9.1 pane_closed vs tab_closed event order on multi-pane close unverified — designed defensively (grouping window + snapshot containment), spike in hg-zmi.5"
@@ -29,15 +29,15 @@ graph-pass: depth 11→11 · width 1.8→1.8 · applied 0 · parked 2
 designRoastExit: converged at round 2 — Should-fix (14 confirmed) [converged], 0 Blocking; punch list of 14 applied inline to spec + beads (no re-roast per loop rule); 2 new escalations parked above
 
 codeBuckets:
-  completed: hg-zmi.1–.20, hg-zmi.46–.59 (pass 3: .53–.55 F1–F3; pass 4: .56–.59)
+  completed: hg-zmi.1–.20, hg-zmi.46–.70 (pass 3: .53–.55; pass 4: .56–.59; fix-loop r1: .60–.70)
   escalated:
   pendingRetry:
   parked:
   stalled: false
-  review: pass 1 not ready (9 must-fix → hg-zmi.46–.52 + .20 re-entry, all completed in pass 2); pass 2 not ready (F1, F2 must-fix; F3 should-fix → hg-zmi.53–.55, epic reopened, super-code pass 3); pass 3 not ready (A 2s polling, red doctor test, C exclusion undo, B rename Notify → hg-zmi.56–.59, pass 4); pass 4 not ready (S1 hook timeout, S2 durable session-end → hg-zmi.60–.61, open, carried into the phase-5 fix loop; S3–S8 deferred by reviewer)
+  review: pass 1 not ready (9 must-fix → hg-zmi.46–.52 + .20 re-entry, all completed in pass 2); pass 2 not ready (F1, F2 must-fix; F3 should-fix → hg-zmi.53–.55, epic reopened, super-code pass 3); pass 3 not ready (A 2s polling, red doctor test, C exclusion undo, B rename Notify → hg-zmi.56–.59, pass 4); pass 4 not ready (S1 hook timeout, S2 durable session-end → hg-zmi.60–.61, open, carried into the phase-5 fix loop; S3–S8 deferred by reviewer); fix-loop r1 pass review not ready (F1 duplicate ids on re-apply, F2 withdrawal of reused seat → hg-zmi.71–.72, carried into round 2)
   sweep: SWEEP DEFERRED (caller-owned)
   slowness: []
-  stopReason: ready-drained (pass 1); root-closed (passes 2, 3, 4)
+  stopReason: ready-drained (pass 1); root-closed (passes 2, 3, 4, fix-loop r1)
   authRefused: hg-zmi.20 pass 1 — `rm /Users/alepar/.config/herdr-graph/config.toml` (user to delete it and /private/tmp/hgx/i); re-entry completed in pass 2
 
 approvals:
