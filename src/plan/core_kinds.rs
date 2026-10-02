@@ -50,12 +50,12 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
 // shared helpers
 // ---------------------------------------------------------------------------------------------
 
-fn parse_args<T: DeserializeOwned>(v: &serde_json::Value) -> Result<T, PlanError> {
+pub(crate) fn parse_args<T: DeserializeOwned>(v: &serde_json::Value) -> Result<T, PlanError> {
     serde_json::from_value(v.clone()).map_err(|e| PlanError::Invalid(format!("malformed arguments: {e}")))
 }
 
 /// A state mismatch seen while applying: the op is rejected, not retried.
-fn mm(e: PlanError) -> MutationError {
+pub(crate) fn mm(e: PlanError) -> MutationError {
     match e {
         PlanError::Store(s) => MutationError::Store(s),
         other => MutationError::Reject(Reject {
@@ -66,54 +66,54 @@ fn mm(e: PlanError) -> MutationError {
     }
 }
 
-fn rev_of(id: impl Into<AnyId>, rev: u64) -> ReliedOn {
+pub(crate) fn rev_of(id: impl Into<AnyId>, rev: u64) -> ReliedOn {
     ReliedOn { object: id.into(), version: Version::Rev(rev) }
 }
 
-fn lc_value(name: &str) -> toml::Value {
+pub(crate) fn lc_value(name: &str) -> toml::Value {
     let mut t = toml::Table::new();
     t.insert("lifecycle".into(), toml::Value::String(name.into()));
     toml::Value::Table(t)
 }
 
-fn absent() -> Runtime {
+pub(crate) fn absent() -> Runtime {
     Runtime { availability: Availability::Absent, bound: None, observed_at: None }
 }
 
-fn basename(p: &RepoPath) -> &str {
+pub(crate) fn basename(p: &RepoPath) -> &str {
     p.as_str().rsplit('/').next().unwrap_or_default()
 }
 
-fn mechanism(cx: &MutationCx<'_>) -> RetireMechanism {
+pub(crate) fn mechanism(cx: &MutationCx<'_>) -> RetireMechanism {
     if cx.request.requester.human { RetireMechanism::UserCli } else { RetireMechanism::AgentRequest }
 }
 
-struct TsInfo {
-    loc: ObjectLocation,
-    rec: TeamspaceRecord,
+pub(crate) struct TsInfo {
+    pub(crate) loc: ObjectLocation,
+    pub(crate) rec: TeamspaceRecord,
 }
 
-fn read_ts(tree: &dyn TreeRead, id: &TeamspaceId) -> Result<TsInfo, PlanError> {
+pub(crate) fn read_ts(tree: &dyn TreeRead, id: &TeamspaceId) -> Result<TsInfo, PlanError> {
     let loc = layout::locate(tree, &id.to_any())?.ok_or_else(|| PlanError::Invalid(format!("no teamspace {id}")))?;
     let rec = read_toml::<TeamspaceRecord>(tree, &loc.record_path)?
         .ok_or_else(|| PlanError::Invalid(format!("no teamspace {id}")))?;
     Ok(TsInfo { loc, rec })
 }
 
-struct SeatFacts {
-    loc: ObjectLocation,
-    rec: SeatRecord,
-    ts: TsInfo,
-    clones: Vec<(ObjectLocation, CloneRecord)>,
+pub(crate) struct SeatFacts {
+    pub(crate) loc: ObjectLocation,
+    pub(crate) rec: SeatRecord,
+    pub(crate) ts: TsInfo,
+    pub(crate) clones: Vec<(ObjectLocation, CloneRecord)>,
 }
 
 impl SeatFacts {
-    fn active_clones(&self) -> impl Iterator<Item = &(ObjectLocation, CloneRecord)> {
+    pub(crate) fn active_clones(&self) -> impl Iterator<Item = &(ObjectLocation, CloneRecord)> {
         self.clones.iter().filter(|(_, c)| c.lifecycle == CloneLifecycle::Active)
     }
 }
 
-fn read_seat(tree: &dyn TreeRead, id: &SeatId) -> Result<SeatFacts, PlanError> {
+pub(crate) fn read_seat(tree: &dyn TreeRead, id: &SeatId) -> Result<SeatFacts, PlanError> {
     let loc = layout::locate(tree, &id.to_any())?.ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
     let rec = read_toml::<SeatRecord>(tree, &loc.record_path)?
         .ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
@@ -131,7 +131,7 @@ fn live_seat(tree: &dyn TreeRead, seat_ref: &str) -> Result<SeatFacts, PlanError
     Ok(f)
 }
 
-fn seat_slug_for(tree: &dyn TreeRead, ts_dir: &RepoPath, name: &str, id: &SeatId, own: Option<&str>) -> Result<String, PlanError> {
+pub(crate) fn seat_slug_for(tree: &dyn TreeRead, ts_dir: &RepoPath, name: &str, id: &SeatId, own: Option<&str>) -> Result<String, PlanError> {
     let parent = ts_dir.join("seats")?;
     let mut taken = layout::taken_slugs(tree, &parent)?;
     if let Some(own) = own {
@@ -140,12 +140,12 @@ fn seat_slug_for(tree: &dyn TreeRead, ts_dir: &RepoPath, name: &str, id: &SeatId
     Ok(unique_slug(name, id.suffix6(), &taken))
 }
 
-fn clone_slug_for(tree: &dyn TreeRead, seat_dir: &RepoPath, name: &str, id: &CloneId) -> Result<String, PlanError> {
+pub(crate) fn clone_slug_for(tree: &dyn TreeRead, seat_dir: &RepoPath, name: &str, id: &CloneId) -> Result<String, PlanError> {
     let taken = layout::taken_slugs(tree, &seat_dir.join("clones")?)?;
     Ok(unique_slug(name, id.suffix6(), &taken))
 }
 
-fn ensure_ts_live(ts: &TsInfo) -> Result<(), PlanError> {
+pub(crate) fn ensure_ts_live(ts: &TsInfo) -> Result<(), PlanError> {
     if ts.rec.lifecycle == Lifecycle::Retired {
         return Err(PlanError::Invalid(format!(
             "teamspace {} is retired; resurrect it first",
@@ -164,7 +164,7 @@ fn run_detail(c: &EffectiveSeatConfig) -> serde_json::Value {
 }
 
 /// open_pane (+ start_agent unless shell) for one clone of an active seat.
-fn open_clone_effects(clone: &CloneId, seat: &SeatId, cfg: &EffectiveSeatConfig) -> Vec<PlanEffect> {
+pub(crate) fn open_clone_effects(clone: &CloneId, seat: &SeatId, cfg: &EffectiveSeatConfig) -> Vec<PlanEffect> {
     let mut v = vec![PlanEffect::new("runtime.open_pane", clone.clone(), json!({ "seat": seat }))];
     if !harness_is_shell(cfg) {
         v.push(PlanEffect::new("runtime.start_agent", clone.clone(), run_detail(cfg)));
@@ -172,7 +172,7 @@ fn open_clone_effects(clone: &CloneId, seat: &SeatId, cfg: &EffectiveSeatConfig)
     v
 }
 
-fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneRecord {
+pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneRecord {
     CloneRecord {
         schema: SCHEMA_VERSION,
         id,
@@ -236,19 +236,19 @@ fn app_exclusions(
 
 /// Accumulator for one retire/resurrect action record.
 #[derive(Default)]
-struct Acc {
-    retired: Vec<AnyId>,
-    already: Vec<AnyId>,
-    affected: Vec<AffectedObject>,
+pub(crate) struct Acc {
+    pub(crate) retired: Vec<AnyId>,
+    pub(crate) already: Vec<AnyId>,
+    pub(crate) affected: Vec<AffectedObject>,
 }
 
 impl Acc {
-    fn changed(&mut self, id: AnyId, before: &str, after: &str) {
+    pub(crate) fn changed(&mut self, id: AnyId, before: &str, after: &str) {
         self.affected.push(AffectedObject { object: id, before: Some(lc_value(before)), after: Some(lc_value(after)) });
     }
 }
 
-fn write_action(
+pub(crate) fn write_action(
     cx: &mut MutationCx<'_>,
     act: &ActionId,
     kind: ActionKind,
@@ -274,13 +274,13 @@ fn write_action(
 }
 
 /// Ids retired by `action` (its record's `retired` list); when the record is missing, an empty set.
-fn retired_by(tree: &dyn TreeRead, action: Option<&ActionId>) -> Result<Option<BTreeSet<AnyId>>, PlanError> {
+pub(crate) fn retired_by(tree: &dyn TreeRead, action: Option<&ActionId>) -> Result<Option<BTreeSet<AnyId>>, PlanError> {
     let Some(action) = action else { return Ok(None) };
     let Some(loc) = layout::locate(tree, &action.to_any())? else { return Ok(None) };
     Ok(read_toml::<ActionRecord>(tree, &loc.record_path)?.map(|a| a.retired.into_iter().collect()))
 }
 
-fn retired_with(
+pub(crate) fn retired_with(
     set: &Option<BTreeSet<AnyId>>,
     action: Option<&ActionId>,
     id: &AnyId,
@@ -294,7 +294,7 @@ fn retired_with(
 
 /// Retire `seat` and its active clones in the overlay; archive its folder. Appends to `acc`.
 #[allow(clippy::too_many_arguments)]
-fn do_retire_seat(
+pub(crate) fn do_retire_seat(
     cx: &mut MutationCx<'_>,
     seat: &SeatId,
     act: &ActionId,
@@ -343,7 +343,7 @@ fn do_retire_seat(
 }
 
 /// Resurrect a retired seat (and the clones in `with_clones`), moving its folder back to a live path.
-fn do_resurrect_seat(
+pub(crate) fn do_resurrect_seat(
     cx: &mut MutationCx<'_>,
     seat: &SeatId,
     active: bool,
