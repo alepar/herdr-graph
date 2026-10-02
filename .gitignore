@@ -18,3 +18,8 @@
 
 # plugin build output
 /bin/
+
+# Raw scraped research data (kept locally, not published)
+research/**/*.json
+research/**/*.json.gz
+research/**/*.jsonl
