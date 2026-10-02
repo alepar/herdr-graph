@@ -290,6 +290,13 @@ fn clone_record_roundtrip() {
             thread: "th".into(),
             constraint: InviteConstraint::Required,
             state: InvitationState::Pending,
+            link: Some(ThreadsLink {
+                seat: "seat-k3Fq9a2B".into(),
+                occupant: Some(NsId::new().to_string()),
+                invitation: Some("inv-1".into()),
+                requirement: Some("requirement-1".into()),
+                revision: Some(2),
+            }),
         }],
         reload_required: true,
     });

@@ -60,6 +60,16 @@ pub struct MessageReceipts {
     pub recipients: Vec<RecipientReceipt>,
 }
 
+/// What threads reports about one (thread, seat) membership: the state plus the ids a native agent needs for
+/// `accept-required` (invitation, requirement episode and its revision).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipDetail {
+    pub state: InvitationState,
+    pub invitation: Option<String>,
+    pub requirement: Option<String>,
+    pub revision: Option<u64>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ThreadsError {
     #[error("threads service busy")]
@@ -94,6 +104,19 @@ pub trait ThreadsPort: Send + Sync {
         thread: &ThreadRef,
         seat: &ThreadsSeatRef,
     ) -> Result<Option<InvitationState>, ThreadsError>;
+    /// `membership` plus the threads-side ids. Additive to the original trait: the default has no ids.
+    async fn membership_detail(
+        &self,
+        thread: &ThreadRef,
+        seat: &ThreadsSeatRef,
+    ) -> Result<Option<MembershipDetail>, ThreadsError> {
+        Ok(self.membership(thread, seat).await?.map(|state| MembershipDetail {
+            state,
+            invitation: None,
+            requirement: None,
+            revision: None,
+        }))
+    }
     async fn notify(
         &self,
         thread: &ThreadRef,
