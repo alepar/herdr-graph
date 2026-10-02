@@ -10,7 +10,7 @@ use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, Runtime};
 use crate::model::effect::EffectStatus;
-use crate::model::harness::{Harness, claude_config_root};
+use crate::model::harness::Harness;
 use crate::model::native_session::SessionEndReason;
 use crate::model::operation::OpState;
 use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};
@@ -275,10 +275,9 @@ impl RuntimeLoop {
         paths: InstancePaths,
         tick: Duration,
         op_events: Option<broadcast::Receiver<OpEvent>>,
+        claude_root: PathBuf,
     ) -> Arc<Self> {
         let (session_ended, _) = broadcast::channel(256);
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        let claude_root = claude_config_root(std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).as_deref(), &home);
         let baseline = baseline::load(&paths.baseline);
         Arc::new(Self {
             herdr,

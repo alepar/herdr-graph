@@ -23,7 +23,9 @@ const SKILLS: &[(&str, &str)] = &[
 
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
-    claude_config_dir.map(Path::to_path_buf).or_else(|| home.map(|h| h.join(".claude")))
+    let dir = claude_config_dir.map(Path::to_path_buf).or_else(|| home.map(|h| h.join(".claude")))?;
+    crate::herdr::isolation::tripwire(&dir, "setup_claude::config_dir");
+    Some(dir)
 }
 
 fn sh_quote(s: &str) -> String {

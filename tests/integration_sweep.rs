@@ -8,7 +8,7 @@
 //!
 //! Nothing here touches a live Herdr, live threads or the memory observer.
 
-#[cfg(feature = "private-herdr")]
+#[cfg(any(feature = "private-herdr", feature = "test-support"))]
 mod support;
 
 // =============================================================================================
@@ -252,17 +252,19 @@ mod golden {
     impl Drop for Rig {
         /// The daemon is detached and would outlive the test: stop it after an argv check.
         fn drop(&mut self) {
-            let Some(pid) = lock::read_info(&self.instance.join(".graph-local/daemon.lock")).map(|i| i.pid) else { return };
-            // SAFETY: signal 0 only probes existence.
-            if unsafe { libc::kill(pid as i32, 0) } != 0 {
-                return;
+            if let Some(pid) = lock::read_info(&self.instance.join(".graph-local/daemon.lock")).map(|i| i.pid)
+                // SAFETY: signal 0 only probes existence.
+                && unsafe { libc::kill(pid as i32, 0) } == 0
+            {
+                let ps = Command::new("/bin/ps").args(["-o", "command=", "-p", &pid.to_string()]).output().unwrap();
+                let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
+                if cmdline.contains(BIN) && cmdline.contains(" daemon") {
+                    // SAFETY: argv-verified as this rig's daemon.
+                    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                }
             }
-            let ps = Command::new("/bin/ps").args(["-o", "command=", "-p", &pid.to_string()]).output().unwrap();
-            let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
-            if cmdline.contains(BIN) && cmdline.contains(" daemon") {
-                // SAFETY: argv-verified as this rig's daemon.
-                unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-            }
+            // Everything else that inherited the root marker (pane shells, hook-started daemons).
+            support::isolated::reap_root(&self.herdr.root);
         }
     }
 
@@ -546,7 +548,12 @@ mod wiring {
         }
 
         async fn start_with(root: &Path, fakes: Fakes, threads: Arc<dyn ThreadsPort>) -> Daemon {
-            let ctx = DaemonCtx { paths: InstancePaths::new(root), herdr_socket: root.join("no-herdr.sock"), started_at: chrono::Utc::now() };
+            let ctx = DaemonCtx {
+                paths: InstancePaths::new(root),
+                herdr_socket: root.join("no-herdr.sock"),
+                started_at: chrono::Utc::now(),
+                claude_root: root.join("claude"),
+            };
             let mut reg = Registry::default();
             compose_with(&mut reg, &ctx, fakes.services(threads)).await.expect("compose");
             let (stop, shutdown): (_, Shutdown) = shutdown_channel();
@@ -1016,59 +1023,37 @@ mod wiring {
 
 #[cfg(feature = "test-support")]
 mod cli_sweep {
-    use herdr_graph::config::InstancePaths;
-    use herdr_graph::daemon::client::Client;
-    use serde_json::{Value, json};
+    use serde_json::Value;
     use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
     use std::process::{Command, Output};
-    use std::time::Duration;
 
     struct Fixture {
-        dir: tempfile::TempDir,
-        home: PathBuf,
+        /// Dropped first: shuts the daemon down and sweeps every process carrying its marker.
+        root: super::support::isolated::TestRoot,
         instance: PathBuf,
-        herdr_socket: PathBuf,
         _listener: UnixListener,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let dir = tempfile::tempdir().unwrap();
-            let home = dir.path().join("home");
-            std::fs::create_dir_all(&home).unwrap();
-            let herdr_socket = dir.path().join("herdr.sock");
-            let listener = UnixListener::bind(&herdr_socket).unwrap();
+            let root = super::support::isolated::TestRoot::new();
+            let listener = UnixListener::bind(root.herdr_socket()).unwrap();
             let l2 = listener.try_clone().unwrap();
             std::thread::spawn(move || for _conn in l2.incoming() {});
-            Fixture { instance: dir.path().join("instance"), home, herdr_socket, _listener: listener, dir }
+            Fixture { instance: root.instance(), root, _listener: listener }
         }
 
-        /// The binary with a scrubbed env: HOME is the fixture's, so `init` and `setup claude` write there.
+        /// The binary with the root's scrubbed env: HOME and CLAUDE_CONFIG_DIR are inside the root, so `init`
+        /// and `setup claude` write there.
         fn cmd(&self, args: &[&str]) -> Command {
-            let mut c = Command::new(env!("CARGO_BIN_EXE_herdr-graph"));
-            c.args(args)
-                .env_clear()
-                .env("PATH", std::env::var("PATH").unwrap_or_default())
-                .env("HOME", &self.home)
-                .env("CLAUDE_CONFIG_DIR", self.dir.path().join("claude"))
-                .env("HERDR_GRAPH_INSTANCE", &self.instance)
-                .env("HERDR_SOCKET_PATH", &self.herdr_socket)
-                .env("HG_TEST_FAKE_SERVICES", "1")
-                .current_dir(self.dir.path());
+            let mut c = self.root.command(env!("CARGO_BIN_EXE_herdr-graph"));
+            c.args(args).env("HG_TEST_FAKE_SERVICES", "1");
             c
         }
 
         fn run(&self, args: &[&str]) -> Output {
             self.cmd(args).output().unwrap()
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            if let Ok(mut c) = Client::connect(&InstancePaths::new(&self.instance).socket, Duration::from_secs(2)) {
-                let _ = c.call("shutdown", json!({}));
-            }
         }
     }
 
@@ -1105,7 +1090,7 @@ mod cli_sweep {
         let op = first_col(&["ops"]);
         assert!(seat.starts_with("st_") && clone.starts_with("cl_") && op.starts_with("op_"), "{seat} {clone} {op}");
 
-        let body = f.dir.path().join("body.md");
+        let body = f.root.path().join("body.md");
         std::fs::write(&body, "notes\n").unwrap();
         let body = body.to_str().unwrap().to_owned();
         let payload_free = ["session-report", "--from-hook", "claude"];

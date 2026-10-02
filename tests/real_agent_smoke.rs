@@ -128,7 +128,7 @@ fn real_agent_seat_bootstrap_and_summarizer_flow() {
     };
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     // The user's real Claude config, observed before and after to prove it is untouched.
-    let real_settings = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude/settings.json"));
+    let real_settings = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude/settings.json")); // isolation-ok: read-only proof the real settings are untouched
     let real_before = real_settings.as_deref().and_then(file_hash);
 
     let herdr = match PrivateHerdr::start() {

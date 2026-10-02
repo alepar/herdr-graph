@@ -1,5 +1,7 @@
 //! Crash-injection: kill the writer at every failpoint, restart, and check nothing is lost or duplicated.
 #![cfg(feature = "test-support")]
+mod support;
+
 use herdr_graph::journal::Journal;
 use herdr_graph::model::change::{ChangeRequest, RequestKind, Requester};
 use herdr_graph::model::operation::OpState;
@@ -82,9 +84,10 @@ fn crash_child() {
 }
 
 fn run_child(root: &Path, failpoints: Option<&str>, mode: Option<&str>) -> i32 {
-    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    // A fresh isolated root per child: `env_clear` already drops any inherited HG_FAILPOINTS / HG_CRASH_MODE.
+    let test_root = support::isolated::TestRoot::new();
+    let mut cmd = test_root.command(std::env::current_exe().unwrap());
     cmd.args(["--exact", "crash_child", "--nocapture", "--test-threads=1"]).env("HG_CRASH_CHILD", root);
-    cmd.env_remove("HG_FAILPOINTS").env_remove("HG_CRASH_MODE");
     if let Some(m) = mode {
         cmd.env("HG_CRASH_MODE", m);
     }

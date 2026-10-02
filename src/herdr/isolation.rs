@@ -4,6 +4,18 @@
 //! reach the user's live resources. [`scrubbed_env`] builds the only environment a private child gets;
 //! [`IsolationGuard`] refuses any path outside the private root or inside a live user resource.
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set on every test child (by `scrubbed_env`): every resolved config/state/socket path must lie under it.
+pub const TEST_ROOT_VAR: &str = "HG_TEST_ROOT";
+/// Exit status of a child that resolved a path outside its test root.
+pub const VIOLATION_EXIT: i32 = 97;
+/// Appended (one line per violation) under the test root; `TestRoot::drop` fails the test when it is non-empty.
+pub const VIOLATIONS_LOG: &str = "isolation-violations.log";
+
+static ARMED: AtomicBool = AtomicBool::new(false);
+static LIVE: OnceLock<Vec<(PathBuf, &'static str)>> = OnceLock::new();
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum IsolationError {
@@ -57,6 +69,7 @@ pub fn live_resources_from(vars: impl IntoIterator<Item = (String, String)>) -> 
             "HOME" => home = Some(path),
             "HERDR_SOCKET_PATH" => live.push((path, "the user's Herdr API socket")),
             "HERDR_PLUGIN_STATE_DIR" => live.push((path, "live herdr-threads state")),
+            "HERDR_PLUGIN_CONFIG_DIR" => live.push((path, "the user's Herdr plugin config")),
             "CLAUDE_CONFIG_DIR" => live.push((path, "the user's Claude config")),
             _ if k.starts_with("HERDR_THREADS_") && v.starts_with('/') => live.push((path, "live herdr-threads state")),
             _ if v.contains("memory-observer") && v.starts_with('/') => live.push((path, "the memory observer")),
@@ -65,7 +78,9 @@ pub fn live_resources_from(vars: impl IntoIterator<Item = (String, String)>) -> 
     }
     if let Some(h) = home {
         live.push((h.join(".config/herdr"), "the user's default Herdr session"));
+        live.push((h.join(".config/herdr-graph"), "the user's herdr-graph config"));
         live.push((h.join(".local/state/herdr-threads"), "live herdr-threads state"));
+        live.push((h.join(".local/state/herdr"), "live herdr-threads state"));
         live.push((h.join(".claude"), "the user's Claude config"));
         live.push((h.join(".claude-mem"), "the memory observer"));
     }
@@ -110,6 +125,7 @@ pub const PATH_VARS: &[&str] = &[
     "HERDR_CONFIG_PATH",
     "HERDR_SOCKET_PATH",
     "HERDR_PLUGIN_STATE_DIR",
+    "HERDR_PLUGIN_CONFIG_DIR",
     "CLAUDE_CONFIG_DIR",
     "HERDR_GRAPH_INSTANCE",
 ];
@@ -133,8 +149,10 @@ pub fn scrubbed_env_from(root: &Path, vars: impl IntoIterator<Item = (String, St
         ("HERDR_CONFIG_PATH".into(), p("config/herdr.toml")),
         ("HERDR_SOCKET_PATH".into(), p("herdr.sock")),
         ("HERDR_PLUGIN_STATE_DIR".into(), p("threads-state")),
+        ("HERDR_PLUGIN_CONFIG_DIR".into(), p("plugin-config")),
         ("CLAUDE_CONFIG_DIR".into(), p("claude")),
         ("HERDR_GRAPH_INSTANCE".into(), p("graph")),
+        (TEST_ROOT_VAR.into(), root.to_string_lossy().into_owned()),
     ];
     for (k, v) in vars {
         if (PASS_THROUGH.contains(&k.as_str()) || CREDENTIALS.contains(&k.as_str())) && !v.is_empty() {
@@ -149,4 +167,58 @@ pub fn scrubbed_env_from(root: &Path, vars: impl IntoIterator<Item = (String, St
 /// few inert variables kept; credentials only from explicit `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`.
 pub fn scrubbed_env(root: &Path) -> Vec<(String, String)> {
     scrubbed_env_from(root, std::env::vars())
+}
+
+/// Arm the in-process tripwire for this whole process (integration-test fixtures call it; lib unit tests are
+/// always armed). Captures the live set from the REAL environment on first use.
+pub fn arm() {
+    LIVE.get_or_init(|| live_resources_from(std::env::vars()));
+    ARMED.store(true, Ordering::SeqCst);
+}
+
+fn armed() -> bool {
+    cfg!(test) || ARMED.load(Ordering::SeqCst)
+}
+
+/// Pure verdict: `root` (from `HG_TEST_ROOT`) wins when present; otherwise `live` must not contain `p`.
+/// Paths are resolved first (symlinks, `..`), so neither can slip past.
+pub fn tripwire_verdict(p: &Path, root: Option<&Path>, live: &[(PathBuf, &'static str)]) -> Result<(), String> {
+    let real = resolve(p);
+    if let Some(root) = root {
+        return if real.starts_with(resolve(root)) {
+            Ok(())
+        } else {
+            Err(format!("path {} is outside the test root {}", real.display(), root.display()))
+        };
+    }
+    for (res, why) in live {
+        if real.starts_with(resolve(res)) {
+            return Err(format!("path {} is a live user resource ({why})", real.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Call wherever a config, state, Claude or socket path is RESOLVED (before it is read, written or connected).
+/// `HG_TEST_ROOT` set: outside the root, append to `<root>/isolation-violations.log`, print, exit 97.
+/// Armed (`cfg(test)` or [`arm`]): a live resource panics. Otherwise a no-op (production).
+pub fn tripwire(p: &Path, what: &str) {
+    if let Some(root) = std::env::var_os(TEST_ROOT_VAR).filter(|r| !r.is_empty()).map(PathBuf::from) {
+        if let Err(msg) = tripwire_verdict(p, Some(&root), &[]) {
+            use std::io::Write;
+            let line = format!("{what}: {msg}");
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(root.join(VIOLATIONS_LOG)) {
+                let _ = writeln!(f, "{line}");
+            }
+            eprintln!("isolation tripwire: {line}");
+            std::process::exit(VIOLATION_EXIT);
+        }
+        return;
+    }
+    if armed() {
+        let live = LIVE.get_or_init(|| live_resources_from(std::env::vars()));
+        if let Err(msg) = tripwire_verdict(p, None, live) {
+            panic!("isolation tripwire: {what}: {msg}");
+        }
+    }
 }

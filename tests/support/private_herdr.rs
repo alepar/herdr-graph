@@ -69,10 +69,11 @@ impl PrivateHerdr {
     pub fn start() -> anyhow::Result<Self> {
         let herdr = super::herdr_binary().ok_or_else(|| anyhow::anyhow!("herdr is not installed"))?;
         let root = PathBuf::from(format!("/private/tmp/hg-{}", ulid::Ulid::new().to_string().to_lowercase()));
-        for d in ["home", "config", "state", "data", "cache", "runtime", "threads-state", "claude", "graph"] {
+        for d in ["home", "config", "state", "data", "cache", "runtime", "threads-state", "claude", "plugin-config", "graph"] {
             std::fs::create_dir_all(root.join(d))?;
         }
         std::fs::write(root.join("config/herdr.toml"), "")?;
+        herdr_graph::herdr::isolation::arm();
         let env = scrubbed_env(&root);
         let guard = IsolationGuard::new(&root);
         for (k, v) in &env {
@@ -159,6 +160,8 @@ impl Drop for PrivateHerdr {
             eprintln!("PrivateHerdr teardown: {e}");
         }
         let _ = self.child.wait();
+        // Pane shells, startup-hook daemons and anything else that inherited the marker.
+        super::isolated::reap_root(&self.root);
         if std::env::var("HG_KEEP_PRIVATE_ROOT").as_deref() != Ok("1") {
             let _ = std::fs::remove_dir_all(&self.root);
         } else {

@@ -68,7 +68,7 @@ pub enum UserConfigOutcome {
 /// Write `<home>/.config/herdr-graph/config.toml` with `instance = "<abs path>"` unless one exists
 /// (spec §1 locate chain, last link). Never overwrites an existing config pointing elsewhere.
 pub fn write_user_config(home: &Path, instance: &Path) -> std::io::Result<UserConfigOutcome> {
-    let cfg = home.join(".config/herdr-graph/config.toml");
+    let cfg = crate::config::user_config_path(home);
     if cfg.exists() {
         let points_here = std::fs::read_to_string(&cfg)
             .ok()

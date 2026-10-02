@@ -2,6 +2,7 @@
 //! Include with `mod support;` from an integration test.
 #![allow(dead_code)]
 
+pub mod isolated;
 pub mod private_herdr;
 
 use std::path::PathBuf;

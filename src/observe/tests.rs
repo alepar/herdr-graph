@@ -100,6 +100,7 @@ fn new_loop(
         InstancePaths::new(root),
         Duration::from_secs(60),
         None,
+        root.join("claude"),
     );
     lp.set_tuning(LoopTuning { commit_timeout: Duration::from_secs(5), settle_timeout: Duration::from_millis(50), debounce: Duration::from_millis(5) });
     lp
@@ -911,6 +912,7 @@ async fn run_loop_reacts_to_events_and_ticks() {
         InstancePaths::new(&fx.root),
         Duration::from_millis(40),
         Some(fx.w.subscribe()),
+        fx.root.join("claude"),
     );
     lp.set_tuning(LoopTuning { commit_timeout: Duration::from_secs(5), settle_timeout: Duration::from_millis(50), debounce: Duration::from_millis(5) });
     let (tx, rx) = tokio::sync::watch::channel(false);

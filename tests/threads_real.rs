@@ -34,7 +34,7 @@ fn crate_root() -> PathBuf {
 fn threads_binary() -> PathBuf {
     let target = crate_root().join("target/threads-bin");
     let bin = target.join("debug/herdr-threads");
-    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())) // isolation-ok: cargo build of the threads checkout
         .args(["build", "--manifest-path"])
         .arg(crate_root().join("third_party/herdr-threads/Cargo.toml"))
         .arg("--target-dir")
@@ -83,6 +83,7 @@ impl Drop for ThreadsDaemon<'_> {
     fn drop(&mut self) {
         // `daemon stop` only talks to the daemon this state directory belongs to.
         let _ = self.cli(None, &["daemon", "stop"]);
+        support::isolated::reap_root(&self.herdr.root);
     }
 }
 
@@ -222,6 +223,7 @@ async fn production_discovery_reaches_real_threads_daemon() {
         paths: herdr_graph::config::InstancePaths::new(&graph_root),
         herdr_socket: herdr.socket.clone(),
         started_at: chrono::Utc::now(),
+        claude_root: herdr.root.join("claude"),
     };
     herdr.guard().check(&ctx.paths.threads_intents).expect("intents dir is private");
     let inputs = herdr_graph::threads::discovery::DiscoveryInputs { home: Some(home), ..Default::default() };
