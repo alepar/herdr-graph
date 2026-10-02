@@ -1,0 +1,71 @@
+//! Plan store: `<instance>/.graph-local/plans/<pl_id>.json` (spec §3.3).
+use super::types::StoredPlan;
+use crate::model::{PlanId, Timestamp};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+pub struct PlanStore {
+    dir: PathBuf,
+}
+
+impl PlanStore {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir }
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// The instance root this store belongs to (`<instance>/.graph-local/plans`).
+    pub fn instance(&self) -> PathBuf {
+        self.dir.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_else(|| self.dir.clone())
+    }
+
+    fn path(&self, id: &PlanId) -> PathBuf {
+        self.dir.join(format!("{id}.json"))
+    }
+
+    /// Write via a temp file in the same directory, then rename.
+    pub fn put(&self, p: &StoredPlan) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        let bytes = serde_json::to_vec_pretty(p).map_err(std::io::Error::other)?;
+        let tmp = self.dir.join(format!(".{}.{}.tmp", p.plan.id, std::process::id()));
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(&bytes)?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, self.path(&p.plan.id))
+    }
+
+    pub fn get(&self, id: &PlanId) -> std::io::Result<Option<StoredPlan>> {
+        match std::fs::read(self.path(id)) {
+            Ok(b) => serde_json::from_slice(&b).map(Some).map_err(std::io::Error::other),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Delete every stored plan created before `cutoff`; returns how many were removed.
+    pub fn prune_older_than(&self, cutoff: Timestamp) -> std::io::Result<usize> {
+        let rd = match std::fs::read_dir(&self.dir) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        let mut removed = 0;
+        for entry in rd {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let Ok(stored) = serde_json::from_slice::<StoredPlan>(&std::fs::read(&path)?) else { continue };
+            if stored.created_at < cutoff {
+                std::fs::remove_file(&path)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+}
