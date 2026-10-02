@@ -12,3 +12,6 @@
 # Agent worktrees
 .claude/worktrees/
 .worktrees/
+
+# Rust build output
+/target/
