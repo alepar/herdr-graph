@@ -563,6 +563,33 @@ async fn rebind_after_restart_restamps_token() {
     assert_eq!(now.runtime.bound.as_ref().unwrap().incarnation, snap.incarnation);
 }
 
+/// hg-zmi.76: `clone rebind` committed after the disconnect marked the clone unknown but before the first
+/// snapshot of the restarted server is observed: that first (rebind) pass must keep the explicit adoption,
+/// not mark the clone unknown again because the pane has no token yet and its terminal id is new.
+#[tokio::test]
+async fn rebind_before_the_first_post_restart_pass_survives_it() {
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let token = crate::model::launch::graph_token(&c.id.to_any());
+    fx.herdr.restart(false, false);
+    let snap = snapshot(&fx).await;
+    let new_pane = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).next().expect("pane survives restart").id.clone();
+    fx.herdr.clear_calls();
+
+    commit(&fx, &format!("clone rebind {} --pane {}", c.id, new_pane.0));
+    let sum = step(&fx).await;
+    assert_eq!(sum.mode, Some(StepMode::Rebind));
+    step(&fx).await;
+
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present, "the explicit rebind is not overwritten by the first pass");
+    assert_eq!(now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()), Some(new_pane.clone()));
+    assert!(calls(&fx).contains(&FakeCall::ReportPaneMetadata(new_pane, "hg".into(), token)), "{:?}", calls(&fx));
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+}
+
 #[tokio::test]
 async fn restart_without_tokens_or_terminal_ids_is_unknown_not_recreated() {
     let fx = fx();

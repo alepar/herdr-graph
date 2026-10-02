@@ -128,8 +128,17 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
             }
             let Some(b) = c.runtime.bound.as_ref() else { continue };
             let term_eq = pane.terminal_id.is_some() && b.terminal_id == pane.terminal_id;
+            // `clone rebind` records the chosen pane with the graph token but no terminal id (the id it had
+            // belongs to a server that may be gone). Until the reconciler stamps the pane, this explicit
+            // adoption is the only evidence, and it holds across a restart.
+            let adopted = b.terminal_id.is_none()
+                && b.token.is_some()
+                && b.pane_id.as_ref() == Some(pid)
+                && token_of(&pane.metadata).is_none();
             let ok = if b.incarnation == snap.incarnation {
                 term_eq || b.pane_id.as_ref() == Some(pid)
+            } else if adopted {
+                true
             } else {
                 let cwd_ok = pane.cwd.is_some() && pane.cwd == recorded_cwd(d, c);
                 let session_ok = match (&pane_session, current_native_id(c)) {

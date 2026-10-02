@@ -439,6 +439,78 @@ async fn subscribe_forwards_events_then_reconnects_with_marker() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A server that goes away and comes back between two snapshots is a new incarnation even when nothing
+/// reconnected a subscription: the snapshot after the loss must not carry the dead server's incarnation, or
+/// the matcher binds panes by their reused ids (hg-zmi.76).
+#[tokio::test]
+async fn snapshot_after_a_server_loss_is_a_new_incarnation() {
+    let dir = scratch("lost");
+    let n = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let socket = mini_server(&dir, move |m, _, _| match m {
+        "session.snapshot" => match n.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            1 => Reply::Error("server_unavailable", "server is shutting down"),
+            _ => Reply::Result(empty_snapshot()),
+        },
+        _ => Reply::Error("unexpected", m.to_owned().leak()),
+    });
+    let c = HerdrClient::new(socket);
+    let before = c.snapshot().await.unwrap().incarnation;
+    assert!(c.snapshot().await.is_err(), "the second snapshot is refused while the server shuts down");
+    let after = c.snapshot().await.unwrap().incarnation;
+    assert_ne!(before, after, "a snapshot after a lost server is not stamped with the old incarnation");
+    // A healthy stream of snapshots keeps one incarnation.
+    assert_eq!(c.snapshot().await.unwrap().incarnation, after);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// A server restarted in place (socket removed and re-bound) is a new incarnation on the very next snapshot,
+/// with no failed request and no subscription to notice it: the dying server can hold a subscription open
+/// past the restart (hg-zmi.76).
+#[tokio::test]
+async fn snapshot_after_the_socket_was_rebound_is_a_new_incarnation() {
+    let dir = scratch("rebound");
+    let serve = |dir: &Path| mini_server(dir, |m, _, _| match m {
+        "session.snapshot" => Reply::Result(empty_snapshot()),
+        _ => Reply::Error("unexpected", m.to_owned().leak()),
+    });
+    let socket = serve(&dir);
+    let c = HerdrClient::new(socket.clone());
+    let before = c.snapshot().await.unwrap().incarnation;
+    assert_eq!(c.snapshot().await.unwrap().incarnation, before, "the same server keeps its incarnation");
+    std::fs::remove_file(&socket).unwrap();
+    assert_eq!(serve(&dir), socket);
+    let after = c.snapshot().await.unwrap().incarnation;
+    assert_ne!(before, after, "a re-bound socket is a different server");
+    assert_eq!(c.snapshot().await.unwrap().incarnation, after);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The reader notices the dropped subscription before the new server is reachable: the generation moves at the
+/// loss, and the reconnect marker reports the incarnation the new server was probed under.
+#[tokio::test]
+async fn subscription_loss_moves_the_generation_once() {
+    let dir = scratch("loss-gen");
+    let socket = mini_server(&dir, |m, _, nth| match m {
+        "session.snapshot" => Reply::Result(empty_snapshot()),
+        // The first subscription drops at once; the retries are held open.
+        "events.subscribe" => Reply::Subscribe { events: vec![], hold: nth > 1 },
+        _ => Reply::Error("unexpected", m.to_owned().leak()),
+    });
+    let c = HerdrClient::new(socket);
+    let mut rx = c.subscribe().await.unwrap();
+    let marker = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        if ev.name == RECONNECTED_EVENT {
+            break ev;
+        }
+    };
+    let g = marker.payload["generation"].as_u64().unwrap();
+    assert_eq!(g, 2, "one subscribe plus one loss is two generations, not three");
+    assert_eq!(c.snapshot().await.unwrap().incarnation.generation, g, "the snapshot after the reconnect carries the marker's generation");
+    drop(rx);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // ---------------------------------------------------------------- FakeHerdr
 
 fn ws_req(label: &str) -> CreateWorkspace {

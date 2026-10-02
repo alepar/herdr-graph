@@ -660,7 +660,9 @@ impl OrgKind for CloneRebind {
             workspace_id: if same_pane { old.workspace_id.clone() } else { None },
             tab_id: if same_pane { old.tab_id.clone() } else { None },
             pane_id: Some(pane),
-            terminal_id: if same_pane { old.terminal_id.clone() } else { None },
+            // The terminal id the clone had may belong to a server that restarted since; the observer fills in
+            // the pane's own once it matches the adoption.
+            terminal_id: None,
             incarnation: old.incarnation,
         });
         rec.runtime.availability = Availability::Present;
