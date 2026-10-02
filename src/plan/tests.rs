@@ -637,7 +637,10 @@ fn rename_writes_name_history_and_moves_folder() {
     alpha(&fx);
     commit(&fx, "seat create foreman --teamspace alpha --active --harness shell");
     let sp = plan(&fx, "seat rename foreman chief");
-    assert_eq!(kinds_of(&sp), vec!["seat.rename", "runtime.rename_tab"]);
+    assert_eq!(kinds_of(&sp), vec!["seat.rename", "runtime.rename_tab", "threads.notify_rename"]);
+    let n = &sp.plan.effects[2].detail;
+    assert_eq!((n["from"].as_str(), n["to"].as_str()), (Some("foreman"), Some("chief")));
+    assert_eq!(n["path_to"], "teamspaces/alpha/seats/chief");
     let d = &sp.plan.effects[0].detail;
     assert_eq!((d["from"].as_str(), d["to"].as_str()), (Some("foreman"), Some("chief")));
     assert_eq!(d["path_to"], "teamspaces/alpha/seats/chief");
