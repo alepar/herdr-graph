@@ -186,6 +186,7 @@ fn patch_clone(fx: &Fx, clone: &CloneId, patch: serde_json::Value) {
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     };
     let op = fx.w.admit(req).unwrap();
     fx.w.drain().unwrap();
@@ -405,6 +406,7 @@ fn seat_json_includes_paths_pending_ops_invitations_beads_view_rev() {
                 relied_on: vec![],
                 requester: Requester { seat: Some(seat.id.clone()), ..Default::default() },
                 supersedes: None,
+                confirmed: None,
             })
             .unwrap();
         fx.w.drain().unwrap();
@@ -544,6 +546,7 @@ fn content_write_rejects_unknown_object_and_record_files_and_dotdot() {
                 relied_on: vec![],
                 requester: Requester::default(),
                 supersedes: None,
+                confirmed: None,
             })
             .unwrap();
         fx.w.drain().unwrap();

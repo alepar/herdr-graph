@@ -8,10 +8,10 @@ use crate::daemon::registry::{CallerInfo, CommandCtx, Registry};
 use crate::ipc::IpcErrorCode;
 use crate::journal::{Journal, OpRow};
 use crate::model::action::ActionRecord;
-use crate::model::change::{ChangeRequest, RequestKind, Requester};
+use crate::model::change::{ChangeRequest, ConfirmedPlan, RequestKind, Requester};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{CloneLifecycle, Lifecycle, RetireMechanism};
-use crate::model::operation::OpState;
+use crate::model::operation::{Confirmation, OpState};
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{AnyId, CommitId, OpId, PlanId, SeatId};
@@ -798,21 +798,17 @@ fn confirmation_mismatch_rejected() {
     let err = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some("deadbeef"), "relay").unwrap_err();
     assert_eq!(err.code, IpcErrorCode::BadRequest);
     // A request that bypasses the command layer is still refused by the writer.
-    let mut args = sp.plan.request.args.as_object().unwrap().clone();
-    args.insert("_plan".into(), json!(sp.plan.id));
-    args.insert(
-        "_confirmation".into(),
-        json!({"mode": "relay", "plan_hash": "deadbeef", "at": "2026-10-02T12:00:00Z"}),
-    );
+    let bad_confirmation = serde_json::from_value(json!({"mode": "relay", "plan_hash": "deadbeef", "at": "2026-10-02T12:00:00Z"})).unwrap();
     let op = fx
         .deps
         .writer
         .admit(ChangeRequest {
             kind: sp.plan.request.kind,
-            args: args.into(),
+            args: sp.plan.request.args.clone(),
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: Some(ConfirmedPlan { plan: sp.plan.id.clone(), confirmation: bad_confirmation, observed: Default::default() }),
         })
         .unwrap();
     fx.w.drain().unwrap();
@@ -827,7 +823,7 @@ fn writer_rejects_unknown_plan_and_tampered_args() {
     let fx = fx();
     alpha(&fx);
     let sp = plan(&fx, "seat create foreman --teamspace alpha");
-    let admit = |args: serde_json::Value| {
+    let admit = |args: serde_json::Value, confirmed: Option<ConfirmedPlan>| {
         let op = fx
             .deps
             .writer
@@ -837,22 +833,47 @@ fn writer_rejects_unknown_plan_and_tampered_args() {
                 relied_on: vec![],
                 requester: Requester::default(),
                 supersedes: None,
+                confirmed,
             })
             .unwrap();
         fx.w.drain().unwrap();
         fx.w.journal().get(&op).unwrap().unwrap().rejection.unwrap().reason
     };
-    let confirmation = json!({"mode": "relay", "plan_hash": sp.hash, "at": "2026-10-02T12:00:00Z"});
-    assert_eq!(admit(json!({"name": "x", "teamspace": "alpha"})), "unknown_plan");
-    assert_eq!(
-        admit(json!({"_plan": PlanId::new(), "_confirmation": confirmation, "name": "x", "teamspace": "alpha"})),
-        "unknown_plan"
-    );
+    let confirmation: Confirmation =
+        serde_json::from_value(json!({"mode": "relay", "plan_hash": sp.hash, "at": "2026-10-02T12:00:00Z"})).unwrap();
+    let confirmed = |plan: PlanId| Some(ConfirmedPlan { plan, confirmation: confirmation.clone(), observed: Default::default() });
+    assert_eq!(admit(json!({"name": "x", "teamspace": "alpha"}), None), "unknown_plan");
+    assert_eq!(admit(json!({"name": "x", "teamspace": "alpha"}), confirmed(PlanId::new())), "unknown_plan");
     let mut tampered = sp.plan.request.args.clone();
     tampered["name"] = json!("evil");
-    tampered["_plan"] = json!(sp.plan.id);
-    tampered["_confirmation"] = confirmation;
-    assert_eq!(admit(tampered), "confirmation_mismatch", "confirmed plan, different request");
+    assert_eq!(admit(tampered, confirmed(sp.plan.id.clone())), "confirmation_mismatch", "confirmed plan, different request");
+    // Underscore keys in args are ordinary (tamperable) args now, never the confirmation envelope.
+    let mut smuggled = sp.plan.request.args.clone();
+    smuggled["_plan"] = json!(sp.plan.id);
+    assert_eq!(admit(smuggled, None), "unknown_plan", "an args-borne plan id is not a confirmed plan");
+}
+
+#[test]
+fn apply_with_no_confirmed_plan_is_unknown_plan() {
+    let fx = fx();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create foreman --teamspace alpha");
+    let op = fx
+        .deps
+        .writer
+        .admit(ChangeRequest {
+            kind: sp.plan.request.kind,
+            args: sp.plan.request.args.clone(),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap();
+    fx.w.drain().unwrap();
+    let rej = fx.w.journal().get(&op).unwrap().unwrap().rejection.unwrap();
+    assert_eq!((rej.reason.as_str(), rej.explanation.contains("no confirmed plan")), ("unknown_plan", true));
+    assert!(layout::all_seats(&view(&fx)).unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -994,7 +1015,24 @@ fn supersedes_flag_carried_into_change_request() {
     assert_eq!(row.request.supersedes, Some(earlier));
     assert_eq!(row.request.kind, RequestKind::SeatCreate);
     assert!(row.request.relied_on.is_empty());
-    assert_eq!(row.request.args["_confirmation"]["plan_hash"], json!(sp.hash));
+    assert_eq!(row.request.args, sp.plan.request.args, "the stored args carry no envelope keys");
+    let confirmed = row.request.confirmed.clone().unwrap();
+    assert_eq!((confirmed.plan.clone(), confirmed.confirmation.plan_hash.clone()), (id.clone(), sp.hash.clone()));
+}
+
+#[test]
+fn operation_record_carries_plan_and_confirmation() {
+    let fx = fx();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create foreman --teamspace alpha");
+    let op = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap();
+    fx.w.drain().unwrap();
+    let head = fx.w.store().head().unwrap();
+    let day = fx.w.journal().get(&op).unwrap().unwrap().updated_at;
+    let rec: crate::model::operation::OperationRecord =
+        crate::ports::store::read_record(&**fx.w.store(), &head, &layout::operation_record(day, &op)).unwrap().unwrap();
+    assert_eq!(rec.plan, Some(sp.plan.id.clone()));
+    assert_eq!(rec.confirmation.map(|c| c.plan_hash), Some(sp.hash.clone()));
 }
 
 #[test]
@@ -1076,6 +1114,7 @@ fn retire_template_member_seat_adds_exclusion_to_each_application() {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         },
     )
     .unwrap();

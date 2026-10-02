@@ -138,6 +138,7 @@ pub fn admit_write(deps: &PlanDeps, caller: &CallerInfo, args: &Value) -> Result
         relied_on,
         requester: requester_for(caller),
         supersedes: None,
+        confirmed: None,
     };
     deps.writer.admit(req).map_err(|e| match e {
         crate::ports::writer::WriterError::Invalid(m) => CommandError::bad_request(m),

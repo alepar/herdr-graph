@@ -42,7 +42,7 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 // ---------------------------------------------------------------------------------------------
 
 fn observed(args: serde_json::Value) -> ChangeRequest {
-    ChangeRequest { kind: RequestKind::Observed, args, relied_on: vec![], requester: Requester::default(), supersedes: None }
+    ChangeRequest { kind: RequestKind::Observed, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
 }
 
 pub fn cascade_request(rule: CascadeRule, retire: &[AnyId], at: Timestamp) -> ChangeRequest {

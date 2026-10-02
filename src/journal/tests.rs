@@ -16,6 +16,7 @@ fn req(sub: &str) -> ChangeRequest {
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 

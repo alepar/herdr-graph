@@ -11,7 +11,7 @@ use crate::failpoint;
 use crate::journal::{Journal, JournalError, OpRow};
 use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::operation::{OpState, OperationRecord};
-use crate::model::{ActionId, CommitId, OpId, PlanId, Timestamp};
+use crate::model::{ActionId, CommitId, OpId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::store::{RepoPath, Store, StoreError};
 use crate::ports::writer::{Writer, WriterError};
@@ -414,8 +414,8 @@ impl WriterCore {
             summary: applied.summary.clone(),
             requester: req.requester.clone(),
             state: OpState::Committed,
-            confirmation: req.args.get("_confirmation").and_then(|v| serde_json::from_value(v.clone()).ok()),
-            plan: req.args.get("_plan").and_then(|v| v.as_str()).and_then(|s| s.parse::<PlanId>().ok()),
+            confirmation: req.confirmed.as_ref().map(|c| c.confirmation.clone()),
+            plan: req.confirmed.as_ref().map(|c| c.plan.clone()),
             commit: None, // a commit cannot contain its own oid
             action: applied.action.clone(),
             supersedes: req.supersedes.clone(),

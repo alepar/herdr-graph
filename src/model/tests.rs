@@ -731,7 +731,36 @@ fn change_request_json_roundtrip() {
         ],
         requester: Requester { human: true, seat: Some(SeatId::new()), ..Default::default() },
         supersedes: Some(OpId::new()),
+        confirmed: None,
     });
+}
+
+#[test]
+fn change_request_confirmed_round_trips() {
+    use crate::model::change::ConfirmedPlan;
+    use crate::model::operation::{ConfirmMode, Confirmation};
+    let mut req = ChangeRequest {
+        kind: RequestKind::SeatRetire,
+        args: serde_json::json!({"seat": "x"}),
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    };
+    // Without `confirmed`: the key is absent from the JSON and an old row without it parses as None.
+    let old = serde_json::to_value(&req).unwrap();
+    assert!(old.get("confirmed").is_none());
+    assert_eq!(serde_json::from_value::<ChangeRequest>(old).unwrap().confirmed, None);
+    // With `confirmed` (including observed facts).
+    let mut observed = serde_json::Map::new();
+    observed.insert("adopt_binding".into(), serde_json::json!({"pane_id": "p1"}));
+    req.confirmed = Some(ConfirmedPlan {
+        plan: PlanId::new(),
+        confirmation: Confirmation { mode: ConfirmMode::Relay, plan_hash: "h".into(), at: ts() },
+        observed,
+    });
+    json_rt(&req);
+    assert!(serde_json::to_value(&req).unwrap()["confirmed"]["observed"]["adopt_binding"].is_object());
 }
 
 // ---- contract tests --------------------------------------------------------------------------

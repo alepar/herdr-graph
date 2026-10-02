@@ -1,6 +1,7 @@
 //! ChangeRequest (spec §3.1): every write enters the system as one of these.
 use crate::model::common::BlobHash;
-use crate::model::ids::{AnyId, CloneId, NsId, OpId, SeatId, TeamspaceId};
+use crate::model::ids::{AnyId, CloneId, NsId, OpId, PlanId, SeatId, TeamspaceId};
+use crate::model::operation::Confirmation;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -84,6 +85,16 @@ pub struct Requester {
     pub human: bool,
 }
 
+/// What `plan apply` admitted: the confirmed plan, the user's confirmation, and facts observed at admission
+/// (e.g. the undo caller pane's live binding). Never part of the plan hash.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmedPlan {
+    pub plan: PlanId,
+    pub confirmation: Confirmation,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub observed: serde_json::Map<String, serde_json::Value>,
+}
+
 /// Every write (spec §3.1). Stored as JSON in the journal; `args` is kind-specific.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChangeRequest {
@@ -95,4 +106,6 @@ pub struct ChangeRequest {
     pub requester: Requester,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<OpId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed: Option<ConfirmedPlan>,
 }

@@ -1,7 +1,9 @@
 //! Transcript and request tests: coverage arithmetic (proptest), then the service over the real writer,
 //! journal and git store with FakeThreads, FakeHerdr and the reconciler.
 use super::*;
-use crate::daemon::registry::CallerInfo;
+use crate::daemon::registry::{CallerInfo, Registry};
+use crate::daemon::server::dispatch_registered;
+use crate::ipc::IpcResult;
 use crate::herdr::fake::{FakeCall, FakeHerdr};
 use crate::model::change::ChangeRequest;
 use crate::model::clone::CloneRecord;
@@ -405,6 +407,24 @@ async fn finish_session(fx: &Fx, worker: &CloneRecord, native: &str, path: &std:
     ev
 }
 
+/// Run one command through the exact path every IPC command takes: `_caller` on the wire becomes `CommandCtx`.
+async fn dispatch(fx: &Fx, kind: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    let mut reg = Registry::default();
+    fx.tr.register_commands(&mut reg);
+    match dispatch_registered(&reg, "r".into(), kind, args).await {
+        IpcResult::Ok { value } => Ok(value),
+        IpcResult::Error { code, message } => Err(format!("{code:?}: {message}")),
+    }
+}
+
+async fn complete(fx: &Fx, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    dispatch(fx, "request.complete", args).await
+}
+
+async fn report_session(fx: &Fx, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    dispatch(fx, "session.report", args).await
+}
+
 fn complete_args(rq: &RequestId, covered: ByteRange, clone: Option<&CloneId>) -> serde_json::Value {
     let caller = CallerInfo { graph_clone: clone.map(|c| c.to_string()), ..Default::default() };
     json!({ "request": rq, "output": "summaries/out.md", "covered": covered, "_caller": caller })
@@ -506,7 +526,7 @@ async fn recovery_requests_only_the_uncovered_tail() {
     let path = write_transcript(&fx, "s1", 5);
     finish_session(&fx, &worker, "native-1", &path).await;
     let first = the_request(&fx);
-    fx.tr.cmd_complete(complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
     assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "fully covered");
     append_lines(&path, 3);
     assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 1);
@@ -630,7 +650,7 @@ async fn resume_append_creates_request_for_new_bytes_only() {
     finish_session(&fx, &worker, "native-1", &path).await;
     let tr = the_transcript(&fx);
     let first = the_request(&fx);
-    fx.tr.cmd_complete(complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
     assert_eq!(the_transcript(&fx).coverage, vec![br(0, 100)]);
 
     // The session is resumed on the same file (a new native session record), which grows.
@@ -683,7 +703,7 @@ async fn clear_session_change_ends_previous_ns_and_requests() {
             "source": "startup",
         })
     };
-    let r = fx.tr.session_report(CallerInfo::default(), report("sess-1", &first)).await.unwrap();
+    let r = report_session(&fx, report("sess-1", &first)).await.unwrap();
     assert_eq!(r["resolved"], true);
     assert!(all_requests(&fx).is_empty(), "a session that has not ended has no request");
     let c = clone_rec(&fx, &worker.id);
@@ -692,12 +712,12 @@ async fn clear_session_change_ends_previous_ns_and_requests() {
 
     // Reporting the same session again changes nothing.
     let head = fx.store.head().unwrap();
-    let same = fx.tr.session_report(CallerInfo::default(), report("sess-1", &first)).await.unwrap();
+    let same = report_session(&fx, report("sess-1", &first)).await.unwrap();
     assert_eq!(same["changed"], false);
     assert_eq!(fx.store.head().unwrap(), head);
 
     // /clear: a new session id on the same clone ends the previous ns and requests its transcript.
-    let r = fx.tr.session_report(CallerInfo::default(), report("sess-2", &second)).await.unwrap();
+    let r = report_session(&fx, report("sess-2", &second)).await.unwrap();
     assert_eq!(r["changed"], true);
     let c = clone_rec(&fx, &worker.id);
     assert_eq!(c.sessions.len(), 2);
@@ -718,13 +738,13 @@ async fn session_report_resolves_clone_by_pane_binding_when_env_absent() {
     let capture = json!({ "harness": "claude", "native_session_id": "sess-9", "transcript_path": path, "cwd": "/work" });
     // The CLI passed neither clone: HERDR_PANE_ID reaches the daemon as the caller's pane.
     let caller = CallerInfo { pane_id: Some(pane.0.clone()), ..Default::default() };
-    let r = fx.tr.session_report(caller, json!({ "capture": capture })).await.unwrap();
+    let r = report_session(&fx, json!({ "capture": capture, "_caller": caller })).await.unwrap();
     assert_eq!(r["resolved"], true);
     let c = clone_rec(&fx, &worker.id);
     assert_eq!(c.sessions.iter().map(|s| s.native_session_id.as_str()).collect::<Vec<_>>(), vec!["sess-9"]);
     // The explicit pane argument resolves the same way.
     let other = json!({ "pane": pane.0, "capture": { "harness": "claude", "native_session_id": "sess-9", "cwd": "/work" } });
-    assert_eq!(fx.tr.session_report(CallerInfo::default(), other).await.unwrap()["changed"], false);
+    assert_eq!(report_session(&fx, other).await.unwrap()["changed"], false);
 }
 
 #[tokio::test]
@@ -733,11 +753,11 @@ async fn session_report_noop_when_unresolved() {
     base(&fx).await;
     let head = fx.store.head().unwrap();
     let capture = json!({ "harness": "claude", "native_session_id": "sess-x", "cwd": "/work" });
-    let r = fx.tr.session_report(CallerInfo::default(), json!({ "pane": "no-such-pane", "capture": capture.clone() })).await.unwrap();
+    let r = report_session(&fx, json!({ "pane": "no-such-pane", "capture": capture.clone() })).await.unwrap();
     assert_eq!(r["resolved"], false);
-    let r = fx.tr.session_report(CallerInfo::default(), json!({ "clone": "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV", "capture": capture.clone() })).await.unwrap();
+    let r = report_session(&fx, json!({ "clone": "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV", "capture": capture.clone() })).await.unwrap();
     assert_eq!(r["resolved"], false, "an unknown clone id and no pane");
-    let r = fx.tr.session_report(CallerInfo::default(), json!({ "capture": capture })).await.unwrap();
+    let r = report_session(&fx, json!({ "capture": capture })).await.unwrap();
     assert_eq!(r["resolved"], false);
     assert_eq!(fx.store.head().unwrap(), head, "an unresolved report writes nothing");
 }
@@ -1024,7 +1044,7 @@ async fn ack_records_dispatched_not_completed() {
     fx.clock.advance(chrono::Duration::minutes(5));
     fx.tr.cmd_ack(json!({ "request": rq.id })).await.unwrap();
     assert_eq!(request(&fx, &rq.id).delivery.dispatched_at, acked.delivery.dispatched_at);
-    fx.tr.cmd_complete(complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
     assert_eq!(request(&fx, &rq.id).status, RequestStatus::Completed);
     // A late ACK never regresses a completed request.
     fx.tr.cmd_ack(json!({ "request": rq.id })).await.unwrap();
@@ -1070,7 +1090,7 @@ async fn complete_records_result_and_merges_coverage() {
     let (_, rq, _) = delivered(&fx, 5).await;
     let sum_clone = clone_of(&fx, "sum");
     fx.clock.advance(chrono::Duration::hours(1));
-    fx.tr.cmd_complete(complete_args(&rq.id, br(0, 60), Some(&sum_clone.id))).await.unwrap();
+    complete(&fx, complete_args(&rq.id, br(0, 60), Some(&sum_clone.id))).await.unwrap();
     let done = request(&fx, &rq.id);
     let result = done.result.clone().unwrap();
     assert_eq!(done.status, RequestStatus::Completed);
@@ -1083,22 +1103,46 @@ async fn complete_records_result_and_merges_coverage() {
     assert_eq!(tr.gaps, vec![br(60, 100)], "the requested bytes the result did not cover stay visible");
 
     // Completing the rest through a later result merges: no gap remains.
-    fx.tr.cmd_complete(complete_args(&rq.id, br(60, 100), Some(&sum_clone.id))).await.unwrap();
+    complete(&fx, complete_args(&rq.id, br(60, 100), Some(&sum_clone.id))).await.unwrap();
     let tr = the_transcript(&fx);
     assert_eq!((tr.coverage, tr.gaps), (vec![br(0, 100)], vec![]));
 
     // Reversed ranges are a usage error, unknown requests are rejected.
     let bad = json!({ "request": rq.id, "output": "o", "covered": { "start": 9, "end": 3 } });
-    assert!(fx.tr.cmd_complete(bad).await.is_err());
+    assert!(complete(&fx, bad).await.is_err());
     let unknown = complete_args(&RequestId::new(), br(0, 1), None);
-    assert!(fx.tr.cmd_complete(unknown).await.is_err());
+    assert!(complete(&fx, unknown).await.is_err());
+}
+
+#[tokio::test]
+async fn completion_by_summarizer_is_attributed_to_its_clone() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 2).await;
+    let summarizer = clone_of(&fx, "sum");
+    complete(&fx, complete_args(&rq.id, rq.range, Some(&summarizer.id))).await.unwrap();
+    let by = request(&fx, &rq.id).result.unwrap().reported_by;
+    assert_eq!(by, summarizer.id.to_any(), "the summarizer clone reported it");
+    assert_ne!(by, worker.seat.to_any(), "not the source seat");
+}
+
+#[tokio::test]
+async fn session_report_via_dispatch_resolves_caller_clone() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "s1", 1);
+    let caller = CallerInfo { graph_clone: Some(worker.id.to_string()), ..Default::default() };
+    let capture = json!({ "harness": "claude", "native_session_id": "sess-c", "transcript_path": path, "cwd": "/work" });
+    let r = report_session(&fx, json!({ "capture": capture, "_caller": caller })).await.unwrap();
+    assert_eq!((r["resolved"].clone(), r["clone"].clone()), (json!(true), json!(worker.id)));
+    let sessions = clone_rec(&fx, &worker.id).sessions;
+    assert_eq!(sessions.iter().map(|s| s.native_session_id.as_str()).collect::<Vec<_>>(), vec!["sess-c"]);
 }
 
 #[tokio::test]
 async fn complete_without_caller_identity_attributes_to_the_source_seat() {
     let fx = fx();
     let (worker, rq, _) = delivered(&fx, 2).await;
-    fx.tr.cmd_complete(complete_args(&rq.id, rq.range, None)).await.unwrap();
+    complete(&fx, complete_args(&rq.id, rq.range, None)).await.unwrap();
     assert_eq!(request(&fx, &rq.id).result.unwrap().reported_by, worker.seat.to_any());
 }
 
@@ -1115,12 +1159,12 @@ async fn late_older_result_never_shrinks_coverage() {
     fx.tr.create_request_for_range(&tr.id, br(200, 300)).await.unwrap();
     let b = live_requests(&fx).into_iter().find(|r| r.id != a.id).unwrap();
 
-    fx.tr.cmd_complete(complete_args(&b.id, br(200, 300), Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&b.id, br(200, 300), Some(&worker.id))).await.unwrap();
     assert_eq!(the_transcript(&fx).coverage, vec![br(200, 300)]);
-    fx.tr.cmd_complete(complete_args(&a.id, br(0, 200), Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&a.id, br(0, 200), Some(&worker.id))).await.unwrap();
     assert_eq!(the_transcript(&fx).coverage, vec![br(0, 300)], "order does not matter");
     // A late, narrower report about the older range cannot take anything back.
-    fx.tr.cmd_complete(complete_args(&a.id, br(0, 50), Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&a.id, br(0, 50), Some(&worker.id))).await.unwrap();
     let tr = the_transcript(&fx);
     assert_eq!(tr.coverage, vec![br(0, 300)]);
     assert_eq!(tr.gaps, vec![], "{:?}", tr.gaps);
@@ -1134,7 +1178,7 @@ async fn unresolved_requests_cannot_be_acked_or_completed() {
     let rq = the_request(&fx);
     let err = fx.tr.cmd_ack(json!({ "request": rq.id })).await.unwrap_err();
     assert!(err.message.contains("request_unresolved"), "{}", err.message);
-    assert!(fx.tr.cmd_complete(complete_args(&rq.id, br(0, 1), None)).await.is_err());
+    assert!(complete(&fx, complete_args(&rq.id, br(0, 1), None)).await.is_err());
     assert_eq!(request(&fx, &rq.id).status, RequestStatus::Unresolved);
 }
 
@@ -1159,7 +1203,7 @@ async fn request_list_filters() {
     finish_session(&fx, &worker, "native-2", &fx.dir.join("missing.jsonl")).await;
     let both = list(ListFilter { pending: true, unresolved: true, undispatched: false });
     assert_eq!(both.len(), 2, "{both:?}");
-    fx.tr.cmd_complete(complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
     assert_eq!(list(ListFilter { pending: true, ..Default::default() }), Vec::<String>::new());
     let _ = path;
 }
@@ -1255,7 +1299,7 @@ async fn liveness_retries_dispatched_after_6h_with_fresh_key() {
 async fn watcher_and_liveness_never_touch_completed_or_unresolved() {
     let fx = fx();
     let (worker, rq, _) = delivered(&fx, 5).await;
-    fx.tr.cmd_complete(complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
+    complete(&fx, complete_args(&rq.id, rq.range, Some(&worker.id))).await.unwrap();
     finish_session(&fx, &worker, "native-2", &fx.dir.join("gone.jsonl")).await;
     let before = fx.threads.notifications().len();
     fx.clock.advance(chrono::Duration::hours(24));

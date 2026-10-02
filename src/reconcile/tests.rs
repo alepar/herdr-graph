@@ -253,6 +253,7 @@ fn admit_bookkeeping(fx: &Fx, args: serde_json::Value) {
             relied_on: vec![],
             requester: Default::default(),
             supersedes: None,
+            confirmed: None,
         })
         .unwrap();
     fx.w.drain().unwrap();
