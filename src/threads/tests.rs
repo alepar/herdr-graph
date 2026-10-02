@@ -626,6 +626,79 @@ async fn reload_required_notifies() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// worktree_dirty (spec §3.5)
+// ---------------------------------------------------------------------------------------------
+
+/// Appends a dirty line the way `worktree::fast_forward` does.
+fn append_dirty(fx: &Fx, path: &str, op: &OpId) {
+    use std::io::Write;
+    let root = fx.deps.instance.clone();
+    std::fs::create_dir_all(root.join(".graph-local")).unwrap();
+    let entry = crate::writer::worktree::DirtyEntry { path: path.to_owned(), op: Some(op.clone()), at: t0() };
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(root.join(".graph-local/worktree_dirty")).unwrap();
+    writeln!(f, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+}
+
+fn seat_folder(fx: &Fx, name: &str) -> String {
+    let id = seat(fx, name).id;
+    layout::all_seats(&view(fx)).unwrap().into_iter().find(|(_, s)| s.id == id).unwrap().0.folder.as_str().to_owned()
+}
+
+fn dirty_notes(fx: &Fx, thread: &ThreadRef) -> Vec<super::fake::FakeNotification> {
+    fx.threads.notifications().into_iter().filter(|n| &n.thread == thread && n.body.contains("left in place")).collect()
+}
+
+#[tokio::test]
+async fn worktree_dirty_notifies_owning_seat_once_per_file_per_op() {
+    let fx = fx();
+    base(&fx).await;
+    steps(&fx, 2).await;
+    let folder = seat_folder(&fx, "foreman");
+    let (op_a, op_b) = (OpId::new(), OpId::new());
+    append_dirty(&fx, &format!("{folder}/AGENTS.md"), &op_a);
+    append_dirty(&fx, &format!("{folder}/notes/x.md"), &op_a);
+    append_dirty(&fx, &format!("{folder}/AGENTS.md"), &op_b);
+    steps(&fx, 3).await;
+    let t = thread_of_seat(&fx, "foreman");
+    let notes = dirty_notes(&fx, &t);
+    assert_eq!(notes.len(), 3, "{notes:?}");
+    assert!(notes.iter().all(|n| n.severity == Severity::Warn));
+    for (path, op) in [("AGENTS.md", &op_a), ("notes/x.md", &op_a), ("AGENTS.md", &op_b)] {
+        let (path, op) = (format!("{folder}/{path}"), op.to_string());
+        assert_eq!(notes.iter().filter(|n| n.body.contains(&path) && n.body.contains(&op)).count(), 1, "{path} {op}: {notes:?}");
+    }
+    steps(&fx, 3).await;
+    assert_eq!(dirty_notes(&fx, &t).len(), 3, "level-triggered but once per (op, file)");
+}
+
+#[tokio::test]
+async fn worktree_dirty_outside_any_seat_is_not_notified() {
+    let fx = fx();
+    base(&fx).await;
+    steps(&fx, 2).await;
+    let ts_folder = layout::list_teamspaces(&view(&fx)).unwrap().remove(0).0.folder.as_str().to_owned();
+    append_dirty(&fx, &format!("{ts_folder}/teamspace.toml"), &OpId::new());
+    steps(&fx, 3).await;
+    let t = thread_of_seat(&fx, "foreman");
+    assert!(dirty_notes(&fx, &t).is_empty());
+    assert!(fx.threads.notifications().iter().all(|n| !n.body.contains("left in place")), "{:?}", fx.threads.notifications());
+}
+
+#[tokio::test]
+async fn worktree_dirty_for_retired_seat_is_not_notified() {
+    let fx = fx();
+    base(&fx).await;
+    plan_and_apply(&fx, "seat create second --teamspace alpha --active --harness shell");
+    steps(&fx, 3).await;
+    let folder = seat_folder(&fx, "second");
+    plan_and_apply(&fx, "seat retire second");
+    steps(&fx, 3).await;
+    append_dirty(&fx, &format!("{folder}/AGENTS.md"), &OpId::new());
+    steps(&fx, 3).await;
+    assert!(fx.threads.notifications().iter().all(|n| !n.body.contains("left in place")), "{:?}", fx.threads.notifications());
+}
+
+// ---------------------------------------------------------------------------------------------
 // failure handling
 // ---------------------------------------------------------------------------------------------
 
