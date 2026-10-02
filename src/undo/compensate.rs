@@ -345,6 +345,7 @@ fn restore_mutate(
 fn displace(cx: &mut MutationCx<'_>, x: &CloneId, act: &ActionId, acc: &mut Acc) -> Result<(), MutationError> {
     let loc = cx.tree.locate(&x.to_any())?.ok_or_else(|| MutationError::Bug(format!("clone {x} vanished")))?;
     let mut rec = read_clone(&cx.tree, x).map_err(mm)?.ok_or_else(|| MutationError::Bug(format!("clone {x} vanished")))?;
+    // Backstop: OrgMutation recomputes the plan against this revision first and rejects an occupied displaced clone (repair_required); this guard only matters if a kind ever skips that recompute.
     if rec.occupant.is_some() {
         return Err(reject(
             "repair_required",

@@ -493,6 +493,24 @@ fn adoption_conflict_with_active_occupant_is_repair_required() {
 }
 
 #[test]
+fn occupant_gained_between_preview_and_apply_is_rejected() {
+    let fx = fx();
+    let (_, f_clone, x, act) = adoption_fixture(&fx, "p-race");
+    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-race"));
+    assert!(sp.plan.repair_required.is_none(), "the preview was clean");
+    patch(&fx, json!({ "clone": x.id, "occupy": true })); // the race: an agent starts on x
+    let row = apply_plan_from_pane(&fx, &sp, "p-race", None);
+    assert_eq!(row.state, OpState::Rejected);
+    let r = row.rejection.expect("rejection");
+    assert!(matches!(r.reason.as_str(), "stale_plan" | "repair_required"), "{r:?}");
+    if r.reason == "repair_required" {
+        assert!(r.explanation.contains(x.id.as_str()), "the explanation names the occupied clone: {r:?}");
+    }
+    assert_eq!(clone_by_id(&fx, &f_clone.id).lifecycle, CloneLifecycle::Retired, "nothing restored");
+    assert_eq!(clone_by_id(&fx, &x.id).lifecycle, CloneLifecycle::Active, "the occupied clone stays");
+}
+
+#[test]
 fn undo_closing_caller_pane_warns() {
     let fx = fx();
     alpha(&fx);
