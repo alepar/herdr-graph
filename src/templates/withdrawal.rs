@@ -67,6 +67,14 @@ pub fn classify(app: &ApplicationRecord, others: &[ApplicationRecord], seat: &Se
     if app.additions.contains(seat) {
         return Verdict::Keep("added to the application independently".into());
     }
+    // A seat borrowed from another application pre-existed this one: it is kept even when the lender is
+    // gone. The lender also records `from: Some(its own id)`, which is the creator side and falls through.
+    if let Some(from) = app.reused.iter().find(|r| &r.seat == seat && r.from.as_ref().is_some_and(|f| f != &app.id)).and_then(|r| r.from.as_ref()) {
+        return Verdict::Keep(match others.iter().find(|o| &o.id == from) {
+            Some(lender) => format!("reused from {}", lender.name),
+            None => format!("pre-existing (reused from application {from})"),
+        });
+    }
     let users: Vec<&ApplicationRecord> = others.iter().filter(|o| references(o, seat)).collect();
     if users.is_empty() {
         return Verdict::Retire;

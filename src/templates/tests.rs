@@ -337,6 +337,79 @@ fn auth_billing_composition_withdrawal() {
     assert_eq!(kept[0]["reason"].as_str(), Some("reused by billing"));
 }
 
+fn reuse_pair(fx: &Fx) -> SeatId {
+    let (e_a, e_b) = (MemberId::new(), MemberId::new());
+    create_template(fx, "a-tpl", &[m(&e_a, "engineer", "deferred")], &[]);
+    create_template(fx, "b-tpl", &[m(&e_b, "engineer", "deferred")], &[]);
+    apply_app(fx, "a-tpl", "a");
+    let engineer = member_seat(fx, "a", &e_a);
+    commit(fx, &format!("application apply b-tpl --teamspace alpha --name b --reuse {e_b}={engineer}"));
+    engineer
+}
+
+#[test]
+fn reused_seat_survives_after_its_creator_retires_first() {
+    let fx = fx();
+    alpha(&fx);
+    let engineer = reuse_pair(&fx);
+
+    // A retires: the engineer is kept (reused by b).
+    let sp = plan(&fx, "application retire a");
+    assert_eq!(count(&sp, "seat.retire"), 0);
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired);
+
+    // B retires: the engineer pre-existed b, so it is still kept.
+    let sp = plan(&fx, "application retire b");
+    assert_eq!(count(&sp, "seat.retire"), 0, "{:?}", kinds_of(&sp));
+    let keep = sp.plan.effects.iter().find(|e| e.kind == "seat.keep").expect("the kept seat is listed");
+    assert_eq!(keep.object, engineer.to_any());
+    assert!(keep.detail["reason"].as_str().unwrap().contains("pre-existing"), "{}", keep.detail["reason"]);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired, "a reused seat is never withdrawn by its borrower");
+}
+
+#[test]
+fn creator_still_retires_its_lent_seat_once_the_borrower_is_gone() {
+    let fx = fx();
+    alpha(&fx);
+    let engineer = reuse_pair(&fx);
+
+    // B retires first: the engineer pre-existed b, so it is kept.
+    let sp = plan(&fx, "application retire b");
+    assert_eq!(count(&sp, "seat.retire"), 0, "{:?}", kinds_of(&sp));
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired);
+
+    // A created it and nobody else uses it any more: it is retired.
+    let sp = plan(&fx, "application retire a");
+    assert_eq!(count(&sp, "seat.retire"), 1, "{:?}", kinds_of(&sp));
+    let retire = sp.plan.effects.iter().find(|e| e.kind == "seat.retire").unwrap();
+    assert_eq!(retire.object, engineer.to_any());
+    assert_eq!(retire.detail["mechanism"], json!("application_withdrawal"));
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let seat = seat_by_id(&fx, &engineer);
+    assert_eq!(seat.lifecycle, Lifecycle::Retired);
+    assert_eq!(seat.retired.unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+}
+
+#[test]
+fn withdraw_plan_keeps_borrowed_seat_when_provider_is_retired() {
+    let fx = fx();
+    alpha(&fx);
+    let engineer = reuse_pair(&fx);
+    let sp = plan(&fx, "application retire a");
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+
+    let preview = withdraw_plan(&view(&fx), &app(&fx, "b")).unwrap();
+    assert!(preview.retire.is_empty(), "{:?}", preview.retire);
+    assert_eq!(preview.keep.len(), 1);
+    assert_eq!(preview.keep[0].0, engineer);
+    assert!(preview.keep[0].1.contains("pre-existing"), "{}", preview.keep[0].1);
+}
+
 #[test]
 fn repeated_application_maps_distinct_seats() {
     let fx = fx();
