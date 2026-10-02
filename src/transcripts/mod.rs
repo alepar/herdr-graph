@@ -83,6 +83,8 @@ pub struct Transcripts {
     pub(crate) core: Arc<DeliveryCore>,
     session_ended: Mutex<Option<broadcast::Receiver<SessionEnded>>>,
     tuning: RwLock<Tuning>,
+    /// Serializes spool ingestion (the loop and every live `session.report`).
+    spool_lock: tokio::sync::Mutex<()>,
 }
 
 /// Seat or clone that reported a result.
@@ -126,6 +128,7 @@ impl Transcripts {
             clock,
             session_ended: Mutex::new(session_ended),
             tuning: RwLock::new(Tuning::default()),
+            spool_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -374,9 +377,9 @@ impl Transcripts {
             async move { me.cmd_complete(args).await }
         });
         let me = self.clone();
-        reg.command("session.report", move |_cx: CommandCtx, args: serde_json::Value| {
+        reg.command("session.report", move |cx: CommandCtx, args: serde_json::Value| {
             let me = me.clone();
-            async move { me.session_report(args).await }
+            async move { me.session_report_live(cx.caller, args).await }
         });
         let me = self.clone();
         reg.status_provider("transcripts", Arc::new(move || me.status_json()));
@@ -390,6 +393,8 @@ impl Transcripts {
         reg.background("transcripts.watcher", move |sd| async move { me.run_watcher(sd).await });
         let me = self.clone();
         reg.background("transcripts.liveness", move |sd| async move { me.run_liveness(sd).await });
+        let me = self.clone();
+        reg.background("transcripts.spool", move |sd| async move { me.run_spool(sd).await });
     }
 
     async fn run_session_ended(self: Arc<Self>, mut sd: Shutdown) -> anyhow::Result<()> {

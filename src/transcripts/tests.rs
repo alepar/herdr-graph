@@ -683,7 +683,7 @@ async fn clear_session_change_ends_previous_ns_and_requests() {
             "source": "startup",
         })
     };
-    let r = fx.tr.session_report(report("sess-1", &first)).await.unwrap();
+    let r = fx.tr.session_report(CallerInfo::default(), report("sess-1", &first)).await.unwrap();
     assert_eq!(r["resolved"], true);
     assert!(all_requests(&fx).is_empty(), "a session that has not ended has no request");
     let c = clone_rec(&fx, &worker.id);
@@ -692,12 +692,12 @@ async fn clear_session_change_ends_previous_ns_and_requests() {
 
     // Reporting the same session again changes nothing.
     let head = fx.store.head().unwrap();
-    let same = fx.tr.session_report(report("sess-1", &first)).await.unwrap();
+    let same = fx.tr.session_report(CallerInfo::default(), report("sess-1", &first)).await.unwrap();
     assert_eq!(same["changed"], false);
     assert_eq!(fx.store.head().unwrap(), head);
 
     // /clear: a new session id on the same clone ends the previous ns and requests its transcript.
-    let r = fx.tr.session_report(report("sess-2", &second)).await.unwrap();
+    let r = fx.tr.session_report(CallerInfo::default(), report("sess-2", &second)).await.unwrap();
     assert_eq!(r["changed"], true);
     let c = clone_rec(&fx, &worker.id);
     assert_eq!(c.sessions.len(), 2);
@@ -718,13 +718,13 @@ async fn session_report_resolves_clone_by_pane_binding_when_env_absent() {
     let capture = json!({ "harness": "claude", "native_session_id": "sess-9", "transcript_path": path, "cwd": "/work" });
     // The CLI passed neither clone: HERDR_PANE_ID reaches the daemon as the caller's pane.
     let caller = CallerInfo { pane_id: Some(pane.0.clone()), ..Default::default() };
-    let r = fx.tr.session_report(json!({ "capture": capture, "_caller": caller })).await.unwrap();
+    let r = fx.tr.session_report(caller, json!({ "capture": capture })).await.unwrap();
     assert_eq!(r["resolved"], true);
     let c = clone_rec(&fx, &worker.id);
     assert_eq!(c.sessions.iter().map(|s| s.native_session_id.as_str()).collect::<Vec<_>>(), vec!["sess-9"]);
     // The explicit pane argument resolves the same way.
     let other = json!({ "pane": pane.0, "capture": { "harness": "claude", "native_session_id": "sess-9", "cwd": "/work" } });
-    assert_eq!(fx.tr.session_report(other).await.unwrap()["changed"], false);
+    assert_eq!(fx.tr.session_report(CallerInfo::default(), other).await.unwrap()["changed"], false);
 }
 
 #[tokio::test]
@@ -733,13 +733,89 @@ async fn session_report_noop_when_unresolved() {
     base(&fx).await;
     let head = fx.store.head().unwrap();
     let capture = json!({ "harness": "claude", "native_session_id": "sess-x", "cwd": "/work" });
-    let r = fx.tr.session_report(json!({ "pane": "no-such-pane", "capture": capture.clone() })).await.unwrap();
+    let r = fx.tr.session_report(CallerInfo::default(), json!({ "pane": "no-such-pane", "capture": capture.clone() })).await.unwrap();
     assert_eq!(r["resolved"], false);
-    let r = fx.tr.session_report(json!({ "clone": "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV", "capture": capture.clone() })).await.unwrap();
+    let r = fx.tr.session_report(CallerInfo::default(), json!({ "clone": "cl_01ARZ3NDEKTSV4RRFFQ69G5FAV", "capture": capture.clone() })).await.unwrap();
     assert_eq!(r["resolved"], false, "an unknown clone id and no pane");
-    let r = fx.tr.session_report(json!({ "capture": capture })).await.unwrap();
+    let r = fx.tr.session_report(CallerInfo::default(), json!({ "capture": capture })).await.unwrap();
     assert_eq!(r["resolved"], false);
     assert_eq!(fx.store.head().unwrap(), head, "an unresolved report writes nothing");
+}
+
+fn spool_session(fx: &Fx, clone: &CloneId, native: &str) {
+    let hook = capture::parse_claude_hook(&format!(r#"{{"session_id":"{native}","source":"startup"}}"#)).unwrap();
+    let args = capture::report_args(&hook, Some(&clone.to_string()), None, "/work".into()).unwrap();
+    let r = capture::SpooledReport { version: 1, caller: CallerInfo::default(), args, spooled_at: fx.clock.now() };
+    capture::spool_report(fx.tr.reconciler.instance(), &r).unwrap();
+}
+
+fn spool_files(fx: &Fx) -> Vec<std::path::PathBuf> {
+    let dir = capture::spool_dir(fx.tr.reconciler.instance());
+    let mut v: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect())
+        .unwrap_or_default();
+    v.sort();
+    v
+}
+
+fn occupant_native(fx: &Fx, clone: &CloneId) -> Option<String> {
+    let c = clone_rec(fx, clone);
+    let occ = c.occupant.as_ref()?;
+    c.sessions.iter().find(|s| s.id == occ.native_session).map(|s| s.native_session_id.clone())
+}
+
+#[tokio::test]
+async fn spooled_report_is_ingested_and_removed() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    spool_session(&fx, &worker.id, "s-spooled");
+    assert_eq!(spool_files(&fx).len(), 1);
+    assert_eq!(fx.tr.ingest_spool().await, 1);
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s-spooled"));
+    assert!(spool_files(&fx).is_empty());
+    assert_eq!(fx.tr.ingest_spool().await, 0, "nothing left to apply");
+}
+
+#[tokio::test]
+async fn spooled_duplicate_of_processed_report_is_dropped() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let live = |id: &str| json!({ "clone": worker.id, "capture": { "harness": "claude", "native_session_id": id, "cwd": "/work" } });
+    fx.tr.session_report(CallerInfo::default(), live("s1")).await.unwrap();
+    spool_session(&fx, &worker.id, "s1");
+    fx.tr.session_report(CallerInfo::default(), live("s2")).await.unwrap();
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"));
+    assert_eq!(fx.tr.ingest_spool().await, 0);
+    assert!(spool_files(&fx).is_empty(), "the stale entry is deleted");
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"), "the stale entry did not end s2");
+}
+
+#[tokio::test]
+async fn live_report_ingests_older_spool_first() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    spool_session(&fx, &worker.id, "s1");
+    let live = json!({ "clone": worker.id, "capture": { "harness": "claude", "native_session_id": "s2", "cwd": "/work" } });
+    let r = fx.tr.session_report_live(CallerInfo::default(), live).await.unwrap();
+    assert_eq!(r["changed"], true);
+    let c = clone_rec(&fx, &worker.id);
+    let s1 = c.sessions.iter().find(|s| s.native_session_id == "s1").expect("s1 was ingested");
+    assert_eq!(s1.end_reason, Some(SessionEndReason::SessionChanged));
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"));
+    assert!(spool_files(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn malformed_spool_entry_is_quarantined_and_later_ones_still_apply() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let dir = capture::spool_dir(fx.tr.reconciler.instance());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("00000000000000000000000000.json"), "not json").unwrap();
+    spool_session(&fx, &worker.id, "s-good");
+    assert_eq!(fx.tr.ingest_spool().await, 1);
+    assert!(dir.join("rejected/00000000000000000000000000.json").exists());
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s-good"));
 }
 
 #[test]
@@ -1185,7 +1261,7 @@ async fn commands_and_loops_register_without_clashing() {
     fx.tr.register_commands(&mut reg);
     fx.tr.register_loops(&mut reg);
     assert_eq!(reg.command_kinds(), vec!["request.ack", "request.complete", "request.list", "session.report"]);
-    assert_eq!(reg.take_loops().len(), 3);
+    assert_eq!(reg.take_loops().len(), 4);
     assert!(reg.status_components().contains_key("transcripts"));
     // The list command answers from the committed tree.
     let h = reg.handler("request.list").unwrap();

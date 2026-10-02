@@ -657,8 +657,13 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     assert_eq!(hook["type"], "command");
     let command = hook["command"].as_str().unwrap();
     let quoted = "'/opt/herdr graph/bin/herdr-graph'";
-    assert!(command.starts_with(&format!("{quoted} session-report --from-hook claude; ")), "{command}");
-    assert!(command.contains(&format!("{quoted} seat --hook-prompt")), "{command}");
+    assert!(command.starts_with(&format!("{quoted} seat --hook-prompt; ")), "{command}");
+    assert!(command.contains(&format!("{quoted} session-report --from-hook claude")), "{command}");
+    assert!(
+        command.find("seat --hook-prompt").unwrap() < command.find("session-report --from-hook claude").unwrap(),
+        "the /seat prompt comes first: {command}"
+    );
+    assert!(command.ends_with(setup_claude::OWNER_MARKER), "{command}");
 
     let seat = std::fs::read_to_string(config.join("skills/seat/SKILL.md")).unwrap();
     let graph = std::fs::read_to_string(config.join("skills/graph/SKILL.md")).unwrap();
@@ -703,7 +708,7 @@ fn setup_claude_is_idempotent() {
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(config.join("settings.json")).unwrap()).unwrap();
     let groups = owned_groups(&settings);
     assert_eq!(groups.len(), 1);
-    assert!(groups[0]["hooks"][0]["command"].as_str().unwrap().starts_with("/new/place/herdr-graph session-report"));
+    assert!(groups[0]["hooks"][0]["command"].as_str().unwrap().starts_with("/new/place/herdr-graph seat --hook-prompt"));
 }
 
 #[test]

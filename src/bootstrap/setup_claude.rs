@@ -34,10 +34,11 @@ fn sh_quote(s: &str) -> String {
     }
 }
 
-/// The hook command: report the session, then prompt `/seat` when this is a graph pane.
+/// The hook command: prompt `/seat` first (when this is a graph pane), then report the session without
+/// waiting on the daemon. `seat --hook-prompt` does not read stdin, so `session-report` still gets the payload.
 pub fn hook_command(binary: &Path) -> String {
     let b = sh_quote(&binary.to_string_lossy());
-    format!("{b} session-report --from-hook claude; {b} seat --hook-prompt {OWNER_MARKER}")
+    format!("{b} seat --hook-prompt; {b} session-report --from-hook claude {OWNER_MARKER}")
 }
 
 fn owned_group(binary: &Path) -> Value {
