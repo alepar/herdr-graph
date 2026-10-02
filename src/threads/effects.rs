@@ -24,7 +24,7 @@ use crate::store::tree::TreeRead;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// `EffectKind::Custom` name of the membership poll.
@@ -376,13 +376,62 @@ fn reload_wants(g: &Graph, journal: &Journal) -> Vec<Want> {
 // ---------------------------------------------------------------------------------------------
 
 pub struct ThreadsSource {
+    instance: PathBuf,
     plans: PlanStore,
     cache: Arc<GraphCache>,
 }
 
 impl ThreadsSource {
     pub(crate) fn new(instance: &Path, cache: Arc<GraphCache>) -> Self {
-        Self { plans: PlanStore::new(instance.join(".graph-local").join("plans")), cache }
+        Self { instance: instance.to_path_buf(), plans: PlanStore::new(instance.join(".graph-local").join("plans")), cache }
+    }
+
+    /// `.graph-local/worktree_dirty` entries (spec §3.5) -> one warning per (op, file) to the channel of the
+    /// active seat whose folder contains the file. The effect identity folds in the key, so the journal's
+    /// known-id check makes it once per file per op, across restarts. Files outside every seat folder are
+    /// left to `doctor`.
+    fn dirty_wants(&self, g: &Graph, tree: &dyn TreeRead) -> Vec<Want> {
+        let entries = crate::writer::worktree::read_dirty_all(&self.instance);
+        if entries.is_empty() {
+            return Vec::new();
+        }
+        let Ok(seats) = layout::all_seats(tree) else { return Vec::new() };
+        let mut out = Vec::new();
+        for entry in entries {
+            let owner = seats
+                .iter()
+                .filter(|(loc, _)| {
+                    let f = loc.folder.as_str();
+                    !f.is_empty() && entry.path.strip_prefix(f).is_some_and(|rest| rest.starts_with('/'))
+                })
+                .max_by_key(|(loc, _)| loc.folder.as_str().len());
+            let Some((_, rec)) = owner else { continue };
+            let Some(seat) = g.seats.get(&rec.id) else { continue };
+            if !g.seat_active(seat) {
+                continue;
+            }
+            let op = entry.op.clone().unwrap_or_else(|| OpId::from_ulid(ulid::Ulid::nil()));
+            let path = &entry.path;
+            let payload = Payload::Notify {
+                purpose: "worktree_dirty".into(),
+                severity: Severity::Warn,
+                body: format!(
+                    "Your local edit to {path} was left in place: graph op {op} changed that file and did not overwrite it \
+                     (see `herdr-graph doctor`). Commit your change through herdr-graph content write or discard it."
+                ),
+                key: format!("notify:worktree_dirty:{op}:{path}"),
+            };
+            out.push(Want {
+                kind: EffectKind::Notify,
+                object: seat.id.to_any(),
+                op,
+                identity_rev: 0,
+                fencing_rev: seat.rev,
+                payload,
+                after: seat.channel.thread_id.is_none().then(|| After::Ensure(seat.id.to_any())).into_iter().collect(),
+            });
+        }
+        out
     }
 
     /// `threads.notify_rename` and `participation.leave_instruction` plan effects of recently committed ops.
@@ -489,6 +538,7 @@ impl EffectSource for ThreadsSource {
         let mut wants = system_wants(&g, cx.journal);
         wants.extend(reload_wants(&g, cx.journal));
         wants.extend(self.intent_wants(&g, cx.journal, cx.now));
+        wants.extend(self.dirty_wants(&g, cx.tree));
 
         // First pass: identities, dropping wants that an open row already covers.
         let mut ids: Vec<Option<EffectId>> = Vec::with_capacity(wants.len());

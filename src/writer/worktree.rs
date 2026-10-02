@@ -190,9 +190,43 @@ pub fn read_dirty(root: &Path) -> Vec<DirtyEntry> {
     by_path.into_values().collect()
 }
 
+/// Every parsable dirty entry in file order, not deduped: two ops that dirty the same file are both kept.
+pub fn read_dirty_all(root: &Path) -> Vec<DirtyEntry> {
+    let Ok(text) = std::fs::read_to_string(dirty_file(root)) else { return Vec::new() };
+    text.lines().filter_map(|l| serde_json::from_str::<DirtyEntry>(l).ok()).collect()
+}
+
 /// The commit the working tree currently mirrors (.graph-local/view_rev).
 pub fn view_rev(root: &Path) -> Option<CommitId> {
     let text = std::fs::read_to_string(view_rev_file(root)).ok()?;
     let t = text.trim();
     (!t.is_empty()).then(|| CommitId(t.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn read_dirty_all_keeps_every_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(local_dir(tmp.path())).unwrap();
+        let at = chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap();
+        let (a, b) = (OpId::new(), OpId::new());
+        let lines = [
+            DirtyEntry { path: "x.md".into(), op: Some(a), at },
+            DirtyEntry { path: "x.md".into(), op: Some(b), at },
+            DirtyEntry { path: "y.md".into(), op: None, at },
+        ];
+        let mut text = String::new();
+        for e in &lines {
+            text.push_str(&serde_json::to_string(e).unwrap());
+            text.push('\n');
+        }
+        text.push_str("not json\n");
+        std::fs::write(dirty_file(tmp.path()), text).unwrap();
+        assert_eq!(read_dirty_all(tmp.path()), lines.to_vec());
+        assert_eq!(read_dirty(tmp.path()).len(), 2, "the deduping reader still collapses by path");
+    }
 }
