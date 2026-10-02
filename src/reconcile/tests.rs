@@ -1536,6 +1536,7 @@ impl EffectSource for FailSource {
                 attempts: 0,
                 last_error: None,
                 updated_at: cx.now,
+                sched: Default::default(),
             },
             deps: vec![],
         }]
@@ -1590,6 +1591,7 @@ async fn notice_is_voided_when_the_effect_leaves_the_attention_status() {
         attempts: 1,
         last_error: Some("x".into()),
         updated_at: fx.clock.now(),
+        sched: Default::default(),
     };
     let n = Notice {
         key: "k".into(),
