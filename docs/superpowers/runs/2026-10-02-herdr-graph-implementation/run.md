@@ -30,17 +30,17 @@ codeRoastExit: converged at round 2 — Should-fix (15 confirmed) [converged], 0
 designRoastExit: converged at round 2 — Should-fix (14 confirmed) [converged], 0 Blocking; punch list of 14 applied inline to spec + beads (no re-roast per loop rule); 2 new escalations parked above
 
 codeBuckets:
-  completed: hg-zmi.1–.20, hg-zmi.46–.74 (pass 3: .53–.55; pass 4: .56–.59; fix-loop r1: .60–.70; regression pass: .71–.74)
+  completed: hg-zmi.1–.20, hg-zmi.46–.77 (sweep fix: .75–.77; pass 3: .53–.55; pass 4: .56–.59; fix-loop r1: .60–.70; regression pass: .71–.74)
   escalated:
   pendingRetry:
   parked:
   stalled: false
   review: pass 1 not ready (9 must-fix → hg-zmi.46–.52 + .20 re-entry, all completed in pass 2); pass 2 not ready (F1, F2 must-fix; F3 should-fix → hg-zmi.53–.55, epic reopened, super-code pass 3); pass 3 not ready (A 2s polling, red doctor test, C exclusion undo, B rename Notify → hg-zmi.56–.59, pass 4); pass 4 not ready (S1 hook timeout, S2 durable session-end → hg-zmi.60–.61, open, carried into the phase-5 fix loop; S3–S8 deferred by reviewer); fix-loop r1 pass review not ready (F1 duplicate ids on re-apply, F2 withdrawal of reused seat → hg-zmi.71–.72, carried into round 2); regression-pass review: conditionally ready, no Blocking — punch list: blocked-agent notice routing (§4.1), worktree_dirty never pruned, writer stranded-op on finish_failed error, stale verification-matrix.md, ops --unresolved noise
-  sweep: FAIL @ 75b528b — default 617/0, test-support 597/2, private-herdr 636/2 (--test-threads=1), threads-service-ack 618/0
-  sweepFix: 4 failing → hg-zmi.75 (2 composed-daemon status-while-starting tests), hg-zmi.76 (2 Herdr-restart e2e tests) · re-run pending
+  sweep: FAIL @ 1237eb1 — 2563 passed / 1 failed (private-herdr e2e_rename_tab_renames_seat_moves_path_history); earlier FAIL @ 75b528b — default 617/0, test-support 597/2, private-herdr 636/2 (--test-threads=1), threads-service-ack 618/0
+  sweepFix: 4 failing → hg-zmi.75 (2 composed-daemon status-while-starting tests), hg-zmi.76 (2 Herdr-restart e2e tests), + hg-zmi.77 (test isolation, user request) · re-run FAIL @ 1237eb1 — default 634/0, test-support 648/0, private-herdr 646/1 (e2e_rename_tab_renames_seat_moves_path_history: old seat dir still present after observed rename, tests/e2e_private_herdr.rs:480), threads-service-ack 635/0 · reported as it stands (fix pass spent)
   slowness: []
   stopReason: ready-drained (pass 1); root-closed (passes 2, 3, 4, fix-loop r1, regression pass)
-  authRefused: hg-zmi.20 pass 1 — `rm /Users/alepar/.config/herdr-graph/config.toml` (user to delete it and /private/tmp/hgx/i); re-entry completed in pass 2
+  authRefused: hg-zmi.20 pass 1 — `rm /Users/alepar/.config/herdr-graph/config.toml`; re-entry completed in pass 2; leftovers deleted 2026-10-02 with the user's explicit approval
 
 approvals:
 - root-brainstorm Q1 · human · summarizer ACK queue → amend herdr-threads (service SendMessage w/ required receipts + service reads); request sent to w4:p1, threads-amendment-request.md
