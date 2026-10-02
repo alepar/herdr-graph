@@ -94,7 +94,7 @@ fn direct_status(reason: &str) -> anyhow::Result<ExitCode> {
 fn doctor() -> anyhow::Result<ExitCode> {
     let report = crate::daemon::doctor::doctor(&Env::from_process());
     for c in &report.checks {
-        println!("[{}] {}: {}", if c.ok { "ok" } else { "FAIL" }, c.name, c.detail);
+        println!("[{}] {}: {}", if c.ok && c.warn { "WARN" } else if c.ok { "ok" } else { "FAIL" }, c.name, c.detail);
     }
     Ok(if report.all_ok() { ExitCode::SUCCESS } else { ExitCode::from(1) })
 }

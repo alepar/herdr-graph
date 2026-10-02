@@ -19,6 +19,9 @@ use std::time::Duration;
 pub struct Check {
     pub name: String,
     pub ok: bool,
+    /// A degraded but working setup: printed `[WARN]`, does not fail doctor (`ok` stays true).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub warn: bool,
     pub detail: String,
 }
 
@@ -34,7 +37,11 @@ impl DoctorReport {
 }
 
 fn check(name: &str, ok: bool, detail: impl Into<String>) -> Check {
-    Check { name: name.into(), ok, detail: detail.into() }
+    Check { name: name.into(), ok, warn: false, detail: detail.into() }
+}
+
+fn warn_check(name: &str, detail: impl Into<String>) -> Check {
+    Check { name: name.into(), ok: true, warn: true, detail: detail.into() }
 }
 
 /// Paths recorded in `.graph-local/worktree_dirty`: JSON lines `{"path":…,"op":…,"at":…}` (written by the writer).
@@ -48,20 +55,24 @@ pub fn read_worktree_dirty(file: &Path) -> Vec<String> {
 }
 
 /// The `threads` check: where the herdr-threads state dir was found (or why not), then the daemon's own view
-/// of the connection. With a daemon, `ok` is its `connected`; without one, `ok` is "the state dir was found".
+/// of the connection. A missing install (discovery `Ok(None)`) is a `[WARN]` unless the daemon reports it is
+/// connected: graph works without threads, degraded. A found dir is ok without a daemon and, with one, follows its
+/// `connected` (found but disconnected is `[FAIL]`). A discovery error (ambiguous install) is `[FAIL]`.
 fn threads_check(resolved: Result<Option<(PathBuf, Source)>, String>, component: Option<&Value>) -> Check {
+    let not_found = matches!(resolved, Ok(None));
     let (found, mut detail) = match &resolved {
         Ok(Some((dir, source))) => (true, format!("state dir {} ({source})", dir.display())),
         Ok(None) => (
             false,
             "not found (no herdr-threads state directory in the default places; install/start herdr-threads or set \
-             threads_state_dir in config.toml)"
+             threads_state_dir in config.toml); graph works without threads but has no channels, \
+             notifications or summarizer delivery"
                 .to_string(),
         ),
         Err(why) => (false, format!("not found ({why})")),
     };
     let Some(c) = component else {
-        return check("threads", found, detail);
+        return if not_found { warn_check("threads", detail) } else { check("threads", found, detail) };
     };
     let connected = c["connected"].as_bool().unwrap_or(false);
     if connected {
@@ -70,7 +81,7 @@ fn threads_check(resolved: Result<Option<(PathBuf, Source)>, String>, component:
         let why = c["error"].as_str().or(c["note"].as_str()).unwrap_or("no reason reported");
         detail.push_str(&format!("; daemon not connected: {why}"));
     }
-    check("threads", connected, detail)
+    if !connected && not_found { warn_check("threads", detail) } else { check("threads", connected, detail) }
 }
 
 const LIST_CAP: usize = 10;
@@ -472,7 +483,7 @@ mod tests {
     fn threads_check_connected_ok() {
         let found = Ok(Some((PathBuf::from("/s/herdr-threads"), Source::HomeDefault)));
         let c = threads_check(found, Some(&serde_json::json!({"connected": true, "capability": "service_ack"})));
-        assert!(c.ok, "{c:?}");
+        assert!(c.ok && !c.warn, "{c:?}");
         assert!(c.detail.contains("state dir /s/herdr-threads"), "{}", c.detail);
         assert!(c.detail.contains("daemon connected"), "{}", c.detail);
         // No daemon: ok follows the discovery result.
@@ -480,13 +491,26 @@ mod tests {
     }
 
     #[test]
-    fn threads_check_not_found_fails_with_hint() {
+    fn threads_check_not_found_warns_with_hint() {
         let c = threads_check(Ok(None), None);
-        assert!(!c.ok);
+        assert!(c.ok && c.warn, "{c:?}");
         assert!(c.detail.contains("not found") && c.detail.contains("threads_state_dir"), "{}", c.detail);
         let c = threads_check(Err("both a and b exist".into()), None);
-        assert!(!c.ok);
+        assert!(!c.ok && !c.warn, "{c:?}");
         assert!(c.detail.contains("both a and b exist"), "{}", c.detail);
+    }
+
+    #[test]
+    fn threads_check_not_found_with_disconnected_daemon_warns() {
+        let c = threads_check(Ok(None), Some(&serde_json::json!({"connected": false, "error": "no state dir"})));
+        assert!(c.ok && c.warn, "{c:?}");
+        assert!(c.detail.contains("no state dir"), "{}", c.detail);
+    }
+
+    #[test]
+    fn warning_does_not_fail_the_report() {
+        let r = DoctorReport { checks: vec![check("a", true, ""), warn_check("threads", "x")] };
+        assert!(r.all_ok());
     }
 
     #[test]
