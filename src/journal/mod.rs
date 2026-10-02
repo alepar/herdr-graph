@@ -225,6 +225,47 @@ impl Journal {
         Ok(())
     }
 
+    /// applying|admitted → committed and, when `supersedes` is set, that op → superseded, in ONE transaction.
+    /// A supersede target in a state that cannot be superseded is logged and skipped; any SQL error rolls back both.
+    pub fn finish_committed_superseding(
+        &self,
+        op: &OpId,
+        commit: &CommitId,
+        action: Option<&ActionId>,
+        supersedes: Option<&OpId>,
+        now: Timestamp,
+    ) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let n = tx.execute(
+            "UPDATE ops SET state='committed', commit_oid=?2, action_id=?3, updated_at=?4
+             WHERE op_id=?1 AND state IN ('applying','admitted')",
+            params![op.as_str(), commit.0, action.map(ActionId::as_str), ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&tx, op, "committed"));
+        }
+        if let Some(old) = supersedes {
+            let n = tx.execute(
+                "UPDATE ops SET state='superseded', superseded_by=?2, updated_at=?3
+                 WHERE op_id=?1 AND state IN ('admitted','committed','rejected','failed')",
+                params![old.as_str(), op.as_str(), ts(now)],
+            )?;
+            if n == 0 {
+                eprintln!("herdr-graph: could not mark {old} superseded by {op}: target is not in a supersedable state");
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Test-only SQL hook for failure injection (triggers).
+    #[cfg(test)]
+    pub(crate) fn execute_batch_for_test(&self, sql: &str) -> Result<()> {
+        self.conn().execute_batch(sql)?;
+        Ok(())
+    }
+
     pub fn finish_rejected(&self, op: &OpId, r: &Rejection, now: Timestamp) -> Result<()> {
         let json = serde_json::to_string(r)?;
         let conn = self.conn();

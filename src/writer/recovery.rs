@@ -9,6 +9,8 @@ pub struct RecoveryReport {
     pub removed_locks: Vec<PathBuf>,
     pub marked_committed: Vec<OpId>,
     pub requeued: Vec<OpId>,
+    /// Committed ops whose `supersedes` target had not been marked superseded; recovery re-applied it.
+    pub resuperseded: Vec<OpId>,
     pub checkpoint: Option<CommitId>,
     pub ff: FfReport,
     /// The `writer_halted` reason this recovery cleared (a restart is a successful probe).

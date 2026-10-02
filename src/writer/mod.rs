@@ -84,11 +84,16 @@ enum Fail {
     Infra(String),
     /// Stop the writer; the op stays `applying` and recovery requeues it.
     Halt(String),
+    /// Deterministic bad data (a corrupt record or plan-store entry): this op fails terminally, the FIFO proceeds.
+    Data(String),
 }
 
 impl From<StoreError> for Fail {
     fn from(e: StoreError) -> Self {
-        Fail::Infra(e.to_string())
+        match e {
+            StoreError::Corrupt { .. } => Fail::Data(e.to_string()),
+            other => Fail::Infra(other.to_string()),
+        }
     }
 }
 impl From<JournalError> for Fail {
@@ -162,43 +167,67 @@ impl WriterCore {
     }
 
     /// Process exactly one admitted op (sync; git2 + rusqlite). Err(Halted) when writer_halted is set.
+    ///
+    /// The single place errors are classified: a halt sets `writer_halted`; every infrastructure error (journal,
+    /// git, store IO), wherever it arose, counts toward `infra_failures`. Deterministic data errors never get here:
+    /// `step_inner` turns them into a terminal `failed` op.
     pub fn step(&self) -> Result<StepOutcome, WriterError> {
-        if let Some(reason) = self.journal.meta_get(WRITER_HALTED).map_err(journal_err)? {
-            return Err(WriterError::Halted(reason));
+        match self.step_inner() {
+            Ok(o) => {
+                self.infra_failures.store(0, Ordering::SeqCst);
+                Ok(o)
+            }
+            Err(Fail::Halt(reason)) => {
+                if self.journal.meta_get(WRITER_HALTED).ok().flatten().as_deref() != Some(reason.as_str())
+                    && let Err(e) = self.journal.meta_set(WRITER_HALTED, &reason)
+                {
+                    self.infra_failures.fetch_add(1, Ordering::SeqCst);
+                    return Err(WriterError::Journal(format!("{reason}; could not record the halt: {e}")));
+                }
+                Err(WriterError::Halted(reason))
+            }
+            // A stray `Data` (not produced inside the apply phase) counts as infrastructure.
+            Err(Fail::Infra(m) | Fail::Data(m)) => {
+                self.infra_failures.fetch_add(1, Ordering::SeqCst);
+                Err(WriterError::Journal(m))
+            }
         }
-        let Some(row) = self.journal.next_admitted().map_err(journal_err)? else {
+    }
+
+    fn step_inner(&self) -> Result<StepOutcome, Fail> {
+        if let Some(reason) = self.journal.meta_get(WRITER_HALTED)? {
+            return Err(Fail::Halt(reason));
+        }
+        let Some(row) = self.journal.next_admitted()? else {
             return Ok(StepOutcome::Idle);
         };
         let now = self.clock.now();
-        let Some(attempts) = self.journal.begin_applying(&row.op, now).map_err(journal_err)? else {
+        let Some(attempts) = self.journal.begin_applying(&row.op, now)? else {
             return Ok(StepOutcome::Skipped(row.op));
         };
         if attempts > self.cfg.max_attempts {
             let reason = format!("poison: exceeded {} attempts", self.cfg.max_attempts);
-            self.journal.finish_failed(&row.op, &reason, now).map_err(journal_err)?;
+            self.journal.finish_failed(&row.op, &reason, now)?;
             self.emit(&row, OpState::Failed, None, None);
             return Ok(StepOutcome::Failed(row.op));
         }
 
         match self.apply_phase(&row, now) {
-            Ok(Phase::Done(outcome)) => {
-                self.infra_failures.store(0, Ordering::SeqCst);
-                Ok(outcome)
-            }
+            Ok(Phase::Done(outcome)) => Ok(outcome),
             Ok(Phase::Committed { commit, applied, old_tree, new_tree }) => {
-                self.infra_failures.store(0, Ordering::SeqCst);
                 self.finish_commit(&row, now, commit, applied, old_tree, new_tree)
             }
-            Err(Fail::Halt(reason)) => {
-                self.journal.meta_set(WRITER_HALTED, &reason).map_err(journal_err)?;
-                Err(WriterError::Halted(reason))
+            Err(Fail::Data(msg)) => {
+                self.journal.finish_failed(&row.op, &format!("corrupt data: {msg}"), now)?;
+                self.emit(&row, OpState::Failed, None, None);
+                Ok(StepOutcome::Failed(row.op))
             }
             Err(Fail::Infra(msg)) => {
                 // Best effort: if even this fails, recovery requeues the stuck `applying` op.
                 let _ = self.journal.requeue(&row.op, false, now);
-                self.infra_failures.fetch_add(1, Ordering::SeqCst);
-                Err(WriterError::Journal(msg))
+                Err(Fail::Infra(msg))
             }
+            Err(halt @ Fail::Halt(_)) => Err(halt),
         }
     }
 
@@ -284,15 +313,23 @@ impl WriterCore {
         applied: Applied,
         old_tree: Oid,
         new_tree: Oid,
-    ) -> Result<StepOutcome, WriterError> {
+    ) -> Result<StepOutcome, Fail> {
         let op = &row.op;
         let commit_id = CommitId(commit.to_string());
         failpoint!("writer.after_cas_before_journal");
-        self.journal.finish_committed(op, &commit_id, applied.action.as_ref(), now).map_err(journal_err)?;
-        if let Some(old) = &row.request.supersedes
-            && let Err(e) = self.journal.supersede(old, op, now)
-        {
-            eprintln!("herdr-graph: could not mark {old} superseded by {op}: {e}");
+        // One transaction: on failure the commit is on main, so the op must not be requeued; the writer halts and
+        // `resume` / restart recovery completes the journal from the trailer.
+        if let Err(e) = self.journal.finish_committed_superseding(
+            op,
+            &commit_id,
+            applied.action.as_ref(),
+            row.request.supersedes.as_ref(),
+            now,
+        ) {
+            return Err(Fail::Halt(format!(
+                "post-commit journal update failed for {op} (commit {}): {e}; run herdr-graph writer resume",
+                commit_id.0
+            )));
         }
         failpoint!("writer.after_journal_before_ff");
         let root = self.store.root();
@@ -442,14 +479,27 @@ impl WriterCore {
             .map_err(to_store)?;
         for (op, commit, action) in trailers {
             let Some(row) = self.journal.get(&op).map_err(journal_err)? else { continue };
-            if !matches!(row.state, OpState::Applying | OpState::Admitted) {
-                continue;
+            match row.state {
+                OpState::Applying | OpState::Admitted => {
+                    self.journal
+                        .finish_committed_superseding(&op, &commit, action.as_ref(), row.request.supersedes.as_ref(), now)
+                        .map_err(journal_err)?;
+                    report.marked_committed.push(op);
+                }
+                // Committed by an interrupted completion: re-apply a missed supersede.
+                OpState::Committed => {
+                    let Some(old) = &row.request.supersedes else { continue };
+                    let Some(target) = self.journal.get(old).map_err(journal_err)? else { continue };
+                    if target.state == OpState::Superseded {
+                        continue;
+                    }
+                    match self.journal.supersede(old, &op, now) {
+                        Ok(()) => report.resuperseded.push(op),
+                        Err(e) => eprintln!("herdr-graph: recovery could not mark {old} superseded by {op}: {e}"),
+                    }
+                }
+                _ => {}
             }
-            self.journal.finish_committed(&op, &commit, action.as_ref(), now).map_err(journal_err)?;
-            if let Some(old) = &row.request.supersedes {
-                let _ = self.journal.supersede(old, &op, now);
-            }
-            report.marked_committed.push(op);
         }
         for row in self.journal.list(&[OpState::Applying], usize::MAX >> 1).map_err(journal_err)? {
             // A crash mid-apply counts as an attempt, so a crash-looping op becomes poison.

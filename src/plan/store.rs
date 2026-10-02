@@ -34,7 +34,9 @@ impl PlanStore {
 
     pub fn get(&self, id: &PlanId) -> std::io::Result<Option<StoredPlan>> {
         match std::fs::read(self.path(id)) {
-            Ok(b) => serde_json::from_slice(&b).map(Some).map_err(std::io::Error::other),
+            Ok(b) => serde_json::from_slice(&b)
+                .map(Some)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
