@@ -17,4 +17,5 @@ approvals:
 - root-brainstorm Q4 · human · Rust Herdr plugin, depends on herdr-threads lib (local, no remote → committed symlink third_party/herdr-threads)
 - root-brainstorm Q5 · human · full contract tiered tests → narrowed by /goal to working MVP (resumeChange)
 - top-split · auto · hg-zmi.1..19 all LEAF (promotion review: hg-zmi.6 SPLIT applied → remainder hg-zmi.17; ISSUES fixed: +hg-zmi.18 daemon wiring, +hg-zmi.19 tier-3 e2e, edges .6←.4 .7←.5 .4←.2 .16←.18, dropped .13←.9; GitHub push kept outside tree)
+- coverage-round-1 · canonical R-list: R1–R23 in coverage-round-1-requirements.md (+R24–R28 from reviewer R-new for round 2) · requirements: 23 · mapped: 23 · unmapped: 0 · auto: 24 findings applied (13 GAP, 11 UNOWNED-SEAM; seams adopted into existing seam contract hg-zmi.1), 0 rejected, 0 escalated — ledger c1–c24; edges added .13←.9,.11,.17; .18←.9,.10,.13,.17; .19←.13,.15,.16,.17
 - root-brainstorm sections · human · "OK for all 5 sections" (section 1 presented; sections 2-5 approved in advance, decided in spec)
