@@ -759,6 +759,53 @@ async fn move_emptying_tab_sets_moved_out_and_no_tab_recreated() {
     assert!(seat(&fx, "foreman").moved_out, "stays moved out until a rebind plan");
 }
 
+/// Two active shell seats `a` and `b`, settled, then `a`'s only pane is moved into `b`'s tab.
+async fn moved_a_into_b() -> (Fx, SeatId, SeatId, HerdrTabId) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(&fx, "seat create a --teamspace alpha --active --harness shell");
+    commit(&fx, "seat create b --teamspace alpha --active --harness shell");
+    settle(&fx).await;
+    let a_id = seat(&fx, "a").id;
+    let b_id = seat(&fx, "b").id;
+    let b_tab = tab_of_seat(&fx, "b");
+    let a_pane = pane_of(&fx, &only_clone(&fx, "a"));
+    fx.herdr.user_move_pane(&a_pane, &b_tab);
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        step(&fx).await;
+    }
+    (fx, a_id, b_id, b_tab)
+}
+
+#[tokio::test]
+async fn moved_out_seat_does_not_rename_destination_tab() {
+    let (fx, a_id, b_id, b_tab) = moved_a_into_b().await;
+    assert!(seat_by_id(&fx, &a_id).1.moved_out, "a's only pane left its tab");
+    let renames_of_b: Vec<_> =
+        calls(&fx).into_iter().filter(|c| matches!(c, FakeCall::RenameTab(t, _) if *t == b_tab)).collect();
+    assert!(renames_of_b.is_empty(), "b's tab must never be renamed: {renames_of_b:?}");
+    let b = seat_by_id(&fx, &b_id).1;
+    assert_eq!(b.name, "b");
+    assert!(b.name_history.is_empty(), "no rename observed against b: {:?}", b.name_history);
+    let snap = snapshot(&fx).await;
+    let live_b = snap.workspaces.iter().flat_map(|w| &w.tabs).find(|t| t.id == b_tab).expect("b's tab");
+    assert_eq!(live_b.label, "b");
+    let named_a = layout::all_seats(&view(&fx)).unwrap().into_iter().filter(|(_, s)| s.name == "a").count();
+    assert_eq!(named_a, 1, "exactly one seat is named a");
+}
+
+#[tokio::test]
+async fn moved_out_seat_gets_no_tab_found_by_token() {
+    let (fx, a_id, _b_id, _b_tab) = moved_a_into_b().await;
+    let a = seat_by_id(&fx, &a_id).1;
+    assert!(a.moved_out);
+    let snap = snapshot(&fx).await;
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.root).unwrap();
+    let idx = crate::reconcile::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert!(idx.tab_for_seat(&a.id).is_none(), "token fallback must be skipped for a moved_out seat");
+}
+
 #[tokio::test]
 async fn move_into_unknown_tab_unbinds() {
     let fx = fx();
