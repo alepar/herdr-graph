@@ -78,7 +78,26 @@ All tiers use private servers and isolated state. The release-build packaging te
 
 ## Verification matrix
 
-Filled by hg-zmi.19 from [docs/verification-matrix.md](docs/verification-matrix.md).
+What is checked against what, from [docs/verification-matrix.md](docs/verification-matrix.md) (herdr 0.9.1, 2026-10-02). Of 59 rows:
+
+| Status | Rows | Meaning |
+| --- | --- | --- |
+| `verified-real` | 37 | ran against a private real Herdr (tier 3), or a real herdr-threads daemon (tier 5), and passed |
+| `verified-fake` | 13 | covered by tiers 1-2 with fakes or a real git store; the unit test is cited |
+| `assumed` | 9 | not exercised, skipped, or exercised and found broken |
+
+Run the tier-3 suite serially: `cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1` (25 flows, about two minutes; `e2e_plugin_link_status_action_single_daemon` runs a release build).
+
+The `assumed` rows:
+
+- Undo run from a pane adopts that pane as the restored clone: **product defect D1**, the undo commits but the caller's pane is never bound (`#[ignore]`d repro `e2e_undo_from_pane_adopts_caller_pane`).
+- Token re-stamp after `clone rebind`: **product defect D2** (`e2e_rebind_restamps_token_after_herdr_restart`).
+- Moving a pane into another seat's tab leaves that seat alone: **product defect D3**, the tab is renamed and the other seat with it (`e2e_move_pane_into_other_seat_tab_keeps_that_seats_name`).
+- Service-ack delivery: waits for the herdr-threads epic ht-5nb (fallback delivery is verified).
+- `claude` and `codex` harness configurations, and the real-agent summarizer flow: skipped without `HG_REAL_AGENTS=1`, the agent binary and an explicit API key.
+- `agent_session` of an `agent.start`ed Claude without Herdr's integration (spike 5), and Herdr live handoff: never run.
+
+Reproduce a defect with `cargo test --features private-herdr --test e2e_private_herdr -- --ignored <name> --test-threads=1`.
 
 ## Design documents
 
