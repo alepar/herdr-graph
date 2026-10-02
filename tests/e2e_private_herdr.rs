@@ -975,11 +975,9 @@ fn e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates() {
     assert_eq!(retired_seat_count(&rig), 0);
 }
 
-/// PRODUCT DEFECT (found by this flow): after `clone rebind` the binding names the pane but Herdr's pane metadata
-/// token is never written back. The reconciler plans `stamp_token` with the clone's creation rev, so its effect id
-/// equals the original, already `done` effect and nothing is emitted. Spec §4.2 says graph re-stamps tokens on rebind.
+/// D2 regression: after a Herdr restart dropped the pane tokens, `clone rebind` binds the pane and the reconciler
+/// re-stamps the Herdr pane metadata token with a fresh effect identity (spec §4.2).
 #[test]
-#[ignore = "product defect: stamp_token effect id collides with the original after rebind (see docs/verification-matrix.md)"]
 fn e2e_rebind_restamps_token_after_herdr_restart() {
     let Some((rig, clones)) = restarted_rig() else { return };
     rig.wait_until("every clone to be marked unknown", WAIT, |r| clones.iter().all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown"));

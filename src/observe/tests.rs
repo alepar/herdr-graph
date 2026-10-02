@@ -527,6 +527,41 @@ async fn restart_without_tokens_matches_terminal_id_with_cwd() {
     assert!(snap.workspaces[0].metadata.contains_key("hg"), "workspace token restored");
 }
 
+/// D2 (hg-zmi.50): after a Herdr restart dropped tokens and terminal ids, `clone rebind` binds the clone to the
+/// pane and the reconciler re-stamps the token with a fresh effect identity (spec 4.2).
+#[tokio::test]
+async fn rebind_after_restart_restamps_token() {
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let token = crate::model::launch::graph_token(&c.id.to_any());
+    fx.herdr.restart(false, false);
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(clone_by_id(&fx, &c.id).runtime.availability, Availability::Unknown);
+    let snap = snapshot(&fx).await;
+    let new_pane = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).next().expect("pane survives restart").id.clone();
+    assert!(snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).all(|p| !p.metadata.contains_key("hg") || p.id != new_pane));
+    fx.herdr.clear_calls();
+
+    commit(&fx, &format!("clone rebind {} --pane {}", c.id, new_pane.0));
+    step(&fx).await;
+    step(&fx).await;
+
+    assert!(
+        calls(&fx).contains(&FakeCall::ReportPaneMetadata(new_pane.clone(), "hg".into(), token.clone())),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+    let snap = snapshot(&fx).await;
+    let pane = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).find(|p| p.id == new_pane).unwrap();
+    assert_eq!(pane.metadata.get("hg"), Some(&token));
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.bound.as_ref().unwrap().incarnation, snap.incarnation);
+}
+
 #[tokio::test]
 async fn restart_without_tokens_or_terminal_ids_is_unknown_not_recreated() {
     let fx = fx();
