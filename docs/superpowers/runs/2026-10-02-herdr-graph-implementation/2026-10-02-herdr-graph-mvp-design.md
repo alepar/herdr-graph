@@ -248,7 +248,7 @@ Never touch the user's live Herdr session or memory observer in tests.
 - `herdr-plugin.toml`: id `herdr-graph`, `min_herdr_version = "0.9.1"`, `platforms = ["macos"]`, `[[build]] scripts/build.sh` (cargo build --release, copy binary into plugin `bin/`), `[[startup]] ["bin/herdr-graph","daemon","--ensure"]`, `[[actions]] status, doctor`.
 - README: install (`herdr plugin link`), init instance, setup, `/seat`, plan/confirm, undo, threads amendment status, verified-vs-assumed matrix.
 - `just`/`cargo` commands: `cargo test` (tiers 1–2 default), `cargo test --features private-herdr` (tier 3), env-gated tiers 4–5.
-- Repository pushed to private GitHub `alepar/herdr-graph` (design docs, research and run artifacts included).
+- Repository pushed to private GitHub `alepar/herdr-graph` (design docs, research and run artifacts included). This is post-merge delivery done at the run's finish step, not a task in the tree (a tree stops at merge-ready).
 
 ## Post-Implementation Notes
 
