@@ -204,10 +204,46 @@ fn instance_checks(root: &Path, checks: &mut Vec<Check>) {
         checks.push(check("failed ops", true, "no journal yet"));
         return;
     }
-    match Journal::open(&paths.journal).and_then(|j| j.list(&[OpState::Failed], 50)) {
+    let journal = match Journal::open(&paths.journal) {
+        Ok(j) => j,
+        Err(e) => {
+            checks.push(check("failed ops", false, format!("cannot read the journal: {e}")));
+            return;
+        }
+    };
+    match journal.list(&[OpState::Failed], 50) {
         Ok(rows) => checks.push(failed_ops_check(&rows)),
         Err(e) => checks.push(check("failed ops", false, format!("cannot read the journal: {e}"))),
     }
+    use crate::model::effect::EffectStatus::{BlockedNeedsHuman, Failed, NeedsRevision};
+    let pending = journal.notice_counts().map(|c| c.get("pending").copied().unwrap_or(0));
+    match (journal.effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed]), pending) {
+        (Ok(rows), Ok(pending)) => checks.push(attention_effects_check(&rows, pending)),
+        (Err(e), _) => checks.push(check("attention effects", false, format!("cannot read the journal: {e}"))),
+        (_, Err(e)) => checks.push(check("attention effects", false, format!("cannot read the journal: {e}"))),
+    }
+}
+
+/// Effects in `NeedsRevision`, `BlockedNeedsHuman` or `Failed`, with their last error, and how many of their
+/// notices have not reached the requester yet.
+fn attention_effects_check(rows: &[crate::model::effect::EffectRecord], pending_notices: u64) -> Check {
+    if rows.is_empty() {
+        return check("attention effects", true, "none");
+    }
+    let items: Vec<String> = rows
+        .iter()
+        .rev()
+        .map(|r| {
+            let status = serde_json::to_value(r.status).ok().and_then(|v| v.as_str().map(str::to_owned));
+            let err = r.last_error.as_deref().unwrap_or("no error recorded");
+            format!("{} {} {}: {err}", r.kind.as_str(), r.object, status.unwrap_or_else(|| format!("{:?}", r.status)))
+        })
+        .collect();
+    let mut detail = format!("{} effect(s) need attention: {}", rows.len(), capped(&items));
+    if pending_notices > 0 {
+        detail.push_str(&format!("; {pending_notices} notice(s) not yet delivered"));
+    }
+    warn_check("attention effects", detail)
 }
 
 pub fn doctor(env: &Env) -> DoctorReport {
@@ -476,6 +512,59 @@ mod tests {
         let names: Vec<_> = checks.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["unknown objects", "undeliverable requests", "failed ops"]);
         assert_eq!(checks[2].detail, "no journal yet");
+        assert!(checks.iter().all(|c| c.ok), "{checks:?}");
+    }
+
+    fn attention_row(status: crate::model::effect::EffectStatus, err: Option<&str>) -> crate::model::effect::EffectRecord {
+        use crate::model::effect::{EffectKind, EffectRecord};
+        let op = crate::model::OpId::new();
+        let object = crate::model::SeatId::new().to_any();
+        EffectRecord {
+            id: EffectRecord::identity(&op, &object, &EffectKind::CreateTab, 1),
+            op,
+            object,
+            kind: EffectKind::CreateTab,
+            object_rev: 1,
+            fencing_rev: 1,
+            status,
+            predicted: vec![],
+            nonce_label: None,
+            attempts: 1,
+            last_error: err.map(str::to_owned),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn attention_effects_listed_with_last_error() {
+        use crate::model::effect::EffectStatus;
+        let rows = [attention_row(EffectStatus::Failed, Some("boom"))];
+        let c = attention_effects_check(&rows, 1);
+        assert!(c.ok && c.warn, "{c:?}");
+        assert!(c.detail.contains("1 effect(s) need attention"), "{}", c.detail);
+        assert!(c.detail.contains("create_tab") && c.detail.contains("failed: boom"), "{}", c.detail);
+        assert!(c.detail.contains("1 notice(s) not yet delivered"), "{}", c.detail);
+        let c = attention_effects_check(&rows, 0);
+        assert!(!c.detail.contains("not yet delivered"), "{}", c.detail);
+    }
+
+    #[test]
+    fn attention_effects_none() {
+        let c = attention_effects_check(&[], 0);
+        assert!(c.ok && !c.warn, "{c:?}");
+        assert_eq!(c.detail, "none");
+    }
+
+    #[test]
+    fn instance_checks_with_journal_reports_attention_effects() {
+        let (t, _store) = instance();
+        let root = t.path().join("inst");
+        let j = Journal::open(&InstancePaths::new(&root).journal).unwrap();
+        j.upsert_effect(&attention_row(crate::model::effect::EffectStatus::NeedsRevision, Some("occupant busy"))).unwrap();
+        let mut checks = Vec::new();
+        instance_checks(&root, &mut checks);
+        let c = checks.iter().find(|c| c.name == "attention effects").expect("attention check");
+        assert!(c.warn && c.detail.contains("occupant busy"), "{c:?}");
         assert!(checks.iter().all(|c| c.ok), "{checks:?}");
     }
 

@@ -82,6 +82,19 @@ impl Mutation for TestSetOccupant {
     }
 }
 
+/// Test-only: gives a seat its channel thread (the notifier's delivery address).
+struct TestSetThread;
+impl Mutation for TestSetThread {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let seat: SeatId = cx.request.args["seat"].as_str().unwrap().parse().unwrap();
+        let loc = cx.tree.locate(&seat.to_any())?.unwrap();
+        let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        rec.channel.thread_id = cx.request.args["thread"].as_str().map(str::to_owned);
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied { summary: "set thread".into(), action: None })
+    }
+}
+
 /// Test-only stand-in for the observer's occupancy end: clears the occupant and ends its session.
 struct TestEndOccupant;
 impl Mutation for TestEndOccupant {
@@ -133,6 +146,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     reg.register("bookkeeping.test_set_model", Arc::new(TestSetModel));
     reg.register("bookkeeping.test_set_occupant", Arc::new(TestSetOccupant));
     reg.register("bookkeeping.test_end_occupant", Arc::new(TestEndOccupant));
+    reg.register("bookkeeping.test_set_thread", Arc::new(TestSetThread));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -1212,4 +1226,178 @@ async fn adopted_pane_of_retired_clone_is_not_closed() {
     let live = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).find(|p| p.id == pa).expect("PA survives");
     assert_eq!(live.metadata.get("hg"), Some(&format!("hg={}", b.id)));
     assert_eq!(live_ref(&fx.journal, &a.id.to_any()), None);
+}
+
+// ---- durable attention notices (hg-zmi.63) ----------------------------------------------------------
+
+fn notices_in(fx: &Fx, state: &str) -> usize {
+    fx.journal.notice_counts().unwrap().get(state).copied().unwrap_or(0) as usize
+}
+
+#[tokio::test]
+async fn needs_revision_notice_survives_threads_down() {
+    let fx = fx();
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    threads.add_thread("t-foreman", "foreman");
+    let rec = Reconciler::new(
+        fx.store.clone(),
+        fx.journal.clone(),
+        fx.w.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        Arc::new(ThreadsNotifier { threads: threads.clone(), journal: fx.journal.clone(), store: fx.store.clone() }),
+        ReconcilerConfig::new(fx.deps.instance.clone()),
+    );
+    let step2 = || async {
+        let r = rec.step_fresh().await;
+        fx.w.drain().unwrap();
+        r
+    };
+    activate(&fx, "claude");
+    let foreman = seat(&fx, "foreman");
+    admit_bookkeeping(&fx, json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}));
+    fx.herdr.fail_next("agent.start", Fault::Unavailable);
+    step2().await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    let requester = crate::model::change::Requester { seat: Some(foreman.id.clone()), ..Default::default() };
+    fx.journal.set_requester(&ef.op, &requester, fx.clock.now()).unwrap();
+
+    threads.disconnect();
+    let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
+    fx.herdr.set_process(&pane, non_shell());
+    fx.clock.advance(chrono::Duration::seconds(5));
+    step2().await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision);
+    let due = fx.journal.due_notices(fx.clock.now() + chrono::Duration::hours(1)).unwrap();
+    assert_eq!(due.len(), 1, "{due:?}");
+    assert_eq!(due[0].effect, ef.id);
+    assert!(due[0].attempts >= 1 && due[0].last_error.is_some(), "{:?}", due[0]);
+    assert!(threads.notifications().is_empty(), "nothing reached threads while it was down");
+    assert!(rec.next_wake().is_some(), "the loop wakes for the notice retry");
+
+    threads.reconnect();
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step2().await;
+    let sent = threads.notifications();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0].thread, ThreadRef("t-foreman".into()));
+    assert!(sent[0].body.contains("needs revision") && sent[0].body.contains("not the shell"), "{}", sent[0].body);
+    assert_eq!(notices_in(&fx, "delivered"), 1);
+    assert_eq!(notices_in(&fx, "pending"), 0);
+
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step2().await;
+    assert_eq!(threads.notifications().len(), 1, "delivered exactly once");
+}
+
+#[tokio::test]
+async fn blocked_needs_human_is_noticed() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(ef.status, EffectStatus::BlockedNeedsHuman);
+    let key = notice_key(&ef.op, &format!("agent on {} is waiting for a human (trust or auth dialog)", ef.object));
+    let n = fx.journal.get_notice(&key.0).unwrap().expect("a notice was journaled with the status");
+    assert_eq!(n.effect, ef.id);
+    assert_eq!(n.state, "delivered", "the sweep at the end of the step delivered it");
+    assert_eq!(fx.notes.messages(), vec![n.text.clone()]);
+    step(&fx).await;
+    assert_eq!(fx.notes.messages().len(), 1, "not delivered again");
+}
+
+struct FailSource(AnyId);
+impl EffectSource for FailSource {
+    fn effects(&self, cx: &DiffCx<'_>) -> Vec<PlannedEffect> {
+        let kind = EffectKind::Custom("demo.fail".into());
+        let op = OpId::from_ulid(ulid::Ulid::nil());
+        let id = EffectRecord::identity(&op, &self.0, &kind, 1);
+        vec![PlannedEffect {
+            record: EffectRecord {
+                id,
+                op,
+                object: self.0.clone(),
+                kind,
+                object_rev: 1,
+                fencing_rev: 1,
+                status: EffectStatus::Pending,
+                predicted: vec![],
+                nonce_label: None,
+                attempts: 0,
+                last_error: None,
+                updated_at: cx.now,
+            },
+            deps: vec![],
+        }]
+    }
+}
+
+struct FailExec;
+#[async_trait::async_trait]
+impl EffectExecutor for FailExec {
+    fn handles(&self, kind: &EffectKind) -> bool {
+        matches!(kind, EffectKind::Custom(k) if k == "demo.fail")
+    }
+    async fn execute(&self, _cx: &ExecCx<'_>, _e: &EffectRecord) -> ExecOutcome {
+        ExecOutcome::Failed("boom".into())
+    }
+}
+
+#[tokio::test]
+async fn failed_effect_is_noticed_and_counted() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    fx.rec.register_source(Arc::new(FailSource(SeatId::new().to_any())));
+    fx.rec.register_executor(Arc::new(FailExec));
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::Custom("demo.fail".into())).remove(0);
+    assert_eq!((ef.status, ef.last_error.as_deref()), (EffectStatus::Failed, Some("boom")));
+    let msgs = fx.notes.messages();
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert!(msgs[0].contains("failed: boom"), "{msgs:?}");
+    assert_eq!(notices_in(&fx, "delivered"), 1);
+    let status = crate::daemon::compose::reconciler_status(&fx.journal);
+    assert_eq!(status["failed_effects"], 1);
+    assert_eq!(status["attention"][0]["last_error"], "boom");
+}
+
+#[tokio::test]
+async fn notice_is_voided_when_the_effect_leaves_the_attention_status() {
+    let fx = fx();
+    let op = OpId::new();
+    let object = SeatId::new().to_any();
+    let kind = EffectKind::CreateTab;
+    let mut row = EffectRecord {
+        id: EffectRecord::identity(&op, &object, &kind, 1),
+        op: op.clone(),
+        object,
+        kind,
+        object_rev: 1,
+        fencing_rev: 1,
+        status: EffectStatus::NeedsRevision,
+        predicted: vec![],
+        nonce_label: None,
+        attempts: 1,
+        last_error: Some("x".into()),
+        updated_at: fx.clock.now(),
+    };
+    let n = Notice {
+        key: "k".into(),
+        effect: row.id.clone(),
+        op,
+        severity: Severity::Warn,
+        text: "t".into(),
+        state: "pending".into(),
+        attempts: 0,
+        last_error: None,
+        next_at: None,
+    };
+    fx.journal.upsert_effect_with_notice(&row, &n).unwrap();
+    row.status = EffectStatus::Done;
+    fx.journal.upsert_effect(&row).unwrap();
+    fx.rec.deliver_notices().await;
+    assert_eq!(fx.journal.get_notice("k").unwrap().unwrap().state, "void");
+    assert!(fx.notes.messages().is_empty());
 }

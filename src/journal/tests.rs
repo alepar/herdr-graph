@@ -304,3 +304,74 @@ fn finish_committed_superseding_is_atomic() {
     let o = j.get(&old).unwrap().unwrap();
     assert_eq!((o.state, o.superseded_by), (OpState::Superseded, Some(new)));
 }
+
+fn notice_for(e: &EffectRecord, key: &str) -> Notice {
+    Notice {
+        key: key.into(),
+        effect: e.id.clone(),
+        op: e.op.clone(),
+        severity: Severity::Warn,
+        text: "needs a look".into(),
+        state: "pending".into(),
+        attempts: 0,
+        last_error: None,
+        next_at: None,
+    }
+}
+
+#[test]
+fn effect_and_notice_written_together() {
+    let (_t, j) = open();
+    let op = OpId::new();
+    let obj = SeatId::new().to_any();
+    let mut e = effect(&op, &obj, 1, EffectStatus::NeedsRevision);
+    e.last_error = Some("busy".into());
+    let n = notice_for(&e, "k1");
+    j.upsert_effect_with_notice(&e, &n).unwrap();
+    assert_eq!(j.get_effect(&e.id).unwrap().unwrap().status, EffectStatus::NeedsRevision);
+    assert_eq!(j.get_notice("k1").unwrap().unwrap(), n);
+    // The same key again does not duplicate or reset the notice, even after it was delivered.
+    j.notice_done("k1", "delivered", t0()).unwrap();
+    j.upsert_effect_with_notice(&e, &n).unwrap();
+    assert_eq!(j.notice_counts().unwrap(), BTreeMap::from([("delivered".to_owned(), 1)]));
+}
+
+#[test]
+fn due_notices_respects_next_at() {
+    let (_t, j) = open();
+    let op = OpId::new();
+    let e = effect(&op, &SeatId::new().to_any(), 1, EffectStatus::Failed);
+    let mut n = notice_for(&e, "k1");
+    n.next_at = Some(t0() + chrono::Duration::seconds(10));
+    j.upsert_effect_with_notice(&e, &n).unwrap();
+    assert!(j.due_notices(t0()).unwrap().is_empty());
+    assert_eq!(j.next_notice_at().unwrap(), n.next_at);
+    assert_eq!(j.due_notices(t0() + chrono::Duration::seconds(10)).unwrap().len(), 1);
+}
+
+#[test]
+fn notice_retry_counts_attempts() {
+    let (_t, j) = open();
+    let op = OpId::new();
+    let e = effect(&op, &SeatId::new().to_any(), 1, EffectStatus::Failed);
+    j.upsert_effect_with_notice(&e, &notice_for(&e, "k1")).unwrap();
+    let later = t0() + chrono::Duration::seconds(5);
+    j.notice_retry("k1", "down", later, t0()).unwrap();
+    j.notice_retry("k1", "still down", later, t0()).unwrap();
+    let n = j.get_notice("k1").unwrap().unwrap();
+    assert_eq!((n.attempts, n.last_error.as_deref(), n.next_at), (2, Some("still down"), Some(later)));
+    assert_eq!(n.state, "pending");
+}
+
+#[test]
+fn notice_done_removes_from_due() {
+    let (_t, j) = open();
+    let op = OpId::new();
+    let e = effect(&op, &SeatId::new().to_any(), 1, EffectStatus::Failed);
+    j.upsert_effect_with_notice(&e, &notice_for(&e, "k1")).unwrap();
+    assert_eq!(j.due_notices(t0()).unwrap().len(), 1);
+    j.notice_done("k1", "void", t0()).unwrap();
+    assert!(j.due_notices(t0()).unwrap().is_empty());
+    assert_eq!(j.get_notice("k1").unwrap().unwrap().state, "void");
+    assert_eq!(j.next_notice_at().unwrap(), None);
+}

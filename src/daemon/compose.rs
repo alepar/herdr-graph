@@ -357,12 +357,110 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
     let j = journal.clone();
     reg.status_provider(
         "reconciler",
-        Arc::new(move || {
-            use crate::model::effect::EffectStatus::{NeedsRevision, Pending, Unknown};
-            let n = |s| j.effects_with_status(&[s]).map(|v| v.len()).unwrap_or(0);
-            json!({ "pending_effects": n(Pending), "unknown_effects": n(Unknown), "needs_revision_effects": n(NeedsRevision) })
-        }),
+        Arc::new(move || reconciler_status(&j)),
     );
+}
+
+/// The `reconciler` status component: open effects, and every effect that needs a human with its last error.
+pub(crate) fn reconciler_status(j: &Journal) -> serde_json::Value {
+    use crate::model::effect::EffectStatus::{BlockedNeedsHuman, Failed, NeedsRevision, Pending, Unknown};
+    let n = |s| j.effects_with_status(&[s]).map(|v| v.len()).unwrap_or(0);
+    let mut attention = j.effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed]).unwrap_or_default();
+    attention.reverse();
+    let attention: Vec<_> = attention
+        .iter()
+        .take(10)
+        .map(|e| {
+            json!({
+                "effect": e.id.to_string(),
+                "kind": e.kind.as_str(),
+                "object": e.object.to_string(),
+                "status": e.status,
+                "last_error": e.last_error,
+            })
+        })
+        .collect();
+    let pending_notices = j.notice_counts().ok().and_then(|c| c.get("pending").copied()).unwrap_or(0);
+    json!({
+        "pending_effects": n(Pending),
+        "unknown_effects": n(Unknown),
+        "needs_revision_effects": n(NeedsRevision),
+        "blocked_effects": n(BlockedNeedsHuman),
+        "failed_effects": n(Failed),
+        "pending_notices": pending_notices,
+        "attention": attention,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::Notice;
+    use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
+    use crate::model::{OpId, SeatId};
+    use chrono::TimeZone;
+
+    #[test]
+    fn reconciler_status_counts_attention_effects() {
+        let t = tempfile::tempdir().unwrap();
+        let j = Journal::open(&t.path().join("j.sqlite3")).unwrap();
+        let now = chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap();
+        let op = OpId::new();
+        let mut first = None;
+        for (i, (status, err)) in [
+            (EffectStatus::Failed, Some("boom")),
+            (EffectStatus::BlockedNeedsHuman, None),
+            (EffectStatus::NeedsRevision, Some("occupant busy")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let object = SeatId::new().to_any();
+            let e = EffectRecord {
+                id: EffectRecord::identity(&op, &object, &EffectKind::CreateTab, 1),
+                op: op.clone(),
+                object,
+                kind: EffectKind::CreateTab,
+                object_rev: 1,
+                fencing_rev: 1,
+                status,
+                predicted: vec![],
+                nonce_label: None,
+                attempts: 1,
+                last_error: err.map(str::to_owned),
+                updated_at: now + chrono::Duration::seconds(i as i64),
+            };
+            let n = Notice {
+                key: format!("k{i}"),
+                effect: e.id.clone(),
+                op: op.clone(),
+                severity: crate::ports::threads::Severity::Warn,
+                text: "t".into(),
+                state: "pending".into(),
+                attempts: 0,
+                last_error: None,
+                next_at: None,
+            };
+            j.upsert_effect_with_notice(&e, &n).unwrap();
+            if i == 0 {
+                first = Some(n.key);
+            }
+        }
+        j.notice_done(&first.unwrap(), "delivered", now).unwrap();
+        j.notice_done("k1", "delivered", now).unwrap();
+        let v = reconciler_status(&j);
+        assert_eq!(v["failed_effects"], 1);
+        assert_eq!(v["blocked_effects"], 1);
+        assert_eq!(v["needs_revision_effects"], 1);
+        assert_eq!(v["pending_notices"], 1);
+        let a = v["attention"].as_array().unwrap();
+        let rows: Vec<_> = a.iter().map(|r| (r["status"].as_str().unwrap(), r["last_error"].as_str())).collect();
+        assert_eq!(
+            rows,
+            [("needs_revision", Some("occupant busy")), ("blocked_needs_human", None), ("failed", Some("boom"))],
+            "newest first, with last_error"
+        );
+    }
 }
 
 /// Production ports that find the herdr-threads service lazily: it may start after the daemon, and a stopped
