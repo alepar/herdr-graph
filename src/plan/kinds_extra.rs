@@ -667,6 +667,11 @@ impl OrgKind for CloneRebind {
         rec.runtime.observed_at = Some(cx.now);
         rec.reload_required = false;
         cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
+        // The re-stamp effect is attributed to this op, so its id differs from the original stamp's (hg-zmi.50).
+        let seat = live_seat(&cx.tree, rec.seat.as_str()).map_err(mm)?;
+        let mut seat_rec = seat.rec;
+        attribute(cx, &mut seat_rec);
+        cx.tree.put_record(seat.loc.record_path.clone(), &mut seat_rec)?;
         Ok(Applied { summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane), action: None })
     }
 }
@@ -1080,13 +1085,15 @@ mod tests {
         assert_eq!(sp.plan.effects[0].detail["from"], "p_old");
         assert_eq!(sp.plan.effects[1].detail["pane"], "p_new");
         assert!(sp.plan.repair_required.is_none());
-        assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+        let row = apply_plan(&fx, &sp);
+        assert_eq!(row.state, OpState::Committed);
         let c = clones_of(&fx, &clone.seat).remove(0);
         let b = c.runtime.bound.expect("bound");
         assert_eq!(b.pane_id, Some(HerdrPaneId("p_new".into())));
         assert_eq!(b.token, Some(graph_token(&c.id.to_any())));
         assert!(!c.reload_required);
         assert_eq!(c.runtime.availability, Availability::Present);
+        assert_eq!(seat(&fx, "one").activation.last_op, Some(row.op.clone()), "re-stamp is attributed to the rebind op");
     }
 
     #[test]

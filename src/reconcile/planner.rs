@@ -4,7 +4,7 @@ use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
-use crate::model::common::{CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation};
+use crate::model::common::{Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation};
 use crate::model::effect::{ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd};
 use crate::model::launch::{nonce_label, parse_graph_token};
 use crate::model::{AnyId, CloneId, EffectId, SeatId, TeamspaceId};
@@ -106,11 +106,17 @@ impl<'a> LiveIndex<'a> {
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
-        let live = live_ref(self.journal, &any)?;
-        if live.incarnation != self.snap.incarnation {
-            return None;
+        let live = live_ref(self.journal, &any).filter(|l| l.incarnation == self.snap.incarnation);
+        if let Some(ws) = live.and_then(|l| l.workspace).and_then(|id| self.ws_by_id(&id)) {
+            return Some(LiveWorkspace { ws, stamped: false });
         }
-        self.ws_by_id(live.workspace.as_ref()?).map(|ws| LiveWorkspace { ws, stamped: false })
+        // A rebound clone pane (see `pane`) places its teamspace's workspace.
+        self.desired
+            .panes
+            .iter()
+            .filter(|p| p.ts == *ts)
+            .find_map(|p| self.pane(&p.clone))
+            .map(|lp| LiveWorkspace { ws: lp.ws, stamped: false })
     }
 
     pub fn pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
@@ -122,11 +128,23 @@ impl<'a> LiveIndex<'a> {
                 }
             }
         }
-        let bound = self.desired.clones.get(clone).and_then(|c| c.runtime.bound.as_ref());
+        let rec = self.desired.clones.get(clone);
+        let bound = rec.and_then(|c| c.runtime.bound.as_ref());
         if let Some(b) = bound
             && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.pane_id
             && let Some(lp) = self.pane_by_id(id)
+        {
+            return Some(LivePane { stamped: false, ..lp });
+        }
+        // `clone rebind` is an explicit user assertion that a pane is the clone's: a binding it wrote while the
+        // clone was `unknown` keeps the old incarnation but is `present`, so honor it when that pane exists in
+        // this snapshot and carries no graph token of its own (spec 4.2: graph re-stamps tokens on rebind).
+        if let Some(b) = bound
+            && rec.is_some_and(|c| c.runtime.availability == Availability::Present)
+            && let Some(id) = &b.pane_id
+            && let Some(lp) = self.pane_by_id(id)
+            && token_of(&lp.pane.metadata).is_none()
         {
             return Some(LivePane { stamped: false, ..lp });
         }
@@ -166,7 +184,8 @@ impl<'a> LiveIndex<'a> {
                 }
             }
         }
-        None
+        // A rebound clone pane (see `pane`) places its seat's tab.
+        self.desired.panes_of(seat).find_map(|p| self.pane(&p.clone)).map(|lp| (lp.ws, lp.tab))
     }
 
     /// Active clones of `seat` that have no live pane and are not `unknown`, in clone-id order.
