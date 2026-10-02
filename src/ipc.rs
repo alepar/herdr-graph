@@ -101,6 +101,42 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(r: &mut R) -> Result<T, FrameErr
     Ok(serde_json::from_slice(&body)?)
 }
 
+/// Read one frame; Ok(None) on clean EOF before a header byte.
+pub async fn read_frame_async<R: tokio::io::AsyncRead + Unpin, T: DeserializeOwned>(
+    r: &mut R,
+) -> Result<Option<T>, FrameError> {
+    use tokio::io::AsyncReadExt;
+    let mut hdr = [0u8; 4];
+    let mut got = 0;
+    while got < 4 {
+        let n = r.read(&mut hdr[got..]).await?;
+        if n == 0 {
+            if got == 0 {
+                return Ok(None);
+            }
+            return Err(FrameError::Io(std::io::ErrorKind::UnexpectedEof.into()));
+        }
+        got += n;
+    }
+    let len = u32::from_be_bytes(hdr);
+    if len > MAX_FRAME_LEN {
+        return Err(FrameError::TooLarge(len as u64));
+    }
+    let mut body = vec![0u8; len as usize];
+    r.read_exact(&mut body).await?;
+    Ok(Some(serde_json::from_slice(&body)?))
+}
+
+pub async fn write_frame_async<W: tokio::io::AsyncWrite + Unpin, T: Serialize>(
+    w: &mut W,
+    msg: &T,
+) -> Result<(), FrameError> {
+    use tokio::io::AsyncWriteExt;
+    w.write_all(&encode_frame(msg)?).await?;
+    w.flush().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +183,28 @@ mod tests {
             read_frame::<_, IpcRequest>(&mut Cursor::new(hdr.to_vec())),
             Err(FrameError::TooLarge(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn async_frame_roundtrip() {
+        let (mut a, mut b) = tokio::io::duplex(1024);
+        write_frame_async(&mut a, &req()).await.unwrap();
+        write_frame_async(&mut a, &req()).await.unwrap();
+        let first: IpcRequest = read_frame_async(&mut b).await.unwrap().unwrap();
+        let second: IpcRequest = read_frame_async(&mut b).await.unwrap().unwrap();
+        assert_eq!((first, second), (req(), req()));
+    }
+
+    #[tokio::test]
+    async fn async_read_eof_is_none() {
+        let (a, mut b) = tokio::io::duplex(64);
+        drop(a);
+        assert!(read_frame_async::<_, IpcRequest>(&mut b).await.unwrap().is_none());
+        // EOF in the middle of a header is an error, not a clean close.
+        let (mut a, mut b) = tokio::io::duplex(64);
+        tokio::io::AsyncWriteExt::write_all(&mut a, &[0, 0]).await.unwrap();
+        drop(a);
+        assert!(read_frame_async::<_, IpcRequest>(&mut b).await.is_err());
     }
 
     #[test]
