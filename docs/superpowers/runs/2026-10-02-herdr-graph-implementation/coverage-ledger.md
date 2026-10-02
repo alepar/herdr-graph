@@ -23,3 +23,20 @@ c22 · r1 · UNOWNED-SEAM · transcript/ns byte ranges · applied — adopted se
 c23 · r1 · UNOWNED-SEAM · delivery capability · applied — query in hg-zmi.1 trait, detection owned by hg-zmi.11
 c24 · r1 · UNOWNED-SEAM · pending ops/invitations query · applied — owned by hg-zmi.17 / hg-zmi.11, consumed by hg-zmi.13
 Seam integration for c16/c18/c20-c23: covered by hg-zmi.19 tier-3 flows and the root integration sweep (no separate Seam integration beads; existing seam contract adopted).
+c25 · r2 · GAP · R22 matrix ownership · applied — hg-zmi.14 placeholder, hg-zmi.19 owns README matrix content
+c26 · r2 · UNOWNED-SEAM · manifest ↔ skills/hook · applied — no manifest entries exist for Claude skills; hg-zmi.13 setup claude installs skills+hook, README documents
+c27 · r2 · GAP · plugin loads in private Herdr · applied — hg-zmi.19 flow + edge .19←.14
+c28 · r2 · UNOWNED-SEAM · transcript watcher loop · applied — hg-zmi.12 owns
+c29 · r2 · UNOWNED-SEAM · bookkeeping kinds · applied — category flag in hg-zmi.6; kinds owned by hg-zmi.7 (effect/binding) and hg-zmi.12 (tr_/rq_)
+c30 · r2 · GAP · R28 undo consumes plan act_ · applied — hg-zmi.10 consumes + acceptance
+c31 · r2 · GAP · R5 crash-injection · partially applied — hg-zmi.3 already had failpoint crash acceptance (full description); added harness to owns line and mid-effect crash acceptance to hg-zmi.18
+c32 · r2 · GAP · R19 summarizer template named · rejected — hg-zmi.13 full description already ships system-summarizer (owns line now names it too)
+c33 · r2 · GAP · R1 herdr-threads dependency · rejected — hg-zmi.1 full description adds the path dependency via third_party symlink
+c34 · r2 · GAP · R13 e2e template/cascade/undo flows · partially applied — hg-zmi.19 full description already had template edit, cascades, undo, app retire; added undo caller-pane adoption flow
+c35 · r2 · GAP · R22 real-agent credentials · applied — hg-zmi.5 credential pass-through rule
+c36 · r2 · UNOWNED-SEAM · teamspace retire/resurrect placement · applied — all retire/resurrect in hg-zmi.6; hg-zmi.17 teamspace rename only
+c37 · r2 · UNOWNED-SEAM · participation intent → threads · applied — edge .11←.17, consumes
+c38 · r2 · UNOWNED-SEAM · session-id capture rule · applied — hg-zmi.8 consumes + per-harness tests
+c39 · r2 · UNOWNED-SEAM · guard for real threads test · applied — edge .11←.5, consumes
+c40 · r2 · UNOWNED-SEAM · superseded op state · applied — hg-zmi.3 owns states + supersedes link
+sweep · root integration sweep hg-zmi.20 created, depends on hg-zmi.1–.19
