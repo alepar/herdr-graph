@@ -221,6 +221,7 @@ pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Service
     // 6. Loops, commands and status providers.
     register_commands(reg, &kinds, &plans, &store, &writer_port, &clock, &journal, &herdr, &threads, paths.root.clone());
     transcripts.register_commands(reg);
+    register_writer_commands(reg, &writer);
 
     let w = writer.clone();
     reg.background("writer", move |sd| async move {
@@ -311,6 +312,26 @@ fn register_threads_connection(reg: &mut Registry, threads: Arc<dyn ThreadsPort>
                 _ = sd.wait() => return Ok(()),
                 _ = tokio::time::sleep(THREADS_PROBE_PERIOD) => {}
             }
+        }
+    });
+}
+
+/// `writer.resume`: clear a halted writer after a successful probe (recovery plus a journal round-trip).
+fn register_writer_commands(reg: &mut Registry, writer: &Arc<WriterCore>) {
+    let w = writer.clone();
+    reg.command("writer.resume", move |_cx: crate::daemon::registry::CommandCtx, _args: serde_json::Value| {
+        let w = w.clone();
+        async move {
+            use crate::daemon::registry::CommandError;
+            let report = tokio::task::spawn_blocking(move || w.resume())
+                .await
+                .map_err(|e| CommandError::internal(format!("writer.resume task failed: {e}")))?
+                .map_err(|e| CommandError::unavailable(format!("probe failed, writer stays halted: {e}")))?;
+            Ok(json!({
+                "was_halted": report.was_halted,
+                "reason": report.reason,
+                "requeued": report.recovery.map(|r| r.requeued).unwrap_or_default(),
+            }))
         }
     });
 }

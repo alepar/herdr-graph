@@ -11,12 +11,45 @@ pub enum Commands {
     Status,
     /// Diagnose the installation and instance.
     Doctor,
+    /// Operate on the single writer.
+    Writer {
+        #[command(subcommand)]
+        action: WriterAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WriterAction {
+    /// Clear a halted writer after a successful probe.
+    Resume,
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
         Commands::Status => status(),
         Commands::Doctor => doctor(),
+        Commands::Writer { action: WriterAction::Resume } => writer_resume(),
+    }
+}
+
+fn writer_resume() -> anyhow::Result<ExitCode> {
+    match call_daemon("writer.resume", serde_json::json!({}), CallMode::Ensure) {
+        Ok(v) => {
+            println!("{}", resume_message(&v));
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("writer resume failed: {e}");
+            Ok(ExitCode::from(1))
+        }
+    }
+}
+
+fn resume_message(v: &serde_json::Value) -> String {
+    if v["was_halted"].as_bool().unwrap_or(false) {
+        format!("writer resumed (was halted: {})", v["reason"].as_str().unwrap_or("unknown reason"))
+    } else {
+        "writer was not halted".to_string()
     }
 }
 
@@ -64,4 +97,29 @@ fn doctor() -> anyhow::Result<ExitCode> {
         println!("[{}] {}: {}", if c.ok { "ok" } else { "FAIL" }, c.name, c.detail);
     }
     Ok(if report.all_ok() { ExitCode::SUCCESS } else { ExitCode::from(1) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn writer_resume_parses() {
+        use clap::Parser;
+        let cli = crate::cli::Cli::try_parse_from(["herdr-graph", "writer", "resume"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            crate::cli::Command::Status(Commands::Writer { action: WriterAction::Resume })
+        ));
+    }
+
+    #[test]
+    fn resume_message_names_reason_or_not_halted() {
+        assert_eq!(
+            resume_message(&json!({"was_halted": true, "reason": "lock contention"})),
+            "writer resumed (was halted: lock contention)"
+        );
+        assert_eq!(resume_message(&json!({"was_halted": false, "reason": null})), "writer was not halted");
+    }
 }

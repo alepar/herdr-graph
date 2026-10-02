@@ -69,6 +69,15 @@ pub enum StepOutcome {
 
 pub const WRITER_HALTED: &str = "writer_halted";
 
+/// Outcome of [`WriterCore::resume`].
+#[derive(Debug, PartialEq)]
+pub struct ResumeReport {
+    pub was_halted: bool,
+    /// The halt reason that was cleared.
+    pub reason: Option<String>,
+    pub recovery: Option<recovery::RecoveryReport>,
+}
+
 /// Why a step stopped before the ref moved.
 enum Fail {
     /// Retryable: the op goes back to `admitted` without counting an attempt.
@@ -395,6 +404,28 @@ impl WriterCore {
 
     /// Spec §3.6; the caller holds the daemon flock (hg-zmi.4).
     pub fn recover(&self) -> Result<recovery::RecoveryReport, WriterError> {
+        self.recover_inner(true)
+    }
+
+    /// Operator-driven recovery of a halted writer: probe by running recovery and a journal round-trip; only when
+    /// both succeed is the halt cleared. A failed probe keeps the halt (and its reason) untouched.
+    pub fn resume(&self) -> Result<ResumeReport, WriterError> {
+        let Some(reason) = self.journal.meta_get(WRITER_HALTED).map_err(journal_err)? else {
+            return Ok(ResumeReport { was_halted: false, reason: None, recovery: None });
+        };
+        let recovery = self.recover_inner(false)?;
+        let stamp = self.clock.now().to_string();
+        self.journal.meta_set("writer_probe", &stamp).map_err(journal_err)?;
+        if self.journal.meta_get("writer_probe").map_err(journal_err)?.as_deref() != Some(stamp.as_str()) {
+            return Err(WriterError::Journal("journal probe read back a different value".into()));
+        }
+        self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+        self.infra_failures.store(0, Ordering::SeqCst);
+        self.wake.notify_one();
+        Ok(ResumeReport { was_halted: true, reason: Some(reason), recovery: Some(recovery) })
+    }
+
+    fn recover_inner(&self, clear_halt: bool) -> Result<recovery::RecoveryReport, WriterError> {
         let now = self.clock.now();
         let mut report = recovery::RecoveryReport::default();
         let to_store = |e: StoreError| WriterError::Journal(e.to_string());
@@ -441,6 +472,13 @@ impl WriterCore {
             })
             .map_err(to_store)?
             .map_err(to_store)?;
+        if clear_halt {
+            report.cleared_halt = self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?;
+            if report.cleared_halt.is_some() {
+                self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+                self.infra_failures.store(0, Ordering::SeqCst);
+            }
+        }
         Ok(report)
     }
 

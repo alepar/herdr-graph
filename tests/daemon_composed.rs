@@ -195,6 +195,37 @@ async fn composed_daemon_plan_apply_via_ipc_commits() {
     d.stop().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn writer_resume_over_ipc_clears_halt() {
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    let journal = Journal::open(&InstancePaths::new(&root).journal).unwrap();
+    journal.meta_set(herdr_graph::writer::WRITER_HALTED, "lock contention on main").unwrap();
+    let status = d.call("status", json!({})).await.unwrap();
+    assert_eq!(status["components"]["writer"]["writer_halted"], "lock contention on main");
+
+    let r = d.call("writer.resume", json!({})).await.unwrap();
+    assert_eq!(r["was_halted"], true, "{r}");
+    assert_eq!(r["reason"], "lock contention on main", "{r}");
+    assert!(r["requeued"].as_array().unwrap().is_empty(), "{r}");
+    let status = d.call("status", json!({})).await.unwrap();
+    assert!(status["components"]["writer"]["writer_halted"].is_null(), "{status}");
+    assert_eq!(journal.meta_get(herdr_graph::writer::WRITER_HALTED).unwrap(), None);
+
+    d.committed(&["teamspace", "create", "after-resume"]).await;
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn writer_resume_not_halted() {
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    let r = d.call("writer.resume", json!({})).await.unwrap();
+    assert_eq!(r["was_halted"], false, "{r}");
+    assert!(r["reason"].is_null(), "{r}");
+    d.stop().await;
+}
+
 const ORG_KINDS: [&str; 22] = [
     "teamspace_create",
     "teamspace_rename",
