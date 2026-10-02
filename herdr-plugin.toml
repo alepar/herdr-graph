@@ -1,0 +1,26 @@
+id = "herdr-graph"
+name = "herdr-graph"
+version = "0.1.0"
+min_herdr_version = "0.9.1"
+description = "Git-backed organization graph of teamspaces, seats and clones for Herdr"
+platforms = ["macos"]
+
+[[build]]
+id = "binary"
+command = ["./scripts/build.sh"]
+
+[[startup]]
+id = "daemon"
+command = ["./bin/herdr-graph", "daemon", "--ensure"]
+
+[[actions]]
+id = "status"
+title = "herdr-graph status"
+contexts = ["workspace"]
+command = ["./bin/herdr-graph", "status"]
+
+[[actions]]
+id = "doctor"
+title = "Inspect herdr-graph setup"
+contexts = ["workspace"]
+command = ["./bin/herdr-graph", "doctor"]

@@ -1,0 +1,655 @@
+//! SQLite op/effect journal and op state machine (spec §3.4). Owned by hg-zmi.3.
+//!
+//! Every state transition is a single `UPDATE ... WHERE op_id=? AND state IN (...)`; zero rows
+//! changed means the transition was not legal. That compare-and-set is what makes cancel versus
+//! apply linearizable.
+use crate::model::change::{ChangeRequest, Requester};
+use crate::model::effect::{EffectRecord, EffectStatus};
+use crate::model::operation::{OpState, Rejection};
+use crate::model::{ActionId, AnyId, CommitId, EffectId, OpId, Timestamp};
+use crate::ports::threads::Severity;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+#[cfg(test)]
+mod tests;
+
+const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS ops(
+  op_id TEXT PRIMARY KEY, seq INTEGER NOT NULL UNIQUE, kind TEXT NOT NULL, request_json TEXT NOT NULL,
+  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, commit_oid TEXT, action_id TEXT,
+  rejection_json TEXT, supersedes TEXT, superseded_by TEXT, admitted_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ops_state_seq ON ops(state, seq);
+CREATE TABLE IF NOT EXISTS effects(
+  effect_id TEXT PRIMARY KEY, op_id TEXT NOT NULL, object_id TEXT NOT NULL, kind TEXT NOT NULL,
+  object_rev INTEGER NOT NULL, status TEXT NOT NULL, record_json TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS effects_status ON effects(status);
+CREATE INDEX IF NOT EXISTS effects_object ON effects(object_id);
+CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notices(
+  key TEXT PRIMARY KEY, effect_id TEXT NOT NULL, op_id TEXT NOT NULL, severity TEXT NOT NULL, text TEXT NOT NULL,
+  state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_at TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS notices_state ON notices(state);
+";
+
+pub struct Journal {
+    conn: Mutex<Connection>,
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpRow {
+    pub op: OpId,
+    pub seq: i64,
+    pub request: ChangeRequest,
+    pub state: OpState,
+    pub attempts: u32,
+    pub commit: Option<CommitId>,
+    pub action: Option<ActionId>,
+    pub rejection: Option<Rejection>,
+    pub superseded_by: Option<OpId>,
+    pub admitted_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
+/// A durable human-attention notice for an effect that reached `NeedsRevision`, `BlockedNeedsHuman` or `Failed`.
+/// `state` is `pending` | `delivered` | `logged` (no channel to deliver to) | `void` (the effect left the status).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Notice {
+    pub key: String,
+    pub effect: EffectId,
+    pub op: OpId,
+    pub severity: Severity,
+    pub text: String,
+    pub state: String,
+    pub attempts: u32,
+    pub last_error: Option<String>,
+    pub next_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CancelOutcome {
+    Cancelled,
+    NotCancellable(OpState),
+    Unknown,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum JournalError {
+    #[error("sqlite: {0}")]
+    Sql(#[from] rusqlite::Error),
+    #[error("json: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid transition for {op}: {from:?} → {to}")]
+    Transition { op: String, from: OpState, to: &'static str },
+}
+
+type Result<T> = std::result::Result<T, JournalError>;
+
+/// serde snake_case name of a unit-variant enum.
+fn name_of<T: Serialize>(x: &T) -> Result<String> {
+    Ok(serde_json::to_value(x)?.as_str().unwrap_or_default().to_owned())
+}
+
+fn ts(t: Timestamp) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+}
+
+fn conv_err(col: usize, e: impl std::error::Error + Send + Sync + 'static) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(col, rusqlite::types::Type::Text, Box::new(e))
+}
+
+fn parse_ts(col: usize, s: &str) -> rusqlite::Result<Timestamp> {
+    chrono::DateTime::parse_from_rfc3339(s).map(|t| t.to_utc()).map_err(|e| conv_err(col, e))
+}
+
+fn parse_id<T: std::str::FromStr<Err = crate::model::IdError>>(col: usize, s: &str) -> rusqlite::Result<T> {
+    s.parse().map_err(|e| conv_err(col, e))
+}
+
+fn parse_json<T: DeserializeOwned>(col: usize, s: &str) -> rusqlite::Result<T> {
+    serde_json::from_str(s).map_err(|e| conv_err(col, e))
+}
+
+const OP_COLS: &str = "op_id, seq, request_json, state, attempts, commit_oid, action_id, rejection_json, \
+                       superseded_by, admitted_at, updated_at";
+
+fn op_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OpRow> {
+    let opt = |i: usize| r.get::<_, Option<String>>(i);
+    Ok(OpRow {
+        op: parse_id(0, &r.get::<_, String>(0)?)?,
+        seq: r.get(1)?,
+        request: parse_json(2, &r.get::<_, String>(2)?)?,
+        state: parse_json(3, &format!("\"{}\"", r.get::<_, String>(3)?))?,
+        attempts: r.get(4)?,
+        commit: opt(5)?.map(CommitId),
+        action: opt(6)?.map(|s| parse_id(6, &s)).transpose()?,
+        rejection: opt(7)?.map(|s| parse_json(7, &s)).transpose()?,
+        superseded_by: opt(8)?.map(|s| parse_id(8, &s)).transpose()?,
+        admitted_at: parse_ts(9, &r.get::<_, String>(9)?)?,
+        updated_at: parse_ts(10, &r.get::<_, String>(10)?)?,
+    })
+}
+
+/// SQL list of quoted state names (they are fixed identifiers, never user input).
+fn quoted_names<T: Serialize>(items: &[T]) -> Result<String> {
+    let names: Result<Vec<String>> = items.iter().map(|s| name_of(s).map(|n| format!("'{n}'"))).collect();
+    Ok(names?.join(","))
+}
+
+/// Result of [`Journal::reassign_requester`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReassignOutcome {
+    Reassigned(OpState),
+    NotReassignable(OpState),
+    Unknown,
+}
+
+impl Journal {
+    pub fn open(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "FULL")?;
+        conn.pragma_update(None, "user_version", 1)?;
+        conn.execute_batch(SCHEMA)?;
+        Ok(Self { conn: Mutex::new(conn), path: path.to_path_buf() })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn path_in(instance_root: &Path) -> PathBuf {
+        instance_root.join(".graph-local").join("journal.sqlite3")
+    }
+
+    fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn admit(&self, req: &ChangeRequest, now: Timestamp) -> Result<OpId> {
+        let op = OpId::new();
+        self.admit_with_id(&op, req, now)?;
+        Ok(op)
+    }
+
+    pub fn admit_with_id(&self, op: &OpId, req: &ChangeRequest, now: Timestamp) -> Result<()> {
+        Self::admit_on(&self.conn(), op, req, now)
+    }
+
+    fn admit_on(conn: &Connection, op: &OpId, req: &ChangeRequest, now: Timestamp) -> Result<()> {
+        let json = serde_json::to_string(req)?;
+        let kind = name_of(&req.kind)?;
+        let t = ts(now);
+        conn.execute(
+            "INSERT INTO ops(op_id, seq, kind, request_json, state, attempts, supersedes, admitted_at, updated_at)
+             VALUES(?1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM ops), ?2, ?3, 'admitted', 0, ?4, ?5, ?5)",
+            params![op.as_str(), kind, json, req.supersedes.as_ref().map(OpId::as_str), t],
+        )?;
+        Ok(())
+    }
+
+    fn get_on(conn: &Connection, op: &OpId) -> Result<Option<OpRow>> {
+        Ok(conn
+            .query_row(&format!("SELECT {OP_COLS} FROM ops WHERE op_id=?1"), [op.as_str()], op_row)
+            .optional()?)
+    }
+
+    pub fn get(&self, op: &OpId) -> Result<Option<OpRow>> {
+        Self::get_on(&self.conn(), op)
+    }
+
+    /// The committed op that applied `plan`, if any (oldest first).
+    pub fn committed_op_for_plan(&self, plan: &crate::model::PlanId) -> Result<Option<OpId>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT op_id FROM ops WHERE state = 'committed'
+                   AND json_extract(request_json, '$.confirmed.plan') = ?1 ORDER BY seq LIMIT 1",
+                [plan.as_str()],
+                |r| parse_id(0, &r.get::<_, String>(0)?),
+            )
+            .optional()?)
+    }
+
+    pub fn next_admitted(&self) -> Result<Option<OpRow>> {
+        Ok(self
+            .conn()
+            .query_row(
+                &format!("SELECT {OP_COLS} FROM ops WHERE state='admitted' ORDER BY seq LIMIT 1"),
+                [],
+                op_row,
+            )
+            .optional()?)
+    }
+
+    /// The error for a transition that changed zero rows: reports the state the op is really in.
+    fn bad_transition(conn: &Connection, op: &OpId, to: &'static str) -> JournalError {
+        match Self::get_on(conn, op) {
+            Ok(Some(row)) => JournalError::Transition { op: op.to_string(), from: row.state, to },
+            Ok(None) => JournalError::Sql(rusqlite::Error::QueryReturnedNoRows),
+            Err(e) => e,
+        }
+    }
+
+    /// CAS admitted→applying, attempts += 1; Some(new attempts) or None if no longer admitted.
+    pub fn begin_applying(&self, op: &OpId, now: Timestamp) -> Result<Option<u32>> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='applying', attempts=attempts+1, updated_at=?2 WHERE op_id=?1 AND state='admitted'",
+            params![op.as_str(), ts(now)],
+        )?;
+        if n == 0 {
+            return Ok(None);
+        }
+        Ok(Some(conn.query_row("SELECT attempts FROM ops WHERE op_id=?1", [op.as_str()], |r| r.get(0))?))
+    }
+
+    /// From applying|admitted (the latter is recovery finding a trailer for a requeued op).
+    pub fn finish_committed(
+        &self,
+        op: &OpId,
+        commit: &CommitId,
+        action: Option<&ActionId>,
+        now: Timestamp,
+    ) -> Result<()> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='committed', commit_oid=?2, action_id=?3, updated_at=?4
+             WHERE op_id=?1 AND state IN ('applying','admitted')",
+            params![op.as_str(), commit.0, action.map(ActionId::as_str), ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&conn, op, "committed"));
+        }
+        Ok(())
+    }
+
+    /// applying|admitted → committed and, when `supersedes` is set, that op → superseded, in ONE transaction.
+    /// A supersede target in a state that cannot be superseded is logged and skipped; any SQL error rolls back both.
+    pub fn finish_committed_superseding(
+        &self,
+        op: &OpId,
+        commit: &CommitId,
+        action: Option<&ActionId>,
+        supersedes: Option<&OpId>,
+        now: Timestamp,
+    ) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let n = tx.execute(
+            "UPDATE ops SET state='committed', commit_oid=?2, action_id=?3, updated_at=?4
+             WHERE op_id=?1 AND state IN ('applying','admitted')",
+            params![op.as_str(), commit.0, action.map(ActionId::as_str), ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&tx, op, "committed"));
+        }
+        if let Some(old) = supersedes {
+            let n = tx.execute(
+                "UPDATE ops SET state='superseded', superseded_by=?2, updated_at=?3
+                 WHERE op_id=?1 AND state IN ('admitted','committed','rejected','failed')",
+                params![old.as_str(), op.as_str(), ts(now)],
+            )?;
+            if n == 0 {
+                eprintln!("herdr-graph: could not mark {old} superseded by {op}: target is not in a supersedable state");
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Test-only SQL hook for failure injection (triggers).
+    #[cfg(test)]
+    pub(crate) fn execute_batch_for_test(&self, sql: &str) -> Result<()> {
+        self.conn().execute_batch(sql)?;
+        Ok(())
+    }
+
+    pub fn finish_rejected(&self, op: &OpId, r: &Rejection, now: Timestamp) -> Result<()> {
+        let json = serde_json::to_string(r)?;
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='rejected', rejection_json=?2, updated_at=?3 WHERE op_id=?1 AND state='applying'",
+            params![op.as_str(), json, ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&conn, op, "rejected"));
+        }
+        Ok(())
+    }
+
+    pub fn finish_failed(&self, op: &OpId, reason: &str, now: Timestamp) -> Result<()> {
+        let r = Rejection { reason: reason.to_owned(), explanation: String::new(), current_revs: vec![] };
+        let json = serde_json::to_string(&r)?;
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='failed', rejection_json=?2, updated_at=?3 WHERE op_id=?1 AND state='applying'",
+            params![op.as_str(), json, ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&conn, op, "failed"));
+        }
+        Ok(())
+    }
+
+    /// applying→admitted. `keep_attempt=false` decrements attempts (infra error: not a poison attempt).
+    pub fn requeue(&self, op: &OpId, keep_attempt: bool, now: Timestamp) -> Result<()> {
+        let conn = self.conn();
+        let dec = i64::from(!keep_attempt);
+        let n = conn.execute(
+            "UPDATE ops SET state='admitted', attempts=MAX(attempts-?2, 0), updated_at=?3
+             WHERE op_id=?1 AND state='applying'",
+            params![op.as_str(), dec, ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&conn, op, "admitted"));
+        }
+        Ok(())
+    }
+
+    /// CAS admitted|failed → cancelled (spec §3.7). Anything else → NotCancellable(state).
+    pub fn cancel(&self, op: &OpId, now: Timestamp) -> Result<CancelOutcome> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='cancelled', updated_at=?2 WHERE op_id=?1 AND state IN ('admitted','failed')",
+            params![op.as_str(), ts(now)],
+        )?;
+        if n == 1 {
+            return Ok(CancelOutcome::Cancelled);
+        }
+        Ok(match Self::get_on(&conn, op)? {
+            Some(row) => CancelOutcome::NotCancellable(row.state),
+            None => CancelOutcome::Unknown,
+        })
+    }
+
+    /// old ∈ {admitted, committed, rejected, failed} → superseded, superseded_by = by.
+    pub fn supersede(&self, old: &OpId, by: &OpId, now: Timestamp) -> Result<()> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE ops SET state='superseded', superseded_by=?2, updated_at=?3
+             WHERE op_id=?1 AND state IN ('admitted','committed','rejected','failed')",
+            params![old.as_str(), by.as_str(), ts(now)],
+        )?;
+        if n == 0 {
+            return Err(Self::bad_transition(&conn, old, "superseded"));
+        }
+        Ok(())
+    }
+
+    pub fn set_requester(&self, op: &OpId, requester: &Requester, now: Timestamp) -> Result<()> {
+        let conn = self.conn();
+        let row = Self::get_on(&conn, op)?.ok_or(JournalError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        let mut req = row.request;
+        req.requester = requester.clone();
+        conn.execute(
+            "UPDATE ops SET request_json=?2, updated_at=?3 WHERE op_id=?1",
+            params![op.as_str(), serde_json::to_string(&req)?, ts(now)],
+        )?;
+        Ok(())
+    }
+
+    /// In one IMMEDIATE transaction: refuse `cancelled`/`superseded`; set the requester; when the op is admitted,
+    /// applying or committed, also admit `follow_up` (the `bookkeeping.reassign` that rewrites the git operation
+    /// record after the op commits). The writer cannot commit the op between the check and the update.
+    pub fn reassign_requester(
+        &self,
+        op: &OpId,
+        requester: &Requester,
+        follow_up: &ChangeRequest,
+        now: Timestamp,
+    ) -> Result<ReassignOutcome> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(row) = Self::get_on(&tx, op)? else { return Ok(ReassignOutcome::Unknown) };
+        if matches!(row.state, OpState::Cancelled | OpState::Superseded) {
+            return Ok(ReassignOutcome::NotReassignable(row.state));
+        }
+        let mut req = row.request;
+        req.requester = requester.clone();
+        tx.execute(
+            "UPDATE ops SET request_json=?2, updated_at=?3 WHERE op_id=?1",
+            params![op.as_str(), serde_json::to_string(&req)?, ts(now)],
+        )?;
+        if matches!(row.state, OpState::Admitted | OpState::Applying | OpState::Committed) {
+            Self::admit_on(&tx, &OpId::new(), follow_up, now)?;
+        }
+        tx.commit()?;
+        Ok(ReassignOutcome::Reassigned(row.state))
+    }
+
+    /// Newest first; empty `states` = all.
+    pub fn list(&self, states: &[OpState], limit: usize) -> Result<Vec<OpRow>> {
+        let filter =
+            if states.is_empty() { String::new() } else { format!("WHERE state IN ({})", quoted_names(states)?) };
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("SELECT {OP_COLS} FROM ops {filter} ORDER BY seq DESC LIMIT ?1"))?;
+        let rows = stmt.query_map([limit as i64], op_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn counts(&self) -> Result<BTreeMap<String, u64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM ops GROUP BY state")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+        Ok(rows)
+    }
+
+    pub fn checkpoint(&self) -> Result<Option<CommitId>> {
+        Ok(self.meta_get("checkpoint_commit")?.map(CommitId))
+    }
+
+    pub fn set_checkpoint(&self, c: &CommitId) -> Result<()> {
+        self.meta_set("checkpoint_commit", &c.0)
+    }
+
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        Ok(self.conn().query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
+    }
+
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Set `key` to `value` and return the value it had, atomically (one IMMEDIATE transaction).
+    pub fn meta_swap(&self, key: &str, value: &str) -> Result<Option<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
+        tx.execute(
+            "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            params![key, value],
+        )?;
+        tx.commit()?;
+        Ok(old)
+    }
+
+    pub fn meta_delete(&self, key: &str) -> Result<()> {
+        self.conn().execute("DELETE FROM meta WHERE key=?1", [key])?;
+        Ok(())
+    }
+
+    // Effects table: schema owned here, rows written by the reconciler (hg-zmi.7).
+
+    fn upsert_effect_on(conn: &Connection, e: &EffectRecord) -> Result<()> {
+        conn.execute(
+            "INSERT INTO effects(effect_id, op_id, object_id, kind, object_rev, status, record_json, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(effect_id) DO UPDATE SET status=excluded.status, record_json=excluded.record_json,
+               object_rev=excluded.object_rev, updated_at=excluded.updated_at",
+            params![
+                e.id.as_str(),
+                e.op.as_str(),
+                e.object.as_str(),
+                e.kind.as_str(),
+                e.object_rev as i64,
+                name_of(&e.status)?,
+                serde_json::to_string(e)?,
+                ts(e.updated_at)
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_effect(&self, e: &EffectRecord) -> Result<()> {
+        Self::upsert_effect_on(&self.conn(), e)
+    }
+
+    fn get_effect_on(conn: &Connection, id: &EffectId) -> Result<Option<EffectRecord>> {
+        let json: Option<String> = conn
+            .query_row("SELECT record_json FROM effects WHERE effect_id=?1", [id.as_str()], |r| r.get(0))
+            .optional()?;
+        Ok(json.map(|j| serde_json::from_str(&j)).transpose()?)
+    }
+
+    pub fn get_effect(&self, id: &EffectId) -> Result<Option<EffectRecord>> {
+        Self::get_effect_on(&self.conn(), id)
+    }
+
+    fn effects_where(&self, clause: &str, args: &[&dyn rusqlite::ToSql]) -> Result<Vec<EffectRecord>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare(&format!("SELECT record_json FROM effects WHERE {clause} ORDER BY updated_at, effect_id"))?;
+        let jsons = stmt.query_map(args, |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        jsons.iter().map(|j| Ok(serde_json::from_str(j)?)).collect()
+    }
+
+    pub fn effects_with_status(&self, s: &[EffectStatus]) -> Result<Vec<EffectRecord>> {
+        if s.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.effects_where(&format!("status IN ({})", quoted_names(s)?), &[])
+    }
+
+    pub fn effects_for_object(&self, o: &AnyId) -> Result<Vec<EffectRecord>> {
+        self.effects_where("object_id=?1", &[&o.as_str()])
+    }
+
+    pub fn set_effect_status(
+        &self,
+        id: &EffectId,
+        s: EffectStatus,
+        last_error: Option<&str>,
+        now: Timestamp,
+    ) -> Result<()> {
+        let conn = self.conn();
+        let Some(mut e) = Self::get_effect_on(&conn, id)? else {
+            return Err(JournalError::Sql(rusqlite::Error::QueryReturnedNoRows));
+        };
+        e.status = s;
+        e.last_error = last_error.map(str::to_owned);
+        e.updated_at = now;
+        Self::upsert_effect_on(&conn, &e)
+    }
+
+    // Notices table: durable attention notifications, written with the effect status (hg-zmi.63).
+
+    /// The effect row and its attention notice in ONE transaction. The notice is inserted only if its key is new.
+    pub fn upsert_effect_with_notice(&self, e: &EffectRecord, n: &Notice) -> Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        Self::upsert_effect_on(&tx, e)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO notices(key, effect_id, op_id, severity, text, state, attempts, last_error, next_at,
+               created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            params![
+                n.key,
+                n.effect.as_str(),
+                n.op.as_str(),
+                name_of(&n.severity)?,
+                n.text,
+                n.state,
+                n.attempts,
+                n.last_error,
+                n.next_at.map(ts),
+                ts(e.updated_at)
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn notice_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Notice> {
+        Ok(Notice {
+            key: r.get(0)?,
+            effect: parse_id(1, &r.get::<_, String>(1)?)?,
+            op: parse_id(2, &r.get::<_, String>(2)?)?,
+            severity: parse_json(3, &format!("\"{}\"", r.get::<_, String>(3)?))?,
+            text: r.get(4)?,
+            state: r.get(5)?,
+            attempts: r.get(6)?,
+            last_error: r.get(7)?,
+            next_at: r.get::<_, Option<String>>(8)?.map(|s| parse_ts(8, &s)).transpose()?,
+        })
+    }
+
+    const NOTICE_COLS: &'static str = "key, effect_id, op_id, severity, text, state, attempts, last_error, next_at";
+
+    /// Pending notices due at `now` (next_at null or <= now), oldest first.
+    pub fn due_notices(&self, now: Timestamp) -> Result<Vec<Notice>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM notices WHERE state='pending' AND (next_at IS NULL OR next_at <= ?1)
+             ORDER BY created_at, key",
+            Self::NOTICE_COLS
+        ))?;
+        Ok(stmt.query_map([ts(now)], Self::notice_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Earliest `next_at` among pending notices that have one.
+    pub fn next_notice_at(&self) -> Result<Option<Timestamp>> {
+        let raw: Option<String> = self.conn().query_row(
+            "SELECT MIN(next_at) FROM notices WHERE state='pending' AND next_at IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(raw.map(|s| parse_ts(0, &s)).transpose()?)
+    }
+
+    pub fn get_notice(&self, key: &str) -> Result<Option<Notice>> {
+        Ok(self
+            .conn()
+            .query_row(&format!("SELECT {} FROM notices WHERE key=?1", Self::NOTICE_COLS), [key], Self::notice_row)
+            .optional()?)
+    }
+
+    /// delivered | logged | void.
+    pub fn notice_done(&self, key: &str, state: &str, now: Timestamp) -> Result<()> {
+        self.conn().execute(
+            "UPDATE notices SET state=?2, next_at=NULL, updated_at=?3 WHERE key=?1",
+            params![key, state, ts(now)],
+        )?;
+        Ok(())
+    }
+
+    /// A failed delivery: attempts += 1, remember the error, try again at `next_at`.
+    pub fn notice_retry(&self, key: &str, error: &str, next_at: Timestamp, now: Timestamp) -> Result<()> {
+        self.conn().execute(
+            "UPDATE notices SET attempts=attempts+1, last_error=?2, next_at=?3, updated_at=?4 WHERE key=?1",
+            params![key, error, ts(next_at), ts(now)],
+        )?;
+        Ok(())
+    }
+
+    pub fn notice_counts(&self) -> Result<BTreeMap<String, u64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM notices GROUP BY state")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
+        Ok(rows)
+    }
+}

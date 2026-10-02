@@ -1,0 +1,14 @@
+schema = 1
+id = "tpl_01KGJBE9EB84DJ1V80H95GWV8G"
+rev = 1
+name = "system-summarizer"
+
+[defaults]
+harness = "claude"
+summaries = false
+
+[[members]]
+id = "mem_01KPEZVQVM7PGW8WWBJCBPGQXG"
+name = "summarizer"
+role = "summarizer"
+startup = "active"
