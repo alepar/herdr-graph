@@ -35,6 +35,21 @@ impl DaemonLock {
     }
 }
 
+/// True iff another open file description currently holds the flock. Never truncates or writes the file.
+pub fn is_held(path: &Path) -> bool {
+    let Ok(file) = std::fs::OpenOptions::new().read(true).open(path) else {
+        return false;
+    };
+    // SAFETY: fd is a valid open file descriptor owned by `file`.
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        return std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock;
+    }
+    // SAFETY: as above; releases the probe lock we just took.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    false
+}
+
 pub fn read_info(path: &Path) -> Option<LockInfo> {
     serde_json::from_slice(&std::fs::read(path).ok()?).ok()
 }
@@ -64,6 +79,18 @@ mod tests {
         drop(first);
         assert!(DaemonLock::try_acquire(&p, &info(3)).unwrap().is_some());
         assert_eq!(read_info(&p).unwrap().pid, 3);
+    }
+
+    #[test]
+    fn is_held_reports_holder() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("daemon.lock");
+        assert!(!is_held(&p), "no file means not held");
+        let l = DaemonLock::try_acquire(&p, &info(1)).unwrap().unwrap();
+        assert!(is_held(&p));
+        assert_eq!(read_info(&p).unwrap().pid, 1, "probe must not clobber the holder's info");
+        drop(l);
+        assert!(!is_held(&p));
     }
 
     #[test]

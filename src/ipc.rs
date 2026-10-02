@@ -7,6 +7,15 @@ use std::io::{Read, Write};
 pub const IPC_VERSION: u32 = 1;
 pub const MAX_FRAME_LEN: u32 = 16 * 1024 * 1024;
 
+/// Daemon lifecycle as `hello` and `status` report it (bead hg-zmi.55).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonPhase {
+    Starting,
+    Ready,
+    Failed,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IpcCommand {
     pub kind: String,
