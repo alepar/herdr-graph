@@ -282,6 +282,7 @@ fn register_commands(
             writer: writer.clone(),
             clock: clock.clone(),
             instance: instance.clone(),
+            herdr: herdr.clone(),
         },
     );
     crate::threads::register_commands(reg, store.clone());

@@ -591,13 +591,10 @@ fn undo_from_new_pane(rig: &E2e) -> String {
     caller
 }
 
-/// PRODUCT DEFECT (found by this flow, reported to the coordinator, see docs/verification-matrix.md): undo run from a
-/// pane commits with `undo.adopt_pane pane=<caller>`, and the daemon admits the adopted binding only after the op
-/// has committed. The commit also wakes the reconciler, which sees the restored clone without a live pane and splits
-/// a NEW pane for it (a `bookkeeping` binding for that pane overwrites the adopted one). The caller's pane ends
-/// up unbound and untokened. Spec §6 and the bead expect the caller pane to become the restored clone.
+/// D1 regression (hg-zmi.51): undo run from a pane commits with `undo.adopt_pane pane=<caller>` and the undo commit
+/// itself binds the restored clone to that pane, so the reconciler woken by the commit has nothing to create. The
+/// caller's pane becomes the restored clone (spec §6) and no second pane is split.
 #[test]
-#[ignore = "product defect: undo adopt-pane races the reconciler's create (see docs/verification-matrix.md)"]
 fn e2e_undo_from_pane_adopts_caller_pane() {
     let rig = rig!();
     let (seat, clones) = seat_with_clones(&rig, "t", "foreman", 1);
@@ -618,10 +615,9 @@ fn e2e_undo_from_pane_adopts_caller_pane() {
     assert_eq!(rig.tab_labelled("foreman").unwrap().1.panes.len(), 1, "foreman's own tab keeps its surviving clone only");
 }
 
-/// The same defect when the undone action closed a whole TAB: the plan also carries `runtime.open_tab`, whose new
-/// tab's pane takes the restored clone's token and binding while the caller's pane stays untouched.
+/// D1 regression, tab variant: the undone action closed a whole TAB, so the plan also carries `runtime.open_tab`;
+/// the caller's pane is the restored clone's pane, so no tab is opened for it.
 #[test]
-#[ignore = "product defect: undo adopt-pane races the reconciler's create, tab variant (see docs/verification-matrix.md)"]
 fn e2e_undo_tab_close_from_pane_adopts_caller_pane() {
     let rig = rig!();
     rig.create_teamspace_with_seat("t", "foreman");

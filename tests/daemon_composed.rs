@@ -14,7 +14,7 @@ use herdr_graph::model::operation::OpState;
 use herdr_graph::plan::commands::PlanDeps;
 use herdr_graph::plan::store::PlanStore;
 use herdr_graph::ports::clock::ManualClock;
-use herdr_graph::ports::herdr::{AgentInfo, AgentSession, AgentStatus};
+use herdr_graph::ports::herdr::{AgentInfo, AgentSession, AgentStatus, HerdrApi};
 use herdr_graph::ports::store::Store;
 use herdr_graph::ports::writer::{Writer, WriterError};
 use herdr_graph::store::init::init_instance;
@@ -487,6 +487,168 @@ async fn session_end_flows_to_transcripts() {
     .await;
     let requests = d.with_view(|v| layout::list_requests(v).unwrap());
     assert_eq!(requests.len(), 1, "exactly one request for the ended session");
+    d.stop().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// undo adopts the caller's pane (spec §6; D1)
+// ---------------------------------------------------------------------------------------------
+
+fn clones_of_seat(d: &Daemon, seat: &str) -> Vec<herdr_graph::model::clone::CloneRecord> {
+    let id = graph_seat(d, seat).id;
+    d.with_view(|v| layout::all_clones(v).unwrap().into_iter().map(|(_, c)| c).filter(|c| c.seat == id).collect())
+}
+
+/// The newest undo candidate whose summary contains `what`.
+async fn undo_act(d: &Daemon, what: &str) -> String {
+    let list = d.call("undo.list", json!({})).await.unwrap();
+    let c = list["candidates"].as_array().unwrap().iter().find(|c| c["summary"].as_str().is_some_and(|s| s.contains(what)));
+    c.unwrap_or_else(|| panic!("no undo candidate containing {what:?}: {list}"))["act"].as_str().unwrap().to_owned()
+}
+
+fn herdr_creates(d: &Daemon) -> usize {
+    d.fakes.herdr.calls().iter().filter(|c| matches!(c, FakeCall::SplitPane(_) | FakeCall::CreateTab(_) | FakeCall::CreateWorkspace(_))).count()
+}
+
+/// plan.create `["undo", act]` from `caller_pane`, then `undo.apply` with the plan's hash.
+async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::HerdrPaneId) -> Value {
+    let caller = serde_json::to_value(CallerInfo { pane_id: Some(caller_pane.0.clone()), ..Default::default() }).unwrap();
+    let plan = d.call("plan.create", json!({ "words": ["undo", act], "_caller": caller })).await.unwrap();
+    assert!(
+        plan["plan"]["effects"].as_array().is_some_and(|e| e.iter().any(|e| e["kind"] == "undo.adopt_pane")),
+        "the preview names the adoption: {plan}"
+    );
+    let r = d.call("undo.apply", json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay", "_caller": caller })).await.unwrap();
+    assert_eq!(r["state"], "admitted", "{r}");
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let op = d.call("ops.get", json!({ "op": r["op"] })).await.unwrap();
+        let state = op["state"].as_str().or(op["op"]["state"].as_str()).unwrap_or("").to_owned();
+        if !matches!(state.as_str(), "admitted" | "applying" | "") {
+            assert_eq!(state, "committed", "{op}");
+            return r;
+        }
+        assert!(Instant::now() < deadline, "the undo never finished: {op}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The daemon is quiet: no Herdr call for a while.
+async fn settle(d: &Daemon) {
+    let mut last = d.fakes.herdr.calls().len();
+    let mut stable = 0;
+    for _ in 0..200 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let n = d.fakes.herdr.calls().len();
+        if n == last {
+            stable += 1;
+            if stable >= 8 {
+                return;
+            }
+        } else {
+            stable = 0;
+            last = n;
+        }
+    }
+    panic!("the daemon never went quiet");
+}
+
+async fn two_clone_seat(d: &Daemon) {
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
+    eventually("the first clone's pane", || bound_pane(d, "foreman").is_some()).await;
+    d.committed(&["clone", "add", "foreman"]).await;
+    eventually("both clones' panes", || {
+        let cs = clones_of_seat(d, "foreman");
+        cs.len() == 2 && cs.iter().all(|c| c.runtime.bound.as_ref().is_some_and(|b| b.pane_id.is_some()))
+    })
+    .await;
+    settle(d).await;
+}
+
+fn tab_of_pane(snap: &herdr_graph::ports::herdr::HerdrSnapshot, pane: &herdr_graph::model::HerdrPaneId) -> herdr_graph::model::HerdrTabId {
+    snap.workspaces.iter().flat_map(|w| w.tabs.iter()).find(|t| t.panes.iter().any(|p| &p.id == pane)).expect("pane in a tab").id.clone()
+}
+
+fn seat_lifecycle(d: &Daemon, name: &str) -> herdr_graph::model::common::Lifecycle {
+    d.with_view(|v| layout::all_seats(v).unwrap().into_iter().map(|(_, s)| s).filter(|s| s.name == name).max_by_key(|s| s.rev))
+        .map(|s| s.lifecycle)
+        .unwrap_or_else(|| panic!("no seat {name}"))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
+    use herdr_graph::model::common::{Availability, CloneLifecycle};
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    two_clone_seat(&d).await;
+    let victim = clones_of_seat(&d, "foreman").into_iter().find(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) != bound_pane(&d, "foreman")).unwrap();
+    let victim_pane = victim.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()).unwrap();
+    let tab = tab_of_pane(&d.fakes.herdr.snapshot().await.unwrap(), &victim_pane);
+
+    d.fakes.herdr.user_close_pane(&victim_pane);
+    eventually("the victim to retire", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == victim.id && c.retired.is_some())).await;
+    settle(&d).await;
+    let act = undo_act(&d, "closure").await;
+    let caller = d.fakes.herdr.add_user_pane(&tab, "caller");
+    d.fakes.herdr.clear_calls();
+
+    undo_from(&d, &act, &caller).await;
+    eventually("the victim to be active again", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == victim.id && c.retired.is_none())).await;
+    settle(&d).await;
+
+    assert_eq!(herdr_creates(&d), 0, "no pane or tab is created for the adopted clone: {:?}", d.fakes.herdr.calls());
+    let now = clones_of_seat(&d, "foreman").into_iter().find(|c| c.id == victim.id).unwrap();
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()), Some(caller.clone()));
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let pane = snap.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.panes.iter()).find(|p| p.id == caller).unwrap();
+    assert!(pane.metadata.values().any(|v| v.contains(&victim.id.to_string())), "the caller pane carries hg=<clone>: {:?}", pane.metadata);
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn undo_tab_close_from_pane_adopts_caller_pane() {
+    use herdr_graph::model::common::Lifecycle;
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
+    eventually("the pane", || bound_pane(&d, "foreman").is_some()).await;
+    settle(&d).await;
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let foreman_tab = tab_of_pane(&snap, &bound_pane(&d, "foreman").unwrap());
+    // The caller's own tab: a plain tab of the same workspace that belongs to no seat.
+    let ws = snap.workspaces[0].id.clone();
+    let scratch = d
+        .fakes
+        .herdr
+        .create_tab(herdr_graph::ports::herdr::CreateTab { workspace: ws, label: "scratch".into(), cwd: "/".into(), env: vec![] })
+        .await
+        .unwrap();
+    let scratch_tab = scratch.tab.unwrap();
+    let clone = clone_of(&d, "foreman");
+
+    d.fakes.herdr.user_close_tab(&foreman_tab);
+    eventually("the seat to retire", || seat_lifecycle(&d, "foreman") == Lifecycle::Retired).await;
+    settle(&d).await;
+    let act = undo_act(&d, "closure").await;
+    let caller = d.fakes.herdr.add_user_pane(&scratch_tab, "caller");
+    d.fakes.herdr.clear_calls();
+
+    undo_from(&d, &act, &caller).await;
+    eventually("the seat to be active again", || seat_lifecycle(&d, "foreman") == Lifecycle::Active).await;
+    settle(&d).await;
+
+    assert_eq!(herdr_creates(&d), 0, "no tab is created for the adopted clone: {:?}", d.fakes.herdr.calls());
+    let now = clone_of(&d, "foreman");
+    assert_eq!(now.id, clone.id);
+    assert_eq!(now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()), Some(caller.clone()));
+    assert_eq!(now.runtime.availability, herdr_graph::model::common::Availability::Present);
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let pane = snap.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.panes.iter()).find(|p| p.id == caller).unwrap();
+    assert!(pane.metadata.values().any(|v| v.contains(&clone.id.to_string())), "the caller pane carries hg=<clone>: {:?}", pane.metadata);
     d.stop().await;
 }
 

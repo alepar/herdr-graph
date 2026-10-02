@@ -169,6 +169,19 @@ pub fn admit_apply(
     confirm: Option<&str>,
     mode: &str,
 ) -> Result<OpId, CommandError> {
+    admit_apply_with(deps, caller, plan, confirm, mode, serde_json::Map::new())
+}
+
+/// `admit_apply` with `extra` request arguments: observed inputs the handler gathered at admission (they are
+/// facts, not confirmed effects, so they stay out of the plan hash).
+pub fn admit_apply_with(
+    deps: &PlanDeps,
+    caller: &CallerInfo,
+    plan: &str,
+    confirm: Option<&str>,
+    mode: &str,
+    extra: serde_json::Map<String, Value>,
+) -> Result<OpId, CommandError> {
     let stored = load_plan(deps, plan)?;
     let Some(confirm) = confirm else {
         return Err(CommandError::bad_request("confirmation required; there is no bypass"));
@@ -192,6 +205,7 @@ pub fn admit_apply(
         Value::Object(m) => m.clone(),
         _ => serde_json::Map::new(),
     };
+    args.extend(extra);
     args.insert("_plan".into(), json!(stored.plan.id));
     let confirmation = Confirmation { mode, plan_hash: stored.hash.clone(), at: deps.clock.now() };
     args.insert("_confirmation".into(), serde_json::to_value(confirmation).expect("confirmation serializes"));
