@@ -257,10 +257,13 @@ impl Transcripts {
     pub(crate) fn note_identity(&self, path: &Path, state: &requests::FileState) -> bool {
         let key = format!("transcripts:ident:{}", path.display());
         let now = state.identity();
-        let last = self.journal.meta_get(&key).ok().flatten();
-        if last.as_deref() != Some(now.as_str()) {
-            let _ = self.journal.meta_set(&key, &now);
-        }
+        let last = match self.journal.meta_swap(&key, &now) {
+            Ok(last) => last,
+            Err(e) => {
+                eprintln!("herdr-graph: transcripts: recording identity of {} failed: {e}", path.display());
+                return false;
+            }
+        };
         last.is_some_and(|l| l != now)
     }
 

@@ -377,3 +377,87 @@ fn notice_done_removes_from_due() {
     assert_eq!(j.get_notice("k1").unwrap().unwrap().state, "void");
     assert_eq!(j.next_notice_at().unwrap(), None);
 }
+
+#[test]
+fn meta_swap_returns_previous() {
+    let (_t, j) = open();
+    assert_eq!(j.meta_swap("k", "a").unwrap(), None);
+    assert_eq!(j.meta_swap("k", "b").unwrap().as_deref(), Some("a"));
+    assert_eq!(j.meta_swap("k", "b").unwrap().as_deref(), Some("b"));
+    assert_eq!(j.meta_get("k").unwrap().as_deref(), Some("b"));
+}
+
+#[test]
+fn meta_swap_concurrent_one_winner() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("journal.sqlite3");
+    let first = Journal::open(&path).unwrap();
+    first.meta_set("k", "old").unwrap();
+    // Separate connections, so the transaction (not the in-process mutex) must provide the atomicity.
+    let journals: Vec<Journal> = (0..8).map(|_| Journal::open(&path).unwrap()).collect();
+    let barrier = std::sync::Barrier::new(journals.len());
+    let seen: Vec<Option<String>> = std::thread::scope(|s| {
+        let handles: Vec<_> = journals
+            .iter()
+            .map(|j| {
+                let barrier = &barrier;
+                s.spawn(move || {
+                    barrier.wait();
+                    j.meta_swap("k", "new").unwrap()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert_eq!(seen.iter().filter(|v| v.as_deref() == Some("old")).count(), 1, "{seen:?}");
+    assert_eq!(seen.iter().filter(|v| v.as_deref() == Some("new")).count(), 7, "{seen:?}");
+}
+
+fn follow_ups(j: &Journal) -> usize {
+    j.list(&[], 100).unwrap().iter().filter(|r| r.request.args["sub"] == "follow").count()
+}
+
+#[test]
+fn reassign_requester_refuses_cancelled() {
+    let (_t, j) = open();
+    let op = j.admit(&req("a"), t0()).unwrap();
+    j.cancel(&op, t0()).unwrap();
+    let who = Requester { human: true, ..Default::default() };
+    let out = j.reassign_requester(&op, &who, &req("follow"), t0()).unwrap();
+    assert_eq!(out, ReassignOutcome::NotReassignable(OpState::Cancelled));
+    assert_eq!(j.get(&op).unwrap().unwrap().request.requester, Requester::default(), "requester untouched");
+    assert_eq!(follow_ups(&j), 0);
+    let out = j.reassign_requester(&OpId::new(), &who, &req("follow"), t0()).unwrap();
+    assert_eq!(out, ReassignOutcome::Unknown);
+}
+
+#[test]
+fn reassign_requester_admits_follow_up_for_committed_and_admitted() {
+    let (_t, j) = open();
+    let who = Requester { human: true, ..Default::default() };
+
+    let admitted = j.admit(&req("a"), t0()).unwrap();
+    let out = j.reassign_requester(&admitted, &who, &req("follow"), t0()).unwrap();
+    assert_eq!(out, ReassignOutcome::Reassigned(OpState::Admitted));
+    assert_eq!(j.get(&admitted).unwrap().unwrap().request.requester, who);
+    assert_eq!(follow_ups(&j), 1);
+
+    let committed = j.admit(&req("b"), t0()).unwrap();
+    j.begin_applying(&committed, t0()).unwrap();
+    j.finish_committed(&committed, &CommitId("c1".into()), None, t0()).unwrap();
+    let out = j.reassign_requester(&committed, &who, &req("follow"), t0()).unwrap();
+    assert_eq!(out, ReassignOutcome::Reassigned(OpState::Committed));
+    assert_eq!(follow_ups(&j), 2);
+    let rows = j.list(&[], 100).unwrap();
+    let follow_seq = rows.iter().filter(|r| r.request.args["sub"] == "follow").map(|r| r.seq).min().unwrap();
+    assert!(follow_seq > rows.iter().find(|r| r.op == admitted).unwrap().seq, "follow-up runs after the op");
+
+    let rejected = j.admit(&req("c"), t0()).unwrap();
+    j.begin_applying(&rejected, t0()).unwrap();
+    j.finish_rejected(&rejected, &Rejection { reason: "r".into(), explanation: "e".into(), current_revs: vec![] }, t0())
+        .unwrap();
+    let out = j.reassign_requester(&rejected, &who, &req("follow"), t0()).unwrap();
+    assert_eq!(out, ReassignOutcome::Reassigned(OpState::Rejected));
+    assert_eq!(j.get(&rejected).unwrap().unwrap().request.requester, who);
+    assert_eq!(follow_ups(&j), 2, "no follow-up for a rejected op");
+}

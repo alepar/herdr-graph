@@ -2,7 +2,7 @@
 //! query used by `/seat`, and supersession validation (spec §3.7, §10). Owned by hg-zmi.17.
 use super::grammar::{self, Scope};
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};
-use crate::journal::{CancelOutcome, Journal, JournalError, OpRow};
+use crate::journal::{CancelOutcome, Journal, JournalError, OpRow, ReassignOutcome};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::common::Lifecycle;
 use crate::model::operation::{OpState, OperationRecord, Rejection};
@@ -13,7 +13,7 @@ use crate::ports::store::{Store, StoreError, read_record};
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::CommitView;
-use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, Reject};
+use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -205,25 +205,28 @@ fn live_seat_record(store: &dyn Store, seat: &SeatId) -> Result<SeatRecord, OpsE
 /// `bookkeeping.reassign` op admitted straight into the journal (the writer picks it up on its next pass).
 pub fn reassign(journal: &Journal, store: &dyn Store, op: &OpId, to: &SeatId, now: Timestamp) -> Result<(), OpsError> {
     let row = journal.get(op)?.ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
-    if matches!(row.state, OpState::Cancelled | OpState::Superseded) {
-        return Err(OpsError::Invalid(format!("op {op} is already resolved ({:?}); nothing to reassign", row.state)));
-    }
     let seat = live_seat_record(store, to)?;
     let old = &row.request.requester;
     let requester = Requester { teamspace: Some(seat.teamspace.clone()), seat: Some(seat.id.clone()), clone: None, native_session: None, human: old.human };
-    journal.set_requester(op, &requester, now)?;
-    journal.meta_delete(&reminder_count_key(op))?;
-    if row.state == OpState::Committed {
-        let req = ChangeRequest {
-            kind: RequestKind::Bookkeeping,
-            args: json!({ "sub": "reassign", "op": op, "requester": requester }),
-            relied_on: vec![],
-            requester: Requester::default(),
-            supersedes: None,
-            confirmed: None,
-        };
-        journal.admit(&req, now)?;
+    // The writer builds the git operation record from the request it read before the reassign, so the follow-up
+    // is admitted for admitted/applying ops too; it runs after the op (higher seq). The state check, the
+    // requester update and the follow-up admission are one journal transaction.
+    let follow_up = ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args: json!({ "sub": "reassign", "op": op, "requester": requester }),
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    };
+    match journal.reassign_requester(op, &requester, &follow_up, now)? {
+        ReassignOutcome::Reassigned(_) => {}
+        ReassignOutcome::NotReassignable(s) => {
+            return Err(OpsError::Invalid(format!("op {op} is already resolved ({s:?}); nothing to reassign")));
+        }
+        ReassignOutcome::Unknown => return Err(OpsError::Invalid(format!("unknown operation {op}"))),
     }
+    journal.meta_delete(&reminder_count_key(op))?;
     Ok(())
 }
 
@@ -291,9 +294,10 @@ impl Mutation for ReassignRecord {
             .get("requester")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .ok_or_else(|| MutationError::Bug("bookkeeping.reassign needs a requester".into()))?;
-        let reject = |why: String| MutationError::Reject(Reject { reason: "unknown_operation".into(), explanation: why, current_revs: vec![] });
-        let loc = layout::locate(&cx.tree, &op.to_any())?.ok_or_else(|| reject(format!("no operation record for {op}")))?;
-        let mut rec: OperationRecord = read_toml(&cx.tree, &loc.record_path)?.ok_or_else(|| reject(format!("no operation record for {op}")))?;
+        // An op that ended rejected or failed has no operation record: nothing to update.
+        let no_record = || Applied { summary: format!("no operation record for {op}; nothing to update"), action: None };
+        let Some(loc) = layout::locate(&cx.tree, &op.to_any())? else { return Ok(no_record()) };
+        let Some(mut rec) = read_toml::<OperationRecord>(&cx.tree, &loc.record_path)? else { return Ok(no_record()) };
         rec.requester = requester;
         cx.tree.put_record(loc.record_path, &mut rec)?;
         Ok(Applied { summary: format!("reassign {op}"), action: None })
@@ -524,6 +528,51 @@ mod tests {
         assert_eq!(rec.requester.seat, Some(two.id));
         let row = j(&fx).get(&done.op).unwrap().unwrap();
         assert_eq!(row.request.requester.seat, rec.requester.seat);
+    }
+
+    #[test]
+    fn reassign_admitted_op_updates_record_after_commit() {
+        let fx = fx();
+        two_seats(&fx);
+        let two = seat(&fx, "two");
+        let sp = plan(&fx, "seat rename one uno");
+        let op = crate::plan::commands::admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap();
+        assert_eq!(j(&fx).get(&op).unwrap().unwrap().state, OpState::Admitted);
+        reassign(j(&fx), &*fx.store, &op, &two.id, t0()).unwrap();
+        assert_eq!(fx.w.drain().unwrap().len(), 2, "the op and the follow-up bookkeeping op");
+        let row = j(&fx).get(&op).unwrap().unwrap();
+        assert_eq!(row.state, OpState::Committed);
+        let v = view(&fx);
+        let loc = layout::locate(&v, &op.to_any()).unwrap().unwrap();
+        let rec: OperationRecord = read_toml(&v, &loc.record_path).unwrap().unwrap();
+        assert_eq!(rec.requester.seat, Some(two.id.clone()), "the committed record names the new requester");
+        assert_eq!(row.request.requester.seat, Some(two.id));
+    }
+
+    #[test]
+    fn reassign_follow_up_for_rejected_op_is_noop() {
+        let fx = fx();
+        two_seats(&fx);
+        let two = seat(&fx, "two");
+        let req = ChangeRequest {
+            kind: RequestKind::SeatRetire,
+            args: json!({ "seat": "nobody" }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+        };
+        let op = fx.w.admit(req).unwrap();
+        reassign(j(&fx), &*fx.store, &op, &two.id, t0()).unwrap();
+        assert_eq!(fx.w.drain().unwrap().len(), 2);
+        assert_eq!(j(&fx).get(&op).unwrap().unwrap().state, OpState::Rejected);
+        let follow = j(&fx)
+            .list(&[], 50)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.request.args["sub"] == "reassign")
+            .expect("follow-up admitted");
+        assert_eq!(follow.state, OpState::Committed, "the follow-up commits as a no-op, not a rejection");
+        assert!(follow.rejection.is_none());
     }
 
     #[test]
