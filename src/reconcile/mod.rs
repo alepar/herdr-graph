@@ -48,8 +48,11 @@ pub struct ReconcilerConfig {
     pub instance: PathBuf,
     /// Send the exit fallback if the agent is still running this long after the exit sequence (3 s).
     pub exit_followup: Duration,
-    /// How soon a `Deferred` effect is looked at again when no Herdr event arrives.
+    /// First re-check delay of an open-ended `Deferred` wait, and the polling period of a time-bound wait
+    /// between its deadlines.
     pub deferred_recheck: Duration,
+    /// Cap of the open-ended deferral backoff (`deferred_recheck` doubles up to this).
+    pub deferred_max: Duration,
 }
 
 impl ReconcilerConfig {
@@ -62,6 +65,7 @@ impl ReconcilerConfig {
             instance,
             exit_followup: Duration::from_secs(3),
             deferred_recheck: Duration::from_secs(2),
+            deferred_max: Duration::from_secs(60),
         }
     }
 }
@@ -323,6 +327,7 @@ impl Reconciler {
         if !matches!(status, EffectStatus::Pending | EffectStatus::Unknown) {
             let _ = self.journal.meta_delete(&format!("retry_at:{}", row.id));
             let _ = self.journal.meta_delete(&format!("wake_at:{}", row.id));
+            let _ = self.journal.meta_delete(&format!("defer_n:{}", row.id));
             session::clear_state(&self.journal, &row.id);
         }
     }
@@ -417,6 +422,9 @@ impl Reconciler {
                 // The same point per effect kind: effect order within an op is by hash, so a crash test that
                 // needs "right after the CreateTab" arms `reconcile.mid_effect.create_tab`, not the generic name.
                 crate::failpoint!(&format!("reconcile.mid_effect.{}", row.kind.as_str()));
+                if !matches!(outcome, ExecOutcome::Deferred(_)) {
+                    let _ = self.journal.meta_delete(&format!("defer_n:{}", row.id));
+                }
                 ran.insert(row.id.clone());
                 let now = self.clock.now();
                 row.attempts += 1;
@@ -467,7 +475,26 @@ impl Reconciler {
                         row.attempts -= 1;
                         row.last_error = Some(why);
                         let _ = self.journal.upsert_effect(&row);
-                        let at = now + chrono::Duration::from_std(self.cfg.deferred_recheck).unwrap_or_default();
+                        let n = self
+                            .journal
+                            .meta_get(&format!("defer_n:{}", row.id))
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        let _ = self.journal.meta_set(&format!("defer_n:{}", row.id), &n.to_string());
+                        let wait = backoff::deferred(self.cfg.deferred_recheck, self.cfg.deferred_max, n);
+                        let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
+                        let _ = self.journal.meta_set(&format!("wake_at:{}", row.id), &at.to_rfc3339());
+                        ran.remove(&row.id);
+                        waiting.insert(row.id.clone());
+                        continue;
+                    }
+                    ExecOutcome::DeferredUntil(at, why) => {
+                        row.attempts -= 1;
+                        row.last_error = Some(why);
+                        let _ = self.journal.upsert_effect(&row);
                         let _ = self.journal.meta_set(&format!("wake_at:{}", row.id), &at.to_rfc3339());
                         ran.remove(&row.id);
                         waiting.insert(row.id.clone());

@@ -906,6 +906,9 @@ async fn relaunch_waits_grace_after_incarnation_change() {
     assert!(early.deferred.contains(&ef), "{early:?}");
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
     assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().attempts, 0, "waiting is not an attempt");
+    let changed = fx.journal.meta_get("incarnation:changed_at").unwrap().expect("incarnation:changed_at");
+    let at = chrono::DateTime::parse_from_rfc3339(&changed).unwrap().to_utc();
+    assert_eq!(fx.rec.next_wake(), Some(at + chrono::Duration::seconds(90)), "wakes at the end of the grace");
 
     fx.clock.advance(chrono::Duration::seconds(60));
     step(&fx).await;
@@ -1045,6 +1048,102 @@ async fn custom_family_registers_source_and_executor() {
     assert!(report.executed.iter().any(|(_, s)| *s == EffectStatus::Done));
     step(&fx).await;
     assert_eq!(*exec.0.lock().unwrap(), 1, "a done effect is not re-run");
+}
+
+#[tokio::test]
+async fn replacement_exit_followup_wakes_at_three_seconds() {
+    let fx = fx_with(|cfg| {
+        cfg.idle_timeout = Duration::from_secs(600);
+        cfg.exit_timeout = Duration::from_secs(30);
+        cfg.exit_followup = Duration::from_secs(3);
+        cfg.deferred_recheck = Duration::from_secs(2);
+    });
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, non_shell());
+    set_model(&fx, &s, "opus-x");
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 2);
+    let t1 = fx.clock.now();
+    assert_eq!(fx.rec.next_wake(), Some(t1 + chrono::Duration::seconds(2)));
+
+    fx.clock.set(t1 + chrono::Duration::seconds(2));
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 2);
+    assert_eq!(fx.rec.next_wake(), Some(t1 + chrono::Duration::seconds(3)));
+
+    fx.clock.set(t1 + chrono::Duration::seconds(3));
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 3, "the /exit fallback goes out at the follow-up deadline");
+    assert_eq!(fx.rec.next_wake(), Some(t1 + chrono::Duration::seconds(5)));
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+}
+
+struct WaitSource(AnyId);
+impl EffectSource for WaitSource {
+    fn effects(&self, cx: &DiffCx<'_>) -> Vec<PlannedEffect> {
+        let kind = EffectKind::Custom("demo.wait".into());
+        let op = OpId::from_ulid(ulid::Ulid::nil());
+        let id = EffectRecord::identity(&op, &self.0, &kind, 1);
+        vec![PlannedEffect {
+            record: EffectRecord {
+                id,
+                op,
+                object: self.0.clone(),
+                kind,
+                object_rev: 1,
+                fencing_rev: 1,
+                status: EffectStatus::Pending,
+                predicted: vec![],
+                nonce_label: None,
+                attempts: 0,
+                last_error: None,
+                updated_at: cx.now,
+            },
+            deps: vec![],
+        }]
+    }
+}
+
+struct WaitExec {
+    calls: Mutex<u32>,
+    ready: std::sync::atomic::AtomicBool,
+}
+#[async_trait::async_trait]
+impl EffectExecutor for WaitExec {
+    fn handles(&self, kind: &EffectKind) -> bool {
+        matches!(kind, EffectKind::Custom(k) if k == "demo.wait")
+    }
+    async fn execute(&self, _cx: &ExecCx<'_>, _e: &EffectRecord) -> ExecOutcome {
+        *self.calls.lock().unwrap() += 1;
+        if self.ready.load(std::sync::atomic::Ordering::SeqCst) { ExecOutcome::Done } else { ExecOutcome::Deferred("not yet".into()) }
+    }
+}
+
+#[tokio::test]
+async fn open_ended_deferral_backs_off_to_the_cap() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    let exec = Arc::new(WaitExec { calls: Mutex::new(0), ready: std::sync::atomic::AtomicBool::new(false) });
+    fx.rec.register_source(Arc::new(WaitSource(SeatId::new().to_any())));
+    fx.rec.register_executor(exec.clone());
+    let mut gaps = vec![];
+    for _ in 0..8 {
+        step(&fx).await;
+        let gap = (fx.rec.next_wake().unwrap() - fx.clock.now()).num_seconds();
+        gaps.push(gap);
+        fx.clock.advance(chrono::Duration::seconds(gap));
+    }
+    assert_eq!(gaps, [2, 4, 8, 16, 32, 60, 60, 60]);
+
+    exec.ready.store(true, std::sync::atomic::Ordering::SeqCst);
+    step(&fx).await;
+    let row = rows(&fx, EffectKind::Custom("demo.wait".into())).remove(0);
+    assert_eq!(row.status, EffectStatus::Done);
+    assert_eq!(row.attempts, 1, "deferrals are not attempts");
+    assert_eq!(fx.rec.next_wake(), None);
+    assert_eq!(fx.journal.meta_get(&format!("defer_n:{}", row.id)).unwrap(), None);
+    assert_eq!(fx.journal.meta_get(&format!("wake_at:{}", row.id)).unwrap(), None);
 }
 
 #[tokio::test]

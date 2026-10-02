@@ -324,7 +324,10 @@ impl HerdrExecutor {
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
         let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Transient("pane is not present".into()) };
         if relaunch && let Some(wait) = self.grace_remaining(cx) {
-            return ExecOutcome::Deferred(format!("{}s of relaunch grace left after the incarnation change", wait.num_seconds().max(1)));
+            return ExecOutcome::DeferredUntil(
+                cx.now + wait,
+                format!("{}s of relaunch grace left after the incarnation change", wait.num_seconds().max(1)),
+            );
         }
         // §4.1 readiness: no agent on the pane and the foreground is the shell.
         if lp.pane.agent.is_some() {

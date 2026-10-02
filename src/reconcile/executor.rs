@@ -52,8 +52,12 @@ pub enum ExecOutcome {
     Failed(String),
     /// No longer implied by the committed state.
     Obsolete,
-    /// Not yet allowed to run (grace period); stays pending without counting an attempt.
+    /// Waiting on something with no known time (a threads seat, a channel, a summarizer occupant). Stays pending
+    /// without counting an attempt; re-checked with exponential backoff and on every step.
     Deferred(String),
+    /// Not yet allowed to run, and the executor knows when to look again (a replacement phase deadline, the
+    /// relaunch grace end). Stays pending without counting an attempt; the loop wakes at that time.
+    DeferredUntil(Timestamp, String),
 }
 
 #[async_trait::async_trait]
