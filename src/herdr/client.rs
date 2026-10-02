@@ -6,6 +6,7 @@ use crate::model::{HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation};
 use crate::ports::herdr::*;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,7 +29,9 @@ pub struct HerdrClient {
     timeout: Duration,
     generation: Arc<AtomicU64>,
     incarnation: Arc<Mutex<Incarnation>>,
-    probed: AtomicBool,
+    /// The cached incarnation may describe a server that is gone: the connection was lost (or never probed)
+    /// since it was taken. The next snapshot re-probes before it is stamped.
+    live: Arc<Liveness>,
     next_id: AtomicU64,
 }
 
@@ -135,13 +138,69 @@ async fn open_subscription(socket: &Path, id: String, limit: Duration) -> Result
     Err(last)
 }
 
-async fn refresh_incarnation(socket: &Path, generation: &AtomicU64, slot: &Mutex<Incarnation>) {
+/// The connection to the server was lost: whatever answers next may be a different server process, so the
+/// generation moves now (once per loss) and the cached incarnation is stale until it is probed again. Without
+/// this a snapshot of a restarted server, taken before the reader reconnected, would carry the dead server's
+/// incarnation and match bound panes by their reused pane ids.
+struct Liveness {
+    stale: AtomicBool,
+    /// Identity of the socket file the cached incarnation was probed under. A restarted server removes and
+    /// re-binds its socket, so a different identity means a different server even when the reader has not
+    /// noticed the old connection end yet (a dying server can hold it open past the restart).
+    sock: Mutex<Option<SockId>>,
+}
+
+/// `(device, inode, ctime seconds, ctime nanoseconds)` of the socket file.
+type SockId = (u64, u64, i64, i64);
+
+fn sock_id(socket: &Path) -> Option<SockId> {
+    std::fs::symlink_metadata(socket).ok().map(|m| (m.dev(), m.ino(), m.ctime(), m.ctime_nsec()))
+}
+
+impl Liveness {
+    fn new() -> Self {
+        Self { stale: AtomicBool::new(true), sock: Mutex::new(None) }
+    }
+
+    fn mark_lost(&self, generation: &AtomicU64) {
+        if !self.stale.swap(true, Ordering::SeqCst) {
+            generation.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Called before a request: the socket file is not the one the incarnation was probed under.
+    fn check_socket(&self, socket: &Path, generation: &AtomicU64) {
+        let recorded = *self.sock.lock().unwrap();
+        if let (Some(then), Some(now)) = (recorded, sock_id(socket))
+            && then != now
+        {
+            self.mark_lost(generation);
+        }
+    }
+}
+
+/// Whether a failed request means the server went away (or is going away) rather than rejected the request.
+fn server_lost(e: &HerdrError) -> bool {
+    matches!(e, HerdrError::Unavailable(_) | HerdrError::Timeout) || wire::is_code(e, "server_unavailable")
+}
+
+async fn refresh_incarnation(socket: &Path, generation: &AtomicU64, slot: &Mutex<Incarnation>, live: &Liveness) {
+    // The incarnation stays stale until the probe result is stored: a snapshot taken meanwhile re-probes
+    // instead of reading the previous server's incarnation.
+    let identity = sock_id(socket);
+    *live.sock.lock().unwrap() = identity;
     let g = generation.load(Ordering::SeqCst);
     let sock = socket.to_path_buf();
     let inc = tokio::task::spawn_blocking(move || incarnation::probe(&sock, g))
         .await
         .unwrap_or(Incarnation { generation: g, server_pid: None, server_started: None });
     *slot.lock().unwrap() = inc;
+    if sock_id(socket) == identity {
+        live.stale.store(false, Ordering::SeqCst);
+    } else {
+        // The server was replaced while it was probed: this probe may describe either one.
+        generation.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 struct Reader {
@@ -150,6 +209,7 @@ struct Reader {
     id: String,
     generation: Arc<AtomicU64>,
     incarnation: Arc<Mutex<Incarnation>>,
+    live: Arc<Liveness>,
     tx: mpsc::Sender<HerdrEvent>,
 }
 
@@ -176,6 +236,7 @@ impl Reader {
                     },
                 }
             }
+            self.live.mark_lost(&self.generation);
             let mut delay = BACKOFF_START;
             conn = loop {
                 tokio::select! {
@@ -187,8 +248,9 @@ impl Reader {
                     Err(_) => delay = (delay * 2).min(BACKOFF_MAX),
                 }
             };
-            let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            refresh_incarnation(&self.socket, &self.generation, &self.incarnation).await;
+            // The loss already moved the generation; the probe now names the server that answered.
+            refresh_incarnation(&self.socket, &self.generation, &self.incarnation, &self.live).await;
+            let generation = self.generation.load(Ordering::SeqCst);
             let marker = HerdrEvent { name: RECONNECTED_EVENT.to_owned(), payload: json!({ "generation": generation }) };
             if self.tx.send(marker).await.is_err() {
                 return;
@@ -205,7 +267,7 @@ impl HerdrClient {
             timeout: Duration::from_secs(10),
             generation: Arc::new(AtomicU64::new(0)),
             incarnation: Arc::new(Mutex::new(Incarnation::default())),
-            probed: AtomicBool::new(false),
+            live: Arc::new(Liveness::new()),
             next_id: AtomicU64::new(0),
         }
     }
@@ -241,8 +303,7 @@ impl HerdrClient {
 
     /// Re-probe the server pid and start time under the current generation.
     pub async fn refresh_incarnation(&self) {
-        refresh_incarnation(&self.socket, &self.generation, &self.incarnation).await;
-        self.probed.store(true, Ordering::SeqCst);
+        refresh_incarnation(&self.socket, &self.generation, &self.incarnation, &self.live).await;
     }
 
     async fn ok(&self, method: &'static str, params: Value) -> Result<(), HerdrError> {
@@ -253,9 +314,18 @@ impl HerdrClient {
 #[async_trait::async_trait]
 impl HerdrApi for HerdrClient {
     async fn snapshot(&self) -> Result<HerdrSnapshot, HerdrError> {
-        let v = self.request(wire::M_SNAPSHOT, json!({})).await?;
+        self.live.check_socket(&self.socket, &self.generation);
+        let v = match self.request(wire::M_SNAPSHOT, json!({})).await {
+            Ok(v) => v,
+            Err(e) => {
+                if server_lost(&e) {
+                    self.live.mark_lost(&self.generation);
+                }
+                return Err(e);
+            }
+        };
         let mut snap = wire::parse_snapshot(&v)?;
-        if !self.probed.load(Ordering::SeqCst) {
+        if self.live.stale.load(Ordering::SeqCst) {
             self.refresh_incarnation().await;
         }
         snap.incarnation = self.incarnation.lock().unwrap().clone();
@@ -274,6 +344,7 @@ impl HerdrApi for HerdrClient {
             id,
             generation: self.generation.clone(),
             incarnation: self.incarnation.clone(),
+            live: self.live.clone(),
             tx,
         };
         tokio::spawn(reader.run(conn));
