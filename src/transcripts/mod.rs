@@ -428,6 +428,10 @@ impl Transcripts {
     }
 
     async fn run_liveness(self: Arc<Self>, mut sd: Shutdown) -> anyhow::Result<()> {
+        // The "on daemon start" pass: the writer loop runs by now, so recovered requests can commit.
+        if let Err(e) = self.recover_session_requests().await {
+            eprintln!("herdr-graph: transcripts: session-end recovery failed: {}", e.message);
+        }
         loop {
             tokio::select! {
                 _ = sd.wait() => return Ok(()),

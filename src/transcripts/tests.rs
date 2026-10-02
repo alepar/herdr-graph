@@ -461,6 +461,70 @@ async fn summaries_false_seat_creates_no_request() {
     assert!(all_transcripts(&fx).is_empty());
 }
 
+/// The crash window: the occupancy end is committed, the `SessionEnded` event never reached the service.
+async fn crash_window(fx: &Fx, lines: usize) -> (CloneRecord, std::path::PathBuf, SessionEnded) {
+    let worker = base(fx).await;
+    let path = write_transcript(fx, "w", lines);
+    start_session(fx, &worker.id, "s-1", Some(&path));
+    let ev = end_session(fx, &worker.id, SessionEndReason::AgentExited);
+    assert!(live_requests(fx).is_empty(), "the event was lost: no request yet");
+    (worker, path, ev)
+}
+
+#[tokio::test]
+async fn lost_session_end_request_is_recovered_exactly_once() {
+    let fx = fx();
+    let (_, _, ev) = crash_window(&fx, 5).await;
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 1);
+    let live = live_requests(&fx);
+    assert_eq!(live.len(), 1, "{live:#?}");
+    assert_eq!(live[0].range, br(0, 100));
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "steady state commits nothing");
+    assert_eq!(live_requests(&fx).len(), 1);
+    fx.tr.on_session_ended(ev).await;
+    assert_eq!(live_requests(&fx).len(), 1, "the late original event dedups");
+}
+
+#[tokio::test]
+async fn recovery_skips_summaries_false_seat() {
+    let fx = fx();
+    plan_and_apply(&fx, "teamspace create alpha");
+    plan_and_apply(&fx, "seat create cron --teamspace alpha --active --harness shell --role system");
+    steps(&fx, 3).await;
+    let c = clone_of(&fx, "cron");
+    let path = write_transcript(&fx, "s1", 5);
+    start_session(&fx, &c.id, "native-1", Some(&path));
+    end_session(&fx, &c.id, SessionEndReason::AgentExited);
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0);
+    assert!(all_requests(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn recovery_requests_only_the_uncovered_tail() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "s1", 5);
+    finish_session(&fx, &worker, "native-1", &path).await;
+    let first = the_request(&fx);
+    fx.tr.cmd_complete(complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "fully covered");
+    append_lines(&path, 3);
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 1);
+    let live = live_requests(&fx);
+    assert_eq!(live.len(), 2, "{live:#?}");
+    assert!(live.iter().any(|r| r.id != first.id && r.range == br(100, 160)));
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0);
+    assert_eq!(live_requests(&fx).len(), 2);
+}
+
+#[tokio::test]
+async fn liveness_scan_runs_recovery() {
+    let fx = fx();
+    crash_window(&fx, 5).await;
+    fx.tr.liveness_scan().await.unwrap();
+    assert_eq!(live_requests(&fx).len(), 1);
+}
+
 #[tokio::test]
 async fn disabling_summaries_keeps_pending_request() {
     let fx = fx();
