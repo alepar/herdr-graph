@@ -2,7 +2,7 @@
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
 resumeChange: 2026-10-02 · "/goal create working MVP for herdr-graph, pushed to new github.com/alepar/herdr-graph repo" · autonomous=t from here (no further questions; remaining root-brainstorm sections decided Mode B); scope narrowed from Q5 "full contract" to a working MVP across all pillars with listed deferrals; goal adds creating a private GitHub repo alepar/herdr-graph and pushing
-phase: roast-design
+phase: code
 
 idea: Implement the approved herdr-graph design. Start by reading IMPLEMENTATION-HANDOFF.md, then CURRENT-DESIGN.md and DESIGN-NOTES.md in the documented precedence order. The user explicitly authorized implementation and considers the design converged; historical design-only restrictions are superseded. Preserve approved decisions, resolve routine implementation details, and retain required checkpoints without re-asking settled design questions. Git and local embedded-Dolt Beads have been initialized and the design baseline committed; verify prerequisites. The Herdr skill is installed at .claude/skills/herdr/SKILL.md. Use the handoff for scope, integration evidence and validation expectations. Do not restart the memory observer or disturb existing user sessions.
 spec: 2026-10-02-herdr-graph-mvp-design.md
@@ -21,6 +21,9 @@ parked:
 - 2026-10-02-herdr-graph-mvp-roast-design-1.md · escalation · "terminal_id reuse across Herdr restart unverified — designed defensively (graph token via pane metadata; raw ids never trusted across incarnations), spike in hg-zmi.5"
 - 2026-10-02-herdr-graph-mvp-roast-design-2.md · escalation · "Herdr resume_agents_on_restore resumes agents in restored panes outside graph's start path — designed defensively (adopt as occupancy start, 90s relaunch grace, idle-shell recheck), spike in hg-zmi.5"
 - 2026-10-02-herdr-graph-mvp-roast-design-2.md · escalation · "Herdr live handoff (herdr update) vs incarnation rule — designed defensively (terminal_id match across incarnations when cwd/agent session agree), spike in hg-zmi.5"
+- graph-pass · graph-change · "hg-zmi.19 <- hg-zmi.16 drop (safe no) — move tier-4 matrix row-fill to .16 or sweep; depth 11→10"
+- graph-pass · graph-change · "proposal: seam-contract for observer/reconciler boundary (hg-zmi.7/.8/.11/.12/.13) — depth could reach 9"
+graph-pass: depth 11→11 · width 1.8→1.8 · applied 0 · parked 2
 designRoastExit: converged at round 2 — Should-fix (14 confirmed) [converged], 0 Blocking; punch list of 14 applied inline to spec + beads (no re-roast per loop rule); 2 new escalations parked above
 
 approvals:

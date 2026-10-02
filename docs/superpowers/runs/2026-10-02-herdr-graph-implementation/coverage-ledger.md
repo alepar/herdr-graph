@@ -40,3 +40,6 @@ c38 · r2 · UNOWNED-SEAM · session-id capture rule · applied — hg-zmi.8 con
 c39 · r2 · UNOWNED-SEAM · guard for real threads test · applied — edge .11←.5, consumes
 c40 · r2 · UNOWNED-SEAM · superseded op state · applied — hg-zmi.3 owns states + supersedes link
 sweep · root integration sweep hg-zmi.20 created, depends on hg-zmi.1–.19
+g1 · graph · GRAPH-EDGE · hg-zmi.19 <- hg-zmi.16 · parked — drop (safe no): only tier-4 matrix rows consume .16 results; would cut depth 11→10
+g2 · graph · GRAPH-EDGE · 18 other critical edges · kept — each carries a real artifact
+g3 · graph · PROPOSAL · hg-zmi.7/.8/.11/.12/.13 · parked — seam-contract observer/reconciler boundary (binding write-back kinds) could cut depth to 9
