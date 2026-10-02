@@ -43,14 +43,16 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             )
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             let state = reply["state"].as_str().unwrap_or("unknown");
-            println!("{} {state}", reply["op"].as_str().unwrap_or("<op>"));
+            let op = reply["op"].as_str().unwrap_or("<op>");
+            println!("{op} {state}");
+            super::plan::print_if_still_running(op, state);
             if let Some(c) = reply["commit"].as_str() {
                 println!("commit {c}");
             }
             if let Some(r) = reply.get("rejection").filter(|r| r.is_object()) {
                 println!("{}: {}", r["reason"].as_str().unwrap_or("rejected"), r["explanation"].as_str().unwrap_or_default());
             }
-            Ok(if state == "committed" { ExitCode::SUCCESS } else { ExitCode::from(1) })
+            Ok(super::plan::exit_for_state(state))
         }
     }
 }

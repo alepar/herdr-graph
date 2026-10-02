@@ -54,6 +54,17 @@ herdr-graph undo
 
 `herdr-graph ops` lists operations; `cancel`, `reassign`, `check-instruction` and `--supersedes` manage them.
 
+## Exit codes
+
+| Code | Meaning |
+| ---- | ------- |
+| 0 | success |
+| 1 | error, rejection or failure |
+| 2 | no instance configured (also usage errors of `request complete`) |
+| 3 | still running: the change was admitted and finishes in the background (`herdr-graph op <id>`) |
+
+The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 s), so a slow writer yields exit code 3 and the op id instead of a transport timeout.
+
 ## Threads integration and amendment status
 
 herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). The threads amendment epic `ht-5nb` was accepted 2026-10-02 but has not landed. Until it does, delivery uses the Notify fallback: ACK lives in graph, not threads. The cargo feature `threads-service-ack` switches to service ACK once it lands.

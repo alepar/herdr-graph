@@ -4,6 +4,7 @@ use super::hash::plan_hash;
 use super::kind::{KindRegistry, PlanCx, PlanError, make_plan};
 use super::store::PlanStore;
 use super::types::{Plan, Reserved, StoredPlan};
+use crate::daemon::budget;
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, Requester};
@@ -19,7 +20,7 @@ use crate::store::tree::CommitView;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub struct PlanDeps {
     pub kinds: Arc<KindRegistry>,
@@ -30,7 +31,6 @@ pub struct PlanDeps {
     pub instance: PathBuf,
 }
 
-const APPLY_WAIT: Duration = Duration::from_secs(30);
 const APPLY_POLL: Duration = Duration::from_millis(50);
 
 fn plan_err(e: PlanError) -> CommandError {
@@ -244,13 +244,14 @@ pub fn op_result(deps: &PlanDeps, op: &OpId) -> Result<Value, CommandError> {
     Ok(json!({ "op": op, "state": state }))
 }
 
-/// Poll the writer every 50 ms (at most 30 s) until the op is terminal, then report it.
+/// Poll the writer every 50 ms until the op is terminal or the request deadline passes, then report it
+/// (state `admitted`/`applying` when it is still running).
 pub async fn wait_result(deps: &PlanDeps, op: &OpId) -> Result<Value, CommandError> {
-    let deadline = Instant::now() + APPLY_WAIT;
+    let deadline = budget::wait_until(Duration::from_secs(25));
     loop {
         match deps.writer.status(op).map_err(writer_err)? {
             Some(s) if terminal(s) => break,
-            _ if Instant::now() >= deadline => break,
+            _ if tokio::time::Instant::now() >= deadline => break,
             _ => tokio::time::sleep(APPLY_POLL).await,
         }
     }

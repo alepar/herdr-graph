@@ -1031,6 +1031,39 @@ async fn ack_records_dispatched_not_completed() {
     assert_eq!(request(&fx, &rq.id).status, RequestStatus::Completed);
 }
 
+/// A writer that admits but never reports progress.
+struct StuckWriter(Arc<dyn Writer>);
+
+impl Writer for StuckWriter {
+    fn admit(&self, request: ChangeRequest) -> Result<crate::model::OpId, crate::ports::writer::WriterError> {
+        self.0.admit(request)
+    }
+    fn status(&self, _: &crate::model::OpId) -> Result<Option<OpState>, crate::ports::writer::WriterError> {
+        Ok(Some(OpState::Admitted))
+    }
+}
+
+#[tokio::test]
+async fn commit_answers_still_running_at_the_request_deadline() {
+    let fx = fx();
+    let (_worker, rq, _) = delivered(&fx, 5).await;
+    let stuck = Transcripts::new(
+        fx.store.clone(),
+        Arc::new(StuckWriter(fx.dw.clone())),
+        fx.rec.clone(),
+        fx.threads.clone(),
+        fx.map.clone(),
+        fx.clock.clone(),
+        None,
+    );
+    let began = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+    let err = crate::daemon::budget::within(deadline, stuck.cmd_ack(json!({ "request": rq.id }))).await.unwrap_err();
+    assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+    assert_eq!(err.code, crate::ipc::IpcErrorCode::StillRunning, "{}", err.message);
+    assert!(err.message.contains("op_"), "the message names the op: {}", err.message);
+}
+
 #[tokio::test]
 async fn complete_records_result_and_merges_coverage() {
     let fx = fx();

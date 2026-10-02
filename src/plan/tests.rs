@@ -888,6 +888,40 @@ impl Fx {
     }
 }
 
+/// A writer that admits (journals) but never reports progress.
+struct StuckWriter(Arc<dyn crate::ports::writer::Writer>);
+
+impl crate::ports::writer::Writer for StuckWriter {
+    fn admit(&self, request: ChangeRequest) -> Result<OpId, crate::ports::writer::WriterError> {
+        self.0.admit(request)
+    }
+    fn status(&self, _: &OpId) -> Result<Option<OpState>, crate::ports::writer::WriterError> {
+        Ok(Some(OpState::Admitted))
+    }
+}
+
+#[tokio::test]
+async fn apply_reply_names_op_when_writer_is_slow() {
+    let fx = fx();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create foreman --teamspace alpha");
+    let mut deps = fx.deps_clone();
+    deps.writer = Arc::new(StuckWriter(fx.deps.writer.clone()));
+    let mut reg = Registry::default();
+    register_commands(&mut reg, deps);
+    let h = reg.handler("plan.apply").unwrap();
+    let cx = CommandCtx { request_id: "r".into(), caller: CallerInfo::default() };
+    let began = std::time::Instant::now();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(300);
+    let v = crate::daemon::budget::within(deadline, h.call(cx, json!({"plan": sp.plan.id, "confirm": sp.hash, "mode": "relay"})))
+        .await
+        .unwrap();
+    assert!(began.elapsed() < std::time::Duration::from_secs(2), "{:?}", began.elapsed());
+    assert_eq!(v["state"], "admitted", "{v}");
+    let op: OpId = v["op"].as_str().expect("reply names the op").parse().unwrap();
+    assert!(fx.w.journal().get(&op).unwrap().is_some(), "the named op is journaled");
+}
+
 #[tokio::test]
 async fn ipc_handlers_create_show_and_apply_end_to_end() {
     let fx = fx();
