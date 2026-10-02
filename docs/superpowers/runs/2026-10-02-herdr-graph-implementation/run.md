@@ -11,6 +11,7 @@ roast-design: 2026-10-02-herdr-graph-mvp-roast-design-1.md, 2026-10-02-herdr-gra
 roast-code: 2026-10-02-herdr-graph-mvp-roast-pr-1.md, 2026-10-02-herdr-graph-mvp-roast-pr-2.md
 branch: super-auto/herdr-graph-implementation
 base: main
+feedback: https://github.com/alepar/superpowers/issues/12
 
 roastDesignRound: 2
 roastCodeRound: 2
