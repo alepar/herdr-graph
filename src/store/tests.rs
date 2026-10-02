@@ -308,6 +308,29 @@ mod tree {
     }
 
     #[test]
+    fn overlay_put_record_refuses_a_second_record_for_an_existing_id() {
+        let (_t, store, st) = with_seat(3);
+        let mut ov = Overlay::new(&store, store.head().unwrap());
+        let mut rec = st.clone();
+        let err = ov.put_record(rp("teamspaces/t/seats/other/seat.toml"), &mut rec).unwrap_err();
+        match err {
+            StoreError::Corrupt { reason, .. } => assert!(reason.contains(&st.id.to_string()), "{reason}"),
+            other => panic!("expected Corrupt, got {other:?}"),
+        }
+        assert!(ov.read_file(&rp("teamspaces/t/seats/other/seat.toml")).unwrap().is_none());
+    }
+
+    #[test]
+    fn overlay_put_record_after_move_dir_is_allowed() {
+        let (_t, store, st) = with_seat(3);
+        let mut ov = Overlay::new(&store, store.head().unwrap());
+        ov.move_dir(&rp("teamspaces/t/seats/foreman"), &rp("teamspaces/t/seats/moved")).unwrap();
+        let mut rec = st.clone();
+        ov.put_record(rp("teamspaces/t/seats/moved/seat.toml"), &mut rec).unwrap();
+        assert_eq!(rec.rev, 4);
+    }
+
+    #[test]
     fn overlay_put_record_new_object_gets_rev_1() {
         let (_t, store, _st) = with_seat(1);
         let mut ov = Overlay::new(&store, store.head().unwrap());

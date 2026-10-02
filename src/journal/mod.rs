@@ -205,6 +205,19 @@ impl Journal {
         Self::get_on(&self.conn(), op)
     }
 
+    /// The committed op that applied `plan`, if any (oldest first).
+    pub fn committed_op_for_plan(&self, plan: &crate::model::PlanId) -> Result<Option<OpId>> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT op_id FROM ops WHERE state = 'committed'
+                   AND json_extract(request_json, '$.confirmed.plan') = ?1 ORDER BY seq LIMIT 1",
+                [plan.as_str()],
+                |r| parse_id(0, &r.get::<_, String>(0)?),
+            )
+            .optional()?)
+    }
+
     pub fn next_admitted(&self) -> Result<Option<OpRow>> {
         Ok(self
             .conn()

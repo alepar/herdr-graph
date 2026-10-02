@@ -7,6 +7,9 @@
 use crate::daemon::client::{CallMode, ClientError, EXIT_STILL_RUNNING, call_daemon};
 use clap::Subcommand;
 use serde_json::{Value, json};
+
+/// Exit code for an apply rejected because the plan was already applied (2 and 3 belong to `daemon::client`).
+pub const EXIT_ALREADY_APPLIED: u8 = 4;
 use std::io::{BufRead, IsTerminal, Write};
 use std::process::ExitCode;
 
@@ -134,7 +137,7 @@ pub fn print_if_still_running(op: &str, state: &str) {
     }
 }
 
-/// Print the op id and state; exit 0 committed, 3 still running, 1 otherwise.
+/// Print the op id and state; exit 0 committed, 3 still running, 4 already applied, 1 otherwise.
 fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {
     let op = result["op"].as_str().unwrap_or("<op>");
     let state = result["state"].as_str().unwrap_or("unknown");
@@ -146,12 +149,24 @@ fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {
     if let Some(r) = result.get("rejection").filter(|r| r.is_object()) {
         println!("{}: {}", r["reason"].as_str().unwrap_or("rejected"), r["explanation"].as_str().unwrap_or_default());
     }
+    if state == "rejected" && result["rejection"]["reason"].as_str() == Some("already_applied") {
+        return Ok(ExitCode::from(EXIT_ALREADY_APPLIED));
+    }
     Ok(exit_for_state(state))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn already_applied_reply_maps_to_distinct_exit() {
+        let reply = |reason: &str| {
+            serde_json::json!({"op":"op_01","state":"rejected","rejection":{"reason":reason,"explanation":"plan pl_x was already applied by op_00"}})
+        };
+        assert_eq!(report_apply(&reply("already_applied")).unwrap(), ExitCode::from(EXIT_ALREADY_APPLIED));
+        assert_eq!(report_apply(&reply("stale_plan")).unwrap(), ExitCode::from(1));
+    }
 
     #[test]
     fn exit_for_state_maps_still_running() {
