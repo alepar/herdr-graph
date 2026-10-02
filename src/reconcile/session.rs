@@ -10,6 +10,7 @@ use crate::model::common::{HerdrPaneId, Timestamp};
 use crate::model::harness::{Harness, KeyStep, StartOutcome, profile};
 use crate::ports::herdr::{AgentStatus, HerdrApi, HerdrError, KeyInput, StartAgent};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Map a Herdr error of an idempotent call: unreachable or slow means retry later.
 pub fn transient_or_failed(e: HerdrError) -> ExecOutcome {
@@ -94,8 +95,15 @@ async fn start(herdr: &dyn HerdrApi, journal: &Journal, effect: &EffectId, pane:
     start_outcome(herdr.start_agent(StartAgent { pane: pane.clone(), kind: to.kind.to_owned(), args: to.args }).await)
 }
 
+/// Next look for a time-bound replacement wait: the earliest of the polling period and the phase deadlines
+/// still ahead.
+fn recheck_at(cfg: &ReconcilerConfig, now: Timestamp, deadlines: &[Timestamp]) -> Timestamp {
+    let poll = now + chrono::Duration::from_std(cfg.deferred_recheck).unwrap_or_default();
+    deadlines.iter().copied().filter(|d| *d > now).fold(poll, |a, d| a.min(d))
+}
+
 /// Advance the replacement of the occupant of `pane` (launched as `from`) by one loop step: at most one probe per
-/// phase, no sleeping. `Deferred` means "ask again next step"; `Done` means the new agent was started.
+/// phase, no sleeping. `DeferredUntil` names when to ask again; `Done` means the new agent was started.
 #[allow(clippy::too_many_arguments)]
 pub async fn advance_replacement(
     herdr: &dyn HerdrApi,
@@ -107,6 +115,7 @@ pub async fn advance_replacement(
     to: Option<Relaunch<'_>>,
     now: Timestamp,
 ) -> ExecOutcome {
+    let dur = |d: Duration| chrono::Duration::from_std(d).unwrap_or_default();
     let state = load(journal, effect).unwrap_or(ReplacePhase::WaitingIdle { since: now, had_agent: false });
     if let ReplacePhase::WaitingIdle { since, had_agent: seen } = state {
         // 1. Idle gate: never interrupt a working agent.
@@ -120,7 +129,8 @@ pub async fn advance_replacement(
                     return ExecOutcome::NeedsRevision("occupant busy".into());
                 }
                 save(journal, effect, &ReplacePhase::WaitingIdle { since, had_agent: true });
-                return ExecOutcome::Deferred("waiting for the occupant to go idle".into());
+                let at = recheck_at(cfg, now, &[since + dur(cfg.idle_timeout)]);
+                return ExecOutcome::DeferredUntil(at, "waiting for the occupant to go idle".into());
             }
             Err(e) => return transient_or_failed(e),
         }
@@ -139,7 +149,13 @@ pub async fn advance_replacement(
         save(journal, effect, &ReplacePhase::Exiting { since: now, fallback_sent: false, fallback_at: None });
         return match herdr.process_info(pane).await {
             Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to).await,
-            Ok(_) => ExecOutcome::Deferred("waiting for the occupant to exit".into()),
+            Ok(_) => {
+                let mut deadlines = vec![now + dur(cfg.exit_timeout)];
+                if profile(from).exit.and_then(|s| s.if_still_running).is_some() {
+                    deadlines.push(now + dur(cfg.exit_followup));
+                }
+                ExecOutcome::DeferredUntil(recheck_at(cfg, now, &deadlines), "waiting for the occupant to exit".into())
+            }
             Err(e) => transient_or_failed(e),
         };
     }
@@ -161,12 +177,20 @@ pub async fn advance_replacement(
             return transient_or_failed(e);
         }
         save(journal, effect, &ReplacePhase::Exiting { since, fallback_sent: true, fallback_at: Some(now) });
-        return ExecOutcome::Deferred("waiting for the occupant to exit".into());
+        let at = recheck_at(cfg, now, &[now + dur(cfg.exit_followup), since + dur(cfg.exit_timeout)]);
+        return ExecOutcome::DeferredUntil(at, "waiting for the occupant to exit".into());
     }
     let followup_settled = fallback.is_none() || !fallback_sent || fallback_at.is_none_or(|f| elapsed(now, f, cfg.exit_followup));
     if elapsed(now, since, cfg.exit_timeout) && followup_settled {
         clear(journal, effect);
         return ExecOutcome::NeedsRevision("occupant did not exit".into());
     }
-    ExecOutcome::Deferred("waiting for the occupant to exit".into())
+    let mut deadlines = vec![since + dur(cfg.exit_timeout)];
+    if fallback.is_some() && !fallback_sent {
+        deadlines.push(since + dur(cfg.exit_followup));
+    }
+    if fallback_sent && let Some(f) = fallback_at {
+        deadlines.push(f + dur(cfg.exit_followup));
+    }
+    ExecOutcome::DeferredUntil(recheck_at(cfg, now, &deadlines), "waiting for the occupant to exit".into())
 }

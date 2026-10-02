@@ -17,7 +17,7 @@ use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
 use crate::plan::core_kinds::register_core_kinds;
 use crate::plan::kind::KindRegistry;
 use crate::plan::store::PlanStore;
-use crate::ports::clock::ManualClock;
+use crate::ports::clock::{Clock, ManualClock};
 use crate::ports::threads::*;
 use crate::ports::writer::Writer;
 use crate::reconcile::{Reconciler, ReconcilerConfig, RequesterNotifier, StepReport};
@@ -350,6 +350,30 @@ async fn invite_waits_for_the_pane_to_become_a_threads_seat() {
     fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-A");
     steps(&fx, 2).await;
     assert_eq!(fx.threads.call_count("invite"), 2);
+}
+
+#[tokio::test]
+async fn indefinitely_deferred_invite_backs_off_its_wake() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": clone.id })); // never mapped to a threads seat
+    let start = fx.clock.now();
+    let mut n = 0;
+    while fx.clock.now() < start + chrono::Duration::minutes(10) {
+        step(&fx).await;
+        n += 1;
+        let now = fx.clock.now();
+        // What RuntimeLoop::run does: sleep until next_wake, at most one tick (60 s).
+        let wake = fx.rec.next_wake().unwrap_or(now + chrono::Duration::seconds(60)).min(now + chrono::Duration::seconds(60));
+        fx.clock.set(wake);
+    }
+    assert!(n <= 16, "{n} steps in 10 min: open-ended deferrals must back off (fixed 2 s polling would be ~300)");
+    assert_eq!(fx.threads.call_count("invite"), 0);
+    assert!(rows(&fx, EffectKind::Invite).iter().all(|r| r.status == EffectStatus::Pending && r.attempts == 0));
+
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-A");
+    steps(&fx, 2).await;
+    assert_eq!(fx.threads.call_count("invite"), 2, "an event-driven step still delivers right away");
 }
 
 #[tokio::test]
