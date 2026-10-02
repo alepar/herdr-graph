@@ -83,8 +83,9 @@ pub struct Transcripts {
     pub(crate) core: Arc<DeliveryCore>,
     session_ended: Mutex<Option<broadcast::Receiver<SessionEnded>>>,
     tuning: RwLock<Tuning>,
-    /// Serializes spool ingestion (the loop and every live `session.report`).
-    spool_lock: tokio::sync::Mutex<()>,
+    /// Serializes spool ingestion (the loop and every live `session.report`) and remembers which spooled
+    /// reports already have an admitted op.
+    spool_lock: tokio::sync::Mutex<capture::SpoolState>,
 }
 
 /// Seat or clone that reported a result.
@@ -128,7 +129,7 @@ impl Transcripts {
             clock,
             session_ended: Mutex::new(session_ended),
             tuning: RwLock::new(Tuning::default()),
-            spool_lock: tokio::sync::Mutex::new(()),
+            spool_lock: tokio::sync::Mutex::new(capture::SpoolState::default()),
         })
     }
 
@@ -147,6 +148,11 @@ impl Transcripts {
     /// Admit a bookkeeping write and wait for it to commit. A rejection is the caller's error.
     pub(crate) async fn commit(&self, request: ChangeRequest) -> Result<OpId, CommandError> {
         let op = self.writer.admit(request).map_err(|e| CommandError::unavailable(e.to_string()))?;
+        self.wait_committed(op).await
+    }
+
+    /// Wait for an admitted op to commit (see [`Self::commit`]).
+    pub(crate) async fn wait_committed(&self, op: OpId) -> Result<OpId, CommandError> {
         // Inside a CLI request this is the request deadline; internal callers keep `commit_timeout`.
         let deadline = crate::daemon::budget::wait_until(self.tuning().commit_timeout);
         loop {

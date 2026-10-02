@@ -379,12 +379,34 @@ struct OccupancyArgs {
 
 struct OccupancyMutation;
 
+/// A start report that changes nothing: a copy of the report whose session is the occupant, one older than the
+/// occupant, or one older than a recorded session of the same native id. A resume (the same native id, at or
+/// after the end of its earlier session) is none of these.
+fn is_duplicate_or_stale_report(rec: &CloneRecord, cap: &SessionCapture, at: Timestamp) -> bool {
+    let occupant = rec.occupant.as_ref();
+    let is_occupant = occupant
+        .and_then(|o| rec.sessions.iter().find(|s| s.id == o.native_session))
+        .is_some_and(|s| s.native_session_id == cap.native_session_id);
+    let older_than_occupant = occupant.is_some_and(|o| at < o.since);
+    let predates_recorded = rec.sessions.iter().any(|s| {
+        s.native_session_id == cap.native_session_id && (at < s.started || s.ended.is_some_and(|e| at < e))
+    });
+    is_occupant || older_than_occupant || predates_recorded
+}
+
 impl Mutation for OccupancyMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: OccupancyArgs = parse(cx)?;
         let at = a.at.unwrap_or(cx.now);
         let mut summary = format!("occupancy of {}", a.clone);
         edit::<CloneRecord>(cx, &a.clone.to_any(), |rec, _| {
+            if let Some(cap) = &a.start
+                && rec.lifecycle == CloneLifecycle::Active
+                && is_duplicate_or_stale_report(rec, cap, at)
+            {
+                summary = format!("duplicate or stale session report on {} ignored", a.clone);
+                return Ok(());
+            }
             if let Some(e) = &a.end
                 && end_occupant(rec, e.reason, e.at.unwrap_or(at))
             {

@@ -8,12 +8,16 @@ use crate::model::harness::Harness;
 use crate::model::native_session::SessionEndReason;
 use crate::ipc::IpcErrorCode;
 use crate::model::common::CloneLifecycle;
-use crate::model::{CloneId, Timestamp};
+use crate::model::change::ChangeRequest;
+use crate::model::native_session::NativeSession;
+use crate::model::operation::OpState;
+use crate::model::{CloneId, OpId, SeatId, Timestamp};
 use crate::observe::mutations::occupancy_request;
 use crate::observe::{SessionCapture, SessionEnded};
 use crate::threads::effects::Graph;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -105,16 +109,47 @@ struct ReportArgs {
     source: Option<String>,
 }
 
+/// A resolved report that needs an `observed.occupancy` op.
+struct Pending {
+    clone: CloneId,
+    seat: SeatId,
+    /// The session that was the occupant when the report was resolved.
+    previous: Option<NativeSession>,
+    native: String,
+    source: Option<String>,
+}
+
+/// A spooled report whose op is admitted and not yet finished.
+struct InFlight {
+    op: OpId,
+    pending: Pending,
+}
+
+/// Spool ingestion state, behind `Transcripts::spool_lock`: the op each spooled file already has in flight, so
+/// a slow commit or a halted writer never gets a second copy queued behind the first.
+#[derive(Default)]
+pub(crate) struct SpoolState {
+    inflight: BTreeMap<PathBuf, InFlight>,
+}
+
+enum Resolved {
+    /// Answered without a write.
+    Done(serde_json::Value),
+    Admit(Box<Pending>, Box<ChangeRequest>),
+}
+
 impl Transcripts {
     /// Handle `session.report`: resolve the clone (explicit id, else the pane's binding), record the session,
     /// and, when it replaced a running one, request the transcript of the session that just ended.
     /// Unresolvable reports answer `{resolved: false}` and change nothing.
+    #[cfg(test)]
     pub(crate) async fn session_report(
         &self,
         caller: CallerInfo,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, CommandError> {
-        self.session_report_inner(caller, args, false).await
+        let at = self.clock.now();
+        self.session_report_at(caller, args, at).await
     }
 
     /// `session.report` from a live caller: reports spooled before it are older, so they go first.
@@ -123,24 +158,71 @@ impl Transcripts {
         caller: CallerInfo,
         args: serde_json::Value,
     ) -> Result<serde_json::Value, CommandError> {
+        // Taken before the spool is ingested, so every spooled report really is older than this one.
+        let at = self.clock.now();
         self.ingest_spool().await;
-        self.session_report(caller, args).await
+        self.session_report_at(caller, args, at).await
     }
 
-    /// Hand every spooled report to `session_report`, oldest first. Ok: delete the file. A report whose native
+    async fn session_report_at(
+        &self,
+        caller: CallerInfo,
+        args: serde_json::Value,
+        at: Timestamp,
+    ) -> Result<serde_json::Value, CommandError> {
+        match self.resolve_report(&caller, args, false, at)? {
+            Resolved::Done(v) => Ok(v),
+            Resolved::Admit(p, request) => {
+                let op = self.commit(*request).await?;
+                self.finish_report(&p, op).await
+            }
+        }
+    }
+
+    /// Hand every spooled report to the occupancy mutation, oldest first, stamped with the time the hook fired.
+    /// A report whose op is admitted but not committed is never admitted again; the pass stops at it, to keep
+    /// order. While the writer is halted nothing is admitted. Ok: delete the file. A report whose native
     /// session id is already in that clone's `sessions` was processed before (the CLI timed out after the daemon
-    /// handled it): delete without reprocessing. A `bad_request`/`rejected` error (or an unreadable file) moves it
-    /// to `session-spool/rejected/` and logs. Any other error keeps the file and stops this pass.
+    /// handled it): delete without reprocessing. A `bad_request`/`rejected` error (or an unreadable file) moves
+    /// it to `session-spool/rejected/` and logs. Any other error keeps the file and stops this pass.
     /// Returns the number of reports applied.
     pub async fn ingest_spool(&self) -> usize {
-        let _guard = self.spool_lock.lock().await;
+        let mut state = self.spool_lock.lock().await;
+        if matches!(self.journal.meta_get(crate::writer::WRITER_HALTED), Ok(Some(_))) {
+            return 0;
+        }
         let dir = spool_dir(self.reconciler.instance());
         let Ok(rd) = std::fs::read_dir(&dir) else { return 0 };
         let mut files: Vec<PathBuf> =
             rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
         files.sort();
+        state.inflight.retain(|p, _| files.contains(p));
         let mut applied = 0;
         for path in files {
+            if let Some(op) = state.inflight.get(&path).map(|e| e.op.clone()) {
+                match self.writer.status(&op) {
+                    Ok(Some(OpState::Committed)) => {
+                        let Some(entry) = state.inflight.remove(&path) else { continue };
+                        if self.finish_spooled(&entry.pending, op).await {
+                            applied += 1;
+                        }
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            eprintln!("herdr-graph: transcripts: cannot remove spooled report {}: {e}", path.display());
+                            return applied;
+                        }
+                        continue;
+                    }
+                    Ok(Some(OpState::Admitted | OpState::Applying)) => return applied,
+                    Ok(_) => {
+                        // Rejected, failed, cancelled or unknown: the op is gone, so process the file afresh.
+                        state.inflight.remove(&path);
+                    }
+                    Err(e) => {
+                        eprintln!("herdr-graph: transcripts: spooled report {} kept: {e}", path.display());
+                        return applied;
+                    }
+                }
+            }
             let parsed = std::fs::read(&path)
                 .map_err(|e| e.to_string())
                 .and_then(|b| serde_json::from_slice::<SpooledReport>(&b).map_err(|e| e.to_string()));
@@ -151,9 +233,31 @@ impl Transcripts {
                     continue;
                 }
             };
-            match self.session_report_inner(report.caller, report.args, true).await {
-                Ok(v) => {
-                    if v["changed"] == true {
+            let outcome = match self.resolve_report(&report.caller, report.args, true, report.spooled_at) {
+                Ok(Resolved::Done(v)) => Ok(v["changed"] == true),
+                Ok(Resolved::Admit(p, request)) => match self.writer.admit(*request) {
+                    Ok(op) => {
+                        state.inflight.insert(path.clone(), InFlight { op: op.clone(), pending: *p });
+                        match self.wait_committed(op).await {
+                            Ok(op) => match state.inflight.remove(&path) {
+                                Some(e) => Ok(self.finish_spooled(&e.pending, op).await),
+                                None => Ok(false),
+                            },
+                            Err(e) => {
+                                if matches!(e.code, IpcErrorCode::BadRequest | IpcErrorCode::Rejected) {
+                                    state.inflight.remove(&path);
+                                }
+                                Err(e)
+                            }
+                        }
+                    }
+                    Err(e) => Err(CommandError::unavailable(e.to_string())),
+                },
+                Err(e) => Err(e),
+            };
+            match outcome {
+                Ok(changed) => {
+                    if changed {
                         applied += 1;
                     }
                     if let Err(e) = std::fs::remove_file(&path) {
@@ -183,12 +287,15 @@ impl Transcripts {
         }
     }
 
-    async fn session_report_inner(
+    /// Resolve the report's clone and decide whether it needs a write. `at` is when the report was made (the
+    /// hook's time for a spooled one), not when it is processed, so two copies of one report carry one time.
+    fn resolve_report(
         &self,
-        caller: CallerInfo,
+        caller: &CallerInfo,
         args: serde_json::Value,
         skip_known: bool,
-    ) -> Result<serde_json::Value, CommandError> {
+        at: Timestamp,
+    ) -> Result<Resolved, CommandError> {
         let a: ReportArgs = serde_json::from_value(args).map_err(|e| CommandError::bad_request(e.to_string()))?;
         let (clone, seat, previous, known) = {
             let view = self.view().map_err(internal)?;
@@ -201,7 +308,7 @@ impl Transcripts {
                 .or_else(|| caller.graph_clone.as_deref().and_then(by_id))
                 .or_else(|| a.pane.as_deref().or(caller.pane_id.as_deref()).and_then(|p| clone_for_pane(&g, p)));
             let Some(rec) = id.and_then(|id| g.clones.get(&id)).filter(|c| c.lifecycle == CloneLifecycle::Active) else {
-                return Ok(json!({ "resolved": false }));
+                return Ok(Resolved::Done(json!({ "resolved": false })));
             };
             let previous = rec
                 .occupant
@@ -212,27 +319,61 @@ impl Transcripts {
             (rec.id.clone(), rec.seat.clone(), previous, known)
         };
         if skip_known && known {
-            return Ok(json!({ "resolved": true, "clone": clone, "changed": false, "duplicate": true, "source": a.source }));
+            return Ok(Resolved::Done(
+                json!({ "resolved": true, "clone": clone, "changed": false, "duplicate": true, "source": a.source }),
+            ));
         }
         if previous.as_ref().is_some_and(|p| p.native_session_id == a.capture.native_session_id) {
-            return Ok(json!({ "resolved": true, "clone": clone, "changed": false, "source": a.source }));
+            return Ok(Resolved::Done(json!({ "resolved": true, "clone": clone, "changed": false, "source": a.source })));
         }
-        let now = self.clock.now();
         let end = previous.as_ref().map(|_| SessionEndReason::SessionChanged);
-        let op = self.commit(occupancy_request(&clone, end, Some(&a.capture), now)).await?;
-        if let Some(prev) = previous {
+        let request = occupancy_request(&clone, end, Some(&a.capture), at);
+        let pending = Pending { clone, seat, previous, native: a.capture.native_session_id, source: a.source };
+        Ok(Resolved::Admit(Box::new(pending), Box::new(request)))
+    }
+
+    /// The occupancy op committed: when it ended the previous session, request that session's transcript.
+    /// The mutation drops a duplicate or stale report, in which case nothing changed and nothing is requested.
+    async fn finish_report(&self, p: &Pending, op: OpId) -> Result<serde_json::Value, CommandError> {
+        let (changed, previous_ended) = {
+            let view = self.view().map_err(internal)?;
+            let g = Graph::load(&view).map_err(internal)?;
+            let rec = g.clones.get(&p.clone);
+            let occupant = rec.and_then(|r| {
+                let o = r.occupant.as_ref()?;
+                r.sessions.iter().find(|s| s.id == o.native_session)
+            });
+            let changed = occupant.is_some_and(|s| s.native_session_id == p.native);
+            let previous_ended = p
+                .previous
+                .as_ref()
+                .is_some_and(|prev| rec.is_some_and(|r| r.sessions.iter().any(|s| s.id == prev.id && s.ended.is_some())));
+            (changed, previous_ended)
+        };
+        if let Some(prev) = p.previous.as_ref().filter(|_| previous_ended) {
             self.on_session_ended(SessionEnded {
-                clone: clone.clone(),
-                seat,
-                ns: prev.id,
+                clone: p.clone.clone(),
+                seat: p.seat.clone(),
+                ns: prev.id.clone(),
                 harness: prev.harness,
-                transcript_path: prev.transcript_path,
+                transcript_path: prev.transcript_path.clone(),
                 reason: SessionEndReason::SessionChanged,
                 op,
             })
             .await;
         }
-        Ok(json!({ "resolved": true, "clone": clone, "changed": true, "source": a.source }))
+        Ok(json!({ "resolved": true, "clone": p.clone, "changed": changed, "source": p.source }))
+    }
+
+    /// [`Self::finish_report`] for the spool: whether the report changed anything.
+    async fn finish_spooled(&self, p: &Pending, op: OpId) -> bool {
+        match self.finish_report(p, op).await {
+            Ok(v) => v["changed"] == true,
+            Err(e) => {
+                eprintln!("herdr-graph: transcripts: spooled report for {} not finished: {}", p.clone, e.message);
+                false
+            }
+        }
     }
 }
 
