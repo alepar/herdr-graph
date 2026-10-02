@@ -637,3 +637,69 @@ fn undo_writes_compensating_action_and_marks_original_undone() {
     assert!(again.contains("already undone"), "{again}");
     assert!(plan_err(&fx, &format!("undo {}", undo.id)).contains("cannot be undone"), "an undo is history, not a candidate");
 }
+
+// exclusions added by a retirement ------------------------------------------------------------
+
+fn duo_setup(fx: &Fx) -> (MemberId, MemberId) {
+    alpha(fx);
+    let (e, r) = (MemberId::new(), MemberId::new());
+    create_template(fx, "duo", &[m(&e, "engineer", "active"), m(&r, "reviewer", "active")]);
+    apply_app(fx, "duo", "one");
+    (e, r)
+}
+
+fn tab_close_engineer(fx: &Fx) -> (SeatRecord, ActionRecord) {
+    let eng = seat_named(fx, "engineer");
+    let mut ids = vec![eng.id.to_any()];
+    ids.extend(clones_of(fx, &eng.id).iter().filter(|c| c.lifecycle == CloneLifecycle::Active).map(|c| c.id.to_any()));
+    let act = cascade(fx, CascadeRule::Tab, &ids);
+    (eng, act)
+}
+
+#[test]
+fn undo_tab_close_removes_the_exclusion_it_added() {
+    let fx = fx();
+    let (e, _r) = duo_setup(&fx);
+    let (eng, act) = tab_close_engineer(&fx);
+    let a = app(&fx, "one");
+    assert_eq!(a.exclusions, vec![e.clone()]);
+    let rows = act.compensation["exclusions_added"].as_array().expect("recorded");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["seat"].as_str(), Some(eng.id.to_string().as_str()));
+    assert_eq!(rows[0]["application"].as_str(), Some(a.id.to_string().as_str()));
+    assert_eq!(rows[0]["member"].as_str(), Some(e.to_string().as_str()));
+    let st = crate::templates::structure::effective_structure(&view(&fx), &a).unwrap();
+    assert!(st.excluded.contains(&e));
+
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    let a = app(&fx, "one");
+    assert!(a.exclusions.is_empty(), "{:?}", a.exclusions);
+    let st = crate::templates::structure::effective_structure(&view(&fx), &a).unwrap();
+    assert!(!st.excluded.contains(&e));
+    assert!(st.seats.iter().any(|s| s.member.as_ref() == Some(&e)));
+}
+
+#[test]
+fn undo_keeps_exclusions_it_did_not_add() {
+    let fx = fx();
+    let (e, r) = duo_setup(&fx);
+    commit(&fx, "seat retire reviewer");
+    assert_eq!(app(&fx, "one").exclusions, vec![r.clone()]);
+    let (_eng, act) = tab_close_engineer(&fx);
+    assert_eq!(app(&fx, "one").exclusions, vec![r.clone(), e.clone()]);
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    assert_eq!(app(&fx, "one").exclusions, vec![r]);
+}
+
+#[test]
+fn seat_resurrect_removes_its_retirements_exclusion() {
+    let fx = fx();
+    let (e, _r) = duo_setup(&fx);
+    let eng = seat_named(&fx, "engineer");
+    commit(&fx, "seat retire engineer");
+    assert_eq!(app(&fx, "one").exclusions, vec![e]);
+    commit(&fx, &format!("seat resurrect {} --active", eng.id));
+    assert!(app(&fx, "one").exclusions.is_empty());
+}
