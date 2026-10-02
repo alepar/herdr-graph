@@ -374,9 +374,9 @@ impl Transcripts {
             async move { me.cmd_ack(args).await }
         });
         let me = self.clone();
-        reg.command("request.complete", move |_cx: CommandCtx, args: serde_json::Value| {
+        reg.command("request.complete", move |cx: CommandCtx, args: serde_json::Value| {
             let me = me.clone();
-            async move { me.cmd_complete(args).await }
+            async move { me.cmd_complete(cx.caller, args).await }
         });
         let me = self.clone();
         reg.command("session.report", move |cx: CommandCtx, args: serde_json::Value| {
@@ -473,7 +473,7 @@ impl Transcripts {
         Ok(json!({ "request": rq, "status": "dispatched" }))
     }
 
-    async fn cmd_complete(&self, args: serde_json::Value) -> Result<serde_json::Value, CommandError> {
+    async fn cmd_complete(&self, caller: CallerInfo, args: serde_json::Value) -> Result<serde_json::Value, CommandError> {
         let rq = Self::request_arg(&args)?;
         let output = args
             .get("output")
@@ -485,7 +485,6 @@ impl Transcripts {
         if covered.start > covered.end {
             return Err(CommandError::bad_request("covered start must not exceed its end"));
         }
-        let caller: CallerInfo = args.get("_caller").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
         let reported_by = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;

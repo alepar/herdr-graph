@@ -7,7 +7,7 @@ use super::types::{Plan, Reserved, StoredPlan};
 use crate::daemon::budget;
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
-use crate::model::change::{ChangeRequest, Requester};
+use crate::model::change::{ChangeRequest, ConfirmedPlan, Requester};
 use crate::model::operation::{ConfirmMode, Confirmation, OpState};
 use crate::model::seat::SeatRecord;
 use crate::model::{CloneId, OpId, PlanId, SeatId};
@@ -201,20 +201,14 @@ pub fn admit_apply_with(
     if let Some(why) = &stored.plan.repair_required {
         return Err(CommandError::rejected(format!("plan {} requires repair and cannot be applied: {why}", stored.plan.id)));
     }
-    let mut args = match &stored.plan.request.args {
-        Value::Object(m) => m.clone(),
-        _ => serde_json::Map::new(),
-    };
-    args.extend(extra);
-    args.insert("_plan".into(), json!(stored.plan.id));
     let confirmation = Confirmation { mode, plan_hash: stored.hash.clone(), at: deps.clock.now() };
-    args.insert("_confirmation".into(), serde_json::to_value(confirmation).expect("confirmation serializes"));
     let req = ChangeRequest {
         kind: stored.plan.request.kind,
-        args: Value::Object(args),
+        args: stored.plan.request.args.clone(),
         relied_on: vec![],
         requester: requester_for(deps, caller, mode == ConfirmMode::Tty),
         supersedes: stored.supersedes.clone(),
+        confirmed: Some(ConfirmedPlan { plan: stored.plan.id.clone(), confirmation, observed: extra }),
     };
     deps.writer.admit(req).map_err(writer_err)
 }

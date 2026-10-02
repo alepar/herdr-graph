@@ -44,7 +44,7 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 /// A bookkeeping request of sub-kind `sub` (`args["sub"]` selects the mutation).
 pub fn bookkeeping_request(sub: &str, mut args: serde_json::Value) -> ChangeRequest {
     args["sub"] = json!(sub);
-    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None }
+    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
 }
 
 /// Whether the request was merged into an older overlapping one (such rows are skipped by scans).

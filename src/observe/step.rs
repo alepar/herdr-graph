@@ -111,7 +111,7 @@ pub struct RuntimeLoop {
 }
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
-    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None }
+    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
 }
 
 fn binding_request(object: &AnyId, b: &Binding) -> ChangeRequest {

@@ -756,6 +756,7 @@ pub(crate) mod testkit {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         let op = fx.w.admit(req).unwrap();
         fx.w.drain().unwrap();
@@ -828,6 +829,7 @@ pub(crate) mod testkit {
             relied_on: vec![],
             requester,
             supersedes: None,
+            confirmed: None,
         };
         use crate::ports::writer::Writer;
         let op = fx.w.admit(req).unwrap();
@@ -846,6 +848,7 @@ pub(crate) mod testkit {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         let op = fx.w.admit(req).unwrap();
         fx.w.drain().unwrap();

@@ -14,7 +14,7 @@ use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
-use crate::model::{AnyId, CloneId, EffectId, IdKind, OpId, PlanId, SeatId, TeamspaceId, Timestamp};
+use crate::model::{AnyId, CloneId, EffectId, IdKind, OpId, SeatId, TeamspaceId, Timestamp};
 use crate::plan::store::PlanStore;
 use crate::ports::store::StoreError;
 use crate::ports::threads::*;
@@ -444,7 +444,7 @@ impl ThreadsSource {
             {
                 continue;
             }
-            let Some(plan_id) = row.request.args.get("_plan").and_then(|v| v.as_str()).and_then(|s| s.parse::<PlanId>().ok())
+            let Some(plan_id) = row.request.confirmed.as_ref().map(|c| c.plan.clone())
             else {
                 continue;
             };
@@ -724,6 +724,7 @@ fn admit_bookkeeping(cx: &ExecCx<'_>, args: serde_json::Value) -> Result<(), Exe
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     };
     cx.writer.admit(request).map(|_| ()).map_err(|e| ExecOutcome::Transient(format!("bookkeeping write: {e}")))
 }

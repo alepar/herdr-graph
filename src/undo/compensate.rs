@@ -221,9 +221,9 @@ fn restore_mutate(
     plan: &Plan,
 ) -> Result<(), MutationError> {
     // The caller's pane as Herdr showed it when `undo.apply` admitted the op: an observed input carried in the
-    // request envelope (`_` keys are outside the plan's args), not a recomputed effect.
+    // request's typed `confirmed.observed`, not a recomputed effect.
     let observed: Option<Binding> =
-        cx.request.args.get(ADOPT_BINDING_KEY).and_then(|v| serde_json::from_value(v.clone()).ok());
+        cx.request.confirmed.as_ref().and_then(|c| c.observed.get(ADOPT_BINDING_KEY)).and_then(|v| serde_json::from_value(v.clone()).ok());
     let mut reserved = plan.reserved.clone();
     let r = compute_restore(&cx.tree, orig, &mut reserved).map_err(mm)?;
     let runtime = r.runtime_clones(&cx.tree).map_err(mm)?;

@@ -239,6 +239,7 @@ fn patch(fx: &Fx, args: serde_json::Value) {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         })
         .unwrap();
     fx.w.drain().unwrap();

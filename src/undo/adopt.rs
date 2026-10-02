@@ -8,7 +8,7 @@ use crate::store::layout;
 use crate::store::tree::TreeRead;
 
 /// Request-envelope key (outside the confirmed plan's args) carrying the caller's pane binding.
-pub const ADOPT_BINDING_KEY: &str = "_adopt_binding";
+pub const ADOPT_BINDING_KEY: &str = "adopt_binding";
 
 /// The restored clone that takes over the caller's pane, and the clone that held the pane until now.
 #[derive(Debug, Clone, PartialEq)]

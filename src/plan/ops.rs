@@ -220,6 +220,7 @@ pub fn reassign(journal: &Journal, store: &dyn Store, op: &OpId, to: &SeatId, no
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         journal.admit(&req, now)?;
     }
@@ -413,6 +414,7 @@ mod tests {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         fx.w.admit(req).unwrap()
     }
@@ -472,6 +474,7 @@ mod tests {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         };
         let op = j(&fx).admit(&req, t0()).unwrap();
         j(&fx).begin_applying(&op, t0()).unwrap().unwrap();
@@ -611,6 +614,7 @@ mod tests {
                 relied_on: vec![],
                 requester: requester_of(&one),
                 supersedes: None,
+                confirmed: None,
             };
             fx.w.admit(req).unwrap()
         };

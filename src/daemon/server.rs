@@ -195,10 +195,25 @@ async fn dispatch(
         }
         _ => return err(IpcErrorCode::Unavailable, "daemon is still starting (first pass); retry shortly"),
     };
+    dispatch_registered_within(&registry, req.request_id, kind, req.command.args, Some(deadline)).await
+}
+
+/// Strip `_caller` into `CommandCtx` and run the registered handler: the exact path every IPC command takes.
+pub async fn dispatch_registered(registry: &Registry, request_id: String, kind: &str, args: serde_json::Value) -> IpcResult {
+    dispatch_registered_within(registry, request_id, kind, args, None).await
+}
+
+/// `dispatch_registered` with the request's deadline in scope for the handler (none: an internal caller).
+async fn dispatch_registered_within(
+    registry: &Registry,
+    request_id: String,
+    kind: &str,
+    mut args: serde_json::Value,
+    deadline: Option<tokio::time::Instant>,
+) -> IpcResult {
     let Some(handler) = registry.handler(kind) else {
         return err(IpcErrorCode::UnknownCommand, format!("unknown command {kind:?}"));
     };
-    let mut args = req.command.args;
     let caller = match args.as_object_mut().and_then(|o| o.remove("_caller")) {
         None => CallerInfo::default(),
         Some(v) => match serde_json::from_value(v) {
@@ -206,8 +221,12 @@ async fn dispatch(
             Err(e) => return err(IpcErrorCode::BadRequest, format!("malformed _caller: {e}")),
         },
     };
-    let cx = CommandCtx { request_id: req.request_id, caller };
-    match budget::within(deadline, handler.call(cx, args)).await {
+    let cx = CommandCtx { request_id, caller };
+    let outcome = match deadline {
+        Some(deadline) => budget::within(deadline, handler.call(cx, args)).await,
+        None => handler.call(cx, args).await,
+    };
+    match outcome {
         Ok(value) => IpcResult::Ok { value },
         Err(CommandError { code, message }) => IpcResult::Error { code, message },
     }

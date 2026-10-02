@@ -433,6 +433,7 @@ mod tests {
                 relied_on: vec![],
                 requester: Requester::default(),
                 supersedes: None,
+                confirmed: None,
             };
             let op = j.admit(&req, now).unwrap();
             j.begin_applying(&op, now).unwrap();

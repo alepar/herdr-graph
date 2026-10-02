@@ -72,6 +72,7 @@ fn crash_child() {
             relied_on: vec![],
             requester: Requester::default(),
             supersedes: None,
+            confirmed: None,
         })
         .unwrap();
     }

@@ -144,7 +144,7 @@ fn plan_and_apply(fx: &Fx, change: &str) {
 
 fn bookkeeping(fx: &Fx, sub: &str, mut args: serde_json::Value) {
     args["sub"] = json!(sub);
-    let req = ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None };
+    let req = ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None };
     fx.w.admit(req).unwrap();
     fx.w.drain().unwrap();
 }

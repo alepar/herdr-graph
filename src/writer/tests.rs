@@ -1,11 +1,11 @@
 use super::*;
 use crate::journal::CancelOutcome;
-use crate::model::change::{ChangeRequest, Requester};
+use crate::model::change::{ChangeRequest, ConfirmedPlan, Requester};
 use crate::model::common::{NameChange, NameSource};
 use crate::model::operation::Confirmation;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
-use crate::model::{AnyId, Lifecycle, SCHEMA_VERSION, SeatId, TeamspaceId};
+use crate::model::{AnyId, Lifecycle, PlanId, SCHEMA_VERSION, SeatId, TeamspaceId};
 use crate::ports::clock::ManualClock;
 use crate::store::init::init_instance;
 use chrono::TimeZone;
@@ -184,6 +184,7 @@ fn book(sub: &str, mut args: serde_json::Value) -> ChangeRequest {
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 
@@ -200,6 +201,7 @@ fn rename(seat: &SeatId, name: &str, rev: Option<u64>) -> ChangeRequest {
             .unwrap_or_default(),
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 
@@ -295,8 +297,7 @@ fn operation_summary_written_with_confirmation_and_plan() {
     let plan = PlanId::new();
     let conf = Confirmation { mode: crate::model::operation::ConfirmMode::Tty, plan_hash: "h".into(), at: t0() };
     let mut r = rename(&fx.seed.a, "renamed", Some(1));
-    r.args["_plan"] = json!(plan.as_str());
-    r.args["_confirmation"] = serde_json::to_value(&conf).unwrap();
+    r.confirmed = Some(ConfirmedPlan { plan: plan.clone(), confirmation: conf.clone(), observed: Default::default() });
     let op = fx.w.admit(r).unwrap();
     fx.w.step().unwrap();
     let head = fx.w.store().head().unwrap();

@@ -219,6 +219,7 @@ impl Rig {
                 relied_on: vec![],
                 requester: Default::default(),
                 supersedes: None,
+                confirmed: None,
             })
             .unwrap();
         self.writer.drain().unwrap();

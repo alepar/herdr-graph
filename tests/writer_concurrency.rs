@@ -128,6 +128,7 @@ fn book(sub: &str, mut args: serde_json::Value) -> ChangeRequest {
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 
@@ -138,6 +139,7 @@ fn rename(seat: &SeatId, name: &str) -> ChangeRequest {
         relied_on: vec![ReliedOn { object: seat.to_any(), version: Version::Rev(1) }],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 

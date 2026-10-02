@@ -125,6 +125,7 @@ fn request(args: serde_json::Value) -> ChangeRequest {
         relied_on: vec![],
         requester: Requester::default(),
         supersedes: None,
+        confirmed: None,
     }
 }
 

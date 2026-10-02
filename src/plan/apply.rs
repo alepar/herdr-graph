@@ -4,8 +4,6 @@ use super::hash::{plan_hash, same_effects};
 use super::kind::{KindRegistry, PlanCx, PlanError, make_plan};
 use super::store::PlanStore;
 use super::types::{PlanEffect, StoredPlan};
-use crate::model::PlanId;
-use crate::model::operation::Confirmation;
 use crate::ports::store::StoreError;
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, Reject};
 use std::path::PathBuf;
@@ -33,16 +31,6 @@ fn effect_diff(confirmed: &[PlanEffect], recomputed: &[PlanEffect]) -> String {
     parts.join("; ")
 }
 
-/// The request args without the `_plan` / `_confirmation` envelope keys.
-fn kind_args(args: &serde_json::Value) -> serde_json::Value {
-    match args {
-        serde_json::Value::Object(m) => {
-            serde_json::Value::Object(m.iter().filter(|(k, _)| !k.starts_with('_')).map(|(k, v)| (k.clone(), v.clone())).collect())
-        }
-        other => other.clone(),
-    }
-}
-
 impl Mutation for OrgMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let req = cx.request;
@@ -52,12 +40,8 @@ impl Mutation for OrgMutation {
             .ok_or_else(|| MutationError::Bug(format!("no organizational kind registered for {:?}", req.kind)))?;
 
         // 1. the confirmed plan
-        let plan_id = req
-            .args
-            .get("_plan")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<PlanId>().ok())
-            .ok_or_else(|| reject("unknown_plan", "request carries no valid plan id".into()))?;
+        let confirmed = req.confirmed.as_ref().ok_or_else(|| reject("unknown_plan", "request carries no confirmed plan".into()))?;
+        let plan_id = confirmed.plan.clone();
         let stored = self
             .plans
             .get(&plan_id)
@@ -71,18 +55,13 @@ impl Mutation for OrgMutation {
             .ok_or_else(|| reject("unknown_plan", format!("plan {plan_id} is not in the plan store")))?;
 
         // 2. the confirmation names exactly this plan
-        let confirmation: Option<Confirmation> =
-            req.args.get("_confirmation").and_then(|v| serde_json::from_value(v.clone()).ok());
-        match confirmation {
-            Some(c) if c.plan_hash == stored.hash => {}
-            _ => {
-                return Err(reject(
-                    "confirmation_mismatch",
-                    format!("confirmation does not match plan {plan_id} (hash {})", stored.hash),
-                ));
-            }
+        if confirmed.confirmation.plan_hash != stored.hash {
+            return Err(reject(
+                "confirmation_mismatch",
+                format!("confirmation does not match plan {plan_id} (hash {})", stored.hash),
+            ));
         }
-        let args = kind_args(&req.args);
+        let args = req.args.clone();
         if args != stored.plan.request.args || req.kind != stored.plan.request.kind {
             return Err(reject("confirmation_mismatch", format!("request does not match plan {plan_id}")));
         }
