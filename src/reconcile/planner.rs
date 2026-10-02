@@ -39,6 +39,10 @@ pub fn set_live_ref(journal: &Journal, object: &AnyId, r: &LiveRef) {
     }
 }
 
+pub fn delete_live_ref(journal: &Journal, object: &AnyId) {
+    let _ = journal.meta_delete(&format!("live:{object}"));
+}
+
 pub fn launched_key(clone: &CloneId) -> String {
     format!("launched:{clone}")
 }
@@ -152,7 +156,23 @@ impl<'a> LiveIndex<'a> {
         if live.incarnation != self.snap.incarnation {
             return None;
         }
-        self.pane_by_id(live.pane.as_ref()?).map(|lp| LivePane { stamped: false, ..lp })
+        // A pane another active clone's committed binding claims (e.g. adopted by an undo from the pane of a
+        // displaced clone) is no longer this clone's, whatever the stale live ref says.
+        let lp = self.pane_by_id(live.pane.as_ref()?)?;
+        if self.pane_claimed_by(&lp.pane.id, clone).is_some() {
+            return None;
+        }
+        Some(LivePane { stamped: false, ..lp })
+    }
+
+    /// An active desired clone other than `except` whose committed binding names this pane. Bindings only (no
+    /// `pane()` call) and no incarnation filter: an `unknown` adopted clone with a pane-only binding claims it.
+    pub fn pane_claimed_by(&self, pane: &HerdrPaneId, except: &CloneId) -> Option<CloneId> {
+        self.desired
+            .panes
+            .iter()
+            .find(|q| q.clone != *except && q.bound.as_ref().is_some_and(|b| b.pane_id.as_ref() == Some(pane)))
+            .map(|q| q.clone.clone())
     }
 
     /// The seat whose committed binding (same incarnation) or journal live ref names this tab.
@@ -476,12 +496,14 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
         let Some(ts_any) = token_of(&ws.metadata) else { continue };
         let Ok(ts) = TeamspaceId::parse(ts_any.as_str()) else { continue };
         let Some(ts_rec) = d.teamspaces.get(&ts) else { continue };
-        let graph_panes = |t: &TabInfo| -> Vec<(CloneId, SeatId)> {
+        // (clone named by the token, its seat, pane id): a pane another clone's committed binding claims
+        // is adopted (undo from a bound pane), so the token's clone no longer owns it.
+        let graph_panes = |t: &TabInfo| -> Vec<(CloneId, SeatId, HerdrPaneId)> {
             t.panes
                 .iter()
-                .filter_map(|p| token_of(&p.metadata))
-                .filter_map(|a| CloneId::parse(a.as_str()).ok())
-                .filter_map(|c| d.clones.get(&c).map(|r| (c, r.seat.clone())))
+                .filter_map(|p| Some((token_of(&p.metadata)?, p.id.clone())))
+                .filter_map(|(a, pid)| Some((CloneId::parse(a.as_str()).ok()?, pid)))
+                .filter_map(|(c, pid)| d.clones.get(&c).map(|r| (c, r.seat.clone(), pid)))
                 .collect()
         };
         if d.workspace(&ts).is_none() {
@@ -489,7 +511,7 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
             let mut predicted = vec![pred(ts_any.clone(), ContainerKind::Workspace, EndState::Closed, false)];
             let mut seats_done = BTreeSet::new();
             for t in &ws.tabs {
-                for (c, s) in graph_panes(t) {
+                for (c, s, _) in graph_panes(t) {
                     predicted.push(pred(c.to_any(), ContainerKind::Pane, EndState::Closed, true));
                     if seats_done.insert(s.clone()) {
                         predicted.push(pred(s.to_any(), ContainerKind::Tab, EndState::Closed, true));
@@ -510,15 +532,18 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
         let mut closing: Vec<Closing> = Vec::new();
         for t in &ws.tabs {
             let gp = graph_panes(t);
-            let Some((_, seat)) = gp.first().cloned() else { continue };
+            let Some((_, seat, _)) = gp.first().cloned() else { continue };
+            let claimed = |c: &CloneId, pid: &HerdrPaneId| idx.pane_claimed_by(pid, c).is_some();
+            let any_claimed = gp.iter().any(|(c, _, pid)| claimed(c, pid));
             // A seat that is merely dormant keeps its active clones: the whole tab goes. A retired seat has only
             // retired clones, which close pane by pane (the last one takes the tab with it, induced).
-            let any_active = gp.iter().any(|(c, _)| d.clones.get(c).is_some_and(|r| r.lifecycle == CloneLifecycle::Active));
-            if d.tab(&seat).is_none() && any_active {
+            let any_active = gp.iter().any(|(c, _, _)| d.clones.get(c).is_some_and(|r| r.lifecycle == CloneLifecycle::Active));
+            if d.tab(&seat).is_none() && any_active && !any_claimed {
                 closing.push(Closing { tab: t.clone(), seat, whole_tab: true, clones: gp.into_iter().map(|g| g.0).collect() });
                 continue;
             }
-            let dead: Vec<CloneId> = gp.iter().filter(|(c, _)| d.pane(c).is_none()).map(|(c, _)| c.clone()).collect();
+            let dead: Vec<CloneId> =
+                gp.iter().filter(|(c, _, pid)| d.pane(c).is_none() && !claimed(c, pid)).map(|(c, _, _)| c.clone()).collect();
             if !dead.is_empty() {
                 closing.push(Closing { tab: t.clone(), seat, whole_tab: false, clones: dead });
             }

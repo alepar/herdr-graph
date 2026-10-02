@@ -102,6 +102,15 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
             continue;
         }
         let Ok(c) = CloneId::parse(any.as_str()) else { continue };
+        // A retired clone's leftover token must not hold a pane an active clone's committed binding names (an
+        // undo adopted it): pass 2 links the pane to that clone, so it is never taken for gone before re-stamping.
+        if d.clones.get(&c).is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+            && d.clones.values().any(|o| {
+                o.lifecycle == CloneLifecycle::Active && o.runtime.bound.as_ref().is_some_and(|b| b.pane_id.as_ref() == Some(pid))
+            })
+        {
+            continue;
+        }
         if d.clones.contains_key(&c) && !m.clone_pane.contains_key(&c) {
             m.link_pane(pid, &c);
         }

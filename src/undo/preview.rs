@@ -226,7 +226,9 @@ pub fn closes_caller(tree: &dyn TreeRead, caller_pane: &str, effects: &[PlanEffe
         }
         let (clone, seat) = (c.id.to_any(), c.seat.to_any());
         let closes = effects.iter().any(|e| {
-            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane") && e.object == clone)
+            // A clone displaced by the undo's own adoption hands its pane over: that pane is adopted, not closed.
+            let displaced = e.detail["displaced_by_undo"] == json!(true);
+            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane") && e.object == clone && !displaced)
                 || (matches!(e.kind.as_str(), "seat.retire" | "runtime.close_tab") && e.object == seat)
         });
         if closes {
