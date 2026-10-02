@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn stub_commands_report_not_implemented() {
-        let cli = Cli::try_parse_from(["herdr-graph", "status"]).unwrap();
+        let cli = Cli::try_parse_from(["herdr-graph", "who", "p1"]).unwrap();
         let err = run(cli).unwrap_err();
         assert!(err.to_string().contains("not implemented"));
     }

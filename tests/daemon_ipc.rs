@@ -1,0 +1,242 @@
+//! Daemon/IPC integration: spawns the real binary against a temp instance and a fake Herdr socket.
+//! Never touches a live Herdr session: every child runs with a cleared environment.
+use herdr_graph::config::{InstancePaths, socket_path};
+use herdr_graph::daemon::client::Client;
+use herdr_graph::daemon::lock;
+use herdr_graph::ipc::IpcErrorCode;
+use herdr_graph::store::init::init_instance;
+use std::os::unix::net::UnixListener;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{Duration, Instant};
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    home: PathBuf,
+    instance: PathBuf,
+    herdr_socket: PathBuf,
+    _listener: UnixListener,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        Self::with_instance_subdir(None)
+    }
+
+    fn with_instance_subdir(sub: Option<&str>) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let instance = match sub {
+            Some(s) => dir.path().join(s).join("instance"),
+            None => dir.path().join("instance"),
+        };
+        init_instance(&instance).unwrap();
+        let herdr_socket = dir.path().join("herdr.sock");
+        let listener = UnixListener::bind(&herdr_socket).unwrap();
+        let l2 = listener.try_clone().unwrap();
+        std::thread::spawn(move || for _conn in l2.incoming() {});
+        Fixture { _dir: dir, home, instance, herdr_socket, _listener: listener }
+    }
+
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_herdr-graph"));
+        c.args(args)
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("HOME", &self.home)
+            .env("HERDR_GRAPH_INSTANCE", &self.instance)
+            .env("HERDR_SOCKET_PATH", &self.herdr_socket);
+        c
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        self.cmd(args).output().unwrap()
+    }
+
+    fn sock(&self) -> PathBuf {
+        socket_path(&self.instance)
+    }
+
+    fn lock_pid(&self) -> u32 {
+        lock::read_info(&InstancePaths::new(&self.instance).lock).expect("lock info").pid
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let sock = self.sock();
+        if let Ok(mut c) = Client::connect(&sock, Duration::from_secs(2)) {
+            let _ = c.call("shutdown", serde_json::json!({}));
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while sock.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if sock.exists()
+            && let Some(info) = lock::read_info(&InstancePaths::new(&self.instance).lock)
+        {
+            // Only signal a pid that is verifiably this test binary's daemon.
+            let ps = Command::new("ps").args(["-o", "command=", "-p", &info.pid.to_string()]).output().unwrap();
+            let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
+            if cmdline.contains(env!("CARGO_BIN_EXE_herdr-graph")) && cmdline.contains(" daemon") {
+                let _ = Command::new("kill").args(["-TERM", &info.pid.to_string()]).status();
+            }
+        }
+    }
+}
+
+fn stdout(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+fn stderr(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+#[test]
+fn ensure_twice_yields_one_daemon() {
+    let f = Fixture::new();
+    let first = f.run(&["daemon", "--ensure"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+    let pid = f.lock_pid();
+    let second = f.run(&["daemon", "--ensure"]);
+    assert!(second.status.success(), "{}", stderr(&second));
+    assert_eq!(f.lock_pid(), pid, "second ensure must not replace the daemon");
+    assert!(stdout(&second).contains("already running"), "{}", stdout(&second));
+    assert!(stdout(&second).contains(&pid.to_string()));
+    let ps = Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output().unwrap();
+    assert!(stdout(&ps).contains("herdr-graph daemon"), "ps: {}", stdout(&ps));
+}
+
+#[test]
+fn cli_roundtrips_a_command() {
+    let f = Fixture::new();
+    assert!(f.run(&["daemon", "--ensure"]).status.success());
+    let mut c = Client::connect(&f.sock(), Duration::from_secs(5)).unwrap();
+    let hello = c.call("hello", serde_json::json!({})).unwrap();
+    assert_eq!(hello["pid"].as_u64().unwrap() as u32, f.lock_pid());
+    assert_eq!(hello["herdr_socket"].as_str().unwrap(), f.herdr_socket.to_str().unwrap());
+    let err = c.call("nope", serde_json::json!({})).unwrap_err();
+    assert!(
+        matches!(err, herdr_graph::daemon::client::ClientError::Remote { code: IpcErrorCode::UnknownCommand, .. }),
+        "{err:?}"
+    );
+    // The same connection keeps working after an error reply.
+    assert!(c.call("hello", serde_json::json!({})).is_ok());
+}
+
+#[test]
+fn status_reports_instance_and_pid() {
+    let f = Fixture::new();
+    assert!(f.run(&["daemon", "--ensure"]).status.success());
+    let pid = f.lock_pid();
+    let out = f.run(&["status"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains(f.instance.to_str().unwrap()), "{text}");
+    assert!(text.contains(&format!("pid {pid}")), "{text}");
+    assert!(text.contains("running"), "{text}");
+}
+
+#[test]
+fn status_without_daemon_reads_directly() {
+    let f = Fixture::new();
+    let out = f.run(&["status"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("not running"), "{text}");
+    assert!(text.contains(f.instance.to_str().unwrap()), "{text}");
+    let head = git_head(&f.instance);
+    assert!(text.contains(&format!("head: {head}")), "expected head {head} in {text}");
+    assert!(!f.sock().exists(), "status must not start a daemon");
+}
+
+fn git_head(root: &Path) -> String {
+    let repo = git2::Repository::open(root).unwrap();
+    repo.refname_to_id("refs/heads/main").unwrap().to_string()
+}
+
+#[test]
+fn daemon_refuses_without_herdr_socket() {
+    let f = Fixture::new();
+    let out = f.cmd(&["daemon"]).env_remove("HERDR_SOCKET_PATH").output().unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("not inside Herdr"), "{}", stderr(&out));
+    let out = f.cmd(&["daemon", "--ensure"]).env_remove("HERDR_SOCKET_PATH").output().unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("not inside Herdr"), "{}", stderr(&out));
+    assert!(!f.sock().exists());
+}
+
+#[test]
+fn daemon_refuses_unreachable_herdr_socket() {
+    let f = Fixture::new();
+    let dead = f.home.join("dead.sock");
+    let out = f.cmd(&["daemon"]).env("HERDR_SOCKET_PATH", &dead).output().unwrap();
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("not reachable"), "{}", stderr(&out));
+}
+
+#[test]
+fn ensure_without_instance_exits_zero() {
+    let f = Fixture::new();
+    let out = f.cmd(&["daemon", "--ensure"]).env_remove("HERDR_GRAPH_INSTANCE").output().unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(!f.sock().exists());
+    assert!(!InstancePaths::new(&f.instance).lock.exists(), "no daemon may have started");
+}
+
+#[test]
+fn long_socket_path_fallback_serves() {
+    let f = Fixture::with_instance_subdir(Some(&format!("{}/{}", "d".repeat(40), "e".repeat(40))));
+    let direct = f.instance.join(".graph-local/daemon.sock");
+    assert!(direct.as_os_str().len() >= 100, "fixture path too short: {}", direct.as_os_str().len());
+    let out = f.run(&["daemon", "--ensure"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let sock = f.sock();
+    assert!(sock.starts_with(format!("/private/tmp/herdr-graph-{}", unsafe { libc::getuid() })), "{sock:?}");
+    assert!(sock.exists());
+    let mut c = Client::connect(&sock, Duration::from_secs(5)).unwrap();
+    assert_eq!(c.call("hello", serde_json::json!({})).unwrap()["pid"].as_u64().unwrap() as u32, f.lock_pid());
+}
+
+#[test]
+fn read_command_without_instance_exits_2() {
+    let f = Fixture::new();
+    let out = f.cmd(&["status"]).env_remove("HERDR_GRAPH_INSTANCE").output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("run herdr-graph init"), "{}", stderr(&out));
+}
+
+#[test]
+fn doctor_reports_checks_and_fails_without_daemon() {
+    let f = Fixture::new();
+    let out = f.run(&["doctor"]);
+    let text = stdout(&out);
+    assert!(text.contains("[ok] instance repo"), "{text}");
+    assert!(text.contains("[ok] herdr socket"), "{text}");
+    assert!(text.contains("[FAIL] daemon:"), "{text}");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(f.run(&["daemon", "--ensure"]).status.success());
+    let out = f.run(&["doctor"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+    assert!(stdout(&out).contains("[ok] daemon:"));
+}
+
+#[test]
+fn shutdown_command_stops_daemon_and_removes_socket() {
+    let f = Fixture::new();
+    assert!(f.run(&["daemon", "--ensure"]).status.success());
+    let sock = f.sock();
+    let mut c = Client::connect(&sock, Duration::from_secs(5)).unwrap();
+    c.call("shutdown", serde_json::json!({})).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while sock.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!sock.exists(), "socket file must be removed on graceful shutdown");
+    // A fresh ensure after shutdown starts a new daemon.
+    let out = f.run(&["daemon", "--ensure"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stdout(&out).contains("started"), "{}", stdout(&out));
+}
