@@ -28,7 +28,6 @@ use crate::writer::{WriterConfig, WriterCore};
 use chrono::TimeZone;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration;
 
 fn t0() -> Timestamp {
     chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap()
@@ -122,8 +121,7 @@ fn fx() -> Fx {
     let w = WriterCore::new(store.clone(), journal.clone(), Arc::new(reg), clock.clone(), WriterConfig::default());
     let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root.clone() };
     let herdr = FakeHerdr::new();
-    let mut cfg = ReconcilerConfig::new(root.clone());
-    cfg.poll_interval = Duration::from_millis(5);
+    let cfg = ReconcilerConfig::new(root.clone());
     let rec = Reconciler::new(store.clone(), journal.clone(), w.clone(), herdr, clock.clone(), Arc::new(Quiet), cfg);
     let threads = Arc::new(FakeThreads::new());
     let map = Arc::new(FakePaneSeatMap::new());

@@ -111,6 +111,7 @@ fn fx() -> Fx {
     init_instance(&root).unwrap();
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
+    crate::plan::kinds_extra::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
@@ -128,7 +129,6 @@ fn fx() -> Fx {
     cfg.idle_timeout = Duration::from_millis(100);
     cfg.exit_timeout = Duration::from_millis(100);
     cfg.exit_followup = Duration::from_millis(20);
-    cfg.poll_interval = Duration::from_millis(5);
     let rec = Reconciler::new(store.clone(), journal.clone(), dw.clone(), herdr.clone(), clock.clone(), Arc::new(QuietNotifier), cfg);
     let lp = new_loop(&herdr, &store, &dw, &journal, &rec, &clock, &root);
     Fx { _tmp: tmp, root, deps, w, dw, store, journal, herdr, clock, rec, lp }
@@ -1008,6 +1008,34 @@ async fn closing_a_pane_with_an_occupant_ends_the_session() {
     let r = clone_by_id(&fx, &c.id);
     assert!(r.occupant.is_none());
     assert_eq!(r.sessions[0].end_reason, Some(SessionEndReason::PaneClosed));
+}
+
+#[tokio::test]
+async fn observation_proceeds_while_replacement_waits() {
+    let fx = fx();
+    activate(&fx, "claude");
+    settle(&fx).await;
+    commit(&fx, "seat create other --teamspace alpha --active --harness claude");
+    settle(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = pane_of(&fx, &c);
+    fx.herdr.set_agent(&pane, Some(AgentInfo { kind: "claude".into(), status: AgentStatus::Working, session: Some(AgentSession::Id("sess-1".into())) }));
+    step(&fx).await;
+    assert!(clone_by_id(&fx, &c.id).occupant.is_some(), "the occupant is observed");
+
+    // The model change plans a replacement that has to wait for the working occupant.
+    fx.herdr.clear_calls();
+    commit(&fx, "seat override foreman --model fancy");
+    tokio::time::timeout(Duration::from_secs(2), step(&fx)).await.expect("the step must not wait for the occupant");
+    let waiting: Vec<_> = fx.journal.effects_with_status(&[EffectStatus::Pending]).unwrap().into_iter().filter(|r| r.kind == EffectKind::ReplaceSession).collect();
+    assert_eq!(waiting.len(), 1, "the replacement is waiting");
+
+    // A user rename on the other seat is observed and committed by the next step.
+    let tab = tab_of_seat(&fx, "other");
+    fx.herdr.user_rename_tab(&tab, "renamed");
+    tokio::time::timeout(Duration::from_secs(2), step(&fx)).await.expect("the step must not wait for the occupant");
+    assert_eq!(seat(&fx, "renamed").name, "renamed");
+    assert_eq!(calls(&fx).iter().filter(|c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))).count(), 0, "the working occupant was never touched");
 }
 
 // =================================================================================================

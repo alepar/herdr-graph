@@ -95,6 +95,14 @@ struct Fx {
 }
 
 fn fx() -> Fx {
+    fx_with(|cfg| {
+        cfg.idle_timeout = Duration::from_millis(100);
+        cfg.exit_timeout = Duration::from_millis(100);
+        cfg.exit_followup = Duration::from_millis(20);
+    })
+}
+
+fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
@@ -115,10 +123,7 @@ fn fx() -> Fx {
     let herdr = FakeHerdr::new();
     let notes = Arc::new(RecordingNotifier::default());
     let mut cfg = ReconcilerConfig::new(root);
-    cfg.idle_timeout = Duration::from_millis(100);
-    cfg.exit_timeout = Duration::from_millis(100);
-    cfg.exit_followup = Duration::from_millis(20);
-    cfg.poll_interval = Duration::from_millis(5);
+    tune(&mut cfg);
     let rec = Reconciler::new(store.clone(), journal.clone(), w.clone(), herdr.clone(), clock.clone(), notes.clone(), cfg);
     Fx { _tmp: tmp, deps, w, store, journal, herdr, clock, notes, rec }
 }
@@ -518,6 +523,10 @@ async fn adopted_occupant_without_launch_record_not_replaced() {
     assert!(rows(&fx, EffectKind::ReplaceSession).is_empty());
 }
 
+fn ms(n: i64) -> chrono::Duration {
+    chrono::Duration::milliseconds(n)
+}
+
 #[tokio::test]
 async fn replacement_busy_occupant_needs_revision() {
     let fx = fx();
@@ -525,11 +534,19 @@ async fn replacement_busy_occupant_needs_revision() {
     fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
     set_model(&fx, &s, "opus-x");
     fx.herdr.clear_calls();
+    let report = step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::Pending, "the wait is not over yet");
+    assert_eq!(report.deferred, vec![ef.id.clone()]);
+    assert!(calls(&fx).is_empty(), "a working agent is never interrupted: {:?}", calls(&fx));
+    assert!(fx.notes.messages().is_empty());
+
+    fx.clock.advance(ms(100));
     step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
     assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
-    assert!(calls(&fx).is_empty(), "a working agent is never interrupted: {:?}", calls(&fx));
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))), 0, "{:?}", calls(&fx));
     assert!(fx.notes.messages().iter().any(|m| m.contains("occupant busy")));
 }
 
@@ -541,15 +558,72 @@ async fn replacement_exit_timeout_starts_no_agent() {
     set_model(&fx, &s, "opus-x");
     fx.herdr.clear_calls();
     step(&fx).await;
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 2, "the two ctrl+c presses: {:?}", calls(&fx));
+
+    fx.clock.advance(ms(20));
+    step(&fx).await;
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 3, "the /exit fallback: {:?}", calls(&fx));
+    step(&fx).await;
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 3, "the fallback is sent once");
+
+    fx.clock.advance(ms(80));
+    step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
     assert_eq!(ef.last_error.as_deref(), Some("occupant did not exit"));
     let log = calls(&fx);
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0, "{log:?}");
-    // The fallback `/exit` followed the two ctrl+c presses.
     let sent: Vec<_> = log.iter().filter_map(|c| if let FakeCall::SendKeys(_, k) = c { Some(k.clone()) } else { None }).collect();
     assert_eq!(sent.len(), 3, "{sent:?}");
     assert_eq!(sent[2], vec![KeyInput::Text("/exit".into()), KeyInput::Key("enter".into())]);
+    assert!(fx.notes.messages().iter().any(|m| m.contains("occupant did not exit")));
+}
+
+#[tokio::test]
+async fn replacement_wait_does_not_block_other_effects() {
+    // Default timeouts: a working occupant would hold the old inline wait for 10 minutes.
+    let fx = fx_with(|_| {});
+    let (s, _, pane) = occupied(&fx).await;
+    commit(&fx, "seat create bench --teamspace alpha --active --harness shell");
+    step(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    commit(&fx, "seat rename bench zwei");
+    fx.herdr.clear_calls();
+
+    let report = tokio::time::timeout(Duration::from_secs(2), step(&fx)).await.expect("the step must not wait for the occupant");
+    assert!(count_calls(&fx, |c| matches!(c, FakeCall::RenameTab(..))) >= 1, "{:?}", calls(&fx));
+    let rename = rows(&fx, EffectKind::RenameTab).into_iter().last().expect("rename row");
+    assert_eq!(rename.status, EffectStatus::Done);
+    let repl = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(repl.status, EffectStatus::Pending);
+    assert!(report.deferred.contains(&repl.id), "{report:?}");
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))), 0);
+}
+
+#[tokio::test]
+async fn replacement_state_survives_restart() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    fx.clock.advance(ms(50));
+    step(&fx).await;
+    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+
+    // A restarted daemon: fresh reconciler over the same journal, store and clock.
+    let mut cfg = ReconcilerConfig::new(fx.deps.instance.clone());
+    cfg.idle_timeout = Duration::from_millis(100);
+    let rec2 = Reconciler::new(fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(), fx.notes.clone(), cfg);
+    fx.clock.advance(ms(50));
+    rec2.step_fresh().await;
+    fx.w.drain().unwrap();
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::NeedsRevision, "the timer counts from the persisted start, not the restart");
+    assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
 }
 
 #[tokio::test]
