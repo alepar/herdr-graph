@@ -4,7 +4,7 @@
 use herdr_graph::config::InstancePaths;
 use herdr_graph::daemon::DaemonCtx;
 use herdr_graph::daemon::client::{Client, ClientError};
-use herdr_graph::daemon::compose::{STARTUP_STEPS, Services, compose_with, mutation_registry};
+use herdr_graph::daemon::compose::{STARTUP_STEPS, Services, compose_with, mutation_registry, production_threads};
 use herdr_graph::daemon::registry::{CallerInfo, Registry, Shutdown, shutdown_channel};
 use herdr_graph::herdr::FakeHerdr;
 use herdr_graph::herdr::fake::FakeCall;
@@ -21,6 +21,7 @@ use herdr_graph::store::init::init_instance;
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
 use herdr_graph::store::GitStore;
+use herdr_graph::threads::discovery::DiscoveryInputs;
 use herdr_graph::threads::{FakePaneSeatMap, FakeThreads};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -712,4 +713,54 @@ mod subprocess {
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut third);
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// the threads port built exactly as production builds it (hg-zmi.46): no HERDR_GRAPH_THREADS_* variable
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn production_threads_port_finds_default_state_dir_without_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let threads_dir = home.join(".local/state/herdr/plugins/herdr-threads");
+    std::fs::create_dir_all(&threads_dir).unwrap();
+    let inputs = DiscoveryInputs { home: Some(home), ..Default::default() };
+    let (threads, _map) = production_threads(&ctx_for(dir.path()), inputs);
+    let err = threads.delivery_capability().await.expect_err("no threads daemon runs in the empty state dir").to_string();
+    assert!(err.contains(&threads_dir.display().to_string()), "discovery must name the directory it found: {err}");
+    assert!(!err.contains("not found") && !err.contains("not configured"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn production_threads_port_reports_missing_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let inputs = DiscoveryInputs { home: Some(dir.path().join("empty-home")), ..Default::default() };
+    let (threads, _map) = production_threads(&ctx_for(dir.path()), inputs);
+    let err = threads.delivery_capability().await.expect_err("nothing installed").to_string();
+    assert!(err.contains("state directory not found") && err.contains("threads_state_dir"), "{err}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn composed_daemon_status_shows_threads_discovery_error() {
+    let (dir, root) = new_instance();
+    let inputs = DiscoveryInputs { home: Some(dir.path().join("empty-home")), ..Default::default() };
+    let (f, base) = fakes();
+    let (threads, map) = production_threads(&ctx_for(&root), inputs);
+    let mut services = Services::new(f.herdr.clone(), threads, map, f.clock.clone());
+    services.reminder_period = base.reminder_period;
+    let d = Daemon::start_with(&root, f, services).await;
+    let mut shown = Value::Null;
+    for _ in 0..800 {
+        let status = d.call("status", json!({})).await.unwrap();
+        shown = status["components"]["threads"].clone();
+        if shown["error"].is_string() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(shown["connected"], false, "{shown}");
+    let err = shown["error"].as_str().unwrap_or_default();
+    assert!(err.contains("state directory not found") && err.contains("threads_state_dir"), "{shown}");
+    d.stop().await;
 }

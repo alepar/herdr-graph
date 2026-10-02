@@ -22,6 +22,7 @@ use crate::ports::writer::{Writer, WriterError};
 use crate::reconcile::{Reconciler, ReconcilerConfig, ThreadsNotifier};
 use crate::store::GitStore;
 use crate::threads::PaneSeatMap;
+use crate::threads::discovery::DiscoveryInputs;
 use crate::transcripts::Transcripts;
 use crate::writer::{MutationRegistry, WRITER_HALTED, WriterConfig, WriterCore};
 use serde_json::json;
@@ -59,8 +60,10 @@ impl Services {
         Self { herdr, threads, pane_seat_map, clock, reminder_period: REMINDER_PERIOD }
     }
 
-    /// Production services: the Herdr socket from the context, the threads service located through
-    /// `HERDR_GRAPH_THREADS_STATE_DIR` (or `HERDR_GRAPH_THREADS_SOCKET` + `HERDR_GRAPH_THREADS_INSTANCE`).
+    /// Production services: the Herdr socket from the context, the threads service located by the default
+    /// discovery chain (`crate::threads::discovery`: `HERDR_GRAPH_THREADS_STATE_DIR`, `threads_state_dir` in
+    /// config.toml, the herdr-threads sibling of the plugin state dir, then the XDG / HOME defaults), or the
+    /// explicit `HERDR_GRAPH_THREADS_SOCKET` + `HERDR_GRAPH_THREADS_INSTANCE` pair.
     /// A missing or stopped threads service never blocks startup: its calls fail and the effects retry.
     pub fn from_env(ctx: &DaemonCtx) -> anyhow::Result<Self> {
         #[cfg(feature = "test-support")]
@@ -68,14 +71,18 @@ impl Services {
             return Ok(fakes::services(ctx));
         }
         let herdr = Arc::new(crate::herdr::HerdrClient::new(ctx.herdr_socket.clone()));
-        let endpoint = Arc::new(lazy::Endpoint::from_env(ctx));
-        Ok(Self::new(
-            herdr,
-            Arc::new(lazy::LazyThreads::new(endpoint.clone())),
-            Arc::new(lazy::LazyMap::new(endpoint)),
-            Arc::new(SystemClock),
-        ))
+        let env = crate::config::Env::from_process();
+        let configured = crate::config::read_threads_state_dir(&env, &crate::config::plugin_config_dir_via_herdr);
+        let (threads, pane_seat_map) = production_threads(ctx, DiscoveryInputs::from_process(configured));
+        Ok(Self::new(herdr, threads, pane_seat_map, Arc::new(SystemClock)))
     }
+}
+
+/// The production threads port and pane-seat map over one lazily located endpoint. `inputs` drive the state
+/// directory discovery, re-run on every call (the threads daemon may be installed or started after graph).
+pub fn production_threads(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
+    let endpoint = Arc::new(lazy::Endpoint::from_env(ctx, inputs));
+    (Arc::new(lazy::LazyThreads::new(endpoint.clone())), Arc::new(lazy::LazyMap::new(endpoint)))
 }
 
 /// Every organizational and internal mutation, registered once. Returns the kind registry (shared with the
@@ -338,24 +345,25 @@ mod lazy {
     use super::*;
     use crate::model::HerdrPaneId;
     use crate::model::clone::{InvitationState, InviteConstraint};
+    use crate::threads::discovery::resolve_state_dir;
     use crate::threads::{Discovered, ServiceThreads, ThreadsSeatMap};
 
     pub struct Endpoint {
-        state_dir: Option<PathBuf>,
+        inputs: DiscoveryInputs,
         explicit: Option<Discovered>,
         herdr_socket: PathBuf,
         intents: PathBuf,
     }
 
     impl Endpoint {
-        pub fn from_env(ctx: &DaemonCtx) -> Self {
+        pub fn from_env(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> Self {
             let var = |n: &str| std::env::var_os(n).filter(|v| !v.is_empty());
             let explicit = var("HERDR_GRAPH_THREADS_SOCKET").zip(var("HERDR_GRAPH_THREADS_INSTANCE")).and_then(|(s, i)| {
                 let instance = i.to_str()?.parse().ok()?;
                 Some(Discovered { socket: PathBuf::from(s), instance })
             });
             Self {
-                state_dir: var("HERDR_GRAPH_THREADS_STATE_DIR").map(PathBuf::from),
+                inputs,
                 explicit,
                 herdr_socket: ctx.herdr_socket.clone(),
                 intents: ctx.paths.threads_intents.clone(),
@@ -366,12 +374,18 @@ mod lazy {
             if let Some(d) = &self.explicit {
                 return Ok(d.clone());
             }
-            let dir = self
-                .state_dir
-                .as_ref()
-                .ok_or_else(|| ThreadsError::Disconnected("herdr-threads is not configured (HERDR_GRAPH_THREADS_STATE_DIR)".into()))?;
-            crate::threads::discover(dir, &self.herdr_socket)
-                .map_err(|e| ThreadsError::Disconnected(format!("herdr-threads is not running: {e}")))
+            let found = resolve_state_dir(&self.inputs).map_err(ThreadsError::Disconnected)?;
+            let Some((dir, source)) = found else {
+                return Err(ThreadsError::Disconnected(
+                    "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, \
+                     the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and \
+                     ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml"
+                        .into(),
+                ));
+            };
+            crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
+                ThreadsError::Disconnected(format!("herdr-threads is not running (state dir {} from {source}): {e}", dir.display()))
+            })
         }
     }
 

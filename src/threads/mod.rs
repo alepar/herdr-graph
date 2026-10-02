@@ -6,6 +6,7 @@
 //! * `mapping` — clone pane -> threads seat;
 //! * this module — registration, bookkeeping mutations, `who` and the pending-invitations query.
 pub mod adapter;
+pub mod discovery;
 pub mod effects;
 pub mod fake;
 pub mod mapping;

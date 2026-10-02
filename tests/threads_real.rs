@@ -66,7 +66,10 @@ impl<'a> ThreadsDaemon<'a> {
     }
 
     fn start(herdr: &'a PrivateHerdr, bin: PathBuf) -> Self {
-        let state = herdr.root.join("threads-state");
+        Self::start_at(herdr, bin, herdr.root.join("threads-state"))
+    }
+
+    fn start_at(herdr: &'a PrivateHerdr, bin: PathBuf, state: PathBuf) -> Self {
         herdr.guard().check(&state).expect("threads state is inside the private root");
         herdr.guard().check(&herdr.socket).expect("host endpoint is private");
         let d = Self { herdr, bin, state };
@@ -189,4 +192,39 @@ async fn real_threads_channel_invite_membership_notify_release() {
     let r = second.ensure_thread(ChannelScope::Seat, "x", &OpKey("ensure:st_OTHER".into())).await;
     assert!(matches!(r, Err(ThreadsError::ServiceBusy)), "{r:?}");
     assert!(Path::new(&herdr.root).exists());
+}
+
+/// hg-zmi.46: the production wiring (default discovery, no `HERDR_GRAPH_THREADS_*` variable anywhere) reaches a
+/// real herdr-threads daemon whose state dir sits at the default place under a private HOME.
+#[tokio::test(flavor = "multi_thread")]
+async fn production_discovery_reaches_real_threads_daemon() {
+    use std::os::unix::fs::DirBuilderExt;
+    if !enabled() {
+        support::skip("set HG_REAL_THREADS=1");
+        return;
+    }
+    let herdr = match PrivateHerdr::start() {
+        Ok(h) => h,
+        Err(e) if support::herdr_binary().is_none() => {
+            support::skip(&format!("{e}"));
+            return;
+        }
+        Err(e) => panic!("private herdr failed to start: {e:#}"),
+    };
+    let home = herdr.root.join("home");
+    let state = home.join(".local/state/herdr/plugins/herdr-threads");
+    herdr.guard().check(&state).expect("threads state is inside the private root");
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&state).unwrap();
+    let _daemon = ThreadsDaemon::start_at(&herdr, threads_binary(), state);
+
+    let graph_root = herdr.root.join("graph");
+    let ctx = herdr_graph::daemon::DaemonCtx {
+        paths: herdr_graph::config::InstancePaths::new(&graph_root),
+        herdr_socket: herdr.socket.clone(),
+        started_at: chrono::Utc::now(),
+    };
+    herdr.guard().check(&ctx.paths.threads_intents).expect("intents dir is private");
+    let inputs = herdr_graph::threads::discovery::DiscoveryInputs { home: Some(home), ..Default::default() };
+    let (threads, _map) = herdr_graph::daemon::compose::production_threads(&ctx, inputs);
+    threads.delivery_capability().await.expect("default discovery reaches the real daemon");
 }
