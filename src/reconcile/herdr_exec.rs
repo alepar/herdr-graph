@@ -150,7 +150,7 @@ impl HerdrExecutor {
             }
             EffectKind::ReplaceSession => clone_of(e).and_then(|c| d.pane(&c).map(|p| (c, p))).is_some_and(|(c, p)| {
                 // A replacement that has begun is finished even though the observer already recorded the old
-                // occupant as gone; one whose start response was lost (`Unknown`) has cleared its state.
+                // occupant as gone; one whose start outcome was lost (`Unknown`) is resolved from the snapshot.
                 (p.occupant.is_some() || e.status == EffectStatus::Unknown || session::has_state(&self.journal, &e.id))
                     && self.launched(&c).is_some_and(|l| l != p.launch_shape())
             }),
@@ -178,6 +178,7 @@ impl HerdrExecutor {
         }
         match cx.herdr.create_workspace(CreateWorkspace { label, cwd: w.cwd.clone(), env: w.env.clone() }).await {
             Ok(c) => {
+                crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
                 set_live_ref(&self.journal, &e.object, &LiveRef { workspace: c.workspace, tab: None, pane: None, incarnation: inc });
                 ExecOutcome::Done
             }
@@ -226,6 +227,7 @@ impl HerdrExecutor {
             .await
         {
             Ok(c) => {
+                crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
                 let seat_ref = LiveRef { workspace: c.workspace.clone(), tab: c.tab.clone(), pane: None, incarnation: inc.clone() };
                 set_live_ref(&self.journal, &e.object, &seat_ref);
                 set_live_ref(&self.journal, &first.clone.to_any(), &LiveRef { pane: c.pane.clone(), ..seat_ref });
@@ -270,6 +272,7 @@ impl HerdrExecutor {
             .await
         {
             Ok(c) => {
+                crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
                 if let Some(pane) = c.pane {
                     set_live_ref(&self.journal, &e.object, &mk_ref(pane));
                 }
@@ -344,7 +347,9 @@ impl HerdrExecutor {
             Err(err) => return transient_or_failed(err),
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
-        let out = start_outcome(cx.herdr.start_agent(StartAgent { pane: lp.pane.id.clone(), kind: kind.to_owned(), args }).await);
+        let started = cx.herdr.start_agent(StartAgent { pane: lp.pane.id.clone(), kind: kind.to_owned(), args }).await;
+        crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
+        let out = start_outcome(started);
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
         }
@@ -370,11 +375,6 @@ impl HerdrExecutor {
         else {
             return ExecOutcome::Obsolete;
         };
-        // A start whose response was lost: the new agent is already on the pane, never send it the exit keys.
-        if e.status == EffectStatus::Unknown && !session::has_state(&self.journal, &e.id) && lp.pane.agent.is_some() {
-            self.record_launch(p);
-            return ExecOutcome::Done;
-        }
         let to_prof = profile(p.harness);
         // Once the observer has recorded the occupancy end, `p.resume` is the session that just ended.
         let resume = (from == p.harness && to_prof.supports_resume())

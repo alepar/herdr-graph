@@ -898,44 +898,55 @@ mod subprocess {
         wait_exit(&mut again);
     }
 
-    #[test]
-    fn crash_mid_effect_executes_at_most_once() {
-        let f = Fixture::new();
-        // Phase 1: a live teamspace (workspace and one tab) next to a dormant seat, shut down cleanly.
-        let mut first = f.spawn_daemon(None);
-        for words in [
-            &["teamspace", "create", "t", "--active"][..],
-            &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"][..],
-            &["seat", "create", "worker", "--teamspace", "t", "--harness", "shell"][..],
-        ] {
-            let out = f.apply(&f.plan(words));
-            assert!(out.status.success(), "{words:?}: {}", String::from_utf8_lossy(&out.stderr));
-        }
+    /// Block until no effect is pending or unknown and Herdr has stopped receiving calls: a leftover effect would
+    /// run first in the next phase and take the armed failpoint instead of the one under test.
+    fn wait_settled(f: &Fixture, what: &str) {
         let deadline = Instant::now() + WAIT_SECS;
-        while f.fake_count("create_workspace") < 1 || f.fake_count("create_tab") < 1 {
-            assert!(Instant::now() < deadline, "workspace and tab never created; log: {}", f.daemon_log());
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        // Let every effect of phase 1 finish: one still pending at shutdown would run first in phase 2 and take
-        // the armed failpoint instead of the worker's CreateTab.
+        let mut last = (usize::MAX, 0);
         loop {
             let status = f.client().call("status", json!({})).unwrap();
             let r = &status["components"]["reconciler"];
+            let calls = f.fake_log().len();
             if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
-                break;
+                // Quiet for two polls in a row: the effects planned by the last command have all run.
+                if last.0 == calls {
+                    last.1 += 1;
+                    if last.1 >= 2 {
+                        return;
+                    }
+                } else {
+                    last = (calls, 0);
+                }
+            } else {
+                last = (usize::MAX, 0);
             }
-            assert!(Instant::now() < deadline, "phase 1 effects never settled: {status}");
-            std::thread::sleep(Duration::from_millis(50));
+            assert!(Instant::now() < deadline, "{what}: effects never settled: {status}; log: {}", f.daemon_log());
+            std::thread::sleep(Duration::from_millis(150));
         }
+    }
+
+    /// A crash after Herdr performed a non-idempotent call and before the graph recorded it: the daemon dies at
+    /// `reconcile.after_call.<kind>` (the call is in Herdr, the effect row says only that it was dispatched), and the
+    /// restarted daemon finds the effect in Herdr's snapshot instead of repeating the call or asking for a revision.
+    fn crash_after_call(kind: &str, setup: &[&[&str]], trigger: &[&str], fake_op: &str) {
+        let f = Fixture::new();
+        // Phase 1: the setup, run to the end and shut down cleanly.
+        let mut first = f.spawn_daemon(None);
+        for words in setup {
+            let out = f.apply(&f.plan(words));
+            assert!(out.status.success(), "{words:?}: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        wait_settled(&f, "phase 1");
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut first);
-        assert_eq!(f.fake_count("create_tab"), 1, "only the keeper's tab so far");
+        let before = f.fake_count(fake_op);
 
-        // Phase 2: activating the seat dispatches CreateTab, and the daemon dies before it records the result.
-        let mut doomed = f.spawn_daemon(Some("reconcile.mid_effect.create_tab=exit:42"));
-        let _ = f.apply(&f.plan(&["seat", "activate", "worker"]));
+        // Phase 2: the trigger dispatches the effect and the daemon dies right after the Herdr call.
+        let failpoint = format!("reconcile.after_call.{kind}=exit:42");
+        let mut doomed = f.spawn_daemon(Some(&failpoint));
+        let _ = f.apply(&f.plan(trigger));
         assert_eq!(wait_exit(&mut doomed).code(), Some(42), "{}", f.daemon_log());
-        assert_eq!(f.fake_count("create_tab"), 2, "the worker's CreateTab reached Herdr before the crash");
+        assert_eq!(f.fake_count(fake_op), before + 1, "the {fake_op} reached Herdr before the crash: {:?}", f.fake_log());
 
         // Phase 3: restart without failpoints: the effect is re-correlated from the snapshot, not re-executed.
         let mut third = f.spawn_daemon(None);
@@ -944,15 +955,67 @@ mod subprocess {
             let status = f.client().call("status", json!({})).unwrap();
             let r = &status["components"]["reconciler"];
             if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+                assert_eq!(r["needs_revision_effects"], 0, "a lost outcome must be adopted, not sent for revision: {status}");
                 break;
             }
-            assert!(Instant::now() < deadline, "effects never settled: {status}");
+            assert!(Instant::now() < deadline, "effects never settled: {status}; log: {}", f.daemon_log());
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(f.fake_count("create_tab"), 2, "at most once: {:?}", f.fake_log());
-        assert_eq!(f.fake_count("create_workspace"), 1, "{:?}", f.fake_log());
+        assert_eq!(f.fake_count(fake_op), before + 1, "at most once: {:?}", f.fake_log());
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut third);
+    }
+
+    // One crash test per non-idempotent kind the subprocess fixture can drive. `replace_session` is covered
+    // in-process (`cancelled_replacement_start_is_recovered`): the fake's agents never exit on keys, so this
+    // fixture cannot reach the replacement's start.
+
+    #[test]
+    fn crash_after_create_tab_executes_at_most_once() {
+        crash_after_call(
+            "create_tab",
+            &[
+                &["teamspace", "create", "t", "--active"],
+                &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
+                &["seat", "create", "worker", "--teamspace", "t", "--harness", "shell"],
+            ],
+            &["seat", "activate", "worker"],
+            "create_tab",
+        );
+    }
+
+    #[test]
+    fn crash_after_create_workspace_executes_at_most_once() {
+        // A teamspace gets its workspace only when a seat tab goes into it, so the trigger is the first active seat.
+        crash_after_call(
+            "create_workspace",
+            &[&["teamspace", "create", "t", "--active"]],
+            &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
+            "create_workspace",
+        );
+    }
+
+    #[test]
+    fn crash_after_split_pane_executes_at_most_once() {
+        crash_after_call(
+            "split_pane",
+            &[
+                &["teamspace", "create", "t", "--active"],
+                &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
+            ],
+            &["clone", "add", "keeper"],
+            "split_pane",
+        );
+    }
+
+    #[test]
+    fn crash_after_start_agent_executes_at_most_once() {
+        crash_after_call(
+            "start_agent",
+            &[&["teamspace", "create", "t", "--active"]],
+            &["seat", "create", "worker", "--teamspace", "t", "--active", "--harness", "claude"],
+            "start_agent",
+        );
     }
 }
 

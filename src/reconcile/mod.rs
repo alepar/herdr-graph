@@ -20,7 +20,7 @@ pub use executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, Pl
 
 use crate::journal::{Journal, Notice};
 use crate::model::common::CommitId;
-use crate::model::effect::{EffectKind, EffectRecord, EffectStatus, PredictedEnd};
+use crate::model::effect::{Dispatch, EffectKind, EffectRecord, EffectStatus, PredictedEnd};
 use crate::model::{CloneId, EffectId, OpId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot};
@@ -186,6 +186,7 @@ impl Reconciler {
         let cache = Arc::new(DesiredCache::default());
         let builtin = HerdrSource { instance: cfg.instance.clone(), cache: cache.clone() };
         let exec = HerdrExecutor { journal: journal.clone(), cfg: cfg.clone(), cache: cache.clone() };
+        Self::fold_legacy_meta(&journal);
         Arc::new(Self {
             store,
             journal,
@@ -199,6 +200,42 @@ impl Reconciler {
             sources: RwLock::new(Vec::new()),
             executors: RwLock::new(vec![Arc::new(exec)]),
         })
+    }
+
+    /// Rows journaled before the scheduling state moved onto them keep it in loose `deps:`/`retry_at:`/`wake_at:`/
+    /// `defer_n:` meta keys: fold those into `row.sched` once, then drop the keys.
+    fn fold_legacy_meta(journal: &Journal) {
+        let rows = journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_else(|e| {
+            eprintln!("herdr-graph: reconcile: cannot list effects to fold legacy scheduling meta: {e}");
+            Vec::new()
+        });
+        let time = |key: &str| {
+            let raw = journal.meta_get(key).ok().flatten()?;
+            chrono::DateTime::parse_from_rfc3339(&raw).ok().map(|t| t.to_utc())
+        };
+        for mut row in rows {
+            let keys = ["deps", "retry_at", "wake_at", "defer_n"].map(|k| format!("{k}:{}", row.id));
+            let deps = journal.meta_get(&keys[0]).ok().flatten().and_then(|raw| serde_json::from_str::<Vec<EffectId>>(&raw).ok());
+            let (retry_at, wake_at) = (time(&keys[1]), time(&keys[2]));
+            let defer_n = journal.meta_get(&keys[3]).ok().flatten().and_then(|s| s.parse::<u32>().ok());
+            if deps.is_some() || retry_at.is_some() || wake_at.is_some() || defer_n.is_some() {
+                if let Some(d) = deps {
+                    row.sched.deps = d;
+                }
+                row.sched.retry_at = retry_at.or(row.sched.retry_at);
+                row.sched.wake_at = wake_at.or(row.sched.wake_at);
+                row.sched.defer_n = defer_n.unwrap_or(row.sched.defer_n);
+                if let Err(e) = journal.upsert_effect(&row) {
+                    eprintln!("herdr-graph: reconcile: cannot fold scheduling meta of effect {}: {e}", row.id);
+                    continue;
+                }
+            }
+            for key in &keys {
+                if let Err(e) = journal.meta_delete(key) {
+                    eprintln!("herdr-graph: reconcile: cannot drop legacy meta {key}: {e}");
+                }
+            }
+        }
     }
 
     /// The effect journal (components that key payloads to effect ids keep them in its `meta` table).
@@ -352,36 +389,35 @@ impl Reconciler {
         }
         for p in fresh {
             let deps: Vec<&EffectId> = p.deps.iter().map(|d| canonical.get(d).unwrap_or(d)).collect();
-            if self.journal.upsert_effect(&p.record).is_err() {
+            let mut record = p.record.clone();
+            record.sched.deps = deps.into_iter().cloned().collect();
+            if let Err(e) = self.journal.upsert_effect(&record) {
+                eprintln!("herdr-graph: reconcile: cannot journal planned effect {}: {e}", record.id);
                 continue;
             }
-            let _ = self.journal.meta_set(&format!("deps:{}", p.record.id), &serde_json::to_string(&deps).unwrap_or_default());
             report.planned.push(p.record.id.clone());
         }
-    }
-
-    fn deps_of(&self, id: &EffectId) -> Vec<EffectId> {
-        self.journal
-            .meta_get(&format!("deps:{id}"))
-            .ok()
-            .flatten()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
-    }
-
-    fn retry_at(&self, id: &EffectId) -> Option<Timestamp> {
-        let raw = self.journal.meta_get(&format!("retry_at:{id}")).ok().flatten()?;
-        chrono::DateTime::parse_from_rfc3339(&raw).ok().map(|t| t.to_utc())
     }
 
     fn mark(&self, row: &mut EffectRecord, status: EffectStatus, error: Option<String>, now: Timestamp) {
         row.status = status;
         row.last_error = error;
         row.updated_at = now;
+        // The outcome is recorded: the write-ahead marker goes in the same write.
+        row.sched.dispatched = None;
+        let open = matches!(status, EffectStatus::Pending | EffectStatus::Unknown);
+        // An effect that ended leaves no scheduling state behind.
+        if !open {
+            row.sched.retry_at = None;
+            row.sched.wake_at = None;
+            row.sched.defer_n = 0;
+        }
         if let Err(e) = self.journal.upsert_effect(row) {
             eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
         }
-        self.clear_effect_meta(row);
+        if !open {
+            session::clear_state(&self.journal, &row.id);
+        }
     }
 
     /// Record an attention status and its notice in one journal write (spec §4.1, §4.4).
@@ -397,6 +433,14 @@ impl Reconciler {
         row.status = status;
         row.last_error = error;
         row.updated_at = now;
+        // The outcome is recorded: the write-ahead marker and any scheduling state go in the same write.
+        row.sched.dispatched = None;
+        let open = matches!(status, EffectStatus::Pending | EffectStatus::Unknown);
+        if !open {
+            row.sched.retry_at = None;
+            row.sched.wake_at = None;
+            row.sched.defer_n = 0;
+        }
         let notice = Notice {
             key: notice_key(&row.op, &text).0,
             effect: row.id.clone(),
@@ -411,22 +455,9 @@ impl Reconciler {
         if let Err(e) = self.journal.upsert_effect_with_notice(row, &notice) {
             eprintln!("herdr-graph: reconcile: cannot journal effect {} with its notice: {e}", row.id);
         }
-        self.clear_effect_meta(row);
-    }
-
-    /// An effect that ended leaves no per-effect meta behind.
-    fn clear_effect_meta(&self, row: &EffectRecord) {
-        if !matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown) {
-            let _ = self.journal.meta_delete(&format!("retry_at:{}", row.id));
-            let _ = self.journal.meta_delete(&format!("wake_at:{}", row.id));
-            let _ = self.journal.meta_delete(&format!("defer_n:{}", row.id));
+        if !open {
             session::clear_state(&self.journal, &row.id);
         }
-    }
-
-    fn meta_time(&self, key: String) -> Option<Timestamp> {
-        let raw = self.journal.meta_get(&key).ok().flatten()?;
-        chrono::DateTime::parse_from_rfc3339(&raw).ok().map(|t| t.to_utc())
     }
 
     /// The earliest time an open effect (`Pending`/`Unknown`) needs another look: its backoff expiry or its
@@ -438,11 +469,21 @@ impl Reconciler {
         let rows = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_default();
         let notice_at = self.journal.next_notice_at().ok().flatten();
         rows.iter()
-            .flat_map(|r| [self.meta_time(format!("retry_at:{}", r.id)), self.meta_time(format!("wake_at:{}", r.id))])
+            .flat_map(|r| [r.sched.retry_at, r.sched.wake_at])
             .chain([notice_at])
             .flatten()
             .filter(|t| *t > now)
             .min()
+    }
+
+    /// A deferral: the row stays open, wakes at `at`, and its dispatch marker goes in the same write.
+    fn defer(&self, row: &mut EffectRecord, at: Timestamp, why: String) {
+        row.sched.wake_at = Some(at);
+        row.sched.dispatched = None;
+        row.last_error = Some(why);
+        if let Err(e) = self.journal.upsert_effect(row) {
+            eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+        }
     }
 
     async fn run_pending(&self, snap: &HerdrSnapshot, report: &mut StepReport) {
@@ -460,6 +501,18 @@ impl Reconciler {
                 let Ok(Some(mut row)) = self.journal.get_effect(&stale.id) else { continue };
                 if !matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown) {
                     continue;
+                }
+                // Lost dispatch: the marker was journaled before a Herdr call and its outcome never was (a crash,
+                // a SIGTERM, or a cancelled future such as the first-pass timeout). Resolve it as `Unknown`: the
+                // executor looks for the effect's token/nonce in the snapshot before any retry.
+                if row.sched.dispatched.is_some() {
+                    row.status = EffectStatus::Unknown;
+                    row.last_error = Some("dispatch outcome lost (crash, timeout or cancellation); inspecting the snapshot".into());
+                    row.sched.dispatched = None;
+                    if let Err(e) = self.journal.upsert_effect(&row) {
+                        eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+                        continue;
+                    }
                 }
                 let Some(exec) = self.executor_for(&row.kind) else { continue };
                 let head = match self.store.head() {
@@ -485,13 +538,15 @@ impl Reconciler {
                         continue;
                     }
                     row.fencing_rev = rev;
-                    let _ = self.journal.upsert_effect(&row);
+                    if let Err(e) = self.journal.upsert_effect(&row) {
+                        eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+                    }
                 }
 
                 // Dependencies.
                 let mut blocked = false;
                 let mut dep_obsolete = false;
-                for dep in self.deps_of(&row.id) {
+                for dep in row.sched.deps.clone() {
                     if let Ok(Some(d)) = self.journal.get_effect(&dep) {
                         match d.status {
                             EffectStatus::Done => {}
@@ -506,9 +561,18 @@ impl Reconciler {
                     progressed = true;
                     continue;
                 }
-                if blocked || self.retry_at(&row.id).is_some_and(|t| t > now) {
+                if blocked || row.sched.retry_at.is_some_and(|t| t > now) {
                     waiting.insert(row.id.clone());
                     continue;
+                }
+
+                // Write-ahead marker: a non-idempotent call is never made without it on the row.
+                if row.kind.is_non_idempotent() {
+                    row.sched.dispatched = Some(Dispatch { attempt: row.attempts + 1, at: now });
+                    if let Err(e) = self.journal.upsert_effect(&row) {
+                        eprintln!("herdr-graph: reconcile: cannot journal the dispatch of effect {}: {e}", row.id);
+                        continue;
+                    }
                 }
 
                 let outcome = exec.execute(&cx, &row).await;
@@ -516,21 +580,22 @@ impl Reconciler {
                 // The same point per effect kind: effect order within an op is by hash, so a crash test that
                 // needs "right after the CreateTab" arms `reconcile.mid_effect.create_tab`, not the generic name.
                 crate::failpoint!(&format!("reconcile.mid_effect.{}", row.kind.as_str()));
-                if !matches!(outcome, ExecOutcome::Deferred(_)) {
-                    let _ = self.journal.meta_delete(&format!("defer_n:{}", row.id));
-                }
                 ran.insert(row.id.clone());
                 let now = self.clock.now();
                 row.attempts += 1;
+                if !matches!(outcome, ExecOutcome::Deferred(_) | ExecOutcome::DeferredUntil(..)) {
+                    row.sched.defer_n = 0;
+                    row.sched.wake_at = None;
+                }
                 let status = match outcome {
                     ExecOutcome::Done => {
-                        let _ = self.journal.meta_delete(&format!("retry_at:{}", row.id));
+                        row.sched.retry_at = None;
                         EffectStatus::Done
                     }
                     ExecOutcome::Transient(msg) => {
                         let wait = backoff::next(row.attempts);
                         let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
-                        let _ = self.journal.meta_set(&format!("retry_at:{}", row.id), &at.to_rfc3339());
+                        row.sched.retry_at = Some(at);
                         self.mark(&mut row, EffectStatus::Pending, Some(msg), now);
                         report.executed.push((row.id.clone(), EffectStatus::Pending));
                         continue;
@@ -563,30 +628,16 @@ impl Reconciler {
                     }
                     ExecOutcome::Deferred(why) => {
                         row.attempts -= 1;
-                        row.last_error = Some(why);
-                        let _ = self.journal.upsert_effect(&row);
-                        let n = self
-                            .journal
-                            .meta_get(&format!("defer_n:{}", row.id))
-                            .ok()
-                            .flatten()
-                            .and_then(|s| s.parse::<u32>().ok())
-                            .unwrap_or(0)
-                            .saturating_add(1);
-                        let _ = self.journal.meta_set(&format!("defer_n:{}", row.id), &n.to_string());
-                        let wait = backoff::deferred(self.cfg.deferred_recheck, self.cfg.deferred_max, n);
+                        row.sched.defer_n = row.sched.defer_n.saturating_add(1);
+                        let wait = backoff::deferred(self.cfg.deferred_recheck, self.cfg.deferred_max, row.sched.defer_n);
                         let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
-                        let _ = self.journal.meta_set(&format!("wake_at:{}", row.id), &at.to_rfc3339());
-                        ran.remove(&row.id);
+                        self.defer(&mut row, at, why);
                         waiting.insert(row.id.clone());
                         continue;
                     }
                     ExecOutcome::DeferredUntil(at, why) => {
                         row.attempts -= 1;
-                        row.last_error = Some(why);
-                        let _ = self.journal.upsert_effect(&row);
-                        let _ = self.journal.meta_set(&format!("wake_at:{}", row.id), &at.to_rfc3339());
-                        ran.remove(&row.id);
+                        self.defer(&mut row, at, why);
                         waiting.insert(row.id.clone());
                         continue;
                     }
@@ -642,6 +693,7 @@ impl Reconciler {
                 attempts: 0,
                 last_error: None,
                 updated_at: self.clock.now(),
+                sched: Default::default(),
             })?;
         }
         Ok(id)

@@ -764,16 +764,17 @@ async fn terminal_effect_clears_its_meta() {
     step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap().is_some(), "waiting state is kept");
-    assert!(fx.journal.meta_get(&format!("wake_at:{}", ef.id)).unwrap().is_some());
-    fx.journal.meta_set(&format!("retry_at:{}", ef.id), &fx.clock.now().to_rfc3339()).unwrap();
+    assert!(ef.sched.wake_at.is_some());
+    let mut with_retry = ef.clone();
+    with_retry.sched.retry_at = Some(fx.clock.now());
+    fx.journal.upsert_effect(&with_retry).unwrap();
 
     fx.clock.advance(ms(100));
     step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
-    for key in ["replace", "wake_at", "retry_at"] {
-        assert_eq!(fx.journal.meta_get(&format!("{key}:{}", ef.id)).unwrap(), None, "{key} leaked");
-    }
+    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None, "replace state leaked");
+    assert_eq!(ef.sched, Default::default(), "scheduling state leaked onto the ended row");
 }
 
 #[tokio::test]
@@ -794,8 +795,7 @@ async fn next_wake_reports_earliest_deferred_or_retry() {
     fx.herdr.fail_next("tab.rename", Fault::Unavailable);
     step(&fx).await;
     let rename = rows(&fx, EffectKind::RenameTab).into_iter().find(|r| r.status == EffectStatus::Pending).expect("pending rename row");
-    let retry = fx.journal.meta_get(&format!("retry_at:{}", rename.id)).unwrap().expect("retry_at");
-    let retry = chrono::DateTime::parse_from_rfc3339(&retry).unwrap().to_utc();
+    let retry = rename.sched.retry_at.expect("retry_at");
     assert!(retry < t0() + ms(5000), "backoff {retry} must be shorter than the recheck for this test");
     assert_eq!(fx.rec.next_wake(), Some(retry));
 }
@@ -1032,6 +1032,7 @@ impl EffectSource for CustomSource {
                 attempts: 0,
                 last_error: None,
                 updated_at: cx.now,
+                sched: Default::default(),
             },
             deps: vec![],
         }]
@@ -1113,6 +1114,7 @@ impl EffectSource for WaitSource {
                 attempts: 0,
                 last_error: None,
                 updated_at: cx.now,
+                sched: Default::default(),
             },
             deps: vec![],
         }]
@@ -1156,8 +1158,214 @@ async fn open_ended_deferral_backs_off_to_the_cap() {
     assert_eq!(row.status, EffectStatus::Done);
     assert_eq!(row.attempts, 1, "deferrals are not attempts");
     assert_eq!(fx.rec.next_wake(), None);
-    assert_eq!(fx.journal.meta_get(&format!("defer_n:{}", row.id)).unwrap(), None);
-    assert_eq!(fx.journal.meta_get(&format!("wake_at:{}", row.id)).unwrap(), None);
+    assert_eq!(row.sched, Default::default());
+}
+
+/// A custom effect that is `Done` on its first run: it makes `run_pending` take another pass.
+struct OnceSource(AnyId);
+impl EffectSource for OnceSource {
+    fn effects(&self, cx: &DiffCx<'_>) -> Vec<PlannedEffect> {
+        let kind = EffectKind::Custom("demo.once".into());
+        let op = OpId::from_ulid(ulid::Ulid::nil());
+        let id = EffectRecord::identity(&op, &self.0, &kind, 1);
+        vec![PlannedEffect {
+            record: EffectRecord {
+                id,
+                op,
+                object: self.0.clone(),
+                kind,
+                object_rev: 1,
+                fencing_rev: 1,
+                status: EffectStatus::Pending,
+                predicted: vec![],
+                nonce_label: None,
+                attempts: 0,
+                last_error: None,
+                updated_at: cx.now,
+                sched: Default::default(),
+            },
+            deps: vec![],
+        }]
+    }
+}
+
+struct OnceExec;
+#[async_trait::async_trait]
+impl EffectExecutor for OnceExec {
+    fn handles(&self, kind: &EffectKind) -> bool {
+        matches!(kind, EffectKind::Custom(k) if k == "demo.once")
+    }
+    async fn execute(&self, _cx: &ExecCx<'_>, _e: &EffectRecord) -> ExecOutcome {
+        ExecOutcome::Done
+    }
+}
+
+#[tokio::test]
+async fn deferred_row_defers_once_per_step() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    let exec = Arc::new(WaitExec { calls: Mutex::new(0), ready: std::sync::atomic::AtomicBool::new(false) });
+    fx.rec.register_source(Arc::new(WaitSource(SeatId::new().to_any())));
+    fx.rec.register_executor(exec.clone());
+    fx.rec.register_source(Arc::new(OnceSource(SeatId::new().to_any())));
+    fx.rec.register_executor(Arc::new(OnceExec));
+    let report = step(&fx).await;
+    assert!(
+        report.executed.iter().any(|(id, st)| *st == EffectStatus::Done && rows(&fx, EffectKind::Custom("demo.once".into()))[0].id == *id),
+        "the second row must finish so that run_pending makes another pass: {report:?}"
+    );
+    assert_eq!(*exec.calls.lock().unwrap(), 1, "a deferred row is not executed again in the same step");
+    let row = rows(&fx, EffectKind::Custom("demo.wait".into())).remove(0);
+    assert_eq!(row.sched.defer_n, 1);
+    assert!(report.deferred.contains(&row.id), "{report:?}");
+}
+
+#[tokio::test]
+async fn legacy_meta_scheduling_is_folded_into_the_row() {
+    let fx = fx();
+    let dep = EffectId::new();
+    let object = SeatId::new().to_any();
+    let kind = EffectKind::Custom("demo.legacy".into());
+    let op = OpId::from_ulid(ulid::Ulid::nil());
+    let row = EffectRecord {
+        id: EffectRecord::identity(&op, &object, &kind, 1),
+        op,
+        object,
+        kind,
+        object_rev: 1,
+        fencing_rev: 1,
+        status: EffectStatus::Pending,
+        predicted: vec![],
+        nonce_label: None,
+        attempts: 0,
+        last_error: None,
+        updated_at: t0(),
+        sched: Default::default(),
+    };
+    fx.journal.upsert_effect(&row).unwrap();
+    let retry = t0() + ms(7000);
+    let wake = t0() + ms(9000);
+    fx.journal.meta_set(&format!("deps:{}", row.id), &serde_json::to_string(&vec![dep.clone()]).unwrap()).unwrap();
+    fx.journal.meta_set(&format!("retry_at:{}", row.id), &retry.to_rfc3339()).unwrap();
+    fx.journal.meta_set(&format!("wake_at:{}", row.id), &wake.to_rfc3339()).unwrap();
+    fx.journal.meta_set(&format!("defer_n:{}", row.id), "3").unwrap();
+
+    let cfg = ReconcilerConfig::new(fx.deps.instance.clone());
+    let _rec = Reconciler::new(fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(), fx.notes.clone(), cfg);
+
+    let got = fx.journal.get_effect(&row.id).unwrap().unwrap();
+    assert_eq!(got.sched.deps, vec![dep]);
+    assert_eq!(got.sched.retry_at, Some(retry));
+    assert_eq!(got.sched.wake_at, Some(wake));
+    assert_eq!(got.sched.defer_n, 3);
+    for key in ["deps", "retry_at", "wake_at", "defer_n"] {
+        assert_eq!(fx.journal.meta_get(&format!("{key}:{}", row.id)).unwrap(), None, "{key} meta left behind");
+    }
+}
+
+/// The agent a start left on `c`'s pane, if any.
+async fn agent_on_pane(fx: &Fx, pane: &HerdrPaneId) -> bool {
+    let snap = fx.herdr.snapshot().await.unwrap();
+    snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).any(|p| p.id == *pane && p.agent.is_some())
+}
+
+#[tokio::test]
+async fn dispatched_row_is_recovered_as_unknown() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::Unavailable);
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = pane_of(&fx, &c);
+    let mut row = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert_eq!(row.status, EffectStatus::Pending);
+    assert!(row.sched.retry_at.is_some(), "the failed start backs off: {row:?}");
+    // The row as a crash right after the Herdr call would have left it.
+    row.sched.dispatched = Some(Dispatch { attempt: 2, at: fx.clock.now() });
+    row.sched.retry_at = None;
+    fx.journal.upsert_effect(&row).unwrap();
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Idle));
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let done = fx.journal.get_effect(&row.id).unwrap().unwrap();
+    assert_eq!(done.status, EffectStatus::Done, "{done:?}");
+    assert_eq!(done.sched.dispatched, None);
+    assert!(start_calls(&fx).is_empty(), "the lost start was adopted, not repeated: {:?}", calls(&fx));
+    assert!(fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().is_some(), "the launch is recorded");
+    assert!(fx.notes.messages().is_empty(), "no needs-revision for an adopted start: {:?}", fx.notes.messages());
+}
+
+#[tokio::test]
+async fn cancelled_start_agent_is_recovered_as_unknown() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("agent.start", Fault::Hang);
+    // The daemon's first-pass timeout cancels the step the same way.
+    assert!(tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh()).await.is_err());
+    fx.w.drain().unwrap();
+    let row = rows(&fx, EffectKind::StartAgent).remove(0);
+    assert!(matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown), "{row:?}");
+    assert!(row.sched.dispatched.is_some(), "the cancelled call left its write-ahead marker: {row:?}");
+    let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
+    assert!(agent_on_pane(&fx, &pane).await, "the hung call did reach Herdr");
+
+    step(&fx).await;
+    let done = fx.journal.get_effect(&row.id).unwrap().unwrap();
+    assert_eq!(done.status, EffectStatus::Done, "{done:?}");
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one start in total: {:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn cancelled_replacement_start_is_recovered() {
+    let fx = fx();
+    let (s, c, pane) = occupied(&fx).await;
+    fx.herdr.set_process(&pane, non_shell());
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    assert_eq!(ef.status, EffectStatus::Pending);
+    // The old occupant exits and the shell shows; the next step starts the new agent, but is cancelled in the call.
+    fx.herdr.set_agent(&pane, None);
+    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    fx.herdr.set_process(&pane, shell());
+    fx.herdr.clear_calls();
+    fx.herdr.fail_next("agent.start", Fault::Hang);
+    assert!(tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh()).await.is_err());
+    fx.w.drain().unwrap();
+    assert_eq!(start_calls(&fx).len(), 1);
+    let phase: super::session::ReplacePhase =
+        serde_json::from_str(&fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap().expect("phase saved")).unwrap();
+    assert!(matches!(phase, super::session::ReplacePhase::Starting { .. }), "{phase:?}");
+
+    step(&fx).await;
+    let done = fx.journal.get_effect(&ef.id).unwrap().unwrap();
+    assert_eq!(done.status, EffectStatus::Done, "{done:?}");
+    assert_eq!(start_calls(&fx).len(), 1, "no second start: {:?}", calls(&fx));
+    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None, "the phase is cleared");
+}
+
+#[tokio::test]
+async fn replacement_without_starting_phase_does_not_adopt_old_agent() {
+    let fx = fx();
+    let (s, _, pane) = occupied(&fx).await;
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
+    set_model(&fx, &s, "opus-x");
+    step(&fx).await;
+    let mut ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
+    // An Unknown row with no phase saved: no start was ever dispatched, so the agent is still the old occupant.
+    fx.journal.meta_delete(&format!("replace:{}", ef.id)).unwrap();
+    ef.status = EffectStatus::Unknown;
+    ef.sched = Default::default();
+    fx.journal.upsert_effect(&ef).unwrap();
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Idle));
+    fx.herdr.set_process(&pane, non_shell());
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    assert_eq!(send_keys_count(&fx), 2, "the exit sequence goes to the old agent: {:?}", calls(&fx));
+    assert_ne!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    assert!(start_calls(&fx).is_empty());
 }
 
 #[tokio::test]
