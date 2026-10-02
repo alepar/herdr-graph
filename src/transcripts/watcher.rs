@@ -15,6 +15,15 @@ use crate::threads::effects::Graph;
 use crate::store::layout;
 
 impl Transcripts {
+    /// Record one observation of a transcript's aligned size; true when the previous observation saw the same
+    /// size (the file has settled: a transcript still being written has no boundary yet).
+    pub(super) fn observe_size(&self, path: &std::path::Path, aligned: u64) -> bool {
+        let key = format!("transcripts:size:{}", path.display());
+        let previous = self.journal.meta_get(&key).ok().flatten().and_then(|v| v.parse::<u64>().ok());
+        let _ = self.journal.meta_set(&key, &aligned.to_string());
+        previous == Some(aligned)
+    }
+
     /// One watcher pass.
     pub async fn watch_once(&self) -> Result<(), CommandError> {
         struct Candidate {
@@ -59,16 +68,14 @@ impl Transcripts {
         for c in candidates {
             let Ok(state) = stat_file(&c.path) else { continue };
             let replaced = self.note_identity(&c.path, &state);
-            let size_key = format!("transcripts:size:{}", c.path.display());
-            let previous = self.journal.meta_get(&size_key).ok().flatten().and_then(|v| v.parse::<u64>().ok());
-            let _ = self.journal.meta_set(&size_key, &state.aligned.to_string());
+            let settled = self.observe_size(&c.path, state.aligned);
             if replaced {
                 self.request_for(&c.clone, &c.ns, Some(c.path.clone()), None, true).await?;
                 continue;
             }
             let Some(tr) = &c.tr else { continue };
             // Settled: a transcript that is still being written has no boundary yet.
-            if state.aligned > c.covered && previous == Some(state.aligned) {
+            if state.aligned > c.covered && settled {
                 self.request_for(&c.clone, &c.ns, Some(c.path.clone()), Some(&tr.id), false).await?;
             }
         }

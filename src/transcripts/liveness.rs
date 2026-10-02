@@ -16,8 +16,9 @@ use super::requests::stat_file;
 use super::{Transcripts, internal};
 use crate::daemon::registry::CommandError;
 use crate::model::effective::resolve_in;
-use crate::model::{CloneId, NsId};
+use crate::model::{CloneId, NsId, TranscriptId};
 use crate::threads::effects::Graph;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use crate::model::Timestamp;
 use crate::model::request::{ProcessingRequest, RequestStatus};
@@ -29,6 +30,15 @@ enum Action {
     Deliver { p: Prepared, retry: bool },
     PollReceipt { rq: ProcessingRequest },
     Remind { p: Prepared, rq: ProcessingRequest },
+}
+
+/// A recovery candidate; `gate` is the transcript record whose tail grew and the file's aligned size, `None` for a
+/// file the graph never recorded.
+struct Candidate {
+    clone: CloneId,
+    ns: NsId,
+    path: Option<PathBuf>,
+    gate: Option<(TranscriptId, u64)>,
 }
 
 fn last_attempt(rq: &ProcessingRequest) -> Option<Timestamp> {
@@ -102,37 +112,73 @@ impl Transcripts {
     /// in-memory `SessionEnded` event (which a crash, SIGTERM, halted writer or timeout can lose). Returns how many
     /// requests it asked for.
     pub async fn recover_session_requests(&self) -> Result<usize, CommandError> {
-        let candidates: Vec<(CloneId, NsId, Option<PathBuf>)> = {
+        // (clone, session, path, record to extend, aligned size to settle-gate); the last two are None when the
+        // graph never recorded the file
+        let candidates: Vec<Candidate> = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;
             let transcripts: Vec<_> = layout::list_transcripts(&view).map_err(internal)?.into_iter().map(|(_, t)| t).collect();
             let requests: Vec<_> = layout::list_requests(&view).map_err(internal)?.into_iter().map(|(_, r)| r).collect();
-            let mut out = Vec::new();
+            // The watcher owns every file a clone's current occupant is writing.
+            let live: HashSet<PathBuf> = g
+                .clones
+                .values()
+                .filter_map(|c| {
+                    let o = c.occupant.as_ref()?;
+                    c.sessions.iter().find(|s| s.id == o.native_session)?.transcript_path.clone()
+                })
+                .collect();
+            let mut out: Vec<Candidate> = Vec::new();
             for clone in g.clones.values() {
                 for s in clone.sessions.iter().filter(|s| s.ended.is_some()) {
+                    if s.transcript_path.as_ref().is_some_and(|p| live.contains(p)) {
+                        continue;
+                    }
                     let Some(seat) = g.seats.get(&clone.seat) else { continue };
                     if !resolve_in(&view, seat).map_err(internal)?.summaries {
                         continue;
                     }
-                    let tr = transcripts.iter().filter(|t| t.native_session == s.id).max_by(|a, b| a.id.cmp(&b.id));
-                    let missing = match (tr, &s.transcript_path) {
-                        (None, _) => true,
-                        (Some(tr), Some(p)) => stat_file(p).is_ok_and(|state| {
+                    // A resumed session has the native id of the first but its own `NsId`: fall back to the
+                    // latest record on the same file and seat, as the watcher does.
+                    let tr = transcripts
+                        .iter()
+                        .filter(|t| t.native_session == s.id)
+                        .max_by(|a, b| a.id.cmp(&b.id))
+                        .or_else(|| {
+                            let p = s.transcript_path.as_ref()?;
+                            transcripts
+                                .iter()
+                                .filter(|t| &t.transcript_path == p && t.seat == clone.seat)
+                                .max_by(|a, b| a.id.cmp(&b.id))
+                        });
+                    let gate = match (tr, &s.transcript_path) {
+                        (None, _) => Some(None),
+                        (Some(tr), Some(p)) => stat_file(p).ok().and_then(|state| {
                             let own: Vec<_> = requests.iter().filter(|r| r.transcript == tr.id).cloned().collect();
-                            state.aligned > covered_end(tr, &own)
+                            (state.aligned > covered_end(tr, &own)).then_some(Some((tr.id.clone(), state.aligned)))
                         }),
-                        (Some(_), None) => false,
+                        (Some(_), None) => None,
                     };
-                    if missing {
-                        out.push((clone.id.clone(), s.id.clone(), s.transcript_path.clone()));
+                    let Some(gate) = gate else { continue };
+                    let cand = Candidate { clone: clone.id.clone(), ns: s.id.clone(), path: s.transcript_path.clone(), gate };
+                    // One candidate per file: the latest ended session on it.
+                    match out.iter().position(|o| o.clone == cand.clone && o.path.is_some() && o.path == cand.path) {
+                        Some(i) => out[i] = cand,
+                        None => out.push(cand),
                     }
                 }
             }
             out
         };
         let mut asked = 0;
-        for (clone, ns, path) in candidates {
-            match self.request_for(&clone, &ns, path, None, false).await {
+        for Candidate { clone, ns, path, gate } in candidates {
+            if let (Some(p), Some((_, aligned))) = (&path, &gate)
+                && !self.observe_size(p, *aligned)
+            {
+                continue;
+            }
+            let tr = gate.map(|(id, _)| id);
+            match self.request_for(&clone, &ns, path, tr.as_ref(), false).await {
                 Ok(()) => asked += 1,
                 Err(e) => eprintln!("herdr-graph: transcripts: recovery request for {ns} failed: {}", e.message),
             }

@@ -529,12 +529,37 @@ async fn recovery_requests_only_the_uncovered_tail() {
     complete(&fx, complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
     assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "fully covered");
     append_lines(&path, 3);
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "first observation: not settled yet");
     assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 1);
     let live = live_requests(&fx);
     assert_eq!(live.len(), 2, "{live:#?}");
     assert!(live.iter().any(|r| r.id != first.id && r.range == br(100, 160)));
     assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0);
     assert_eq!(live_requests(&fx).len(), 2);
+}
+
+#[tokio::test]
+async fn recovery_leaves_a_live_resumed_session_to_the_watcher() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "s1", 5);
+    finish_session(&fx, &worker, "native-1", &path).await;
+    let first = the_request(&fx);
+    complete(&fx, complete_args(&first.id, first.range, Some(&worker.id))).await.unwrap();
+    // resumed on the same file and still appending
+    start_session(&fx, &worker.id, "native-1", Some(&path));
+    append_lines(&path, 3);
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "the live occupant owns the file");
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0);
+    assert_eq!(live_requests(&fx).len(), 1);
+    // the resumed session ends; its SessionEnded event is lost
+    end_session(&fx, &worker.id, SessionEndReason::AgentExited);
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "first observation: not settled yet");
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 1, "settled: the tail is requested");
+    let live = live_requests(&fx);
+    assert_eq!(live.len(), 2, "{live:#?}");
+    assert!(live.iter().any(|r| r.id != first.id && r.range == br(100, 160)));
+    assert_eq!(fx.tr.recover_session_requests().await.unwrap(), 0, "steady state");
 }
 
 #[tokio::test]
