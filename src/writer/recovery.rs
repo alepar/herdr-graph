@@ -11,6 +11,8 @@ pub struct RecoveryReport {
     pub requeued: Vec<OpId>,
     pub checkpoint: Option<CommitId>,
     pub ff: FfReport,
+    /// The `writer_halted` reason this recovery cleared (a restart is a successful probe).
+    pub cleared_halt: Option<String>,
 }
 
 /// Remove <git dir>/refs/heads/main.lock and <git dir>/index.lock (r2). Only valid while holding the daemon flock.

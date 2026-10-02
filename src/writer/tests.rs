@@ -505,6 +505,64 @@ fn lock_contention_exhausted_halts_writer() {
     assert_eq!(trailer_count(&fx, &op), 1);
 }
 
+fn halted_fx() -> (Fx, OpId, std::path::PathBuf) {
+    let fx = fx_with(WriterConfig { lock_retries: 2, lock_backoff: Duration::from_millis(10), ..Default::default() });
+    let lock = fx.root.join(".git/refs/heads/main.lock");
+    std::fs::write(&lock, "").unwrap();
+    let op = fx.w.admit(pair(1)).unwrap();
+    assert!(matches!(fx.w.step(), Err(WriterError::Halted(_))));
+    assert!(fx.w.journal().meta_get(WRITER_HALTED).unwrap().is_some());
+    (fx, op, lock)
+}
+
+#[test]
+fn resume_clears_halt_after_successful_probe() {
+    let (fx, op, lock) = halted_fx();
+    let rep = fx.w.resume().unwrap();
+    assert!(rep.was_halted);
+    assert!(rep.reason.unwrap().contains("lock contention"));
+    assert_eq!(rep.recovery.unwrap().requeued, vec![op.clone()]);
+    assert!(!lock.exists(), "recovery removed the stale lock");
+    assert_eq!(fx.w.journal().meta_get(WRITER_HALTED).unwrap(), None);
+    assert!(matches!(fx.w.drain().unwrap()[..], [StepOutcome::Committed(..)]));
+    assert_eq!(trailer_count(&fx, &op), 1);
+}
+
+#[test]
+fn resume_keeps_halt_when_probe_fails() {
+    let (fx, _op, _lock) = halted_fx();
+    let reason = fx.w.journal().meta_get(WRITER_HALTED).unwrap().unwrap();
+    // Recovery cannot read the ref: the probe fails.
+    let main = fx.root.join(".git/refs/heads/main");
+    let parked = fx.root.join(".git/refs/heads/main.parked");
+    std::fs::rename(&main, &parked).unwrap();
+    assert!(fx.w.resume().is_err());
+    assert_eq!(fx.w.journal().meta_get(WRITER_HALTED).unwrap(), Some(reason));
+    assert!(matches!(fx.w.step(), Err(WriterError::Halted(_))));
+    std::fs::rename(&parked, &main).unwrap();
+    assert!(fx.w.resume().unwrap().was_halted);
+    assert_eq!(fx.w.journal().meta_get(WRITER_HALTED).unwrap(), None);
+}
+
+#[test]
+fn resume_when_not_halted_is_noop() {
+    let fx = fx();
+    let rep = fx.w.resume().unwrap();
+    assert!(!rep.was_halted);
+    assert!(rep.reason.is_none() && rep.recovery.is_none());
+    assert_eq!(fx.w.journal().meta_get("writer_probe").unwrap(), None, "no probe ran");
+}
+
+#[test]
+fn recover_clears_stale_halt() {
+    let fx = fx();
+    fx.w.journal().meta_set(WRITER_HALTED, "disk on fire").unwrap();
+    let rep = fx.w.recover().unwrap();
+    assert_eq!(rep.cleared_halt.as_deref(), Some("disk on fire"));
+    assert_eq!(fx.w.journal().meta_get(WRITER_HALTED).unwrap(), None);
+    assert_eq!(fx.w.recover().unwrap().cleared_halt, None);
+}
+
 #[test]
 fn recover_marks_committed_from_trailer() {
     let fx = fx();
