@@ -863,6 +863,118 @@ async fn malformed_spool_entry_is_quarantined_and_later_ones_still_apply() {
     assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s-good"));
 }
 
+fn shell_capture(native: &str) -> SessionCapture {
+    SessionCapture { harness: Harness::Shell, native_session_id: native.into(), transcript_path: None, cwd: "/work".into() }
+}
+
+#[tokio::test]
+async fn duplicate_start_report_is_a_noop() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    start_session(&fx, &worker.id, "s1", None);
+    let at = fx.clock.now();
+    admit(&fx, occupancy_request(&worker.id, Some(SessionEndReason::SessionChanged), Some(&shell_capture("s1")), at));
+    let c = clone_rec(&fx, &worker.id);
+    assert_eq!(c.sessions.len(), 1, "no phantom session for the same native id: {:?}", c.sessions);
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s1"));
+    assert!(c.sessions[0].ended.is_none(), "the duplicate did not end the session it started");
+}
+
+#[tokio::test]
+async fn older_start_report_after_newer_occupant_is_dropped() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let older = fx.clock.now();
+    fx.clock.advance(chrono::Duration::seconds(10));
+    start_session(&fx, &worker.id, "s2", None);
+    admit(&fx, occupancy_request(&worker.id, Some(SessionEndReason::SessionChanged), Some(&shell_capture("s1")), older));
+    let c = clone_rec(&fx, &worker.id);
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"));
+    assert!(c.sessions.iter().all(|s| s.native_session_id != "s1"), "{:?}", c.sessions);
+    assert!(c.sessions[0].ended.is_none());
+    assert!(all_requests(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn resume_of_an_ended_session_still_starts_a_new_session() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    start_session(&fx, &worker.id, "n1", None);
+    end_session(&fx, &worker.id, SessionEndReason::AgentExited);
+    start_session(&fx, &worker.id, "n1", None);
+    let c = clone_rec(&fx, &worker.id);
+    assert_eq!(c.sessions.iter().filter(|s| s.native_session_id == "n1").count(), 2);
+    let occ = c.occupant.as_ref().unwrap();
+    assert_eq!(occ.native_session, c.sessions[1].id, "the occupant is the second session");
+}
+
+/// Journal ops that start session `native` through `observed.occupancy`.
+fn occupancy_ops_starting(fx: &Fx, native: &str) -> usize {
+    fx.journal
+        .list(&[], 1000)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.request.args["sub"] == "occupancy" && r.request.args["start"]["native_session_id"] == native)
+        .count()
+}
+
+#[tokio::test]
+async fn halted_writer_and_repeated_spool_passes_admit_one_occupancy_op() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let tr = Transcripts::new(
+        fx.store.clone(),
+        fx.w.clone(),
+        fx.rec.clone(),
+        fx.threads.clone(),
+        fx.map.clone(),
+        fx.clock.clone(),
+        None,
+    );
+    spool_session(&fx, &worker.id, "s1");
+    fx.journal.meta_set(crate::writer::WRITER_HALTED, "test").unwrap();
+    assert_eq!(tr.ingest_spool().await, 0);
+    assert_eq!(tr.ingest_spool().await, 0);
+    assert_eq!(occupancy_ops_starting(&fx, "s1"), 0, "a halted writer admits nothing");
+
+    fx.journal.meta_delete(crate::writer::WRITER_HALTED).unwrap();
+    for _ in 0..2 {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+        assert_eq!(crate::daemon::budget::within(deadline, tr.ingest_spool()).await, 0);
+    }
+    assert_eq!(occupancy_ops_starting(&fx, "s1"), 1, "the second pass did not re-admit the report");
+    assert_eq!(spool_files(&fx).len(), 1, "uncommitted: the file stays");
+
+    fx.w.drain().unwrap();
+    assert_eq!(tr.ingest_spool().await, 1);
+    assert!(spool_files(&fx).is_empty());
+    assert_eq!(occupancy_ops_starting(&fx, "s1"), 1);
+    let c = clone_rec(&fx, &worker.id);
+    assert_eq!(c.sessions.iter().filter(|s| s.native_session_id == "s1").count(), 1);
+}
+
+#[tokio::test]
+async fn stale_live_report_after_newer_spooled_report_leaves_occupant() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let hook = capture::parse_claude_hook(r#"{"session_id":"s2","source":"startup"}"#).unwrap();
+    let args = capture::report_args(&hook, Some(&worker.id.to_string()), None, "/work".into()).unwrap();
+    let later = fx.clock.now() + chrono::Duration::seconds(10);
+    let r = capture::SpooledReport { version: 1, caller: CallerInfo::default(), args, spooled_at: later };
+    capture::spool_report(fx.tr.reconciler.instance(), &r).unwrap();
+    assert_eq!(fx.tr.ingest_spool().await, 1);
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"));
+
+    let live = json!({ "clone": worker.id, "capture": { "harness": "claude", "native_session_id": "s1", "cwd": "/work" } });
+    let r = fx.tr.session_report(CallerInfo::default(), live).await.unwrap();
+    assert_eq!(r["changed"], false);
+    let c = clone_rec(&fx, &worker.id);
+    assert_eq!(occupant_native(&fx, &worker.id).as_deref(), Some("s2"));
+    assert!(c.sessions.iter().all(|s| s.native_session_id != "s1"), "{:?}", c.sessions);
+    assert!(c.sessions[0].ended.is_none());
+    assert!(all_requests(&fx).is_empty());
+}
+
 #[test]
 fn session_report_cli_is_a_noop_without_clone_or_pane() {
     let hook = capture::parse_claude_hook(
