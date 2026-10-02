@@ -4,7 +4,7 @@
 //! A human at a terminal sees the plan and a `[y/n]` prompt; there is no bypass flag. An agent runs
 //! `plan --json`, shows the plan to the user and, after an explicit yes, runs
 //! `apply <pl> --confirm <hash> --confirmed-by user-relay`.
-use crate::daemon::client::{CallMode, ClientError, call_daemon};
+use crate::daemon::client::{CallMode, ClientError, EXIT_STILL_RUNNING, call_daemon};
 use clap::Subcommand;
 use serde_json::{Value, json};
 use std::io::{BufRead, IsTerminal, Write};
@@ -118,16 +118,54 @@ fn apply(plan: String, confirm: Option<String>, confirmed_by: Option<String>) ->
     report_apply(&result)
 }
 
-/// Print the op id and final state; exit 1 unless the op committed.
+/// Exit code for an operation state: 0 committed, 3 still running (admitted or applying), 1 anything else.
+pub fn exit_for_state(state: &str) -> ExitCode {
+    match state {
+        "committed" => ExitCode::SUCCESS,
+        "admitted" | "applying" => ExitCode::from(EXIT_STILL_RUNNING),
+        _ => ExitCode::from(1),
+    }
+}
+
+/// After the `"{op} {state}"` line: say how to follow an op that has not finished.
+pub fn print_if_still_running(op: &str, state: &str) {
+    if matches!(state, "admitted" | "applying") {
+        println!("{op} still running — check with herdr-graph op {op}");
+    }
+}
+
+/// Print the op id and state; exit 0 committed, 3 still running, 1 otherwise.
 fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {
     let op = result["op"].as_str().unwrap_or("<op>");
     let state = result["state"].as_str().unwrap_or("unknown");
     println!("{op} {state}");
+    print_if_still_running(op, state);
     if let Some(c) = result["commit"].as_str() {
         println!("commit {c}");
     }
     if let Some(r) = result.get("rejection").filter(|r| r.is_object()) {
         println!("{}: {}", r["reason"].as_str().unwrap_or("rejected"), r["explanation"].as_str().unwrap_or_default());
     }
-    Ok(if state == "committed" { ExitCode::SUCCESS } else { ExitCode::from(1) })
+    Ok(exit_for_state(state))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_for_state_maps_still_running() {
+        assert_eq!(exit_for_state("admitted"), ExitCode::from(EXIT_STILL_RUNNING));
+        assert_eq!(exit_for_state("applying"), ExitCode::from(EXIT_STILL_RUNNING));
+        assert_eq!(exit_for_state("committed"), ExitCode::SUCCESS);
+        assert_eq!(exit_for_state("rejected"), ExitCode::from(1));
+        assert_eq!(EXIT_STILL_RUNNING, 3);
+    }
+
+    #[test]
+    fn slow_writer_reply_maps_to_still_running_exit() {
+        // The daemon's reply for an op that outlived the request budget (see the plan tests).
+        let reply = json!({"op": "op_01", "state": "admitted"});
+        assert_eq!(report_apply(&reply).unwrap(), ExitCode::from(EXIT_STILL_RUNNING));
+    }
 }

@@ -1,4 +1,5 @@
 //! UDS IPC server: 4-byte BE length JSON frames, dispatch to built-ins and registered command handlers.
+use super::budget;
 use super::registry::{CallerInfo, CommandCtx, CommandError, Registry, Shutdown};
 use crate::ipc::{
     DaemonPhase, IPC_VERSION, IpcErrorCode, IpcRequest, IpcResponse, IpcResult, read_frame_async, write_frame_async,
@@ -67,8 +68,8 @@ impl StartGate {
     }
 }
 
-/// How long a request is held while the daemon starts; below the client's 30 s call timeout.
-pub const START_HOLD: Duration = Duration::from_secs(25);
+/// How long a request is held while the daemon starts; derived from the one request budget.
+pub use super::budget::START_HOLD;
 
 /// Unchanged signature for existing callers/tests: a gate that is ready from the start.
 pub async fn serve(listener: UnixListener, registry: Arc<Registry>, builtins: Builtins, shutdown: Shutdown) {
@@ -120,10 +121,11 @@ async fn connection(
                 }
             },
         };
+        let deadline = tokio::time::Instant::now() + budget::SERVER_BUDGET;
         let request_id = req.request_id.clone();
         let result = tokio::select! {
             _ = shutdown.wait() => return,
-            r = dispatch(&gate, &builtins, req, hold) => r,
+            r = dispatch(&gate, &builtins, req, hold, deadline) => r,
         };
         let resp = IpcResponse { version: IPC_VERSION, request_id, result };
         if write_frame_async(&mut stream, &resp).await.is_err() {
@@ -136,7 +138,13 @@ fn err(code: IpcErrorCode, message: impl Into<String>) -> IpcResult {
     IpcResult::Error { code, message: message.into() }
 }
 
-async fn dispatch(gate: &StartGate, b: &Builtins, req: IpcRequest, hold: Duration) -> IpcResult {
+async fn dispatch(
+    gate: &StartGate,
+    b: &Builtins,
+    req: IpcRequest,
+    hold: Duration,
+    deadline: tokio::time::Instant,
+) -> IpcResult {
     if req.version != IPC_VERSION {
         return err(
             IpcErrorCode::VersionMismatch,
@@ -179,6 +187,7 @@ async fn dispatch(gate: &StartGate, b: &Builtins, req: IpcRequest, hold: Duratio
         }
         _ => {}
     }
+    let hold = hold.min(deadline.saturating_duration_since(tokio::time::Instant::now()));
     let registry = match gate.wait(hold).await {
         Some(GateState::Ready(reg)) => reg,
         Some(GateState::Failed(why)) => {
@@ -198,7 +207,7 @@ async fn dispatch(gate: &StartGate, b: &Builtins, req: IpcRequest, hold: Duratio
         },
     };
     let cx = CommandCtx { request_id: req.request_id, caller };
-    match handler.call(cx, args).await {
+    match budget::within(deadline, handler.call(cx, args)).await {
         Ok(value) => IpcResult::Ok { value },
         Err(CommandError { code, message }) => IpcResult::Error { code, message },
     }
@@ -391,6 +400,43 @@ mod tests {
         let IpcResult::Error { code, message } = resp.result else { panic!("{resp:?}") };
         assert_eq!(code, IpcErrorCode::Unavailable);
         assert!(message.contains("still starting"), "{message}");
+    }
+
+    fn deadline_registry() -> Registry {
+        let mut reg = Registry::default();
+        reg.command("test.deadline", |_cx: CommandCtx, _args: serde_json::Value| async move {
+            let d = budget::request_deadline().ok_or_else(|| CommandError::internal("no request deadline"))?;
+            let left = d.saturating_duration_since(tokio::time::Instant::now());
+            Ok(json!({"left_ms": left.as_millis() as u64}))
+        });
+        reg
+    }
+
+    #[tokio::test]
+    async fn held_request_keeps_within_budget() {
+        // Gate never ready: answers "still starting" at the (test) hold, not later.
+        let h = start_gated(StartGate::starting(), Duration::from_millis(300)).await;
+        let mut s = UnixStream::connect(&h.sock).await.unwrap();
+        let began = std::time::Instant::now();
+        let resp = roundtrip(&mut s, request(IPC_VERSION, "d0", "test.deadline", json!({}))).await;
+        let IpcResult::Error { code, message } = resp.result else { panic!("{resp:?}") };
+        assert_eq!(code, IpcErrorCode::Unavailable);
+        assert!(message.contains("still starting"), "{message}");
+        assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+
+        // Gate ready after 200 ms: the handler's deadline counts from frame receipt, not from readiness.
+        let gate = StartGate::starting();
+        let h = start_gated(gate.clone(), Duration::from_secs(10)).await;
+        let mut s = UnixStream::connect(&h.sock).await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            gate.ready(Arc::new(deadline_registry()));
+        });
+        let resp = roundtrip(&mut s, request(IPC_VERSION, "d1", "test.deadline", json!({}))).await;
+        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let left = Duration::from_millis(value["left_ms"].as_u64().unwrap());
+        assert!(left > Duration::ZERO, "deadline must be in the future");
+        assert!(left <= budget::SERVER_BUDGET - Duration::from_millis(150), "hold time must be charged: {left:?}");
     }
 
     #[tokio::test]

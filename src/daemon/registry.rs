@@ -45,6 +45,13 @@ impl CommandError {
     pub fn internal(m: impl Into<String>) -> Self {
         Self { code: IpcErrorCode::Internal, message: m.into() }
     }
+    /// The request's budget ran out while `op` was still non-terminal.
+    pub fn still_running(op: &crate::model::OpId, state: crate::model::operation::OpState) -> Self {
+        Self {
+            code: IpcErrorCode::StillRunning,
+            message: format!("{op} is still {state:?} (it finishes in the background; check with herdr-graph op {op})"),
+        }
+    }
 }
 
 pub trait CommandHandler: Send + Sync + 'static {

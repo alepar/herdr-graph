@@ -39,6 +39,8 @@ pub enum IpcErrorCode {
     Rejected,
     Unavailable,
     Internal,
+    /// The operation was admitted and is still running; the message names it.
+    StillRunning,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

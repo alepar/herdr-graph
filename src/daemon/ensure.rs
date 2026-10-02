@@ -16,8 +16,8 @@ fn pid_of(reply: &serde_json::Value) -> u32 {
     reply["pid"].as_u64().unwrap_or(0) as u32
 }
 
-/// How long ensure waits for a daemon to answer: the daemon's first observer pass plus margin (bead hg-zmi.55).
-pub const STARTUP_WAIT: Duration = Duration::from_secs(super::compose::FIRST_PASS_LIMIT.as_secs() + 10);
+/// How long ensure waits for a daemon to answer; one of the request budget's constants.
+pub use super::budget::STARTUP_WAIT;
 
 /// Advisory flock on `.graph-local/ensure.lock`, held from before the spawn until the daemon holds its own lock.
 struct SpawnGuard(#[allow(dead_code)] std::fs::File);

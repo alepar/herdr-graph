@@ -147,11 +147,16 @@ impl Transcripts {
     /// Admit a bookkeeping write and wait for it to commit. A rejection is the caller's error.
     pub(crate) async fn commit(&self, request: ChangeRequest) -> Result<OpId, CommandError> {
         let op = self.writer.admit(request).map_err(|e| CommandError::unavailable(e.to_string()))?;
-        let deadline = tokio::time::Instant::now() + self.tuning().commit_timeout;
+        // Inside a CLI request this is the request deadline; internal callers keep `commit_timeout`.
+        let deadline = crate::daemon::budget::wait_until(self.tuning().commit_timeout);
         loop {
             match self.writer.status(&op) {
                 Ok(Some(OpState::Committed)) => return Ok(op),
-                Ok(Some(OpState::Admitted | OpState::Applying)) => {}
+                Ok(Some(state @ (OpState::Admitted | OpState::Applying))) => {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(CommandError::still_running(&op, state));
+                    }
+                }
                 Ok(Some(state)) => {
                     let why = self
                         .journal
@@ -165,9 +170,6 @@ impl Transcripts {
                 }
                 Ok(None) => return Err(CommandError::internal(format!("{op} vanished from the journal"))),
                 Err(e) => return Err(CommandError::unavailable(e.to_string())),
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(CommandError::unavailable(format!("{op} did not finish in time")));
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }

@@ -117,6 +117,7 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
         let state = reply["op"]["state"].as_str().unwrap_or("unknown");
         if finished(state) || Instant::now() >= deadline {
             println!("{op} {state}");
+            super::plan::print_if_still_running(&op, state);
             if let Some(c) = reply["commit"].as_str() {
                 println!("commit {c}");
             }
@@ -127,7 +128,7 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
                     r.get("explanation").and_then(Value::as_str).unwrap_or_default()
                 );
             }
-            return Ok(if state == "committed" { ExitCode::SUCCESS } else { ExitCode::from(1) });
+            return Ok(super::plan::exit_for_state(state));
         }
         std::thread::sleep(Duration::from_millis(100));
     }

@@ -4,7 +4,8 @@
 //! `ack` and `complete` are mutating (they start the daemon if needed). An ACK records dispatch only;
 //! `complete` is what records a result.
 use crate::config::{Env, plugin_config_dir_via_herdr};
-use crate::daemon::client::{CallMode, ClientError, EXIT_NO_INSTANCE, call_daemon};
+use crate::daemon::client::{CallMode, ClientError, EXIT_NO_INSTANCE, EXIT_STILL_RUNNING, call_daemon};
+use crate::ipc::IpcErrorCode;
 use crate::model::ByteRange;
 use crate::transcripts::requests::{ListFilter, RequestRow, list_view};
 use clap::Subcommand;
@@ -86,6 +87,10 @@ fn mutate(kind: &str, args: serde_json::Value) -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Err(ClientError::NoInstance) => no_instance(),
+        Err(ClientError::Remote { code: IpcErrorCode::StillRunning, message }) => {
+            println!("{message}");
+            Ok(ExitCode::from(EXIT_STILL_RUNNING))
+        }
         Err(e) => Err(e.into()),
     }
 }

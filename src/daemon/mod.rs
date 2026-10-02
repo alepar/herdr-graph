@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod budget;
 pub mod client;
 pub mod compose;
 pub mod doctor;

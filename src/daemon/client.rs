@@ -9,9 +9,12 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::budget::CALL_TIMEOUT;
+
 pub const EXIT_NO_INSTANCE: u8 = 2;
-const ENSURE_TIMEOUT: Duration = super::ensure::STARTUP_WAIT;
-const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+/// The change was admitted and is still running (finishes in the background).
+pub const EXIT_STILL_RUNNING: u8 = 3;
+const ENSURE_TIMEOUT: Duration = super::budget::STARTUP_WAIT;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
