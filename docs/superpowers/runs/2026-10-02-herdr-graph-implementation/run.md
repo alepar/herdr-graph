@@ -26,6 +26,18 @@ parked:
 graph-pass: depth 11→11 · width 1.8→1.8 · applied 0 · parked 2
 designRoastExit: converged at round 2 — Should-fix (14 confirmed) [converged], 0 Blocking; punch list of 14 applied inline to spec + beads (no re-roast per loop rule); 2 new escalations parked above
 
+codeBuckets:
+  completed: hg-zmi.1, hg-zmi.2, hg-zmi.3, hg-zmi.4, hg-zmi.5, hg-zmi.6, hg-zmi.7, hg-zmi.8, hg-zmi.9, hg-zmi.10, hg-zmi.11, hg-zmi.12, hg-zmi.13, hg-zmi.14, hg-zmi.15, hg-zmi.16, hg-zmi.17, hg-zmi.18, hg-zmi.19
+  escalated: hg-zmi.20 (BLOCKED-AUTH: refused cleanup rm of ~/.config/herdr-graph/config.toml left by its own probe; work committed on task-hg-zmi.20 d7d7731)
+  pendingRetry:
+  parked:
+  stalled: false
+  review: not ready (9 must-fix) — fix beads hg-zmi.46–.52 filed under the epic + hg-zmi.20 re-entry; super-code re-entered
+  sweep: SWEEP DEFERRED (caller-owned)
+  slowness: []
+  stopReason: ready-drained (pass 1)
+  authRefused: hg-zmi.20 — `rm /Users/alepar/.config/herdr-graph/config.toml` (user to delete it and /private/tmp/hgx/i)
+
 approvals:
 - root-brainstorm Q1 · human · summarizer ACK queue → amend herdr-threads (service SendMessage w/ required receipts + service reads); request sent to w4:p1, threads-amendment-request.md
 - root-brainstorm Q2 · human · confirmation = TTY [y/n] in human terminals; agents relay with --confirm <plan-hash> after explicit user yes
