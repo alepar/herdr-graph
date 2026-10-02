@@ -250,8 +250,6 @@ pub fn doctor(env: &Env) -> DoctorReport {
     let status = Client::connect(&sock, Duration::from_secs(2)).ok().and_then(|mut c| c.call("status", serde_json::json!({})).ok());
     let comp = |name: &str| status.as_ref().and_then(|s| s["components"].get(name)).cloned();
     checks.push(writer_check(comp("writer").as_ref()));
-        None => checks.push(check("writer", true, "not reported by daemon")),
-    }
     let inputs = DiscoveryInputs {
         env_state_dir: env.threads_state_dir.clone(),
         config_state_dir: crate::config::read_threads_state_dir(env, &plugin_config_dir_via_herdr),
