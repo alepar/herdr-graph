@@ -783,11 +783,10 @@ fn e2e_move_only_pane_moved_out_no_recreate() {
     assert_eq!(retired_seat_count(&rig), 0);
 }
 
-/// PRODUCT DEFECT (found by this flow): moving a seat's pane into ANOTHER SEAT's tab makes the reconciler rename that tab
-/// to the moved-out seat's name; the rename is then observed as a user rename of the other seat, which is renamed
-/// after the first one (duplicate seat names). See docs/verification-matrix.md.
+/// Regression test for D3 (fixed by hg-zmi.49): moving a seat's pane into ANOTHER SEAT's tab must not make the
+/// reconciler rename that tab to the moved-out seat's name (spec §4.3.4), which used to be observed as a user rename
+/// of the other seat and produced duplicate seat names. See docs/verification-matrix.md.
 #[test]
-#[ignore = "product defect: reconciler renames the destination seat's tab after a pane move (see docs/verification-matrix.md)"]
 fn e2e_move_pane_into_other_seat_tab_keeps_that_seats_name() {
     let rig = rig!();
     let (foreman, _bar) = two_seats(&rig);

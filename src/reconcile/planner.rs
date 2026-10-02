@@ -155,11 +155,35 @@ impl<'a> LiveIndex<'a> {
         self.pane_by_id(live.pane.as_ref()?).map(|lp| LivePane { stamped: false, ..lp })
     }
 
+    /// The seat whose committed binding (same incarnation) or journal live ref names this tab.
+    pub fn tab_owner(&self, tab: &HerdrTabId) -> Option<SeatId> {
+        for (seat, d) in &self.desired.seats {
+            if let Some(b) = d.runtime.bound.as_ref()
+                && b.incarnation == self.snap.incarnation
+                && b.tab_id.as_ref() == Some(tab)
+            {
+                return Some(seat.clone());
+            }
+            if let Some(live) = live_ref(self.journal, &seat.to_any())
+                && live.incarnation == self.snap.incarnation
+                && live.tab.as_ref() == Some(tab)
+            {
+                return Some(seat.clone());
+            }
+        }
+        None
+    }
+
+    fn owned_by_other(&self, tab: &HerdrTabId, seat: &SeatId) -> bool {
+        self.tab_owner(tab).is_some_and(|o| &o != seat)
+    }
+
     pub fn tab_for_seat(&self, seat: &SeatId) -> Option<(&'a WorkspaceInfo, &'a TabInfo)> {
         let bound = self.desired.seats.get(seat).and_then(|s| s.runtime.bound.as_ref());
         if let Some(b) = bound
             && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.tab_id
+            && !self.owned_by_other(id, seat)
             && let Some(found) = self.tab_by_id(id)
         {
             return Some(found);
@@ -167,19 +191,27 @@ impl<'a> LiveIndex<'a> {
         if let Some(live) = live_ref(self.journal, &seat.to_any())
             && live.incarnation == self.snap.incarnation
             && let Some(id) = &live.tab
+            && !self.owned_by_other(id, seat)
             && let Some(found) = self.tab_by_id(id)
         {
             return Some(found);
         }
+        // A moved-out seat's clones live in other tabs: a token search would find (and claim) someone else's tab.
+        if self.desired.tab(seat).is_some_and(|t| t.moved_out) {
+            return None;
+        }
+        let clone_seat = |p: &PaneInfo| {
+            token_of(&p.metadata)
+                .and_then(|a| CloneId::parse(a.as_str()).ok())
+                .and_then(|c| self.desired.clones.get(&c))
+                .map(|c| &c.seat)
+        };
         for w in &self.snap.workspaces {
             for t in &w.tabs {
-                let holds_seat_pane = t.panes.iter().any(|p| {
-                    token_of(&p.metadata)
-                        .and_then(|a| CloneId::parse(a.as_str()).ok())
-                        .and_then(|c| self.desired.clones.get(&c))
-                        .is_some_and(|c| &c.seat == seat)
-                });
-                if holds_seat_pane {
+                if self.owned_by_other(&t.id, seat) || t.panes.iter().any(|p| clone_seat(p).is_some_and(|s| s != seat)) {
+                    continue;
+                }
+                if t.panes.iter().any(|p| clone_seat(p) == Some(seat)) {
                     return Some((w, t));
                 }
             }
@@ -359,7 +391,9 @@ pub fn plan_effects(
                     }
                 }
                 Some((_, live_tab)) => {
-                    if live_tab.label != tab.name {
+                    // §4.3.4: never relabel a tab bound to another seat, nor on behalf of a moved-out seat.
+                    let foreign = idx.tab_owner(&live_tab.id).is_some_and(|o| o != tab.seat);
+                    if live_tab.label != tab.name && !tab.moved_out && !foreign {
                         o.mk(
                             EffectKind::RenameTab,
                             seat_any.clone(),

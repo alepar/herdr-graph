@@ -47,7 +47,7 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 | retire a seat's last clone: plan shows the induced `seat.retire` and `runtime.close_tab`; afterwards tab gone, seat retired exactly once, no "observed" closure | 3.3, 4.4 | verified-real | `e2e_retire_last_clone_induced_seat_retirement_once` |
 | seat deactivate: tab closed, seat dormant, clones and seat not retired, not recorded as a closure | 4.4 | verified-real | `e2e_seat_deactivate_closes_tab_no_retirement` |
 | move a seat's only pane to another (non-seat) tab: clone `reload_required`, seat active + `absent` + `moved_out`, no tab recreated | 4.3 | verified-real | `e2e_move_only_pane_moved_out_no_recreate` |
-| move a pane into ANOTHER seat's tab leaves that seat's name and tab label alone | 4.3 | assumed | DEFECT D3: `e2e_move_pane_into_other_seat_tab_keeps_that_seats_name` (`#[ignore]`) |
+| move a pane into ANOTHER seat's tab leaves that seat's name and tab label alone | 4.3 | verified | `e2e_move_pane_into_other_seat_tab_keeps_that_seats_name` (regression for D3) |
 | a rename whose event the daemon never handled (daemon stopped, then killed) is recovered once from the snapshot diff | 4.3.2 | verified-real | `e2e_dropped_rename_recovered` |
 | rename a tab while the daemon is down: recorded as an observed rename on restart, not reverted | 4.3.2 | verified-real | `e2e_rename_while_daemon_down_recorded` |
 | summary of a closed seat: request routed to the summarizer, ack then complete, file lands in the archived seat folder (`summaries/` only) | 8.2, 3.5 | verified-real | `e2e_summary_lands_in_archived_seat_folder` (the test plays the summarizer; no real agent) |
@@ -127,7 +127,7 @@ These are product defects, reported to the coordinator, not fixed here (task 19 
   the same-incarnation binding, and the token never returns. Spec 4.2 says graph re-stamps tokens on rebind. The same
   collision affects D1's token. Fixed by hg-zmi.50: `clone rebind` attributes the seat to the rebind op, and
   `LiveIndex::pane` (with `tab_for_seat` and `workspace`) honors a `present` rebound pane of an older incarnation.
-- **D3: a moved-out seat renames the destination tab.** After `pane.move` of seat A's only pane into seat B's tab the
+- **D3: a moved-out seat renames the destination tab.** (fixed by hg-zmi.49) After `pane.move` of seat A's only pane into seat B's tab the
   reconciler's `tab_for_seat(A)` finds that tab through A's token-bearing pane and plans `rename_tab`
   to A's name; the rename is then observed as a user rename of seat B, which becomes "A" (directory
   `A-<suffix>`), so two seats share a name. Moving into a tab that belongs to no seat relabels that tab with A's name
