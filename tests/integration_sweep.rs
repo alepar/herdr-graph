@@ -442,6 +442,12 @@ mod golden {
         rig.wait_until("the seat to be renamed", |r| {
             r.row("seats", "chief", "active").is_some()
         });
+        // Committed reads can observe the rename before the derived worktree fast-forward finishes.
+        rig.wait_until("the renamed working-tree view", |r| {
+            use herdr_graph::ports::store::Store;
+            let store = herdr_graph::store::GitStore::open(&r.instance).unwrap();
+            herdr_graph::writer::worktree::view_rev(&r.instance) == Some(store.head().unwrap())
+        });
         let chief = rig.row("seats", "chief", "active").unwrap();
         assert_eq!(chief.id, foreman.id, "same seat, new name");
         assert!(
