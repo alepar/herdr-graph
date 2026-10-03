@@ -53,8 +53,10 @@ pub fn plan_hash(p: &Plan) -> String {
 }
 
 fn sorted_keys(e: &[PlanEffect]) -> Vec<String> {
-    let mut v: Vec<String> =
-        e.iter().map(|x| canonical_json(&serde_json::to_value(x).expect("effect serializes"))).collect();
+    let mut v: Vec<String> = e
+        .iter()
+        .map(|x| canonical_json(&serde_json::to_value(x).expect("effect serializes")))
+        .collect();
     v.sort();
     v
 }

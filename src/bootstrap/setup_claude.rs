@@ -23,13 +23,18 @@ const SKILLS: &[(&str, &str)] = &[
 
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
-    let dir = claude_config_dir.map(Path::to_path_buf).or_else(|| home.map(|h| h.join(".claude")))?;
+    let dir = claude_config_dir
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|h| h.join(".claude")))?;
     crate::herdr::isolation::tripwire(&dir, "setup_claude::config_dir");
     Some(dir)
 }
 
 fn sh_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+:@%".contains(c)) {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:@%".contains(c))
+    {
         s.to_owned()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -49,7 +54,11 @@ fn owned_group(binary: &Path) -> Value {
 
 fn is_owned(group: &Value) -> bool {
     group["hooks"].as_array().is_some_and(|hooks| {
-        hooks.iter().any(|h| h["command"].as_str().is_some_and(|c| c.contains(OWNER_MARKER)))
+        hooks.iter().any(|h| {
+            h["command"]
+                .as_str()
+                .is_some_and(|c| c.contains(OWNER_MARKER))
+        })
     })
 }
 
@@ -74,7 +83,10 @@ pub struct UninstallReport {
 }
 
 fn sha(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// What the installer recorded, so uninstall can restore exactly.
@@ -105,7 +117,8 @@ impl Manifest {
             "original": self.original, "installed_sha": self.installed_sha,
             "restorable": self.restorable, "created_skills_root": self.created_skills_root,
         });
-        std::fs::write(path, serde_json::to_string_pretty(&v)? + "\n").with_context(|| format!("writing {}", path.display()))
+        std::fs::write(path, serde_json::to_string_pretty(&v)? + "\n")
+            .with_context(|| format!("writing {}", path.display()))
     }
 }
 
@@ -114,7 +127,8 @@ fn pretty(doc: &Value) -> anyhow::Result<String> {
 }
 
 fn parse_settings(path: &Path, text: &str) -> anyhow::Result<Value> {
-    let doc: Value = serde_json::from_str(text).with_context(|| format!("{} is not valid JSON; not modified", path.display()))?;
+    let doc: Value = serde_json::from_str(text)
+        .with_context(|| format!("{} is not valid JSON; not modified", path.display()))?;
     if !doc.is_object() {
         bail!("{} is not a JSON object; not modified", path.display());
     }
@@ -125,9 +139,19 @@ fn parse_settings(path: &Path, text: &str) -> anyhow::Result<Value> {
 fn session_start_mut<'a>(doc: &'a mut Value, path: &Path) -> anyhow::Result<&'a mut Vec<Value>> {
     let obj = doc.as_object_mut().expect("checked to be an object");
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
-    let hooks = hooks.as_object_mut().with_context(|| format!("`hooks` in {} is not an object; not modified", path.display()))?;
+    let hooks = hooks.as_object_mut().with_context(|| {
+        format!(
+            "`hooks` in {} is not an object; not modified",
+            path.display()
+        )
+    })?;
     let arr = hooks.entry("SessionStart").or_insert_with(|| json!([]));
-    arr.as_array_mut().with_context(|| format!("`hooks.SessionStart` in {} is not an array; not modified", path.display()))
+    arr.as_array_mut().with_context(|| {
+        format!(
+            "`hooks.SessionStart` in {} is not an array; not modified",
+            path.display()
+        )
+    })
 }
 
 /// Install the owned hook group and the two skills. Idempotent.
@@ -146,7 +170,12 @@ pub fn install(config: &Path, binary: &Path) -> anyhow::Result<InstallReport> {
     };
     let desired = owned_group(binary);
     let arr = session_start_mut(&mut doc, &settings)?;
-    let owned_at: Vec<usize> = arr.iter().enumerate().filter(|(_, g)| is_owned(g)).map(|(i, _)| i).collect();
+    let owned_at: Vec<usize> = arr
+        .iter()
+        .enumerate()
+        .filter(|(_, g)| is_owned(g))
+        .map(|(i, _)| i)
+        .collect();
     let hook = match owned_at.as_slice() {
         [] => {
             arr.push(desired);
@@ -175,25 +204,41 @@ pub fn install(config: &Path, binary: &Path) -> anyhow::Result<InstallReport> {
                 }
                 m
             }
-            None => Manifest { original: before.clone(), restorable: true, ..Manifest::default() },
+            None => Manifest {
+                original: before.clone(),
+                restorable: true,
+                ..Manifest::default()
+            },
         };
-        std::fs::write(&settings, &text).with_context(|| format!("writing {}", settings.display()))?;
+        std::fs::write(&settings, &text)
+            .with_context(|| format!("writing {}", settings.display()))?;
         m.installed_sha = sha(text.as_bytes());
         if first_install && !skills_root_existed {
             m.created_skills_root = true;
         }
         let skills_written = write_skills(config)?;
         m.write(&manifest_path)?;
-        return Ok(InstallReport { hook, skills_written });
+        return Ok(InstallReport {
+            hook,
+            skills_written,
+        });
     }
     let skills_written = write_skills(config)?;
     if first_install {
         // Hook group found without a manifest (installed by hand or the manifest was lost): record what we can.
         let text = before.unwrap_or_default();
-        Manifest { original: Some(text.clone()), installed_sha: sha(text.as_bytes()), restorable: false, created_skills_root: false }
-            .write(&manifest_path)?;
+        Manifest {
+            original: Some(text.clone()),
+            installed_sha: sha(text.as_bytes()),
+            restorable: false,
+            created_skills_root: false,
+        }
+        .write(&manifest_path)?;
     }
-    Ok(InstallReport { hook, skills_written })
+    Ok(InstallReport {
+        hook,
+        skills_written,
+    })
 }
 
 fn skills_root(config: &Path) -> PathBuf {
@@ -224,7 +269,9 @@ pub fn uninstall(config: &Path) -> anyhow::Result<UninstallReport> {
     let mut hook_removed = false;
 
     if let Some(text) = &current {
-        let exact = manifest.as_ref().is_some_and(|m| m.restorable && sha(text.as_bytes()) == m.installed_sha);
+        let exact = manifest
+            .as_ref()
+            .is_some_and(|m| m.restorable && sha(text.as_bytes()) == m.installed_sha);
         if exact {
             let m = manifest.as_ref().expect("checked");
             match &m.original {
@@ -234,11 +281,19 @@ pub fn uninstall(config: &Path) -> anyhow::Result<UninstallReport> {
             hook_removed = true;
         } else {
             let mut doc = parse_settings(&settings, text)?;
-            let had_owned = doc["hooks"]["SessionStart"].as_array().is_some_and(|a| a.iter().any(is_owned));
+            let had_owned = doc["hooks"]["SessionStart"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(is_owned));
             if had_owned {
                 let obj = doc.as_object_mut().expect("checked to be an object");
-                let hooks = obj.get_mut("hooks").and_then(Value::as_object_mut).expect("hooks exist when an owned group does");
-                let arr = hooks.get_mut("SessionStart").and_then(Value::as_array_mut).expect("checked");
+                let hooks = obj
+                    .get_mut("hooks")
+                    .and_then(Value::as_object_mut)
+                    .expect("hooks exist when an owned group does");
+                let arr = hooks
+                    .get_mut("SessionStart")
+                    .and_then(Value::as_array_mut)
+                    .expect("checked");
                 arr.retain(|g| !is_owned(g));
                 if arr.is_empty() {
                     hooks.remove("SessionStart");
@@ -274,5 +329,8 @@ pub fn uninstall(config: &Path) -> anyhow::Result<UninstallReport> {
     if manifest.is_some() {
         std::fs::remove_file(&manifest_path)?;
     }
-    Ok(UninstallReport { hook_removed, skills_removed })
+    Ok(UninstallReport {
+        hook_removed,
+        skills_removed,
+    })
 }

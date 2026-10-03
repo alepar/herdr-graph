@@ -31,7 +31,11 @@ pub struct Reject {
 
 impl From<Reject> for Rejection {
     fn from(r: Reject) -> Self {
-        Rejection { reason: r.reason, explanation: r.explanation, current_revs: r.current_revs }
+        Rejection {
+            reason: r.reason,
+            explanation: r.explanation,
+            current_revs: r.current_revs,
+        }
     }
 }
 
@@ -59,7 +63,10 @@ pub trait Mutation: Send + Sync {
 /// `args["sub"]` a string → "<kind>.<sub>" (e.g. "observed.cascade", "bookkeeping.binding").
 pub fn mutation_key(req: &ChangeRequest) -> String {
     let kind = kind_name(req.kind);
-    let has_sub = matches!(req.kind, RequestKind::Observed | RequestKind::Bookkeeping | RequestKind::ContentWrite);
+    let has_sub = matches!(
+        req.kind,
+        RequestKind::Observed | RequestKind::Bookkeeping | RequestKind::ContentWrite
+    );
     match req.args.get("sub").and_then(|v| v.as_str()) {
         Some(sub) if has_sub => format!("{kind}.{sub}"),
         _ => kind,
@@ -68,7 +75,10 @@ pub fn mutation_key(req: &ChangeRequest) -> String {
 
 /// serde snake_case name of a request kind.
 pub fn kind_name(kind: RequestKind) -> String {
-    serde_json::to_value(kind).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 #[derive(Default, Clone)]
@@ -80,7 +90,10 @@ impl MutationRegistry {
     /// Panics on a duplicate key: that is a wiring bug.
     pub fn register(&mut self, key: impl Into<String>, m: Arc<dyn Mutation>) {
         let key = key.into();
-        assert!(!self.map.contains_key(&key), "mutation {key:?} registered twice");
+        assert!(
+            !self.map.contains_key(&key),
+            "mutation {key:?} registered twice"
+        );
         self.map.insert(key, m);
     }
 

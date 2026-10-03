@@ -57,7 +57,10 @@ struct ThreadsDaemon<'a> {
 impl<'a> ThreadsDaemon<'a> {
     fn cli(&self, pane: Option<&HerdrPaneId>, args: &[&str]) -> Output {
         let mut c = self.herdr.command(&self.bin);
-        c.args(["--state-dir"]).arg(&self.state).arg("--host-endpoint").arg(&self.herdr.socket);
+        c.args(["--state-dir"])
+            .arg(&self.state)
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket);
         c.args(args);
         if let Some(p) = pane {
             c.env("HERDR_PANE_ID", &p.0);
@@ -70,11 +73,21 @@ impl<'a> ThreadsDaemon<'a> {
     }
 
     fn start_at(herdr: &'a PrivateHerdr, bin: PathBuf, state: PathBuf) -> Self {
-        herdr.guard().check(&state).expect("threads state is inside the private root");
-        herdr.guard().check(&herdr.socket).expect("host endpoint is private");
+        herdr
+            .guard()
+            .check(&state)
+            .expect("threads state is inside the private root");
+        herdr
+            .guard()
+            .check(&herdr.socket)
+            .expect("host endpoint is private");
         let d = Self { herdr, bin, state };
         let out = d.cli(None, &["daemon", "ensure"]);
-        assert!(out.status.success(), "daemon ensure: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "daemon ensure: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         d
     }
 }
@@ -103,7 +116,12 @@ fn stdout(o: &Output) -> String {
 }
 
 fn ok(what: &str, o: &Output) {
-    assert!(o.status.success(), "{what}: {} {}", stdout(o), String::from_utf8_lossy(&o.stderr));
+    assert!(
+        o.status.success(),
+        "{what}: {} {}",
+        stdout(o),
+        String::from_utf8_lossy(&o.stderr)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -129,87 +147,200 @@ async fn real_threads_channel_invite_membership_notify_release() {
     // else must be inside the private root, and nothing may be a live user resource.
     match herdr.guard().check(&found.socket) {
         Ok(()) => {}
-        Err(IsolationError::OutsideRoot(p, _)) if p.to_string_lossy().starts_with("/private/tmp/herdr-threads-") => {}
-        Err(e) => panic!("threads socket {} is not private: {e}", found.socket.display()),
+        Err(IsolationError::OutsideRoot(p, _))
+            if p.to_string_lossy()
+                .starts_with("/private/tmp/herdr-threads-") => {}
+        Err(e) => panic!(
+            "threads socket {} is not private: {e}",
+            found.socket.display()
+        ),
     }
-    let intents = herdr.root.join("graph").join(".graph-local").join("threads-intents");
-    herdr.guard().check(&intents).expect("intents dir is private");
-    let threads = ServiceThreads::with_system_clock(found.socket.clone(), intents, found.instance).unwrap();
-    let clock: Arc<dyn herdr_threads::protocol::time::Clock> = Arc::new(herdr_threads::app::SystemClock::new());
+    let intents = herdr
+        .root
+        .join("graph")
+        .join(".graph-local")
+        .join("threads-intents");
+    herdr
+        .guard()
+        .check(&intents)
+        .expect("intents dir is private");
+    let threads =
+        ServiceThreads::with_system_clock(found.socket.clone(), intents, found.instance).unwrap();
+    let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
+        Arc::new(herdr_threads::app::SystemClock::new());
     let map = ThreadsSeatMap::new(found.socket.clone(), found.instance, clock);
 
     // A pane in the private Herdr, registered as a threads seat (a person's seat: `me init`).
     let client = herdr.client();
     let created = client
-        .create_workspace(CreateWorkspace { label: "threads-real".into(), cwd: herdr.root.join("home"), env: vec![] })
+        .create_workspace(CreateWorkspace {
+            label: "threads-real".into(),
+            cwd: herdr.root.join("home"),
+            env: vec![],
+        })
         .await
         .expect("workspace");
     let pane = created.pane.clone().expect("first pane");
     let init = daemon.cli(Some(&pane), &["me", "init"]);
     ok("me init", &init);
-    let seat = poll("the pane's threads seat", async || map.seat_for(&pane).await.ok().flatten()).await;
+    let seat = poll("the pane's threads seat", async || {
+        map.seat_for(&pane).await.ok().flatten()
+    })
+    .await;
     assert!(seat.0.starts_with("seat-"), "{seat:?}");
 
     // EnsureThread: idempotent by operation key.
     let key = OpKey("ensure:st_REALTEST".into());
-    let thread = threads.ensure_thread(ChannelScope::Seat, "alpha/foreman", &key).await.expect("ensure");
+    let thread = threads
+        .ensure_thread(ChannelScope::Seat, "alpha/foreman", &key)
+        .await
+        .expect("ensure");
     assert_eq!(thread, ThreadRef("hg-st_realtest".into()));
-    assert_eq!(threads.ensure_thread(ChannelScope::Seat, "alpha/foreman", &key).await.unwrap(), thread);
-    assert_eq!(threads.membership(&thread, &seat).await.unwrap(), None, "nobody invited yet");
-    threads.set_topic(&thread, "alpha/boss", &OpKey("topic:real:1".into())).await.expect("set topic");
+    assert_eq!(
+        threads
+            .ensure_thread(ChannelScope::Seat, "alpha/foreman", &key)
+            .await
+            .unwrap(),
+        thread
+    );
+    assert_eq!(
+        threads.membership(&thread, &seat).await.unwrap(),
+        None,
+        "nobody invited yet"
+    );
+    threads
+        .set_topic(&thread, "alpha/boss", &OpKey("topic:real:1".into()))
+        .await
+        .expect("set topic");
 
     // Invite Required: pending until the native side accepts; the graph side never accepts.
-    threads.invite(&thread, &seat, InviteConstraint::Required, &OpKey("invite:real:1".into())).await.expect("invite");
-    let d = threads.membership_detail(&thread, &seat).await.unwrap().expect("membership after invite");
+    threads
+        .invite(
+            &thread,
+            &seat,
+            InviteConstraint::Required,
+            &OpKey("invite:real:1".into()),
+        )
+        .await
+        .expect("invite");
+    let d = threads
+        .membership_detail(&thread, &seat)
+        .await
+        .unwrap()
+        .expect("membership after invite");
     assert_eq!(d.state, InvitationState::Pending);
-    let (inv, req, rev) = (d.invitation.clone().unwrap(), d.requirement.clone().unwrap(), d.revision.unwrap());
+    let (inv, req, rev) = (
+        d.invitation.clone().unwrap(),
+        d.requirement.clone().unwrap(),
+        d.revision.unwrap(),
+    );
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!(threads.membership(&thread, &seat).await.unwrap(), Some(InvitationState::Pending), "acceptance is never fabricated");
+    assert_eq!(
+        threads.membership(&thread, &seat).await.unwrap(),
+        Some(InvitationState::Pending),
+        "acceptance is never fabricated"
+    );
 
     // The agent accepts with the exact command graph prints for `/seat`.
     let accept = daemon.cli(
         Some(&pane),
-        &["accept-required", &thread.0, "--invitation", &inv, "--requirement", &req, "--revision", &rev.to_string()],
+        &[
+            "accept-required",
+            &thread.0,
+            "--invitation",
+            &inv,
+            "--requirement",
+            &req,
+            "--revision",
+            &rev.to_string(),
+        ],
     );
     ok("accept-required", &accept);
     poll("accepted membership", async || {
-        (threads.membership(&thread, &seat).await.ok()? == Some(InvitationState::Accepted)).then_some(())
+        (threads.membership(&thread, &seat).await.ok()? == Some(InvitationState::Accepted))
+            .then_some(())
     })
     .await;
 
     // Notify lands in the thread history.
-    threads.notify(&thread, Severity::Info, "graph says hello", &OpKey("notify:real:1".into())).await.expect("notify");
+    threads
+        .notify(
+            &thread,
+            Severity::Info,
+            "graph says hello",
+            &OpKey("notify:real:1".into()),
+        )
+        .await
+        .expect("notify");
     let read = daemon.cli(Some(&pane), &["read", &thread.0, "--json"]);
     ok("read", &read);
-    assert!(stdout(&read).contains("graph says hello"), "{}", stdout(&read));
+    assert!(
+        stdout(&read).contains("graph says hello"),
+        "{}",
+        stdout(&read)
+    );
 
     // Service-ACK delivery (herdr-threads ht-5nb): a v2 registration, an ACK-required request to the joined
     // seat, pending until the native agent ACKs it by exact id; ACK means received, never processed.
-    assert_eq!(threads.delivery_capability().await.unwrap(), DeliveryCapability::ServiceAck);
+    assert_eq!(
+        threads.delivery_capability().await.unwrap(),
+        DeliveryCapability::ServiceAck
+    );
     let msg = threads
-        .send_request(&thread, std::slice::from_ref(&seat), "graph request rq_REAL", &OpKey("deliver:rq_REAL".into()))
+        .send_request(
+            &thread,
+            std::slice::from_ref(&seat),
+            "graph request rq_REAL",
+            &OpKey("deliver:rq_REAL".into()),
+        )
         .await
         .expect("service send");
-    let r = threads.receipt_state(std::slice::from_ref(&msg)).await.expect("receipts");
+    let r = threads
+        .receipt_state(std::slice::from_ref(&msg))
+        .await
+        .expect("receipts");
     assert_eq!(r[0].recipients.len(), 1, "{r:?}");
     assert_eq!(r[0].recipients[0].seat, seat);
-    assert_eq!(r[0].recipients[0].state, ReceiptState::Pending, "no ACK is ever fabricated");
+    assert_eq!(
+        r[0].recipients[0].state,
+        ReceiptState::Pending,
+        "no ACK is ever fabricated"
+    );
     let ack = daemon.cli(Some(&pane), &["ack", &msg.0]);
     ok("ack", &ack);
     poll("acknowledged receipt", async || {
-        let r = threads.receipt_state(std::slice::from_ref(&msg)).await.ok()?;
+        let r = threads
+            .receipt_state(std::slice::from_ref(&msg))
+            .await
+            .ok()?;
         matches!(r[0].recipients[0].state, ReceiptState::Acknowledged { .. }).then_some(())
     })
     .await;
 
     // ReleaseRequirement cleans up: the requirement episode ends, and a second release is clean.
-    threads.release_requirement(&thread, &seat, &OpKey("release:real:1".into())).await.expect("release");
-    assert_eq!(threads.membership(&thread, &seat).await.unwrap(), Some(InvitationState::Released));
-    threads.release_requirement(&thread, &seat, &OpKey("release:real:2".into())).await.expect("second release");
+    threads
+        .release_requirement(&thread, &seat, &OpKey("release:real:1".into()))
+        .await
+        .expect("release");
+    assert_eq!(
+        threads.membership(&thread, &seat).await.unwrap(),
+        Some(InvitationState::Released)
+    );
+    threads
+        .release_requirement(&thread, &seat, &OpKey("release:real:2".into()))
+        .await
+        .expect("second release");
 
     // A busy service (a second registration while the first lives) is reported, never taken over.
-    let second = ServiceThreads::with_system_clock(found.socket, herdr.root.join("graph/.graph-local/threads-intents-2"), found.instance).unwrap();
-    let r = second.ensure_thread(ChannelScope::Seat, "x", &OpKey("ensure:st_OTHER".into())).await;
+    let second = ServiceThreads::with_system_clock(
+        found.socket,
+        herdr.root.join("graph/.graph-local/threads-intents-2"),
+        found.instance,
+    )
+    .unwrap();
+    let r = second
+        .ensure_thread(ChannelScope::Seat, "x", &OpKey("ensure:st_OTHER".into()))
+        .await;
     assert!(matches!(r, Err(ThreadsError::ServiceBusy)), "{r:?}");
     assert!(Path::new(&herdr.root).exists());
 }
@@ -233,8 +364,15 @@ async fn production_discovery_reaches_real_threads_daemon() {
     };
     let home = herdr.root.join("home");
     let state = home.join(".local/state/herdr/plugins/herdr-threads");
-    herdr.guard().check(&state).expect("threads state is inside the private root");
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&state).unwrap();
+    herdr
+        .guard()
+        .check(&state)
+        .expect("threads state is inside the private root");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&state)
+        .unwrap();
     let _daemon = ThreadsDaemon::start_at(&herdr, threads_binary(), state);
 
     let graph_root = herdr.root.join("graph");
@@ -244,8 +382,17 @@ async fn production_discovery_reaches_real_threads_daemon() {
         started_at: chrono::Utc::now(),
         claude_root: herdr.root.join("claude"),
     };
-    herdr.guard().check(&ctx.paths.threads_intents).expect("intents dir is private");
-    let inputs = herdr_graph::threads::discovery::DiscoveryInputs { home: Some(home), ..Default::default() };
+    herdr
+        .guard()
+        .check(&ctx.paths.threads_intents)
+        .expect("intents dir is private");
+    let inputs = herdr_graph::threads::discovery::DiscoveryInputs {
+        home: Some(home),
+        ..Default::default()
+    };
     let (threads, _map) = herdr_graph::daemon::compose::production_threads(&ctx, inputs);
-    threads.delivery_capability().await.expect("default discovery reaches the real daemon");
+    threads
+        .delivery_capability()
+        .await
+        .expect("default discovery reaches the real daemon");
 }

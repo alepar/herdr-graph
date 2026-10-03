@@ -80,7 +80,10 @@ pub const CLAUDE: HarnessProfile = HarnessProfile {
         steps: &[KeyStep::Key("ctrl+c"), KeyStep::Key("ctrl+c")],
         if_still_running: Some(KeyStep::SubmitText("/exit")),
     }),
-    session_id_sources: &[SessionIdSource::GraphHookReport, SessionIdSource::HerdrAgentSession],
+    session_id_sources: &[
+        SessionIdSource::GraphHookReport,
+        SessionIdSource::HerdrAgentSession,
+    ],
     transcript: TranscriptLocator::ClaudeProjects,
 };
 pub const CODEX: HarnessProfile = HarnessProfile {
@@ -159,7 +162,9 @@ pub fn claude_transcript_glob(root: &Path, session_id: &str) -> String {
 
 /// Session id from argv for `ProcessInfoArgv { marker }`: the token right after `marker`.
 pub fn session_id_from_argv(argv: &[String], marker: &str) -> Option<String> {
-    argv.windows(2).find(|w| w[0] == marker).map(|w| w[1].clone())
+    argv.windows(2)
+        .find(|w| w[0] == marker)
+        .map(|w| w[1].clone())
 }
 
 /// Outcome of `agent.start` (spec §4.1 "Readiness and start outcomes"). Never blindly retried.

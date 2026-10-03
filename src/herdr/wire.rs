@@ -6,8 +6,8 @@
 //! subscription request uses dots (`tab.created`).
 use crate::model::{HerdrPaneId, HerdrTabId, HerdrTerminalId, HerdrWorkspaceId, Incarnation};
 use crate::ports::herdr::{
-    AgentInfo, AgentSession, AgentStatus, HerdrError, HerdrSnapshot, PaneInfo, ProcessInfo, TabInfo,
-    WorkspaceInfo,
+    AgentInfo, AgentSession, AgentStatus, HerdrError, HerdrSnapshot, PaneInfo, ProcessInfo,
+    TabInfo, WorkspaceInfo,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,7 +69,8 @@ pub struct WireRequest {
 impl WireRequest {
     /// One NDJSON line, newline included.
     pub fn to_line(&self) -> Result<Vec<u8>, HerdrError> {
-        let mut line = serde_json::to_vec(self).map_err(|e| HerdrError::Protocol(format!("encode request: {e}")))?;
+        let mut line = serde_json::to_vec(self)
+            .map_err(|e| HerdrError::Protocol(format!("encode request: {e}")))?;
         line.push(b'\n');
         Ok(line)
     }
@@ -107,18 +108,26 @@ pub enum Frame {
 }
 
 pub fn parse_frame(line: &str) -> Result<Frame, HerdrError> {
-    let v: Value = serde_json::from_str(line).map_err(|e| HerdrError::Protocol(format!("bad json line: {e}")))?;
+    let v: Value = serde_json::from_str(line)
+        .map_err(|e| HerdrError::Protocol(format!("bad json line: {e}")))?;
     if v.get("event").is_some() {
-        serde_json::from_value(v).map(Frame::Event).map_err(|e| HerdrError::Protocol(format!("bad event: {e}")))
+        serde_json::from_value(v)
+            .map(Frame::Event)
+            .map_err(|e| HerdrError::Protocol(format!("bad event: {e}")))
     } else {
-        serde_json::from_value(v).map(Frame::Response).map_err(|e| HerdrError::Protocol(format!("bad response: {e}")))
+        serde_json::from_value(v)
+            .map(Frame::Response)
+            .map_err(|e| HerdrError::Protocol(format!("bad response: {e}")))
     }
 }
 
 /// `error` member to the port error. The Herdr error code is kept as the message prefix
 /// (`"<code>: <message>"`) so callers can still branch on it (`agent_not_ready`, `agent_not_found`).
 pub fn error_to_rejected(method: &str, e: &WireError) -> HerdrError {
-    HerdrError::Rejected { method: method.to_owned(), message: format!("{}: {}", e.code, e.message) }
+    HerdrError::Rejected {
+        method: method.to_owned(),
+        message: format!("{}: {}", e.code, e.message),
+    }
 }
 
 /// `true` when a [`HerdrError::Rejected`] carries the given Herdr error code.
@@ -131,7 +140,9 @@ fn proto(msg: impl Into<String>) -> HerdrError {
 }
 
 fn str_field<'a>(v: &'a Value, key: &str) -> Result<&'a str, HerdrError> {
-    v.get(key).and_then(Value::as_str).ok_or_else(|| proto(format!("missing string field `{key}`")))
+    v.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| proto(format!("missing string field `{key}`")))
 }
 
 fn opt_str(v: &Value, key: &str) -> Option<String> {
@@ -141,7 +152,11 @@ fn opt_str(v: &Value, key: &str) -> Option<String> {
 fn tokens(v: &Value) -> BTreeMap<String, String> {
     v.get("tokens")
         .and_then(Value::as_object)
-        .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned()))).collect())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -193,7 +208,9 @@ pub fn parse_pane(v: &Value) -> Result<PaneInfo, HerdrError> {
 pub fn parse_snapshot(v: &Value) -> Result<HerdrSnapshot, HerdrError> {
     let snap = v.get("snapshot").unwrap_or(v);
     let list = |key: &str| -> Result<&Vec<Value>, HerdrError> {
-        snap.get(key).and_then(Value::as_array).ok_or_else(|| proto(format!("snapshot lacks `{key}` array")))
+        snap.get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| proto(format!("snapshot lacks `{key}` array")))
     };
     let agents = list("agents")?;
     let mut panes_by_tab: BTreeMap<String, Vec<PaneInfo>> = BTreeMap::new();
@@ -201,12 +218,17 @@ pub fn parse_snapshot(v: &Value) -> Result<HerdrSnapshot, HerdrError> {
         let mut pane = parse_pane(p)?;
         // The dedicated agents list is authoritative when it names the pane.
         let id = pane.id.0.clone();
-        if let Some(a) = agents.iter().find(|a| a.get("pane_id").and_then(Value::as_str) == Some(id.as_str()))
+        if let Some(a) = agents
+            .iter()
+            .find(|a| a.get("pane_id").and_then(Value::as_str) == Some(id.as_str()))
             && let Some(info) = parse_agent(a)
         {
             pane.agent = Some(info);
         }
-        panes_by_tab.entry(str_field(p, "tab_id")?.to_owned()).or_default().push(pane);
+        panes_by_tab
+            .entry(str_field(p, "tab_id")?.to_owned())
+            .or_default()
+            .push(pane);
     }
     let mut tabs_by_ws: BTreeMap<String, Vec<TabInfo>> = BTreeMap::new();
     for t in list("tabs")? {
@@ -216,7 +238,10 @@ pub fn parse_snapshot(v: &Value) -> Result<HerdrSnapshot, HerdrError> {
             label: str_field(t, "label")?.to_owned(),
             panes: panes_by_tab.remove(&id).unwrap_or_default(),
         };
-        tabs_by_ws.entry(str_field(t, "workspace_id")?.to_owned()).or_default().push(tab);
+        tabs_by_ws
+            .entry(str_field(t, "workspace_id")?.to_owned())
+            .or_default()
+            .push(tab);
     }
     let mut workspaces = Vec::new();
     for w in list("workspaces")? {
@@ -228,28 +253,49 @@ pub fn parse_snapshot(v: &Value) -> Result<HerdrSnapshot, HerdrError> {
             tabs: tabs_by_ws.remove(&id).unwrap_or_default(),
         });
     }
-    Ok(HerdrSnapshot { incarnation: Incarnation::default(), workspaces })
+    Ok(HerdrSnapshot {
+        incarnation: Incarnation::default(),
+        workspaces,
+    })
 }
 
 /// `pane.process_info` result (`{type, process_info:{...}}`) to the port type. `is_shell` is true when
 /// the foreground process group is the shell's own (or nothing else is in the foreground).
 pub fn parse_process_info(v: &Value) -> Result<ProcessInfo, HerdrError> {
     let p = v.get("process_info").unwrap_or(v);
-    let pgid = p.get("foreground_process_group_id").and_then(Value::as_u64).map(|n| n as u32);
+    let pgid = p
+        .get("foreground_process_group_id")
+        .and_then(Value::as_u64)
+        .map(|n| n as u32);
     let shell = p.get("shell_pid").and_then(Value::as_u64).map(|n| n as u32);
-    let procs = p.get("foreground_processes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let procs = p
+        .get("foreground_processes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let lead = procs
         .iter()
         .find(|q| pgid.is_some() && q.get("pid").and_then(Value::as_u64).map(|n| n as u32) == pgid)
         .or_else(|| procs.first());
-    let foreground_pid = lead.and_then(|q| q.get("pid").and_then(Value::as_u64)).map(|n| n as u32).or(pgid);
+    let foreground_pid = lead
+        .and_then(|q| q.get("pid").and_then(Value::as_u64))
+        .map(|n| n as u32)
+        .or(pgid);
     let foreground_argv = lead
         .and_then(|q| q.get("argv").and_then(Value::as_array))
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
     let is_shell = match (pgid, shell) {
         (Some(g), Some(s)) => g == s,
         _ => procs.is_empty(),
     };
-    Ok(ProcessInfo { foreground_pid, foreground_argv, is_shell })
+    Ok(ProcessInfo {
+        foreground_pid,
+        foreground_argv,
+        is_shell,
+    })
 }

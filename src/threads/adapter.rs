@@ -5,14 +5,17 @@
 use super::fake::thread_for_ensure_key;
 use crate::model::clone::{InvitationState, InviteConstraint};
 use crate::ports::threads::*;
-use herdr_threads::client::service::{PersistentServiceClient, ServiceCallError, ServiceIntentJournal};
+use herdr_threads::client::service::{
+    PersistentServiceClient, ServiceCallError, ServiceIntentJournal,
+};
 use herdr_threads::protocol::ids::{MessageId, OperationId, RequirementId, SeatId, ThreadId};
 use herdr_threads::protocol::pagination::PageRequest;
 use herdr_threads::protocol::results::{ApiError, ErrorCode, ReceiptStatus, Recipient};
 use herdr_threads::protocol::service::{
-    EnsureManagedThread, InvitationConstraint, NotificationSeverity, ReleaseRequirement, RequirementState,
-    SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership, ServiceMembershipQuery, ServiceNotify,
-    ServiceOperation, ServiceReceiptsQuery, ServiceResult, ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
+    EnsureManagedThread, InvitationConstraint, NotificationSeverity, ReleaseRequirement,
+    RequirementState, SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership,
+    ServiceMembershipQuery, ServiceNotify, ServiceOperation, ServiceReceiptsQuery, ServiceResult,
+    ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
 };
 use herdr_threads::protocol::time::{CallBudget, Cancellation, Clock as ThreadsClock, MonoInstant};
 use sha2::{Digest, Sha256};
@@ -23,7 +26,10 @@ use std::time::Duration;
 /// A budget that ends `d` from now on `clock`'s monotonic reading.
 pub(crate) fn call_budget(clock: &dyn ThreadsClock, d: Duration) -> CallBudget {
     let ms = u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
-    CallBudget { deadline: MonoInstant(clock.monotonic_now().0.saturating_add(ms)), cancellation: Cancellation::default() }
+    CallBudget {
+        deadline: MonoInstant(clock.monotonic_now().0.saturating_add(ms)),
+        cancellation: Cancellation::default(),
+    }
 }
 
 /// Map a threads API error onto the port's error classes: busy and connection trouble are retried with
@@ -38,7 +44,9 @@ pub(crate) fn api_error(e: ApiError) -> ThreadsError {
         | ErrorCode::Cancelled
         | ErrorCode::StaleServiceGeneration
         | ErrorCode::ServiceNotRegistered
-        | ErrorCode::DaemonBootChanged => ThreadsError::Disconnected(format!("{:?}: {}", e.code, e.detail)),
+        | ErrorCode::DaemonBootChanged => {
+            ThreadsError::Disconnected(format!("{:?}: {}", e.code, e.detail))
+        }
         ErrorCode::Unsupported | ErrorCode::UnsupportedHarness => ThreadsError::Unsupported,
         code => ThreadsError::Rejected(format!("{code:?}: {}", e.detail)),
     }
@@ -95,7 +103,12 @@ fn detail_of(m: &ServiceMembership) -> Option<MembershipDetail> {
         VoluntaryMembershipState::Left => InvitationState::Released,
         VoluntaryMembershipState::Retired => InvitationState::Retired,
     };
-    Some(MembershipDetail { state, invitation: None, requirement: None, revision: None })
+    Some(MembershipDetail {
+        state,
+        invitation: None,
+        requirement: None,
+        revision: None,
+    })
 }
 
 /// Where a running herdr-threads daemon for one state directory and Herdr host endpoint listens, and the
@@ -110,12 +123,23 @@ pub struct Discovered {
 /// `NotFound` when no daemon has published one (never started, or stopped).
 pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Discovered> {
     use herdr_threads::daemon::{ownership, paths};
-    let ctx = paths::RuntimeContext::explicit(state_dir.to_path_buf(), host_endpoint.to_path_buf(), None)?;
+    let ctx = paths::RuntimeContext::explicit(
+        state_dir.to_path_buf(),
+        host_endpoint.to_path_buf(),
+        None,
+    )?;
     let paths = paths::InstancePaths::resolve(&ctx)?;
-    let instance = ownership::read_existing_namespace(&paths)?
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no herdr-threads daemon has run for this state"))?;
+    let instance = ownership::read_existing_namespace(&paths)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no herdr-threads daemon has run for this state",
+        )
+    })?;
     let d = ownership::read_descriptor(&paths, instance)?;
-    Ok(Discovered { socket: d.endpoint, instance: d.instance_uuid })
+    Ok(Discovered {
+        socket: d.endpoint,
+        instance: d.instance_uuid,
+    })
 }
 
 pub struct ServiceThreads {
@@ -155,8 +179,17 @@ impl ServiceThreads {
     }
 
     /// `new` with the system clock.
-    pub fn with_system_clock(socket: PathBuf, intents_dir: PathBuf, instance: uuid::Uuid) -> std::io::Result<Self> {
-        Self::new(socket, intents_dir, instance, Arc::new(herdr_threads::app::SystemClock::new()))
+    pub fn with_system_clock(
+        socket: PathBuf,
+        intents_dir: PathBuf,
+        instance: uuid::Uuid,
+    ) -> std::io::Result<Self> {
+        Self::new(
+            socket,
+            intents_dir,
+            instance,
+            Arc::new(herdr_threads::app::SystemClock::new()),
+        )
     }
 
     pub fn intents_dir_in(instance_root: &Path) -> PathBuf {
@@ -173,12 +206,19 @@ impl ServiceThreads {
         if self.client.registration().await.is_some() {
             return Ok(());
         }
-        self.client.register(&self.budget()).await.map(|_| ()).map_err(api_error)
+        self.client
+            .register(&self.budget())
+            .await
+            .map(|_| ())
+            .map_err(api_error)
     }
 
     /// Replay mutations left unresolved by a dropped connection or an earlier crash, in order. The result of
     /// the one the caller is about to issue again (`want`), if it was among them, is returned.
-    async fn replay_pending(&self, want: &OperationId) -> Result<Option<ServiceResult>, ThreadsError> {
+    async fn replay_pending(
+        &self,
+        want: &OperationId,
+    ) -> Result<Option<ServiceResult>, ThreadsError> {
         let keys: Vec<OperationId> = self.pending.lock().await.clone();
         let mut found = None;
         for key in keys {
@@ -207,7 +247,9 @@ impl ServiceThreads {
         }
         match e {
             ServiceCallError::Api { error, .. } => api_error(error),
-            ServiceCallError::Journal(io) => ThreadsError::Disconnected(format!("intent journal: {io}")),
+            ServiceCallError::Journal(io) => {
+                ThreadsError::Disconnected(format!("intent journal: {io}"))
+            }
             ServiceCallError::Completion { result, .. } => match result {
                 Ok(_) => ThreadsError::Disconnected("completion record needs repair".into()),
                 Err(e) => api_error(e),
@@ -218,7 +260,10 @@ impl ServiceThreads {
     /// One durable mutation: a completed or unresolved intent under the same key is resumed, never duplicated.
     async fn mutate(&self, op: ServiceOperation) -> Result<ServiceResult, ThreadsError> {
         self.ready().await?;
-        let key = op.operation_key().cloned().ok_or_else(|| rejected("mutate", "operation has no key"))?;
+        let key = op
+            .operation_key()
+            .cloned()
+            .ok_or_else(|| rejected("mutate", "operation has no key"))?;
         if let Some(r) = self.replay_pending(&key).await? {
             return Ok(r);
         }
@@ -254,8 +299,12 @@ impl ServiceThreads {
             page: PageRequest::default(),
         });
         match self.client.query(q, &self.budget()).await {
-            Ok(ServiceResult::Membership(page)) => Ok(page.items.into_iter().find(|m| m.seat == seat_id)),
-            Ok(_) => Err(ThreadsError::Rejected("unexpected result for a membership query".into())),
+            Ok(ServiceResult::Membership(page)) => {
+                Ok(page.items.into_iter().find(|m| m.seat == seat_id))
+            }
+            Ok(_) => Err(ThreadsError::Rejected(
+                "unexpected result for a membership query".into(),
+            )),
             Err(e) if e.code == ErrorCode::NotFound => Ok(None),
             Err(e) => Err(api_error(e)),
         }
@@ -291,7 +340,10 @@ impl ThreadsPort for ServiceThreads {
         });
         match self.mutate(op).await? {
             ServiceResult::ThreadEnsured(m) => Ok(ThreadRef(m.thread.as_str().to_owned())),
-            other => Err(rejected("ensure_thread", format!("unexpected result {other:?}"))),
+            other => Err(rejected(
+                "ensure_thread",
+                format!("unexpected result {other:?}"),
+            )),
         }
     }
 
@@ -332,7 +384,11 @@ impl ThreadsPort for ServiceThreads {
         thread: &ThreadRef,
         seat: &ThreadsSeatRef,
     ) -> Result<Option<MembershipDetail>, ThreadsError> {
-        Ok(self.query_membership(thread, seat).await?.as_ref().and_then(detail_of))
+        Ok(self
+            .query_membership(thread, seat)
+            .await?
+            .as_ref()
+            .and_then(detail_of))
     }
 
     async fn notify(
@@ -357,7 +413,12 @@ impl ThreadsPort for ServiceThreads {
         }
     }
 
-    async fn set_topic(&self, thread: &ThreadRef, topic: &str, op_key: &OpKey) -> Result<(), ThreadsError> {
+    async fn set_topic(
+        &self,
+        thread: &ThreadRef,
+        topic: &str,
+        op_key: &OpKey,
+    ) -> Result<(), ThreadsError> {
         let op = ServiceOperation::SetTopic(ServiceSetTopic {
             thread: thread_id(thread)?,
             topic: clip(topic, 1024),
@@ -365,7 +426,10 @@ impl ThreadsPort for ServiceThreads {
         });
         match self.mutate(op).await? {
             ServiceResult::TopicChanged(_) => Ok(()),
-            other => Err(rejected("set_topic", format!("unexpected result {other:?}"))),
+            other => Err(rejected(
+                "set_topic",
+                format!("unexpected result {other:?}"),
+            )),
         }
     }
 
@@ -376,13 +440,24 @@ impl ThreadsPort for ServiceThreads {
         op_key: &OpKey,
     ) -> Result<(), ThreadsError> {
         // The requirement id comes from a membership query first; a missing or ended episode is already clean.
-        let Some(m) = self.query_membership(thread, seat).await? else { return Ok(()) };
-        let Some(req) = m.requirement else { return Ok(()) };
-        if !matches!(req.state, RequirementState::Pending | RequirementState::Accepted) {
+        let Some(m) = self.query_membership(thread, seat).await? else {
+            return Ok(());
+        };
+        let Some(req) = m.requirement else {
+            return Ok(());
+        };
+        if !matches!(
+            req.state,
+            RequirementState::Pending | RequirementState::Accepted
+        ) {
             return Ok(());
         }
         let requirement = req.requirement.as_str().to_owned();
-        let key = if op_key.0.ends_with(&requirement) { op_key.clone() } else { OpKey(format!("{}:{requirement}", op_key.0)) };
+        let key = if op_key.0.ends_with(&requirement) {
+            op_key.clone()
+        } else {
+            OpKey(format!("{}:{requirement}", op_key.0))
+        };
         let op = ServiceOperation::ReleaseRequirement(ReleaseRequirement {
             thread: thread_id(thread)?,
             seat: seat_id(seat)?,
@@ -391,7 +466,10 @@ impl ThreadsPort for ServiceThreads {
         });
         match self.mutate(op).await? {
             ServiceResult::RequirementReleased(_) => Ok(()),
-            other => Err(rejected("release_requirement", format!("unexpected result {other:?}"))),
+            other => Err(rejected(
+                "release_requirement",
+                format!("unexpected result {other:?}"),
+            )),
         }
     }
 
@@ -402,7 +480,10 @@ impl ThreadsPort for ServiceThreads {
         body: &str,
         op_key: &OpKey,
     ) -> Result<MessageRef, ThreadsError> {
-        let recipients = recipients.iter().map(seat_id).collect::<Result<Vec<_>, _>>()?;
+        let recipients = recipients
+            .iter()
+            .map(seat_id)
+            .collect::<Result<Vec<_>, _>>()?;
         let op = ServiceOperation::Send(ServiceSend {
             thread: thread_id(thread)?,
             body: clip(body, SERVICE_SEND_MAX_BODY_BYTES),
@@ -412,11 +493,17 @@ impl ThreadsPort for ServiceThreads {
         });
         match self.mutate(op).await? {
             ServiceResult::MessageSent(m) => Ok(MessageRef(m.summary.message.as_str().to_owned())),
-            other => Err(rejected("send_request", format!("unexpected result {other:?}"))),
+            other => Err(rejected(
+                "send_request",
+                format!("unexpected result {other:?}"),
+            )),
         }
     }
 
-    async fn receipt_state(&self, messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
+    async fn receipt_state(
+        &self,
+        messages: &[MessageRef],
+    ) -> Result<Vec<MessageReceipts>, ThreadsError> {
         self.ready().await?;
         let mut out = Vec::with_capacity(messages.len());
         for message in messages {
@@ -424,10 +511,17 @@ impl ThreadsPort for ServiceThreads {
             let mut recipients = Vec::new();
             let mut page = PageRequest::default();
             loop {
-                let q = ServiceOperation::Receipts(ServiceReceiptsQuery { message: id.clone(), page: page.clone() });
+                let q = ServiceOperation::Receipts(ServiceReceiptsQuery {
+                    message: id.clone(),
+                    page: page.clone(),
+                });
                 let inspection = match self.client.query(q, &self.budget()).await {
                     Ok(ServiceResult::Receipts(i)) => i,
-                    Ok(_) => return Err(ThreadsError::Rejected("unexpected result for a receipts query".into())),
+                    Ok(_) => {
+                        return Err(ThreadsError::Rejected(
+                            "unexpected result for a receipts query".into(),
+                        ));
+                    }
                     Err(e) => return Err(api_error(e)),
                 };
                 recipients.extend(inspection.recipients.items.iter().map(receipt_of));
@@ -436,7 +530,10 @@ impl ThreadsPort for ServiceThreads {
                     _ => break,
                 }
             }
-            out.push(MessageReceipts { message: message.clone(), recipients });
+            out.push(MessageReceipts {
+                message: message.clone(),
+                recipients,
+            });
         }
         Ok(out)
     }
@@ -477,5 +574,8 @@ fn receipt_of(r: &Recipient) -> RecipientReceipt {
                 .unwrap_or_else(chrono::Utc::now),
         },
     };
-    RecipientReceipt { seat: ThreadsSeatRef(r.seat.as_str().to_owned()), state }
+    RecipientReceipt {
+        seat: ThreadsSeatRef(r.seat.as_str().to_owned()),
+        state,
+    }
 }

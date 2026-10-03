@@ -1,5 +1,5 @@
 //! `teamspaces/<slug>/teamspace.toml` (spec §2.4).
-use crate::model::common::{Channel, NameChange, Retirement, Runtime, Lifecycle};
+use crate::model::common::{Channel, Lifecycle, NameChange, Retirement, Runtime};
 use crate::model::ids::TeamspaceId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

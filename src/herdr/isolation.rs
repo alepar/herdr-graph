@@ -57,7 +57,9 @@ fn resolve(p: &Path) -> PathBuf {
 /// `HERDR_SOCKET_PATH` and default Herdr config/socket dir, the herdr-threads state dir and any
 /// `HERDR_THREADS_*` / `HERDR_PLUGIN_STATE_DIR` path, `~/.claude`, and the memory observer dir
 /// (`~/.claude-mem` and any variable value containing "memory-observer").
-pub fn live_resources_from(vars: impl IntoIterator<Item = (String, String)>) -> Vec<(PathBuf, &'static str)> {
+pub fn live_resources_from(
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(PathBuf, &'static str)> {
     let mut live: Vec<(PathBuf, &'static str)> = Vec::new();
     let mut home: Option<PathBuf> = None;
     for (k, v) in vars {
@@ -71,15 +73,25 @@ pub fn live_resources_from(vars: impl IntoIterator<Item = (String, String)>) -> 
             "HERDR_PLUGIN_STATE_DIR" => live.push((path, "live herdr-threads state")),
             "HERDR_PLUGIN_CONFIG_DIR" => live.push((path, "the user's Herdr plugin config")),
             "CLAUDE_CONFIG_DIR" => live.push((path, "the user's Claude config")),
-            _ if k.starts_with("HERDR_THREADS_") && v.starts_with('/') => live.push((path, "live herdr-threads state")),
-            _ if v.contains("memory-observer") && v.starts_with('/') => live.push((path, "the memory observer")),
+            _ if k.starts_with("HERDR_THREADS_") && v.starts_with('/') => {
+                live.push((path, "live herdr-threads state"))
+            }
+            _ if v.contains("memory-observer") && v.starts_with('/') => {
+                live.push((path, "the memory observer"))
+            }
             _ => {}
         }
     }
     if let Some(h) = home {
         live.push((h.join(".config/herdr"), "the user's default Herdr session"));
-        live.push((h.join(".config/herdr-graph"), "the user's herdr-graph config"));
-        live.push((h.join(".local/state/herdr-threads"), "live herdr-threads state"));
+        live.push((
+            h.join(".config/herdr-graph"),
+            "the user's herdr-graph config",
+        ));
+        live.push((
+            h.join(".local/state/herdr-threads"),
+            "live herdr-threads state",
+        ));
         live.push((h.join(".local/state/herdr"), "live herdr-threads state"));
         live.push((h.join(".claude"), "the user's Claude config"));
         live.push((h.join(".claude-mem"), "the memory observer"));
@@ -94,7 +106,13 @@ impl IsolationGuard {
     }
 
     pub fn with_live(root: &Path, live: Vec<(PathBuf, &'static str)>) -> Self {
-        Self { root: resolve(root), live: live.into_iter().map(|(p, why)| (resolve(&p), why)).collect() }
+        Self {
+            root: resolve(root),
+            live: live
+                .into_iter()
+                .map(|(p, why)| (resolve(&p), why))
+                .collect(),
+        }
     }
 
     /// Canonicalized `p` must be under the root and neither equal to nor under any live resource.
@@ -137,7 +155,10 @@ const PASS_THROUGH: &[&str] = &["PATH", "LANG", "LC_ALL", "TERM", "SHELL", "USER
 const CREDENTIALS: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
 
 /// [`scrubbed_env`] over an explicit variable source (testable without mutating the process env).
-pub fn scrubbed_env_from(root: &Path, vars: impl IntoIterator<Item = (String, String)>) -> Vec<(String, String)> {
+pub fn scrubbed_env_from(
+    root: &Path,
+    vars: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
     let p = |rel: &str| root.join(rel).to_string_lossy().into_owned();
     let mut env: Vec<(String, String)> = vec![
         ("HOME".into(), p("home")),
@@ -155,7 +176,9 @@ pub fn scrubbed_env_from(root: &Path, vars: impl IntoIterator<Item = (String, St
         (TEST_ROOT_VAR.into(), root.to_string_lossy().into_owned()),
     ];
     for (k, v) in vars {
-        if (PASS_THROUGH.contains(&k.as_str()) || CREDENTIALS.contains(&k.as_str())) && !v.is_empty() {
+        if (PASS_THROUGH.contains(&k.as_str()) || CREDENTIALS.contains(&k.as_str()))
+            && !v.is_empty()
+        {
             env.push((k, v));
         }
     }
@@ -182,18 +205,29 @@ fn armed() -> bool {
 
 /// Pure verdict: `root` (from `HG_TEST_ROOT`) wins when present; otherwise `live` must not contain `p`.
 /// Paths are resolved first (symlinks, `..`), so neither can slip past.
-pub fn tripwire_verdict(p: &Path, root: Option<&Path>, live: &[(PathBuf, &'static str)]) -> Result<(), String> {
+pub fn tripwire_verdict(
+    p: &Path,
+    root: Option<&Path>,
+    live: &[(PathBuf, &'static str)],
+) -> Result<(), String> {
     let real = resolve(p);
     if let Some(root) = root {
         return if real.starts_with(resolve(root)) {
             Ok(())
         } else {
-            Err(format!("path {} is outside the test root {}", real.display(), root.display()))
+            Err(format!(
+                "path {} is outside the test root {}",
+                real.display(),
+                root.display()
+            ))
         };
     }
     for (res, why) in live {
         if real.starts_with(resolve(res)) {
-            return Err(format!("path {} is a live user resource ({why})", real.display()));
+            return Err(format!(
+                "path {} is a live user resource ({why})",
+                real.display()
+            ));
         }
     }
     Ok(())
@@ -203,11 +237,18 @@ pub fn tripwire_verdict(p: &Path, root: Option<&Path>, live: &[(PathBuf, &'stati
 /// `HG_TEST_ROOT` set: outside the root, append to `<root>/isolation-violations.log`, print, exit 97.
 /// Armed (`cfg(test)` or [`arm`]): a live resource panics. Otherwise a no-op (production).
 pub fn tripwire(p: &Path, what: &str) {
-    if let Some(root) = std::env::var_os(TEST_ROOT_VAR).filter(|r| !r.is_empty()).map(PathBuf::from) {
+    if let Some(root) = std::env::var_os(TEST_ROOT_VAR)
+        .filter(|r| !r.is_empty())
+        .map(PathBuf::from)
+    {
         if let Err(msg) = tripwire_verdict(p, Some(&root), &[]) {
             use std::io::Write;
             let line = format!("{what}: {msg}");
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(root.join(VIOLATIONS_LOG)) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(root.join(VIOLATIONS_LOG))
+            {
                 let _ = writeln!(f, "{line}");
             }
             eprintln!("isolation tripwire: {line}");

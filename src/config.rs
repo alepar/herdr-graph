@@ -134,7 +134,10 @@ pub fn read_config_path_key(config_toml: &Path, key: &str) -> Option<PathBuf> {
 
 /// First hit of `threads_state_dir` in `<plugin config dir>/config.toml`, then in the user config
 /// (the same two files `locate_instance` reads).
-pub fn read_threads_state_dir(env: &Env, plugin_config_dir: &dyn Fn(&Env) -> Option<PathBuf>) -> Option<PathBuf> {
+pub fn read_threads_state_dir(
+    env: &Env,
+    plugin_config_dir: &dyn Fn(&Env) -> Option<PathBuf>,
+) -> Option<PathBuf> {
     const KEY: &str = "threads_state_dir";
     if let Some(dir) = plugin_config_dir(env)
         && let Some(p) = read_config_path_key(&dir.join("config.toml"), KEY)
@@ -202,14 +205,22 @@ mod tests {
 
     fn write_cfg(dir: &Path, instance: &str) {
         std::fs::create_dir_all(dir).unwrap();
-        std::fs::write(dir.join("config.toml"), format!("instance = \"{instance}\"\n")).unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            format!("instance = \"{instance}\"\n"),
+        )
+        .unwrap();
     }
 
     #[test]
     fn locate_env_var_wins() {
         let t = tempfile::tempdir().unwrap();
         write_cfg(t.path(), "/from/plugin");
-        let env = Env { instance: Some("/from/env".into()), home: Some(t.path().into()), ..Default::default() };
+        let env = Env {
+            instance: Some("/from/env".into()),
+            home: Some(t.path().into()),
+            ..Default::default()
+        };
         let got = locate_instance(&env, &|_| Some(t.path().into())).unwrap();
         assert_eq!(got, (PathBuf::from("/from/env"), InstanceSource::EnvVar));
     }
@@ -220,17 +231,26 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         write_cfg(plugin.path(), "/from/plugin");
         write_cfg(&home.path().join(".config/herdr-graph"), "/from/user");
-        let env = Env { home: Some(home.path().into()), ..Default::default() };
+        let env = Env {
+            home: Some(home.path().into()),
+            ..Default::default()
+        };
         let (root, src) = locate_instance(&env, &|_| Some(plugin.path().into())).unwrap();
         assert_eq!(root, PathBuf::from("/from/plugin"));
-        assert_eq!(src, InstanceSource::PluginConfig(plugin.path().join("config.toml")));
+        assert_eq!(
+            src,
+            InstanceSource::PluginConfig(plugin.path().join("config.toml"))
+        );
     }
 
     #[test]
     fn locate_user_config_last() {
         let home = tempfile::tempdir().unwrap();
         write_cfg(&home.path().join(".config/herdr-graph"), "/from/user");
-        let env = Env { home: Some(home.path().into()), ..Default::default() };
+        let env = Env {
+            home: Some(home.path().into()),
+            ..Default::default()
+        };
         // plugin dir resolves but has no config.toml → falls through
         let empty = tempfile::tempdir().unwrap();
         let (root, src) = locate_instance(&env, &|_| Some(empty.path().into())).unwrap();
@@ -241,7 +261,10 @@ mod tests {
     #[test]
     fn locate_none() {
         let home = tempfile::tempdir().unwrap();
-        let env = Env { home: Some(home.path().into()), ..Default::default() };
+        let env = Env {
+            home: Some(home.path().into()),
+            ..Default::default()
+        };
         assert!(locate_instance(&env, &|_| None).is_none());
     }
 
@@ -264,14 +287,20 @@ mod tests {
     fn socket_path_short_root_is_in_instance() {
         let root = Path::new("/tmp/inst");
         assert_eq!(socket_path(root), root.join(".graph-local/daemon.sock"));
-        assert_eq!(InstancePaths::new(root).socket, root.join(".graph-local/daemon.sock"));
+        assert_eq!(
+            InstancePaths::new(root).socket,
+            root.join(".graph-local/daemon.sock")
+        );
     }
 
     #[test]
     fn socket_path_long_root_falls_back_under_private_tmp() {
         let root = PathBuf::from(format!("/{}", "a".repeat(119)));
         let p = socket_path(&root);
-        assert!(p.to_str().unwrap().starts_with("/private/tmp/herdr-graph-"), "{p:?}");
+        assert!(
+            p.to_str().unwrap().starts_with("/private/tmp/herdr-graph-"),
+            "{p:?}"
+        );
         assert!(p.as_os_str().len() < 100);
         assert_eq!(p, socket_path(&root));
         let other = PathBuf::from(format!("/{}", "b".repeat(119)));
@@ -287,17 +316,37 @@ mod tests {
         let plugin = t.path().join("plugin");
         std::fs::create_dir_all(home.join(".config/herdr-graph")).unwrap();
         std::fs::create_dir_all(&plugin).unwrap();
-        std::fs::write(user_config_path(&home), "threads_state_dir = \"/abs/user\"\n").unwrap();
-        let env = Env { home: Some(home), ..Default::default() };
+        std::fs::write(
+            user_config_path(&home),
+            "threads_state_dir = \"/abs/user\"\n",
+        )
+        .unwrap();
+        let env = Env {
+            home: Some(home),
+            ..Default::default()
+        };
         let p = plugin.clone();
         let via = move |_: &Env| Some(p.clone());
         // Only the user config has the key: it is used.
-        assert_eq!(read_threads_state_dir(&env, &via), Some(PathBuf::from("/abs/user")));
+        assert_eq!(
+            read_threads_state_dir(&env, &via),
+            Some(PathBuf::from("/abs/user"))
+        );
         // The plugin config wins once it has the key.
-        std::fs::write(plugin.join("config.toml"), "threads_state_dir = \"/abs/plugin\"\n").unwrap();
-        assert_eq!(read_threads_state_dir(&env, &via), Some(PathBuf::from("/abs/plugin")));
+        std::fs::write(
+            plugin.join("config.toml"),
+            "threads_state_dir = \"/abs/plugin\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            read_threads_state_dir(&env, &via),
+            Some(PathBuf::from("/abs/plugin"))
+        );
         // No plugin config dir: the user config is still read; with neither file, None.
-        assert_eq!(read_threads_state_dir(&env, &|_: &Env| None).as_deref(), Some(Path::new("/abs/user")));
+        assert_eq!(
+            read_threads_state_dir(&env, &|_: &Env| None).as_deref(),
+            Some(Path::new("/abs/user"))
+        );
         std::fs::remove_file(user_config_path(env.home.as_ref().unwrap())).unwrap();
         assert_eq!(read_threads_state_dir(&env, &|_: &Env| None), None);
     }

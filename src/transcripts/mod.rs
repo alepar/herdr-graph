@@ -90,21 +90,46 @@ pub struct Transcripts {
 
 /// Seat or clone that reported a result.
 fn caller_object(g: &Graph, caller: &CallerInfo) -> Option<AnyId> {
-    if let Some(c) = caller.graph_clone.as_deref().and_then(|c| CloneId::parse(c).ok()).filter(|c| g.clones.contains_key(c)) {
+    if let Some(c) = caller
+        .graph_clone
+        .as_deref()
+        .and_then(|c| CloneId::parse(c).ok())
+        .filter(|c| g.clones.contains_key(c))
+    {
         return Some(c.to_any());
     }
-    if let Some(s) = caller.graph_seat.as_deref().and_then(|s| SeatId::parse(s).ok()).filter(|s| g.seats.contains_key(s)) {
+    if let Some(s) = caller
+        .graph_seat
+        .as_deref()
+        .and_then(|s| SeatId::parse(s).ok())
+        .filter(|s| g.seats.contains_key(s))
+    {
         return Some(s.to_any());
     }
-    caller.pane_id.as_deref().and_then(|p| clone_for_pane(g, p)).map(|c| c.to_any())
+    caller
+        .pane_id
+        .as_deref()
+        .and_then(|p| clone_for_pane(g, p))
+        .map(|c| c.to_any())
 }
 
 /// The clone bound to a Herdr pane (active clones first, then the newest).
 pub(crate) fn clone_for_pane(g: &Graph, pane: &str) -> Option<CloneId> {
     g.clones
         .values()
-        .filter(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).is_some_and(|p| p.0 == pane))
-        .max_by_key(|c| (c.lifecycle == crate::model::common::CloneLifecycle::Active, c.rev))
+        .filter(|c| {
+            c.runtime
+                .bound
+                .as_ref()
+                .and_then(|b| b.pane_id.as_ref())
+                .is_some_and(|p| p.0 == pane)
+        })
+        .max_by_key(|c| {
+            (
+                c.lifecycle == crate::model::common::CloneLifecycle::Active,
+                c.rev,
+            )
+        })
         .map(|c| c.id.clone())
 }
 
@@ -138,16 +163,25 @@ impl Transcripts {
     }
 
     pub(crate) fn tuning(&self) -> Tuning {
-        self.tuning.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.tuning
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub(crate) fn view(&self) -> Result<CommitView<'_>, StoreError> {
-        Ok(CommitView { store: &*self.store, at: self.store.head()? })
+        Ok(CommitView {
+            store: &*self.store,
+            at: self.store.head()?,
+        })
     }
 
     /// Admit a bookkeeping write and wait for it to commit. A rejection is the caller's error.
     pub(crate) async fn commit(&self, request: ChangeRequest) -> Result<OpId, CommandError> {
-        let op = self.writer.admit(request).map_err(|e| CommandError::unavailable(e.to_string()))?;
+        let op = self
+            .writer
+            .admit(request)
+            .map_err(|e| CommandError::unavailable(e.to_string()))?;
         self.wait_committed(op).await
     }
 
@@ -174,7 +208,11 @@ impl Transcripts {
                         .unwrap_or_else(|| format!("{state:?}"));
                     return Err(CommandError::rejected(why));
                 }
-                Ok(None) => return Err(CommandError::internal(format!("{op} vanished from the journal"))),
+                Ok(None) => {
+                    return Err(CommandError::internal(format!(
+                        "{op} vanished from the journal"
+                    )));
+                }
                 Err(e) => return Err(CommandError::unavailable(e.to_string())),
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -189,7 +227,10 @@ impl Transcripts {
     /// source seat's effective `summaries` is true (spec §8.2).
     pub async fn on_session_ended(&self, ev: SessionEnded) {
         if let Err(e) = self.session_ended_inner(&ev).await {
-            eprintln!("herdr-graph: transcripts: request for {} failed: {}", ev.ns, e.message);
+            eprintln!(
+                "herdr-graph: transcripts: request for {} failed: {}",
+                ev.ns, e.message
+            );
         }
     }
 
@@ -197,7 +238,9 @@ impl Transcripts {
         let (summaries, path) = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;
-            let Some(seat) = g.seats.get(&ev.seat) else { return Ok(()) };
+            let Some(seat) = g.seats.get(&ev.seat) else {
+                return Ok(());
+            };
             let summaries = resolve_in(&view, seat).map_err(internal)?.summaries;
             let from_record = g
                 .clones
@@ -234,13 +277,18 @@ impl Transcripts {
             "clone": clone, "ns": ns, "path": path, "size": size, "summaries": true,
             "force_new": force_new, "tr": tr,
         });
-        self.commit(bookkeeping_request("request_create", args)).await?;
+        self.commit(bookkeeping_request("request_create", args))
+            .await?;
         self.process_pending().await;
         Ok(())
     }
 
     /// Re-request an explicit byte range of a transcript (a gap): same dedup and merge rules.
-    pub async fn create_request_for_range(&self, tr: &TranscriptId, range: ByteRange) -> Result<(), CommandError> {
+    pub async fn create_request_for_range(
+        &self,
+        tr: &TranscriptId,
+        range: ByteRange,
+    ) -> Result<(), CommandError> {
         let (clone, ns, path) = {
             let view = self.view().map_err(internal)?;
             let rec = layout::list_transcripts(&view)
@@ -254,7 +302,8 @@ impl Transcripts {
         let args = json!({
             "clone": clone, "ns": ns, "path": path, "size": range.end, "summaries": true, "range": range, "tr": tr,
         });
-        self.commit(bookkeeping_request("request_create", args)).await?;
+        self.commit(bookkeeping_request("request_create", args))
+            .await?;
         self.process_pending().await;
         Ok(())
     }
@@ -266,7 +315,10 @@ impl Transcripts {
         let last = match self.journal.meta_swap(&key, &now) {
             Ok(last) => last,
             Err(e) => {
-                eprintln!("herdr-graph: transcripts: recording identity of {} failed: {e}", path.display());
+                eprintln!(
+                    "herdr-graph: transcripts: recording identity of {} failed: {e}",
+                    path.display()
+                );
                 return false;
             }
         };
@@ -282,7 +334,10 @@ impl Transcripts {
     /// `undeliverable` and the teamspace channel is told once; a request that became deliverable loses the flag.
     pub async fn process_pending(&self) {
         if let Err(e) = self.process_pending_inner().await {
-            eprintln!("herdr-graph: transcripts: routing pending requests failed: {}", e.message);
+            eprintln!(
+                "herdr-graph: transcripts: routing pending requests failed: {}",
+                e.message
+            );
         }
     }
 
@@ -295,13 +350,20 @@ impl Transcripts {
         let work: Vec<Work> = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;
-            let transcripts: Vec<_> = layout::list_transcripts(&view).map_err(internal)?.into_iter().map(|(_, t)| t).collect();
+            let transcripts: Vec<_> = layout::list_transcripts(&view)
+                .map_err(internal)?
+                .into_iter()
+                .map(|(_, t)| t)
+                .collect();
             let mut out = Vec::new();
             for (_, rq) in layout::list_requests(&view).map_err(internal)? {
-                if rq.status != RequestStatus::Pending || is_merged(&rq) || rq.unresolved.is_some() {
+                if rq.status != RequestStatus::Pending || is_merged(&rq) || rq.unresolved.is_some()
+                {
                     continue;
                 }
-                let Some(tr) = transcripts.iter().find(|t| t.id == rq.transcript) else { continue };
+                let Some(tr) = transcripts.iter().find(|t| t.id == rq.transcript) else {
+                    continue;
+                };
                 let dest = resolve_destination(&g, &view, &tr.seat).map_err(internal)?;
                 let teamspace_thread = g
                     .seats
@@ -309,7 +371,11 @@ impl Transcripts {
                     .and_then(|s| g.teamspaces.get(&s.teamspace))
                     .and_then(|t| t.channel.thread_id.clone())
                     .map(ThreadRef);
-                out.push(Work { rq, dest, teamspace_thread });
+                out.push(Work {
+                    rq,
+                    dest,
+                    teamspace_thread,
+                });
             }
             out
         };
@@ -323,10 +389,14 @@ impl Transcripts {
                         ))
                         .await?;
                     }
-                    if let Destination::Relaunch { clone, authority, .. } = &w.dest
+                    if let Destination::Relaunch {
+                        clone, authority, ..
+                    } = &w.dest
                         && let Err(e) = self.reconciler.request_relaunch(clone, authority)
                     {
-                        eprintln!("herdr-graph: transcripts: cannot relaunch summarizer clone {clone}: {e:#}");
+                        eprintln!(
+                            "herdr-graph: transcripts: cannot relaunch summarizer clone {clone}: {e:#}"
+                        );
                     }
                 }
                 Destination::Undeliverable { reason, .. } => {
@@ -337,22 +407,34 @@ impl Transcripts {
                         ))
                         .await?;
                     }
-                    self.notify_undeliverable_once(&w.rq.id, reason, w.teamspace_thread.as_ref()).await;
+                    self.notify_undeliverable_once(&w.rq.id, reason, w.teamspace_thread.as_ref())
+                        .await;
                 }
             }
         }
         Ok(())
     }
 
-    async fn notify_undeliverable_once(&self, rq: &RequestId, reason: &str, thread: Option<&ThreadRef>) {
+    async fn notify_undeliverable_once(
+        &self,
+        rq: &RequestId,
+        reason: &str,
+        thread: Option<&ThreadRef>,
+    ) {
         let key = format!("transcripts:undeliverable_notified:{rq}");
         if self.journal.meta_get(&key).ok().flatten().is_some() {
             return;
         }
         let Some(thread) = thread else { return };
-        let body = format!("transcript request {rq} is undeliverable ({reason}); it stays pending until a summarizer is available.");
+        let body = format!(
+            "transcript request {rq} is undeliverable ({reason}); it stays pending until a summarizer is available."
+        );
         let op_key = OpKey(format!("undeliverable:{rq}"));
-        match self.threads.notify(thread, Severity::Warn, &body, &op_key).await {
+        match self
+            .threads
+            .notify(thread, Severity::Warn, &body, &op_key)
+            .await
+        {
             Ok(()) => {
                 let _ = self.journal.meta_set(&key, "1");
             }
@@ -373,25 +455,37 @@ impl Transcripts {
     /// IPC commands `request.list|ack|complete` and `session.report`, and the `transcripts` status component.
     pub fn register_commands(self: &Arc<Self>, reg: &mut Registry) {
         let me = self.clone();
-        reg.command("request.list", move |_cx: CommandCtx, args: serde_json::Value| {
-            let me = me.clone();
-            async move { me.cmd_list(args) }
-        });
+        reg.command(
+            "request.list",
+            move |_cx: CommandCtx, args: serde_json::Value| {
+                let me = me.clone();
+                async move { me.cmd_list(args) }
+            },
+        );
         let me = self.clone();
-        reg.command("request.ack", move |_cx: CommandCtx, args: serde_json::Value| {
-            let me = me.clone();
-            async move { me.cmd_ack(args).await }
-        });
+        reg.command(
+            "request.ack",
+            move |_cx: CommandCtx, args: serde_json::Value| {
+                let me = me.clone();
+                async move { me.cmd_ack(args).await }
+            },
+        );
         let me = self.clone();
-        reg.command("request.complete", move |cx: CommandCtx, args: serde_json::Value| {
-            let me = me.clone();
-            async move { me.cmd_complete(cx.caller, args).await }
-        });
+        reg.command(
+            "request.complete",
+            move |cx: CommandCtx, args: serde_json::Value| {
+                let me = me.clone();
+                async move { me.cmd_complete(cx.caller, args).await }
+            },
+        );
         let me = self.clone();
-        reg.command("session.report", move |cx: CommandCtx, args: serde_json::Value| {
-            let me = me.clone();
-            async move { me.session_report_live(cx.caller, args).await }
-        });
+        reg.command(
+            "session.report",
+            move |cx: CommandCtx, args: serde_json::Value| {
+                let me = me.clone();
+                async move { me.session_report_live(cx.caller, args).await }
+            },
+        );
         let me = self.clone();
         reg.status_provider("transcripts", Arc::new(move || me.status_json()));
     }
@@ -399,17 +493,29 @@ impl Transcripts {
     /// Background loops: `SessionEnded` consumer, transcript watcher, liveness scan.
     pub fn register_loops(self: &Arc<Self>, reg: &mut Registry) {
         let me = self.clone();
-        reg.background("transcripts.session_ended", move |sd| async move { me.run_session_ended(sd).await });
+        reg.background("transcripts.session_ended", move |sd| async move {
+            me.run_session_ended(sd).await
+        });
         let me = self.clone();
-        reg.background("transcripts.watcher", move |sd| async move { me.run_watcher(sd).await });
+        reg.background("transcripts.watcher", move |sd| async move {
+            me.run_watcher(sd).await
+        });
         let me = self.clone();
-        reg.background("transcripts.liveness", move |sd| async move { me.run_liveness(sd).await });
+        reg.background("transcripts.liveness", move |sd| async move {
+            me.run_liveness(sd).await
+        });
         let me = self.clone();
-        reg.background("transcripts.spool", move |sd| async move { me.run_spool(sd).await });
+        reg.background("transcripts.spool", move |sd| async move {
+            me.run_spool(sd).await
+        });
     }
 
     async fn run_session_ended(self: Arc<Self>, mut sd: Shutdown) -> anyhow::Result<()> {
-        let rx = self.session_ended.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let rx = self
+            .session_ended
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         let Some(mut rx) = rx else {
             sd.wait().await;
             return Ok(());
@@ -438,7 +544,10 @@ impl Transcripts {
                 _ = tokio::time::sleep(self.tuning().watch_interval) => {}
             }
             if let Err(e) = self.watch_once().await {
-                eprintln!("herdr-graph: transcripts: watcher pass failed: {}", e.message);
+                eprintln!(
+                    "herdr-graph: transcripts: watcher pass failed: {}",
+                    e.message
+                );
             }
         }
     }
@@ -446,7 +555,10 @@ impl Transcripts {
     async fn run_liveness(self: Arc<Self>, mut sd: Shutdown) -> anyhow::Result<()> {
         // The "on daemon start" pass: the writer loop runs by now, so recovered requests can commit.
         if let Err(e) = self.recover_session_requests().await {
-            eprintln!("herdr-graph: transcripts: session-end recovery failed: {}", e.message);
+            eprintln!(
+                "herdr-graph: transcripts: session-end recovery failed: {}",
+                e.message
+            );
         }
         loop {
             tokio::select! {
@@ -454,7 +566,10 @@ impl Transcripts {
                 _ = tokio::time::sleep(self.tuning().liveness_interval) => {}
             }
             if let Err(e) = self.liveness_scan().await {
-                eprintln!("herdr-graph: transcripts: liveness scan failed: {}", e.message);
+                eprintln!(
+                    "herdr-graph: transcripts: liveness scan failed: {}",
+                    e.message
+                );
             }
         }
     }
@@ -471,28 +586,42 @@ impl Transcripts {
     }
 
     fn request_arg(args: &serde_json::Value) -> Result<RequestId, CommandError> {
-        let raw = args.get("request").and_then(|v| v.as_str()).ok_or_else(|| CommandError::bad_request("needs {request}"))?;
+        let raw = args
+            .get("request")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| CommandError::bad_request("needs {request}"))?;
         RequestId::parse(raw).map_err(|e| CommandError::bad_request(e.to_string()))
     }
 
     async fn cmd_ack(&self, args: serde_json::Value) -> Result<serde_json::Value, CommandError> {
         let rq = Self::request_arg(&args)?;
         let at = self.clock.now();
-        self.commit(bookkeeping_request("request_ack", json!({ "rq": rq, "at": at }))).await?;
+        self.commit(bookkeeping_request(
+            "request_ack",
+            json!({ "rq": rq, "at": at }),
+        ))
+        .await?;
         Ok(json!({ "request": rq, "status": "dispatched" }))
     }
 
-    async fn cmd_complete(&self, caller: CallerInfo, args: serde_json::Value) -> Result<serde_json::Value, CommandError> {
+    async fn cmd_complete(
+        &self,
+        caller: CallerInfo,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, CommandError> {
         let rq = Self::request_arg(&args)?;
         let output = args
             .get("output")
             .and_then(|v| v.as_str())
             .ok_or_else(|| CommandError::bad_request("needs {output}"))?
             .to_owned();
-        let covered: ByteRange = serde_json::from_value(args.get("covered").cloned().unwrap_or_default())
-            .map_err(|e| CommandError::bad_request(format!("covered: {e}")))?;
+        let covered: ByteRange =
+            serde_json::from_value(args.get("covered").cloned().unwrap_or_default())
+                .map_err(|e| CommandError::bad_request(format!("covered: {e}")))?;
         if covered.start > covered.end {
-            return Err(CommandError::bad_request("covered start must not exceed its end"));
+            return Err(CommandError::bad_request(
+                "covered start must not exceed its end",
+            ));
         }
         let reported_by = {
             let view = self.view().map_err(internal)?;
@@ -512,7 +641,9 @@ impl Transcripts {
                         .into_iter()
                         .map(|(_, t)| t)
                         .find(|t| t.id == req.transcript)
-                        .ok_or_else(|| CommandError::rejected(format!("{} does not exist", req.transcript)))?;
+                        .ok_or_else(|| {
+                            CommandError::rejected(format!("{} does not exist", req.transcript))
+                        })?;
                     tr.seat.to_any()
                 }
             }
@@ -527,8 +658,12 @@ impl Transcripts {
     }
 
     fn status_json(&self) -> serde_json::Value {
-        let Ok(view) = self.view() else { return json!({ "error": "no committed head" }) };
-        let Ok(all) = layout::list_requests(&view) else { return json!({ "error": "cannot list requests" }) };
+        let Ok(view) = self.view() else {
+            return json!({ "error": "no committed head" });
+        };
+        let Ok(all) = layout::list_requests(&view) else {
+            return json!({ "error": "cannot list requests" });
+        };
         let (mut pending, mut dispatched, mut unresolved, mut completed) = (0, 0, 0, 0);
         let mut undeliverable = Vec::new();
         for (_, r) in all {
@@ -549,7 +684,6 @@ impl Transcripts {
             "undeliverable": undeliverable,
         })
     }
-
 }
 
 pub(crate) fn internal(e: impl std::fmt::Display) -> CommandError {

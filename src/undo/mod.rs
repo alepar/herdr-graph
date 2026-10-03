@@ -17,7 +17,14 @@ use std::sync::Arc;
 /// Registers the `undo` kind. Hydration and template-edit undo run through `application retire` and
 /// `template edit`, so those kinds (core + templates) must be registered first.
 pub fn register_kinds(reg: &mut KindRegistry) {
-    let app_retire = reg.get(RequestKind::ApplicationRetire).expect("register the templates kinds before undo");
-    let template_edit = reg.get(RequestKind::TemplateEdit).expect("register the templates kinds before undo");
-    reg.register(Arc::new(compensate::UndoKind { app_retire, template_edit }));
+    let app_retire = reg
+        .get(RequestKind::ApplicationRetire)
+        .expect("register the templates kinds before undo");
+    let template_edit = reg
+        .get(RequestKind::TemplateEdit)
+        .expect("register the templates kinds before undo");
+    reg.register(Arc::new(compensate::UndoKind {
+        app_retire,
+        template_edit,
+    }));
 }

@@ -63,11 +63,18 @@ pub struct FakeHerdr {
 }
 
 fn shell() -> ProcessInfo {
-    ProcessInfo { foreground_pid: None, foreground_argv: Vec::new(), is_shell: true }
+    ProcessInfo {
+        foreground_pid: None,
+        foreground_argv: Vec::new(),
+        is_shell: true,
+    }
 }
 
 fn rejected(method: &str, msg: impl Into<String>) -> HerdrError {
-    HerdrError::Rejected { method: method.to_owned(), message: msg.into() }
+    HerdrError::Rejected {
+        method: method.to_owned(),
+        message: msg.into(),
+    }
 }
 
 type Events = Vec<(&'static str, serde_json::Value)>;
@@ -89,12 +96,24 @@ impl FakeState {
         self.next_term += 1;
         HerdrTerminalId(format!("term{}", self.next_term))
     }
-    fn new_pane(&mut self, label: Option<String>, cwd: PathBuf, env: Vec<(String, String)>) -> PaneInfo {
+    fn new_pane(
+        &mut self,
+        label: Option<String>,
+        cwd: PathBuf,
+        env: Vec<(String, String)>,
+    ) -> PaneInfo {
         let id = self.pane_id();
         let terminal_id = Some(self.term_id());
         self.envs.insert(id.clone(), env);
         self.processes.insert(id.clone(), shell());
-        PaneInfo { id, terminal_id, label, cwd: Some(cwd), metadata: BTreeMap::new(), agent: None }
+        PaneInfo {
+            id,
+            terminal_id,
+            label,
+            cwd: Some(cwd),
+            metadata: BTreeMap::new(),
+            agent: None,
+        }
     }
     fn incarnation(&self) -> Incarnation {
         Incarnation {
@@ -104,19 +123,33 @@ impl FakeState {
         }
     }
     fn find_pane(&mut self, id: &HerdrPaneId) -> Option<&mut PaneInfo> {
-        self.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()).flat_map(|t| t.panes.iter_mut()).find(|p| &p.id == id)
+        self.workspaces
+            .iter_mut()
+            .flat_map(|w| w.tabs.iter_mut())
+            .flat_map(|t| t.panes.iter_mut())
+            .find(|p| &p.id == id)
     }
     fn find_ws(&mut self, id: &HerdrWorkspaceId) -> Option<&mut WorkspaceInfo> {
         self.workspaces.iter_mut().find(|w| &w.id == id)
     }
     fn find_tab(&mut self, id: &HerdrTabId) -> Option<&mut TabInfo> {
-        self.workspaces.iter_mut().flat_map(|w| w.tabs.iter_mut()).find(|t| &t.id == id)
+        self.workspaces
+            .iter_mut()
+            .flat_map(|w| w.tabs.iter_mut())
+            .find(|t| &t.id == id)
     }
     fn ws_of_tab(&self, id: &HerdrTabId) -> Option<HerdrWorkspaceId> {
-        self.workspaces.iter().find(|w| w.tabs.iter().any(|t| &t.id == id)).map(|w| w.id.clone())
+        self.workspaces
+            .iter()
+            .find(|w| w.tabs.iter().any(|t| &t.id == id))
+            .map(|w| w.id.clone())
     }
     fn tab_of_pane(&self, id: &HerdrPaneId) -> Option<HerdrTabId> {
-        self.workspaces.iter().flat_map(|w| &w.tabs).find(|t| t.panes.iter().any(|p| &p.id == id)).map(|t| t.id.clone())
+        self.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|t| t.panes.iter().any(|p| &p.id == id))
+            .map(|t| t.id.clone())
     }
 
     fn drop_pane_state(&mut self, id: &HerdrPaneId) {
@@ -126,31 +159,51 @@ impl FakeState {
 
     /// Remove a workspace and everything in it; events: pane_closed per pane, tab_closed per tab, workspace_closed.
     fn remove_ws(&mut self, id: &HerdrWorkspaceId, ev: &mut Events) {
-        let Some(i) = self.workspaces.iter().position(|w| &w.id == id) else { return };
+        let Some(i) = self.workspaces.iter().position(|w| &w.id == id) else {
+            return;
+        };
         let ws = self.workspaces.remove(i);
         for t in &ws.tabs {
             for p in &t.panes {
                 self.drop_pane_state(&p.id);
-                ev.push(("pane_closed", json!({ "pane_id": p.id, "tab_id": t.id, "workspace_id": ws.id })));
+                ev.push((
+                    "pane_closed",
+                    json!({ "pane_id": p.id, "tab_id": t.id, "workspace_id": ws.id }),
+                ));
             }
-            ev.push(("tab_closed", json!({ "tab_id": t.id, "workspace_id": ws.id })));
+            ev.push((
+                "tab_closed",
+                json!({ "tab_id": t.id, "workspace_id": ws.id }),
+            ));
         }
         ev.push(("workspace_closed", json!({ "workspace_id": ws.id })));
     }
 
     /// Remove a tab; closes the workspace too when it was the last tab and that policy is on.
     fn remove_tab(&mut self, id: &HerdrTabId, ev: &mut Events) {
-        let Some(ws_id) = self.ws_of_tab(id) else { return };
+        let Some(ws_id) = self.ws_of_tab(id) else {
+            return;
+        };
         let policy = self.last_tab_closes_workspace;
         let ws = self.find_ws(&ws_id).expect("workspace of tab");
-        let i = ws.tabs.iter().position(|t| &t.id == id).expect("tab in workspace");
+        let i = ws
+            .tabs
+            .iter()
+            .position(|t| &t.id == id)
+            .expect("tab in workspace");
         let tab = ws.tabs.remove(i);
         let now_empty = ws.tabs.is_empty();
         for p in &tab.panes {
             self.drop_pane_state(&p.id);
-            ev.push(("pane_closed", json!({ "pane_id": p.id, "tab_id": tab.id, "workspace_id": ws_id })));
+            ev.push((
+                "pane_closed",
+                json!({ "pane_id": p.id, "tab_id": tab.id, "workspace_id": ws_id }),
+            ));
         }
-        ev.push(("tab_closed", json!({ "tab_id": tab.id, "workspace_id": ws_id })));
+        ev.push((
+            "tab_closed",
+            json!({ "tab_id": tab.id, "workspace_id": ws_id }),
+        ));
         if now_empty && policy {
             self.remove_ws(&ws_id, ev);
         }
@@ -158,13 +211,18 @@ impl FakeState {
 
     /// Remove a pane; the tab goes with its last pane (and the workspace with its last tab by policy).
     fn remove_pane(&mut self, id: &HerdrPaneId, ev: &mut Events) {
-        let Some(tab_id) = self.tab_of_pane(id) else { return };
+        let Some(tab_id) = self.tab_of_pane(id) else {
+            return;
+        };
         let ws_id = self.ws_of_tab(&tab_id).expect("workspace of tab");
         let tab = self.find_tab(&tab_id).expect("tab of pane");
         tab.panes.retain(|p| &p.id != id);
         let empty = tab.panes.is_empty();
         self.drop_pane_state(id);
-        ev.push(("pane_closed", json!({ "pane_id": id, "tab_id": tab_id, "workspace_id": ws_id })));
+        ev.push((
+            "pane_closed",
+            json!({ "pane_id": id, "tab_id": tab_id, "workspace_id": ws_id }),
+        ));
         if empty {
             self.remove_tab(&tab_id, ev);
         }
@@ -173,8 +231,14 @@ impl FakeState {
 
 impl FakeHerdr {
     pub fn new() -> Arc<Self> {
-        let state = FakeState { last_tab_closes_workspace: true, ..FakeState::default() };
-        Arc::new(Self { state: Mutex::new(state), events: Mutex::new(Vec::new()) })
+        let state = FakeState {
+            last_tab_closes_workspace: true,
+            ..FakeState::default()
+        };
+        Arc::new(Self {
+            state: Mutex::new(state),
+            events: Mutex::new(Vec::new()),
+        })
     }
 
     /// Every call attempted so far, in order (faulted ones included).
@@ -188,7 +252,13 @@ impl FakeHerdr {
 
     /// Queue a fault for the next call of `method` (wire method name, e.g. "tab.create").
     pub fn fail_next(&self, method: &str, fault: Fault) {
-        self.state.lock().unwrap().faults.entry(method.to_owned()).or_default().push_back(fault);
+        self.state
+            .lock()
+            .unwrap()
+            .faults
+            .entry(method.to_owned())
+            .or_default()
+            .push_back(fault);
     }
 
     /// Env a pane was created with (not part of the snapshot).
@@ -199,7 +269,10 @@ impl FakeHerdr {
     fn emit(&self, events: Events) {
         let mut subs = self.events.lock().unwrap();
         for (name, payload) in events {
-            let ev = HerdrEvent { name: name.to_owned(), payload };
+            let ev = HerdrEvent {
+                name: name.to_owned(),
+                payload,
+            };
             subs.retain(|tx| match tx.try_send(ev.clone()) {
                 Ok(()) => true,
                 Err(mpsc::error::TrySendError::Full(_)) => true,
@@ -266,7 +339,10 @@ impl FakeHerdr {
             let ws = st.ws_of_tab(t);
             if let (Some(tab), Some(ws)) = (st.find_tab(t), ws) {
                 tab.label = label.to_owned();
-                ev.push(("tab_renamed", json!({ "tab_id": t, "workspace_id": ws, "label": label })));
+                ev.push((
+                    "tab_renamed",
+                    json!({ "tab_id": t, "workspace_id": ws, "label": label }),
+                ));
             }
         });
     }
@@ -275,7 +351,10 @@ impl FakeHerdr {
         self.scripted(|st, ev| {
             if let Some(ws) = st.find_ws(w) {
                 ws.label = label.to_owned();
-                ev.push(("workspace_renamed", json!({ "workspace_id": w, "label": label })));
+                ev.push((
+                    "workspace_renamed",
+                    json!({ "workspace_id": w, "label": label }),
+                ));
             }
         });
     }
@@ -283,16 +362,25 @@ impl FakeHerdr {
     /// Move a pane to another tab; its old tab closes (and the workspace by policy) when left empty.
     pub fn user_move_pane(&self, p: &HerdrPaneId, to_tab: &HerdrTabId) {
         self.scripted(|st, ev| {
-            let (Some(from), Some(_)) = (st.tab_of_pane(p), st.ws_of_tab(to_tab)) else { return };
+            let (Some(from), Some(_)) = (st.tab_of_pane(p), st.ws_of_tab(to_tab)) else {
+                return;
+            };
             if &from == to_tab {
                 return;
             }
             let from_tab = st.find_tab(&from).expect("source tab");
-            let i = from_tab.panes.iter().position(|q| &q.id == p).expect("pane in source tab");
+            let i = from_tab
+                .panes
+                .iter()
+                .position(|q| &q.id == p)
+                .expect("pane in source tab");
             let pane = from_tab.panes.remove(i);
             let emptied = from_tab.panes.is_empty();
             st.find_tab(to_tab).expect("target tab").panes.push(pane);
-            ev.push(("pane_moved", json!({ "pane_id": p, "from_tab_id": from, "tab_id": to_tab })));
+            ev.push((
+                "pane_moved",
+                json!({ "pane_id": p, "from_tab_id": from, "tab_id": to_tab }),
+            ));
             if emptied {
                 st.remove_tab(&from, ev);
             }
@@ -305,7 +393,14 @@ impl FakeHerdr {
             let appeared = agent.is_some();
             if let Some(pane) = st.find_pane(p) {
                 pane.agent = agent;
-                ev.push((if appeared { "pane_agent_detected" } else { "pane_updated" }, json!({ "pane_id": p })));
+                ev.push((
+                    if appeared {
+                        "pane_agent_detected"
+                    } else {
+                        "pane_updated"
+                    },
+                    json!({ "pane_id": p }),
+                ));
             }
         });
     }
@@ -321,7 +416,10 @@ impl FakeHerdr {
             let cwd = PathBuf::from("/");
             let pane = st.new_pane(Some(label.to_owned()), cwd, Vec::new());
             id = Some(pane.id.clone());
-            ev.push(("pane_created", json!({ "pane_id": pane.id, "tab_id": tab, "workspace_id": ws })));
+            ev.push((
+                "pane_created",
+                json!({ "pane_id": pane.id, "tab_id": tab, "workspace_id": ws }),
+            ));
             st.find_tab(tab).expect("tab").panes.push(pane);
         });
         id.expect("add_user_pane: unknown tab")
@@ -378,19 +476,36 @@ impl FakeHerdr {
 impl HerdrApi for FakeHerdr {
     async fn snapshot(&self) -> Result<HerdrSnapshot, HerdrError> {
         let mut st = self.state.lock().unwrap();
-        if let Some(f) = st.faults.get_mut("session.snapshot").and_then(VecDeque::pop_front) {
+        if let Some(f) = st
+            .faults
+            .get_mut("session.snapshot")
+            .and_then(VecDeque::pop_front)
+        {
             return match f {
                 Fault::Unavailable => Err(HerdrError::Unavailable("fake: unavailable".into())),
                 Fault::Timeout | Fault::LostResponse | Fault::Hang => Err(HerdrError::Timeout),
                 Fault::Rejected(m) => Err(rejected("session.snapshot", m)),
-                Fault::StartOutcome(_) => Ok(HerdrSnapshot { incarnation: st.incarnation(), workspaces: st.workspaces.clone() }),
+                Fault::StartOutcome(_) => Ok(HerdrSnapshot {
+                    incarnation: st.incarnation(),
+                    workspaces: st.workspaces.clone(),
+                }),
             };
         }
-        Ok(HerdrSnapshot { incarnation: st.incarnation(), workspaces: st.workspaces.clone() })
+        Ok(HerdrSnapshot {
+            incarnation: st.incarnation(),
+            workspaces: st.workspaces.clone(),
+        })
     }
 
     async fn subscribe(&self) -> Result<HerdrEventStream, HerdrError> {
-        if let Some(Fault::Unavailable) = self.state.lock().unwrap().faults.get_mut("events.subscribe").and_then(VecDeque::pop_front) {
+        if let Some(Fault::Unavailable) = self
+            .state
+            .lock()
+            .unwrap()
+            .faults
+            .get_mut("events.subscribe")
+            .and_then(VecDeque::pop_front)
+        {
             return Err(HerdrError::Unavailable("fake: unavailable".into()));
         }
         self.state.lock().unwrap().generation += 1;
@@ -400,116 +515,226 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn create_workspace(&self, req: CreateWorkspace) -> Result<Created, HerdrError> {
-        self.mutate("workspace.create", FakeCall::CreateWorkspace(req.clone()), |st, ev| {
-            let ws_id = st.ws_id();
-            let tab_id = st.tab_id();
-            let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
-            let pane_id = pane.id.clone();
-            let tab = TabInfo { id: tab_id.clone(), label: "1".to_owned(), panes: vec![pane] };
-            st.workspaces.push(WorkspaceInfo { id: ws_id.clone(), label: req.label.clone(), metadata: BTreeMap::new(), tabs: vec![tab] });
-            ev.push(("workspace_created", json!({ "workspace_id": ws_id, "label": req.label })));
-            ev.push(("tab_created", json!({ "tab_id": tab_id, "workspace_id": ws_id })));
-            ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws_id })));
-            Ok(Created { workspace: Some(ws_id), tab: Some(tab_id), pane: Some(pane_id) })
-        }).await
+        self.mutate(
+            "workspace.create",
+            FakeCall::CreateWorkspace(req.clone()),
+            |st, ev| {
+                let ws_id = st.ws_id();
+                let tab_id = st.tab_id();
+                let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
+                let pane_id = pane.id.clone();
+                let tab = TabInfo {
+                    id: tab_id.clone(),
+                    label: "1".to_owned(),
+                    panes: vec![pane],
+                };
+                st.workspaces.push(WorkspaceInfo {
+                    id: ws_id.clone(),
+                    label: req.label.clone(),
+                    metadata: BTreeMap::new(),
+                    tabs: vec![tab],
+                });
+                ev.push((
+                    "workspace_created",
+                    json!({ "workspace_id": ws_id, "label": req.label }),
+                ));
+                ev.push((
+                    "tab_created",
+                    json!({ "tab_id": tab_id, "workspace_id": ws_id }),
+                ));
+                ev.push((
+                    "pane_created",
+                    json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws_id }),
+                ));
+                Ok(Created {
+                    workspace: Some(ws_id),
+                    tab: Some(tab_id),
+                    pane: Some(pane_id),
+                })
+            },
+        )
+        .await
     }
 
     async fn rename_workspace(&self, id: &HerdrWorkspaceId, label: &str) -> Result<(), HerdrError> {
-        self.mutate("workspace.rename", FakeCall::RenameWorkspace(id.clone(), label.to_owned()), |st, ev| {
-            let ws = st.find_ws(id).ok_or_else(|| rejected("workspace.rename", format!("workspace {id} not found")))?;
-            ws.label = label.to_owned();
-            ev.push(("workspace_renamed", json!({ "workspace_id": id, "label": label })));
-            Ok(())
-        }).await
+        self.mutate(
+            "workspace.rename",
+            FakeCall::RenameWorkspace(id.clone(), label.to_owned()),
+            |st, ev| {
+                let ws = st.find_ws(id).ok_or_else(|| {
+                    rejected("workspace.rename", format!("workspace {id} not found"))
+                })?;
+                ws.label = label.to_owned();
+                ev.push((
+                    "workspace_renamed",
+                    json!({ "workspace_id": id, "label": label }),
+                ));
+                Ok(())
+            },
+        )
+        .await
     }
 
     async fn close_workspace(&self, id: &HerdrWorkspaceId) -> Result<(), HerdrError> {
-        self.mutate("workspace.close", FakeCall::CloseWorkspace(id.clone()), |st, ev| {
-            st.find_ws(id).ok_or_else(|| rejected("workspace.close", format!("workspace {id} not found")))?;
-            st.remove_ws(id, ev);
-            Ok(())
-        }).await
+        self.mutate(
+            "workspace.close",
+            FakeCall::CloseWorkspace(id.clone()),
+            |st, ev| {
+                st.find_ws(id).ok_or_else(|| {
+                    rejected("workspace.close", format!("workspace {id} not found"))
+                })?;
+                st.remove_ws(id, ev);
+                Ok(())
+            },
+        )
+        .await
     }
 
     async fn create_tab(&self, req: CreateTab) -> Result<Created, HerdrError> {
         self.mutate("tab.create", FakeCall::CreateTab(req.clone()), |st, ev| {
             let ws = req.workspace.clone();
-            st.find_ws(&ws).ok_or_else(|| rejected("tab.create", format!("workspace {ws} not found")))?;
+            st.find_ws(&ws)
+                .ok_or_else(|| rejected("tab.create", format!("workspace {ws} not found")))?;
             let tab_id = st.tab_id();
             let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
             let pane_id = pane.id.clone();
-            st.find_ws(&ws).expect("workspace").tabs.push(TabInfo { id: tab_id.clone(), label: req.label.clone(), panes: vec![pane] });
-            ev.push(("tab_created", json!({ "tab_id": tab_id, "workspace_id": ws, "label": req.label })));
-            ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws })));
-            Ok(Created { workspace: Some(ws), tab: Some(tab_id), pane: Some(pane_id) })
-        }).await
+            st.find_ws(&ws).expect("workspace").tabs.push(TabInfo {
+                id: tab_id.clone(),
+                label: req.label.clone(),
+                panes: vec![pane],
+            });
+            ev.push((
+                "tab_created",
+                json!({ "tab_id": tab_id, "workspace_id": ws, "label": req.label }),
+            ));
+            ev.push((
+                "pane_created",
+                json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
+            ));
+            Ok(Created {
+                workspace: Some(ws),
+                tab: Some(tab_id),
+                pane: Some(pane_id),
+            })
+        })
+        .await
     }
 
     async fn rename_tab(&self, id: &HerdrTabId, label: &str) -> Result<(), HerdrError> {
-        self.mutate("tab.rename", FakeCall::RenameTab(id.clone(), label.to_owned()), |st, ev| {
-            let ws = st.ws_of_tab(id);
-            let tab = st.find_tab(id).ok_or_else(|| rejected("tab.rename", format!("tab {id} not found")))?;
-            tab.label = label.to_owned();
-            ev.push(("tab_renamed", json!({ "tab_id": id, "workspace_id": ws, "label": label })));
-            Ok(())
-        }).await
+        self.mutate(
+            "tab.rename",
+            FakeCall::RenameTab(id.clone(), label.to_owned()),
+            |st, ev| {
+                let ws = st.ws_of_tab(id);
+                let tab = st
+                    .find_tab(id)
+                    .ok_or_else(|| rejected("tab.rename", format!("tab {id} not found")))?;
+                tab.label = label.to_owned();
+                ev.push((
+                    "tab_renamed",
+                    json!({ "tab_id": id, "workspace_id": ws, "label": label }),
+                ));
+                Ok(())
+            },
+        )
+        .await
     }
 
     async fn close_tab(&self, id: &HerdrTabId) -> Result<(), HerdrError> {
         self.mutate("tab.close", FakeCall::CloseTab(id.clone()), |st, ev| {
-            st.find_tab(id).ok_or_else(|| rejected("tab.close", format!("tab {id} not found")))?;
+            st.find_tab(id)
+                .ok_or_else(|| rejected("tab.close", format!("tab {id} not found")))?;
             st.remove_tab(id, ev);
             Ok(())
-        }).await
+        })
+        .await
     }
 
     async fn split_pane(&self, req: SplitPane) -> Result<Created, HerdrError> {
         self.mutate("pane.split", FakeCall::SplitPane(req.clone()), |st, ev| {
-            let tab_id = st.tab_of_pane(&req.target).ok_or_else(|| rejected("pane.split", format!("pane {} not found", req.target)))?;
+            let tab_id = st
+                .tab_of_pane(&req.target)
+                .ok_or_else(|| rejected("pane.split", format!("pane {} not found", req.target)))?;
             let ws = st.ws_of_tab(&tab_id).expect("workspace of tab");
             let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
             let pane_id = pane.id.clone();
             st.find_tab(&tab_id).expect("tab").panes.push(pane);
-            ev.push(("pane_created", json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws })));
-            Ok(Created { workspace: Some(ws), tab: Some(tab_id), pane: Some(pane_id) })
-        }).await
+            ev.push((
+                "pane_created",
+                json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
+            ));
+            Ok(Created {
+                workspace: Some(ws),
+                tab: Some(tab_id),
+                pane: Some(pane_id),
+            })
+        })
+        .await
     }
 
     async fn rename_pane(&self, id: &HerdrPaneId, label: &str) -> Result<(), HerdrError> {
-        self.mutate("pane.rename", FakeCall::RenamePane(id.clone(), label.to_owned()), |st, ev| {
-            let pane = st.find_pane(id).ok_or_else(|| rejected("pane.rename", format!("pane {id} not found")))?;
-            pane.label = Some(label.to_owned());
-            ev.push(("pane_updated", json!({ "pane_id": id })));
-            Ok(())
-        }).await
+        self.mutate(
+            "pane.rename",
+            FakeCall::RenamePane(id.clone(), label.to_owned()),
+            |st, ev| {
+                let pane = st
+                    .find_pane(id)
+                    .ok_or_else(|| rejected("pane.rename", format!("pane {id} not found")))?;
+                pane.label = Some(label.to_owned());
+                ev.push(("pane_updated", json!({ "pane_id": id })));
+                Ok(())
+            },
+        )
+        .await
     }
 
     async fn close_pane(&self, id: &HerdrPaneId) -> Result<(), HerdrError> {
         self.mutate("pane.close", FakeCall::ClosePane(id.clone()), |st, ev| {
-            st.find_pane(id).ok_or_else(|| rejected("pane.close", format!("pane {id} not found")))?;
+            st.find_pane(id)
+                .ok_or_else(|| rejected("pane.close", format!("pane {id} not found")))?;
             st.remove_pane(id, ev);
             Ok(())
-        }).await
+        })
+        .await
     }
 
-    async fn report_pane_metadata(&self, id: &HerdrPaneId, key: &str, value: &str) -> Result<(), HerdrError> {
+    async fn report_pane_metadata(
+        &self,
+        id: &HerdrPaneId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), HerdrError> {
         let call = FakeCall::ReportPaneMetadata(id.clone(), key.to_owned(), value.to_owned());
         self.mutate("pane.report_metadata", call, |st, ev| {
-            let pane = st.find_pane(id).ok_or_else(|| rejected("pane.report_metadata", format!("pane {id} not found")))?;
+            let pane = st
+                .find_pane(id)
+                .ok_or_else(|| rejected("pane.report_metadata", format!("pane {id} not found")))?;
             pane.metadata.insert(key.to_owned(), value.to_owned());
             ev.push(("pane_updated", json!({ "pane_id": id })));
             Ok(())
-        }).await
+        })
+        .await
     }
 
-    async fn report_workspace_metadata(&self, id: &HerdrWorkspaceId, key: &str, value: &str) -> Result<(), HerdrError> {
+    async fn report_workspace_metadata(
+        &self,
+        id: &HerdrWorkspaceId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), HerdrError> {
         let call = FakeCall::ReportWorkspaceMetadata(id.clone(), key.to_owned(), value.to_owned());
         self.mutate("workspace.report_metadata", call, |st, ev| {
-            let ws = st.find_ws(id).ok_or_else(|| rejected("workspace.report_metadata", format!("workspace {id} not found")))?;
+            let ws = st.find_ws(id).ok_or_else(|| {
+                rejected(
+                    "workspace.report_metadata",
+                    format!("workspace {id} not found"),
+                )
+            })?;
             ws.metadata.insert(key.to_owned(), value.to_owned());
             ev.push(("workspace_metadata_updated", json!({ "workspace_id": id })));
             Ok(())
-        }).await
+        })
+        .await
     }
 
     async fn start_agent(&self, req: StartAgent) -> Result<StartOutcome, HerdrError> {
@@ -520,9 +745,18 @@ impl HerdrApi for FakeHerdr {
         let mut ev = Vec::new();
         {
             let mut st = self.state.lock().unwrap();
-            let pane = st.find_pane(&req.pane).ok_or_else(|| rejected("agent.start", format!("pane {} not found", req.pane)))?;
-            pane.agent = Some(AgentInfo { kind: req.kind.clone(), status: AgentStatus::Idle, session: None });
-            ev.push(("pane_agent_detected", json!({ "pane_id": req.pane, "agent": req.kind })));
+            let pane = st
+                .find_pane(&req.pane)
+                .ok_or_else(|| rejected("agent.start", format!("pane {} not found", req.pane)))?;
+            pane.agent = Some(AgentInfo {
+                kind: req.kind.clone(),
+                status: AgentStatus::Idle,
+                session: None,
+            });
+            ev.push((
+                "pane_agent_detected",
+                json!({ "pane_id": req.pane, "agent": req.kind }),
+            ));
         }
         self.emit(ev);
         if matches!(fault, Some(Fault::Hang)) {
@@ -535,15 +769,28 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn agent(&self, pane: &HerdrPaneId) -> Result<Option<AgentInfo>, HerdrError> {
-        Ok(self.state.lock().unwrap().find_pane(pane).and_then(|p| p.agent.clone()))
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .find_pane(pane)
+            .and_then(|p| p.agent.clone()))
     }
 
     async fn process_info(&self, pane: &HerdrPaneId) -> Result<ProcessInfo, HerdrError> {
         let st = self.state.lock().unwrap();
-        st.processes.get(pane).cloned().ok_or_else(|| rejected("pane.process_info", format!("pane {pane} not found")))
+        st.processes
+            .get(pane)
+            .cloned()
+            .ok_or_else(|| rejected("pane.process_info", format!("pane {pane} not found")))
     }
 
     async fn send_keys(&self, pane: &HerdrPaneId, keys: &[KeyInput]) -> Result<(), HerdrError> {
-        self.mutate("agent.send_keys", FakeCall::SendKeys(pane.clone(), keys.to_vec()), |_, _| Ok(())).await
+        self.mutate(
+            "agent.send_keys",
+            FakeCall::SendKeys(pane.clone(), keys.to_vec()),
+            |_, _| Ok(()),
+        )
+        .await
     }
 }

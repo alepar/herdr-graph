@@ -22,7 +22,10 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &[
         "templates/system-summarizer/members/summarizer/AGENTS.md",
         include_str!("../../templates/system-summarizer/members/summarizer/AGENTS.md"),
     ),
-    ("templates/project-team/template.toml", include_str!("../../templates/project-team/template.toml")),
+    (
+        "templates/project-team/template.toml",
+        include_str!("../../templates/project-team/template.toml"),
+    ),
     (
         "templates/project-team/members/foreman/AGENTS.md",
         include_str!("../../templates/project-team/members/foreman/AGENTS.md"),
@@ -31,7 +34,10 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &[
         "templates/project-team/members/researcher/AGENTS.md",
         include_str!("../../templates/project-team/members/researcher/AGENTS.md"),
     ),
-    ("templates/feature-team/template.toml", include_str!("../../templates/feature-team/template.toml")),
+    (
+        "templates/feature-team/template.toml",
+        include_str!("../../templates/feature-team/template.toml"),
+    ),
     (
         "templates/feature-team/members/engineer/AGENTS.md",
         include_str!("../../templates/feature-team/members/engineer/AGENTS.md"),
@@ -70,11 +76,24 @@ pub fn install_examples(instance: &Path) -> Result<CommitId, StoreError> {
         index.add_path(Path::new(rel)).map_err(git_err)?;
     }
     index.write().map_err(git_err)?;
-    let tree = repo.find_tree(index.write_tree().map_err(git_err)?).map_err(git_err)?;
-    let parent = repo.head().map_err(git_err)?.peel_to_commit().map_err(git_err)?;
+    let tree = repo
+        .find_tree(index.write_tree().map_err(git_err)?)
+        .map_err(git_err)?;
+    let parent = repo
+        .head()
+        .map_err(git_err)?
+        .peel_to_commit()
+        .map_err(git_err)?;
     let sig = graph_signature().map_err(git_err)?;
     let oid = repo
-        .commit(Some("refs/heads/main"), &sig, &sig, "init: example templates", &tree, &[&parent])
+        .commit(
+            Some("refs/heads/main"),
+            &sig,
+            &sig,
+            "init: example templates",
+            &tree,
+            &[&parent],
+        )
         .map_err(git_err)?;
     Ok(CommitId(oid.to_string()))
 }

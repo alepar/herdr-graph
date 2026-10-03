@@ -7,7 +7,9 @@ use std::sync::Once;
 /// over `path`, then fsync `path`'s parent directory. A crash leaves either the old or the new content.
 pub fn write_atomic_in(tmp_dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::create_dir_all(tmp_dir)?;
-    let name = path.file_name().map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+    let name = path
+        .file_name()
+        .map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
@@ -34,7 +36,10 @@ pub fn write_atomic_in(tmp_dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Re
 
 /// `write_atomic_in` with the temp file next to `path`.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     write_atomic_in(dir, path, bytes)
 }
 
@@ -63,7 +68,10 @@ pub fn enable_git_fsync() {
         // SAFETY: GIT_OPT_ENABLE_FSYNC_GITDIR takes one int argument; we pass exactly one c_int, after
         // libgit2 is initialised, and the option only flips a process-global flag.
         let rc = unsafe {
-            libgit2_sys::git_libgit2_opts(libgit2_sys::GIT_OPT_ENABLE_FSYNC_GITDIR as std::os::raw::c_int, 1 as std::os::raw::c_int)
+            libgit2_sys::git_libgit2_opts(
+                libgit2_sys::GIT_OPT_ENABLE_FSYNC_GITDIR as std::os::raw::c_int,
+                1 as std::os::raw::c_int,
+            )
         };
         if rc != 0 {
             eprintln!("herdr-graph: could not enable libgit2 gitdir fsync (rc={rc})");
@@ -82,7 +90,10 @@ mod tests {
         write_atomic(&p, b"one").unwrap();
         write_atomic(&p, b"two-longer").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"two-longer");
-        let names: Vec<_> = std::fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let names: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(names, vec![std::ffi::OsString::from("a.txt")]);
     }
 
@@ -94,12 +105,20 @@ mod tests {
         write_atomic_in(&tmp, &p, b"x").unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), b"x");
         assert!(tmp.is_dir(), "tmp dir was created");
-        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "temp renamed away");
+        assert_eq!(
+            std::fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "temp renamed away"
+        );
         // a failing rename (destination is a non-empty directory) removes its temp
         let blocked = d.path().join("blocked");
         std::fs::create_dir_all(blocked.join("child")).unwrap();
         assert!(write_atomic_in(&tmp, &blocked, b"y").is_err());
-        assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "temp removed on error");
+        assert_eq!(
+            std::fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "temp removed on error"
+        );
     }
 
     #[test]
@@ -120,7 +139,10 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init(d.path()).unwrap();
         let sig = git2::Signature::now("t", "t@example.com").unwrap();
-        let tree = repo.find_tree(repo.treebuilder(None).unwrap().write().unwrap()).unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "m", &tree, &[]).unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "m", &tree, &[])
+            .unwrap();
     }
 }

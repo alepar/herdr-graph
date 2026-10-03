@@ -1,5 +1,5 @@
 //! Clone record (spec §2.4): a seat's live incarnation(s) and their session history.
-use crate::model::common::{is_false, CloneLifecycle, NameChange, Occupant, Retirement, Runtime};
+use crate::model::common::{CloneLifecycle, NameChange, Occupant, Retirement, Runtime, is_false};
 use crate::model::ids::{CloneId, SeatId};
 use crate::model::native_session::NativeSession;
 use serde::{Deserialize, Serialize};

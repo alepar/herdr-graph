@@ -4,7 +4,9 @@ use super::baseline::{self, Baseline};
 use super::classify::{Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
 use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
-use super::mutations::{availability_request, cascade_request, move_request, occupancy_request, rename_request};
+use super::mutations::{
+    availability_request, cascade_request, move_request, occupancy_request, rename_request,
+};
 use crate::config::InstancePaths;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
@@ -18,8 +20,8 @@ use crate::ports::clock::Clock;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, ProcessInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::Store;
 use crate::ports::writer::Writer;
-use crate::reconcile::planner::TOKEN_KEY;
 use crate::reconcile::desired::DesiredRuntime;
+use crate::reconcile::planner::TOKEN_KEY;
 use crate::reconcile::{Reconciler, StepReport, consume_prediction, predictions};
 use crate::store::tree::CommitView;
 use crate::writer::OpEvent;
@@ -77,7 +79,11 @@ pub struct LoopTuning {
 
 impl Default for LoopTuning {
     fn default() -> Self {
-        Self { commit_timeout: Duration::from_secs(30), settle_timeout: Duration::from_secs(2), debounce: Duration::from_millis(100) }
+        Self {
+            commit_timeout: Duration::from_secs(30),
+            settle_timeout: Duration::from_secs(2),
+            debounce: Duration::from_millis(100),
+        }
     }
 }
 
@@ -111,11 +117,20 @@ pub struct RuntimeLoop {
 }
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
-    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
+    ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args,
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    }
 }
 
 fn binding_request(object: &AnyId, b: &Binding) -> ChangeRequest {
-    bookkeeping(json!({ "sub": "binding", "object": object, "binding": b, "availability": Availability::Present }))
+    bookkeeping(
+        json!({ "sub": "binding", "object": object, "binding": b, "availability": Availability::Present }),
+    )
 }
 
 fn clone_binding(loc: &PaneLoc<'_>, inc: &Incarnation) -> Binding {
@@ -158,25 +173,46 @@ fn runtime_of<'a>(d: &'a DesiredRuntime, object: &AnyId) -> Option<&'a Runtime> 
     if let Ok(s) = SeatId::parse(object.as_str()) {
         return d.seats.get(&s).map(|r| &r.runtime);
     }
-    crate::model::TeamspaceId::parse(object.as_str()).ok().and_then(|t| d.teamspaces.get(&t)).map(|r| &r.runtime)
+    crate::model::TeamspaceId::parse(object.as_str())
+        .ok()
+        .and_then(|t| d.teamspaces.get(&t))
+        .map(|r| &r.runtime)
 }
 
 /// Turn a classification into the requests of one step, in commit order: cascades, renames, occupancy,
 /// moves, explained closures, unknowns (rebind only), and finally binding write-backs for matched objects.
-fn build_ops(d: &DesiredRuntime, snap: &HerdrSnapshot, m: &Matches, c: &Classified, rebind: bool, now: Timestamp) -> Vec<PlannedOp> {
+fn build_ops(
+    d: &DesiredRuntime,
+    snap: &HerdrSnapshot,
+    m: &Matches,
+    c: &Classified,
+    rebind: bool,
+    now: Timestamp,
+) -> Vec<PlannedOp> {
     let mut ops: Vec<PlannedOp> = Vec::new();
     let retired_now = c.retired_now();
-    let plain = |request: ChangeRequest| PlannedOp { request, ends: vec![] };
+    let plain = |request: ChangeRequest| PlannedOp {
+        request,
+        ends: vec![],
+    };
 
     for cas in &c.cascades {
-        ops.push(PlannedOp { request: cascade_request(cas.rule, &cas.retire, now), ends: cas.ends.clone() });
+        ops.push(PlannedOp {
+            request: cascade_request(cas.rule, &cas.retire, now),
+            ends: cas.ends.clone(),
+        });
     }
     for (object, new) in &c.renames {
         ops.push(plain(rename_request(object, new, now, None)));
     }
     for oc in &c.occupancy {
         ops.push(PlannedOp {
-            request: occupancy_request(&oc.clone, oc.end.as_ref().map(|e| e.reason), oc.start.as_ref(), now),
+            request: occupancy_request(
+                &oc.clone,
+                oc.end.as_ref().map(|e| e.reason),
+                oc.start.as_ref(),
+                now,
+            ),
             ends: oc.end.iter().cloned().collect(),
         });
     }
@@ -187,7 +223,10 @@ fn build_ops(d: &DesiredRuntime, snap: &HerdrSnapshot, m: &Matches, c: &Classifi
     for mv in &c.moves {
         moved.insert(mv.clone.clone());
         let binding = if mv.known {
-            m.clone_pane.get(&mv.clone).and_then(|p| locs.get(p)).map(|loc| clone_binding(loc, &snap.incarnation))
+            m.clone_pane
+                .get(&mv.clone)
+                .and_then(|p| locs.get(p))
+                .map(|loc| clone_binding(loc, &snap.incarnation))
         } else {
             None
         };
@@ -199,26 +238,35 @@ fn build_ops(d: &DesiredRuntime, snap: &HerdrSnapshot, m: &Matches, c: &Classifi
         if let Some(s) = &seat {
             attached.insert(s.clone());
         }
-        ops.push(plain(move_request(Some(&mv.clone), binding.as_ref(), seat.as_ref())));
+        ops.push(plain(move_request(
+            Some(&mv.clone),
+            binding.as_ref(),
+            seat.as_ref(),
+        )));
     }
     for seat in c.moved_out.iter().filter(|s| !attached.contains(*s)) {
         ops.push(plain(move_request(None, None, Some(seat))));
     }
 
     for object in &c.gone {
-        let needs = runtime_of(d, object).is_some_and(|rt| rt.availability != Availability::Absent || rt.bound.is_some());
+        let needs = runtime_of(d, object)
+            .is_some_and(|rt| rt.availability != Availability::Absent || rt.bound.is_some());
         if !retired_now.contains(object) && needs {
             ops.push(plain(availability_request(object, Availability::Absent)));
         }
     }
     for e in &c.gone_ends {
         if !retired_now.contains(&e.clone.to_any()) {
-            ops.push(PlannedOp { request: occupancy_request(&e.clone, Some(e.reason), None, now), ends: vec![e.clone()] });
+            ops.push(PlannedOp {
+                request: occupancy_request(&e.clone, Some(e.reason), None, now),
+                ends: vec![e.clone()],
+            });
         }
     }
     if rebind {
         for object in &m.unmatched {
-            let known = runtime_of(d, object).is_some_and(|rt| rt.availability == Availability::Unknown);
+            let known =
+                runtime_of(d, object).is_some_and(|rt| rt.availability == Availability::Unknown);
             if !retired_now.contains(object) && !known {
                 ops.push(plain(availability_request(object, Availability::Unknown)));
             }
@@ -228,35 +276,50 @@ fn build_ops(d: &DesiredRuntime, snap: &HerdrSnapshot, m: &Matches, c: &Classifi
     // Bindings of matched objects. A clone living in a tab graph does not know stays as the move left it.
     let inc = &snap.incarnation;
     for (cid, pid) in &m.clone_pane {
-        let (Some(rec), Some(loc)) = (d.clones.get(cid), locs.get(pid)) else { continue };
-        if rec.lifecycle == CloneLifecycle::Retired || moved.contains(cid) || retired_now.contains(&cid.to_any()) {
+        let (Some(rec), Some(loc)) = (d.clones.get(cid), locs.get(pid)) else {
+            continue;
+        };
+        if rec.lifecycle == CloneLifecycle::Retired
+            || moved.contains(cid)
+            || retired_now.contains(&cid.to_any())
+        {
             continue;
         }
         if !m.tabs.contains_key(&loc.tab.id) {
             continue;
         }
         let b = clone_binding(loc, inc);
-        if rec.runtime.bound.as_ref() != Some(&b) || rec.runtime.availability != Availability::Present {
+        if rec.runtime.bound.as_ref() != Some(&b)
+            || rec.runtime.availability != Availability::Present
+        {
             ops.push(plain(binding_request(&cid.to_any(), &b)));
         }
     }
     for (tid, sid) in &m.tabs {
-        let (Some(rec), Some((ws, tab))) = (d.seats.get(sid), find_tab(snap, tid)) else { continue };
+        let (Some(rec), Some((ws, tab))) = (d.seats.get(sid), find_tab(snap, tid)) else {
+            continue;
+        };
         if rec.lifecycle == Lifecycle::Retired || retired_now.contains(&sid.to_any()) {
             continue;
         }
         let b = seat_binding(ws, tab, inc);
-        if rec.runtime.bound.as_ref() != Some(&b) || rec.runtime.availability != Availability::Present {
+        if rec.runtime.bound.as_ref() != Some(&b)
+            || rec.runtime.availability != Availability::Present
+        {
             ops.push(plain(binding_request(&sid.to_any(), &b)));
         }
     }
     for (wid, tsid) in &m.workspaces {
-        let (Some(rec), Some(ws)) = (d.teamspaces.get(tsid), find_ws(snap, wid)) else { continue };
+        let (Some(rec), Some(ws)) = (d.teamspaces.get(tsid), find_ws(snap, wid)) else {
+            continue;
+        };
         if rec.lifecycle == Lifecycle::Retired || retired_now.contains(&tsid.to_any()) {
             continue;
         }
         let b = ts_binding(ws, inc);
-        if rec.runtime.bound.as_ref() != Some(&b) || rec.runtime.availability != Availability::Present {
+        if rec.runtime.bound.as_ref() != Some(&b)
+            || rec.runtime.availability != Availability::Present
+        {
             ops.push(plain(binding_request(&tsid.to_any(), &b)));
         }
     }
@@ -291,7 +354,11 @@ impl RuntimeLoop {
             session_ended,
             op_events: Mutex::new(op_events),
             // Always a rebind pass first: the daemon may have missed anything while it was down.
-            state: Mutex::new(LoopState { healthy: false, needs_rebind: true, baseline }),
+            state: Mutex::new(LoopState {
+                healthy: false,
+                needs_rebind: true,
+                baseline,
+            }),
             step_lock: tokio::sync::Mutex::new(()),
             tuning: RwLock::new(LoopTuning::default()),
             claude_root: RwLock::new(claude_root),
@@ -311,7 +378,10 @@ impl RuntimeLoop {
     }
 
     fn tuning(&self) -> LoopTuning {
-        self.tuning.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.tuning
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, LoopState> {
@@ -331,7 +401,11 @@ impl RuntimeLoop {
     async fn wait_writer_idle(&self, limit: Duration) {
         let deadline = tokio::time::Instant::now() + limit;
         while tokio::time::Instant::now() < deadline {
-            let busy = self.journal.list(&[OpState::Admitted, OpState::Applying], 1).map(|r| !r.is_empty()).unwrap_or(false);
+            let busy = self
+                .journal
+                .list(&[OpState::Admitted, OpState::Applying], 1)
+                .map(|r| !r.is_empty())
+                .unwrap_or(false);
             if !busy {
                 return;
             }
@@ -343,7 +417,9 @@ impl RuntimeLoop {
         let deadline = tokio::time::Instant::now() + limit;
         loop {
             match self.writer.status(op) {
-                Ok(Some(s)) if !matches!(s, OpState::Admitted | OpState::Applying) => return Some(s),
+                Ok(Some(s)) if !matches!(s, OpState::Admitted | OpState::Applying) => {
+                    return Some(s);
+                }
                 Ok(None) | Err(_) => return None,
                 Ok(Some(_)) => {}
             }
@@ -356,7 +432,12 @@ impl RuntimeLoop {
 
     /// Admit `ops` in order and wait for each to reach a terminal state. Emits `SessionEnded` for every
     /// committed op that ended sessions. Returns whether all committed.
-    async fn commit_ops(&self, ops: Vec<PlannedOp>, limit: Duration, summary: &mut StepSummary) -> bool {
+    async fn commit_ops(
+        &self,
+        ops: Vec<PlannedOp>,
+        limit: Duration,
+        summary: &mut StepSummary,
+    ) -> bool {
         let mut admitted: Vec<(OpId, Vec<EndedSession>)> = Vec::new();
         let mut all_ok = true;
         for op in ops {
@@ -390,7 +471,9 @@ impl RuntimeLoop {
                     }
                 }
                 other => {
-                    eprintln!("herdr-graph: observe: observed op {id} ended {other:?}; the next diff re-derives it");
+                    eprintln!(
+                        "herdr-graph: observe: observed op {id} ended {other:?}; the next diff re-derives it"
+                    );
                     summary.rejected += 1;
                     all_ok = false;
                 }
@@ -414,11 +497,15 @@ impl RuntimeLoop {
             let mut st = self.state();
             st.healthy = true;
             let b = st.baseline.clone();
-            let rebind = st.needs_rebind || b.as_ref().is_none_or(|b| b.incarnation != snap.incarnation);
+            let rebind =
+                st.needs_rebind || b.as_ref().is_none_or(|b| b.incarnation != snap.incarnation);
             (rebind, b)
         };
         let desired = {
-            let tree = CommitView { store: &*self.store, at: head.clone() };
+            let tree = CommitView {
+                store: &*self.store,
+                at: head.clone(),
+            };
             DesiredRuntime::load(&tree, &self.paths.root)?
         };
         let matches = match_snapshot(&snap, &desired);
@@ -428,25 +515,54 @@ impl RuntimeLoop {
                 procs.insert(pane, info);
             }
         }
-        let claude_root = self.claude_root.read().unwrap_or_else(|e| e.into_inner()).clone();
-        let cx = DiffCx { desired: &desired, snap: &snap, matches: &matches, claude_root: &claude_root, procs: &procs };
+        let claude_root = self
+            .claude_root
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let cx = DiffCx {
+            desired: &desired,
+            snap: &snap,
+            matches: &matches,
+            claude_root: &claude_root,
+            procs: &procs,
+        };
         let base_matches;
         let (elements, baseline_matches) = match (&baseline, rebind) {
             (Some(b), false) => {
                 base_matches = match_snapshot(&b.snapshot, &desired);
-                (diff::diff(&cx, &b.snapshot, &base_matches), Some(&base_matches))
+                (
+                    diff::diff(&cx, &b.snapshot, &base_matches),
+                    Some(&base_matches),
+                )
             }
             _ => (diff::rebind(&cx), None),
         };
         let preds = predictions(&self.journal);
         let classified = classify(
-            &ClassifyCx { desired: &desired, journal: &self.journal, preds: &preds, matches: &matches, baseline: baseline_matches },
+            &ClassifyCx {
+                desired: &desired,
+                journal: &self.journal,
+                preds: &preds,
+                matches: &matches,
+                baseline: baseline_matches,
+            },
             elements,
         );
         let ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
 
-        let mut summary = StepSummary { mode: Some(if rebind { StepMode::Rebind } else { StepMode::Diff }), ..Default::default() };
-        if !self.commit_ops(ops, tuning.commit_timeout, &mut summary).await {
+        let mut summary = StepSummary {
+            mode: Some(if rebind {
+                StepMode::Rebind
+            } else {
+                StepMode::Diff
+            }),
+            ..Default::default()
+        };
+        if !self
+            .commit_ops(ops, tuning.commit_timeout, &mut summary)
+            .await
+        {
             // Baseline stays; the next step re-derives what did not commit (spec §4.3.7).
             return Ok(summary);
         }
@@ -456,9 +572,13 @@ impl RuntimeLoop {
         for ef in &classified.consumed {
             consume_prediction(&self.journal, ef);
         }
-        let spent: BTreeSet<_> = predictions(&self.journal).into_iter().map(|(ef, _)| ef).collect();
+        let spent: BTreeSet<_> = predictions(&self.journal)
+            .into_iter()
+            .map(|(ef, _)| ef)
+            .collect();
         for ef in spent {
-            if matches!(self.journal.get_effect(&ef), Ok(Some(r)) if r.status == EffectStatus::Done) {
+            if matches!(self.journal.get_effect(&ef), Ok(Some(r)) if r.status == EffectStatus::Done)
+            {
                 consume_prediction(&self.journal, &ef);
             }
         }
@@ -480,7 +600,11 @@ impl RuntimeLoop {
 
     /// The snapshot failed. After a healthy connection every bound object becomes `unknown` (never retired);
     /// either way the next successful snapshot is a rebind pass.
-    async fn on_disconnect(&self, err: crate::ports::herdr::HerdrError, tuning: &LoopTuning) -> anyhow::Result<StepSummary> {
+    async fn on_disconnect(
+        &self,
+        err: crate::ports::herdr::HerdrError,
+        tuning: &LoopTuning,
+    ) -> anyhow::Result<StepSummary> {
         eprintln!("herdr-graph: observe: snapshot failed: {err}");
         let was_healthy = {
             let mut st = self.state();
@@ -489,36 +613,62 @@ impl RuntimeLoop {
             st.needs_rebind = true;
             was
         };
-        let mut summary = StepSummary { mode: Some(StepMode::Disconnected), ..Default::default() };
+        let mut summary = StepSummary {
+            mode: Some(StepMode::Disconnected),
+            ..Default::default()
+        };
         if !was_healthy {
             return Ok(summary);
         }
         let head = self.store.head()?;
-        let tree = CommitView { store: &*self.store, at: head };
+        let tree = CommitView {
+            store: &*self.store,
+            at: head,
+        };
         let d = DesiredRuntime::load(&tree, &self.paths.root)?;
         let mut ops: Vec<PlannedOp> = Vec::new();
         let mut mark = |object: AnyId, rt: &Runtime| {
             if rt.bound.is_some() && rt.availability != Availability::Unknown {
-                ops.push(PlannedOp { request: availability_request(&object, Availability::Unknown), ends: vec![] });
+                ops.push(PlannedOp {
+                    request: availability_request(&object, Availability::Unknown),
+                    ends: vec![],
+                });
             }
         };
-        for t in d.teamspaces.values().filter(|t| t.lifecycle != Lifecycle::Retired) {
+        for t in d
+            .teamspaces
+            .values()
+            .filter(|t| t.lifecycle != Lifecycle::Retired)
+        {
             mark(t.id.to_any(), &t.runtime);
         }
-        for s in d.seats.values().filter(|s| s.lifecycle != Lifecycle::Retired) {
+        for s in d
+            .seats
+            .values()
+            .filter(|s| s.lifecycle != Lifecycle::Retired)
+        {
             mark(s.id.to_any(), &s.runtime);
         }
-        for c in d.clones.values().filter(|c| c.lifecycle != CloneLifecycle::Retired) {
+        for c in d
+            .clones
+            .values()
+            .filter(|c| c.lifecycle != CloneLifecycle::Retired)
+        {
             mark(c.id.to_any(), &c.runtime);
         }
-        self.commit_ops(ops, tuning.commit_timeout, &mut summary).await;
+        self.commit_ops(ops, tuning.commit_timeout, &mut summary)
+            .await;
         Ok(summary)
     }
 
     /// Trigger loop: Herdr events, the tick, op-committed notifications and reconnects all just cause a new
     /// complete snapshot (spec §4.3.1). Returns when `shutdown` turns true.
     pub async fn run(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
-        let mut op_rx = self.op_events.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let mut op_rx = self
+            .op_events
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         let mut events: Option<crate::ports::herdr::HerdrEventStream> = None;
         let mut ticker = tokio::time::interval(self.tick.max(Duration::from_millis(1)));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -533,7 +683,9 @@ impl RuntimeLoop {
                         events = Some(stream);
                         self.force_rebind();
                     }
-                    Err(e) => eprintln!("herdr-graph: observe: cannot subscribe to herdr events: {e}"),
+                    Err(e) => {
+                        eprintln!("herdr-graph: observe: cannot subscribe to herdr events: {e}")
+                    }
                 }
             }
             if let Err(e) = self.step_once().await {
@@ -541,10 +693,12 @@ impl RuntimeLoop {
             }
             let resubscribe = events.is_none();
             // Deferred or backed-off effects need another look at their own time, not only on the tick.
-            let wake = self
-                .reconciler
-                .next_wake()
-                .map(|t| (t - self.clock.now()).to_std().unwrap_or_default().clamp(Duration::from_millis(20), self.tick));
+            let wake = self.reconciler.next_wake().map(|t| {
+                (t - self.clock.now())
+                    .to_std()
+                    .unwrap_or_default()
+                    .clamp(Duration::from_millis(20), self.tick)
+            });
             tokio::select! {
                 _ = shutdown.changed() => {}
                 _ = async { match wake { Some(d) => tokio::time::sleep(d).await, None => std::future::pending::<()>().await } } => {}

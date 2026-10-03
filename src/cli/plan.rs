@@ -61,7 +61,11 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             change.retain(|w| w != "--json");
             plan_flow(change, json || trailing_json)
         }
-        Commands::Apply { plan, confirm, confirmed_by } => apply(plan, confirm, confirmed_by),
+        Commands::Apply {
+            plan,
+            confirm,
+            confirmed_by,
+        } => apply(plan, confirm, confirmed_by),
     }
 }
 
@@ -71,7 +75,8 @@ fn remote(e: ClientError) -> anyhow::Error {
 
 /// The whole plan → confirm flow, reused by other command groups (e.g. `rebind`).
 pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
-    let reply = call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure).map_err(remote)?;
+    let reply =
+        call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure).map_err(remote)?;
     let tty = std::io::stdin().is_terminal();
     match decide(tty, json) {
         Decision::Json => {
@@ -112,12 +117,22 @@ pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn apply(plan: String, confirm: Option<String>, confirmed_by: Option<String>) -> anyhow::Result<ExitCode> {
+fn apply(
+    plan: String,
+    confirm: Option<String>,
+    confirmed_by: Option<String>,
+) -> anyhow::Result<ExitCode> {
     let (Some(confirm), Some("user-relay")) = (confirm, confirmed_by.as_deref()) else {
-        anyhow::bail!("confirmation required; there is no bypass (apply <pl> --confirm <hash> --confirmed-by user-relay)");
+        anyhow::bail!(
+            "confirmation required; there is no bypass (apply <pl> --confirm <hash> --confirmed-by user-relay)"
+        );
     };
-    let result = call_daemon("plan.apply", json!({ "plan": plan, "confirm": confirm, "mode": "relay" }), CallMode::Ensure)
-        .map_err(remote)?;
+    let result = call_daemon(
+        "plan.apply",
+        json!({ "plan": plan, "confirm": confirm, "mode": "relay" }),
+        CallMode::Ensure,
+    )
+    .map_err(remote)?;
     report_apply(&result)
 }
 
@@ -147,7 +162,11 @@ fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {
         println!("commit {c}");
     }
     if let Some(r) = result.get("rejection").filter(|r| r.is_object()) {
-        println!("{}: {}", r["reason"].as_str().unwrap_or("rejected"), r["explanation"].as_str().unwrap_or_default());
+        println!(
+            "{}: {}",
+            r["reason"].as_str().unwrap_or("rejected"),
+            r["explanation"].as_str().unwrap_or_default()
+        );
     }
     if state == "rejected" && result["rejection"]["reason"].as_str() == Some("already_applied") {
         return Ok(ExitCode::from(EXIT_ALREADY_APPLIED));
@@ -161,17 +180,27 @@ mod tests {
 
     #[test]
     fn already_applied_reply_maps_to_distinct_exit() {
-        let reply = |reason: &str| {
-            serde_json::json!({"op":"op_01","state":"rejected","rejection":{"reason":reason,"explanation":"plan pl_x was already applied by op_00"}})
-        };
-        assert_eq!(report_apply(&reply("already_applied")).unwrap(), ExitCode::from(EXIT_ALREADY_APPLIED));
-        assert_eq!(report_apply(&reply("stale_plan")).unwrap(), ExitCode::from(1));
+        let reply = |reason: &str| serde_json::json!({"op":"op_01","state":"rejected","rejection":{"reason":reason,"explanation":"plan pl_x was already applied by op_00"}});
+        assert_eq!(
+            report_apply(&reply("already_applied")).unwrap(),
+            ExitCode::from(EXIT_ALREADY_APPLIED)
+        );
+        assert_eq!(
+            report_apply(&reply("stale_plan")).unwrap(),
+            ExitCode::from(1)
+        );
     }
 
     #[test]
     fn exit_for_state_maps_still_running() {
-        assert_eq!(exit_for_state("admitted"), ExitCode::from(EXIT_STILL_RUNNING));
-        assert_eq!(exit_for_state("applying"), ExitCode::from(EXIT_STILL_RUNNING));
+        assert_eq!(
+            exit_for_state("admitted"),
+            ExitCode::from(EXIT_STILL_RUNNING)
+        );
+        assert_eq!(
+            exit_for_state("applying"),
+            ExitCode::from(EXIT_STILL_RUNNING)
+        );
         assert_eq!(exit_for_state("committed"), ExitCode::SUCCESS);
         assert_eq!(exit_for_state("rejected"), ExitCode::from(1));
         assert_eq!(EXIT_STILL_RUNNING, 3);
@@ -181,6 +210,9 @@ mod tests {
     fn slow_writer_reply_maps_to_still_running_exit() {
         // The daemon's reply for an op that outlived the request budget (see the plan tests).
         let reply = json!({"op": "op_01", "state": "admitted"});
-        assert_eq!(report_apply(&reply).unwrap(), ExitCode::from(EXIT_STILL_RUNNING));
+        assert_eq!(
+            report_apply(&reply).unwrap(),
+            ExitCode::from(EXIT_STILL_RUNNING)
+        );
     }
 }

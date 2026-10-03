@@ -3,9 +3,9 @@
 use super::hash::{plan_hash, same_effects};
 use super::kind::{KindRegistry, PlanCx, PlanError, make_plan};
 use super::store::PlanStore;
+use super::types::{PlanEffect, StoredPlan};
 use crate::journal::Journal;
 use crate::model::AnyId;
-use super::types::{PlanEffect, StoredPlan};
 use crate::ports::store::StoreError;
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, Reject};
 use std::path::PathBuf;
@@ -18,7 +18,11 @@ pub struct OrgMutation {
 }
 
 fn reject(reason: &str, explanation: String) -> MutationError {
-    MutationError::Reject(Reject { reason: reason.into(), explanation, current_revs: vec![] })
+    MutationError::Reject(Reject {
+        reason: reason.into(),
+        explanation,
+        current_revs: vec![],
+    })
 }
 
 /// `-`/`+` lines for the effects only one side has.
@@ -36,13 +40,18 @@ fn effect_diff(confirmed: &[PlanEffect], recomputed: &[PlanEffect]) -> String {
 impl Mutation for OrgMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let req = cx.request;
-        let kind = self
-            .kinds
-            .get(req.kind)
-            .ok_or_else(|| MutationError::Bug(format!("no organizational kind registered for {:?}", req.kind)))?;
+        let kind = self.kinds.get(req.kind).ok_or_else(|| {
+            MutationError::Bug(format!(
+                "no organizational kind registered for {:?}",
+                req.kind
+            ))
+        })?;
 
         // 1. the confirmed plan
-        let confirmed = req.confirmed.as_ref().ok_or_else(|| reject("unknown_plan", "request carries no confirmed plan".into()))?;
+        let confirmed = req
+            .confirmed
+            .as_ref()
+            .ok_or_else(|| reject("unknown_plan", "request carries no confirmed plan".into()))?;
         let plan_id = confirmed.plan.clone();
         let stored = self
             .plans
@@ -54,41 +63,65 @@ impl Mutation for OrgMutation {
                 }),
                 _ => MutationError::Store(e.into()),
             })?
-            .ok_or_else(|| reject("unknown_plan", format!("plan {plan_id} is not in the plan store")))?;
+            .ok_or_else(|| {
+                reject(
+                    "unknown_plan",
+                    format!("plan {plan_id} is not in the plan store"),
+                )
+            })?;
 
         // 2. the confirmation names exactly this plan
         if confirmed.confirmation.plan_hash != stored.hash {
             return Err(reject(
                 "confirmation_mismatch",
-                format!("confirmation does not match plan {plan_id} (hash {})", stored.hash),
+                format!(
+                    "confirmation does not match plan {plan_id} (hash {})",
+                    stored.hash
+                ),
             ));
         }
         let args = req.args.clone();
         if args != stored.plan.request.args || req.kind != stored.plan.request.kind {
-            return Err(reject("confirmation_mismatch", format!("request does not match plan {plan_id}")));
+            return Err(reject(
+                "confirmation_mismatch",
+                format!("request does not match plan {plan_id}"),
+            ));
         }
 
         // 2b. a confirmed plan applies at most once: its id already names a committed op, or an id it
         // reserved already exists (a replacement of an applied plan carries the same reserved ids).
         // Runs before the recompute so no replacement plan is ever stored.
-        let journal = Journal::open(&Journal::path_in(&self.instance))
-            .map_err(|e| MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string()))))?;
-        let prior = journal
-            .committed_op_for_plan(&plan_id)
-            .map_err(|e| MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string()))))?;
+        let journal = Journal::open(&Journal::path_in(&self.instance)).map_err(|e| {
+            MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string())))
+        })?;
+        let prior = journal.committed_op_for_plan(&plan_id).map_err(|e| {
+            MutationError::Store(StoreError::Io(std::io::Error::other(e.to_string())))
+        })?;
         if let Some(op) = prior {
-            return Err(reject("already_applied", format!("plan {plan_id} was already applied by {op}")));
+            return Err(reject(
+                "already_applied",
+                format!("plan {plan_id} was already applied by {op}"),
+            ));
         }
         for v in stored.plan.reserved.0.values() {
             let Ok(id) = v.parse::<AnyId>() else { continue };
             if cx.tree.locate(&id)?.is_some() {
-                return Err(reject("already_applied", format!("plan {plan_id} was already applied: {id} already exists")));
+                return Err(reject(
+                    "already_applied",
+                    format!("plan {plan_id} was already applied: {id} already exists"),
+                ));
             }
         }
 
         // 3. recompute against the committed revision this apply runs on
         let at = cx.tree.base().clone();
-        let pcx = PlanCx { tree: &cx.tree, at, caller: &stored.caller, now: cx.now, instance: &self.instance };
+        let pcx = PlanCx {
+            tree: &cx.tree,
+            at,
+            caller: &stored.caller,
+            now: cx.now,
+            instance: &self.instance,
+        };
         let fresh = match make_plan(&*kind, &pcx, args.clone(), stored.plan.reserved.clone()) {
             Ok(p) => p,
             Err(PlanError::Store(e)) => return Err(MutationError::Store(e)),
@@ -97,13 +130,18 @@ impl Mutation for OrgMutation {
             Err(e) => {
                 return Err(reject(
                     "stale_plan",
-                    format!("plan {plan_id} is stale: {e}; no replacement plan could be computed, plan again"),
+                    format!(
+                        "plan {plan_id} is stale: {e}; no replacement plan could be computed, plan again"
+                    ),
                 ));
             }
         };
 
         if let Some(why) = &fresh.repair_required {
-            return Err(reject("repair_required", format!("plan {plan_id} cannot apply: {why}")));
+            return Err(reject(
+                "repair_required",
+                format!("plan {plan_id} cannot apply: {why}"),
+            ));
         }
 
         // 4. only the confirmed effect set may run
@@ -122,7 +160,9 @@ impl Mutation for OrgMutation {
                 effect_diff(&stored.plan.effects, &replacement.plan.effects),
                 replacement.plan.id
             );
-            self.plans.put(&replacement).map_err(|e| MutationError::Store(e.into()))?;
+            self.plans
+                .put(&replacement)
+                .map_err(|e| MutationError::Store(e.into()))?;
             return Err(reject("stale_plan", explanation));
         }
 

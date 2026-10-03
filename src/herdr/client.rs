@@ -5,8 +5,8 @@ use crate::model::harness::StartOutcome;
 use crate::model::{HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation};
 use crate::ports::herdr::*;
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -40,7 +40,11 @@ fn unavailable(e: impl std::fmt::Display) -> HerdrError {
 }
 
 fn lines_of(v: &[(String, String)]) -> Value {
-    Value::Object(v.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect())
+    Value::Object(
+        v.iter()
+            .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+            .collect(),
+    )
 }
 
 fn path_str(p: &Path) -> String {
@@ -48,24 +52,48 @@ fn path_str(p: &Path) -> String {
 }
 
 fn created(v: &Value) -> Created {
-    let id = |obj: &str, key: &str| v.get(obj).and_then(|o| o.get(key)).and_then(Value::as_str).map(str::to_owned);
+    let id = |obj: &str, key: &str| {
+        v.get(obj)
+            .and_then(|o| o.get(key))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     let pane = v.get("root_pane").or_else(|| v.get("pane"));
-    let pane_field = |key: &str| pane.and_then(|p| p.get(key)).and_then(Value::as_str).map(str::to_owned);
+    let pane_field = |key: &str| {
+        pane.and_then(|p| p.get(key))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
     Created {
         workspace: id("workspace", "workspace_id")
             .or_else(|| id("tab", "workspace_id"))
             .or_else(|| pane_field("workspace_id"))
             .map(HerdrWorkspaceId),
-        tab: id("tab", "tab_id").or_else(|| pane_field("tab_id")).map(HerdrTabId),
+        tab: id("tab", "tab_id")
+            .or_else(|| pane_field("tab_id"))
+            .map(HerdrTabId),
         pane: pane_field("pane_id").map(HerdrPaneId),
     }
 }
 
 /// One request = one connection: connect, write one NDJSON line, read lines until our response.
-async fn rpc(socket: &Path, id: String, method: &'static str, params: Value, limit: Duration) -> Result<Value, HerdrError> {
-    let line = WireRequest { id: id.clone(), method, params }.to_line()?;
+async fn rpc(
+    socket: &Path,
+    id: String,
+    method: &'static str,
+    params: Value,
+    limit: Duration,
+) -> Result<Value, HerdrError> {
+    let line = WireRequest {
+        id: id.clone(),
+        method,
+        params,
+    }
+    .to_line()?;
     let exchange = async {
-        let mut stream = UnixStream::connect(socket).await.map_err(|e| HerdrError::Unavailable(format!("{}: {e}", socket.display())))?;
+        let mut stream = UnixStream::connect(socket)
+            .await
+            .map_err(|e| HerdrError::Unavailable(format!("{}: {e}", socket.display())))?;
         stream.write_all(&line).await.map_err(unavailable)?;
         let mut reader = BufReader::new(stream);
         let mut buf = String::new();
@@ -79,7 +107,9 @@ async fn rpc(socket: &Path, id: String, method: &'static str, params: Value, lim
             if buf.trim().is_empty() {
                 continue;
             }
-            let Frame::Response(resp) = wire::parse_frame(buf.trim())? else { continue };
+            let Frame::Response(resp) = wire::parse_frame(buf.trim())? else {
+                continue;
+            };
             // Herdr answers unparsable requests with an empty id.
             if resp.id.as_deref().is_some_and(|r| r != id && !r.is_empty()) {
                 continue;
@@ -87,28 +117,58 @@ async fn rpc(socket: &Path, id: String, method: &'static str, params: Value, lim
             return match (resp.result, resp.error) {
                 (_, Some(e)) => Err(wire::error_to_rejected(method, &e)),
                 (Some(r), None) => Ok(r),
-                (None, None) => Err(HerdrError::Protocol(format!("{method}: response has neither result nor error"))),
+                (None, None) => Err(HerdrError::Protocol(format!(
+                    "{method}: response has neither result nor error"
+                ))),
             };
         }
     };
-    tokio::time::timeout(limit, exchange).await.unwrap_or(Err(HerdrError::Timeout))
+    tokio::time::timeout(limit, exchange)
+        .await
+        .unwrap_or(Err(HerdrError::Timeout))
 }
 
 /// Connect, subscribe to every topic, and wait for the acknowledgement. Returns the live connection.
-async fn open_subscription(socket: &Path, id: String, limit: Duration) -> Result<BufReader<UnixStream>, HerdrError> {
+async fn open_subscription(
+    socket: &Path,
+    id: String,
+    limit: Duration,
+) -> Result<BufReader<UnixStream>, HerdrError> {
     let mut last = HerdrError::Timeout;
     for attempt in 0..SUBSCRIBE_ATTEMPTS {
-        let snap = rpc(socket, format!("{id}-snap{attempt}"), wire::M_SNAPSHOT, json!({}), limit).await?;
-        let mut subs: Vec<Value> = wire::GLOBAL_TOPICS.iter().map(|t| json!({ "type": t })).collect();
+        let snap = rpc(
+            socket,
+            format!("{id}-snap{attempt}"),
+            wire::M_SNAPSHOT,
+            json!({}),
+            limit,
+        )
+        .await?;
+        let mut subs: Vec<Value> = wire::GLOBAL_TOPICS
+            .iter()
+            .map(|t| json!({ "type": t }))
+            .collect();
         // `pane.agent_status_changed` has no wildcard form: subscribe per pane known right now.
-        for pane in snap.pointer("/snapshot/panes").and_then(Value::as_array).into_iter().flatten() {
+        for pane in snap
+            .pointer("/snapshot/panes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if let Some(pid) = pane.get("pane_id").and_then(Value::as_str) {
                 subs.push(json!({ "type": wire::TOPIC_AGENT_STATUS, "pane_id": pid }));
             }
         }
-        let line = WireRequest { id: id.clone(), method: wire::M_SUBSCRIBE, params: json!({ "subscriptions": subs }) }.to_line()?;
+        let line = WireRequest {
+            id: id.clone(),
+            method: wire::M_SUBSCRIBE,
+            params: json!({ "subscriptions": subs }),
+        }
+        .to_line()?;
         let handshake = async {
-            let mut stream = UnixStream::connect(socket).await.map_err(|e| HerdrError::Unavailable(format!("{}: {e}", socket.display())))?;
+            let mut stream = UnixStream::connect(socket)
+                .await
+                .map_err(|e| HerdrError::Unavailable(format!("{}: {e}", socket.display())))?;
             stream.write_all(&line).await.map_err(unavailable)?;
             let mut reader = BufReader::new(stream);
             let mut buf = String::new();
@@ -129,7 +189,10 @@ async fn open_subscription(socket: &Path, id: String, limit: Duration) -> Result
                 }
             }
         };
-        match tokio::time::timeout(limit, handshake).await.unwrap_or(Err(HerdrError::Timeout)) {
+        match tokio::time::timeout(limit, handshake)
+            .await
+            .unwrap_or(Err(HerdrError::Timeout))
+        {
             Ok(r) => return Ok(r),
             Err(e) if wire::is_code(&e, "pane_not_found") => last = e,
             Err(e) => return Err(e),
@@ -154,12 +217,17 @@ struct Liveness {
 type SockId = (u64, u64, i64, i64);
 
 fn sock_id(socket: &Path) -> Option<SockId> {
-    std::fs::symlink_metadata(socket).ok().map(|m| (m.dev(), m.ino(), m.ctime(), m.ctime_nsec()))
+    std::fs::symlink_metadata(socket)
+        .ok()
+        .map(|m| (m.dev(), m.ino(), m.ctime(), m.ctime_nsec()))
 }
 
 impl Liveness {
     fn new() -> Self {
-        Self { stale: AtomicBool::new(true), sock: Mutex::new(None) }
+        Self {
+            stale: AtomicBool::new(true),
+            sock: Mutex::new(None),
+        }
     }
 
     fn mark_lost(&self, generation: &AtomicU64) {
@@ -181,10 +249,16 @@ impl Liveness {
 
 /// Whether a failed request means the server went away (or is going away) rather than rejected the request.
 fn server_lost(e: &HerdrError) -> bool {
-    matches!(e, HerdrError::Unavailable(_) | HerdrError::Timeout) || wire::is_code(e, "server_unavailable")
+    matches!(e, HerdrError::Unavailable(_) | HerdrError::Timeout)
+        || wire::is_code(e, "server_unavailable")
 }
 
-async fn refresh_incarnation(socket: &Path, generation: &AtomicU64, slot: &Mutex<Incarnation>, live: &Liveness) {
+async fn refresh_incarnation(
+    socket: &Path,
+    generation: &AtomicU64,
+    slot: &Mutex<Incarnation>,
+    live: &Liveness,
+) {
     // The incarnation stays stale until the probe result is stored: a snapshot taken meanwhile re-probes
     // instead of reading the previous server's incarnation.
     let identity = sock_id(socket);
@@ -193,7 +267,11 @@ async fn refresh_incarnation(socket: &Path, generation: &AtomicU64, slot: &Mutex
     let sock = socket.to_path_buf();
     let inc = tokio::task::spawn_blocking(move || incarnation::probe(&sock, g))
         .await
-        .unwrap_or(Incarnation { generation: g, server_pid: None, server_started: None });
+        .unwrap_or(Incarnation {
+            generation: g,
+            server_pid: None,
+            server_started: None,
+        });
     *slot.lock().unwrap() = inc;
     if sock_id(socket) == identity {
         live.stale.store(false, Ordering::SeqCst);
@@ -249,9 +327,18 @@ impl Reader {
                 }
             };
             // The loss already moved the generation; the probe now names the server that answered.
-            refresh_incarnation(&self.socket, &self.generation, &self.incarnation, &self.live).await;
+            refresh_incarnation(
+                &self.socket,
+                &self.generation,
+                &self.incarnation,
+                &self.live,
+            )
+            .await;
             let generation = self.generation.load(Ordering::SeqCst);
-            let marker = HerdrEvent { name: RECONNECTED_EVENT.to_owned(), payload: json!({ "generation": generation }) };
+            let marker = HerdrEvent {
+                name: RECONNECTED_EVENT.to_owned(),
+                payload: json!({ "generation": generation }),
+            };
             if self.tx.send(marker).await.is_err() {
                 return;
             }
@@ -283,7 +370,11 @@ impl HerdrClient {
     }
 
     fn new_id(&self) -> String {
-        format!("hg-{}-{}", std::process::id(), self.next_id.fetch_add(1, Ordering::Relaxed))
+        format!(
+            "hg-{}-{}",
+            std::process::id(),
+            self.next_id.fetch_add(1, Ordering::Relaxed)
+        )
     }
 
     /// Connect error is `Unavailable`; a missed deadline or a connection lost after the request was
@@ -296,7 +387,10 @@ impl HerdrClient {
     /// current pane for this caller.
     pub async fn current_pane(&self) -> Result<Option<HerdrPaneId>, HerdrError> {
         match self.request(wire::M_PANE_CURRENT, json!({})).await {
-            Ok(v) => Ok(v.pointer("/pane/pane_id").and_then(Value::as_str).map(|s| HerdrPaneId(s.to_owned()))),
+            Ok(v) => Ok(v
+                .pointer("/pane/pane_id")
+                .and_then(Value::as_str)
+                .map(|s| HerdrPaneId(s.to_owned()))),
             Err(HerdrError::Rejected { .. }) => Ok(None),
             Err(e) => Err(e),
         }
@@ -304,7 +398,13 @@ impl HerdrClient {
 
     /// Re-probe the server pid and start time under the current generation.
     pub async fn refresh_incarnation(&self) {
-        refresh_incarnation(&self.socket, &self.generation, &self.incarnation, &self.live).await;
+        refresh_incarnation(
+            &self.socket,
+            &self.generation,
+            &self.incarnation,
+            &self.live,
+        )
+        .await;
     }
 
     async fn ok(&self, method: &'static str, params: Value) -> Result<(), HerdrError> {
@@ -358,11 +458,16 @@ impl HerdrApi for HerdrClient {
     }
 
     async fn rename_workspace(&self, id: &HerdrWorkspaceId, label: &str) -> Result<(), HerdrError> {
-        self.ok(wire::M_WORKSPACE_RENAME, json!({ "workspace_id": id.0, "label": label })).await
+        self.ok(
+            wire::M_WORKSPACE_RENAME,
+            json!({ "workspace_id": id.0, "label": label }),
+        )
+        .await
     }
 
     async fn close_workspace(&self, id: &HerdrWorkspaceId) -> Result<(), HerdrError> {
-        self.ok(wire::M_WORKSPACE_CLOSE, json!({ "workspace_id": id.0 })).await
+        self.ok(wire::M_WORKSPACE_CLOSE, json!({ "workspace_id": id.0 }))
+            .await
     }
 
     async fn create_tab(&self, req: CreateTab) -> Result<Created, HerdrError> {
@@ -374,7 +479,11 @@ impl HerdrApi for HerdrClient {
     }
 
     async fn rename_tab(&self, id: &HerdrTabId, label: &str) -> Result<(), HerdrError> {
-        self.ok(wire::M_TAB_RENAME, json!({ "tab_id": id.0, "label": label })).await
+        self.ok(
+            wire::M_TAB_RENAME,
+            json!({ "tab_id": id.0, "label": label }),
+        )
+        .await
     }
 
     async fn close_tab(&self, id: &HerdrTabId) -> Result<(), HerdrError> {
@@ -394,19 +503,35 @@ impl HerdrApi for HerdrClient {
     }
 
     async fn rename_pane(&self, id: &HerdrPaneId, label: &str) -> Result<(), HerdrError> {
-        self.ok(wire::M_PANE_RENAME, json!({ "pane_id": id.0, "label": label })).await
+        self.ok(
+            wire::M_PANE_RENAME,
+            json!({ "pane_id": id.0, "label": label }),
+        )
+        .await
     }
 
     async fn close_pane(&self, id: &HerdrPaneId) -> Result<(), HerdrError> {
-        self.ok(wire::M_PANE_CLOSE, json!({ "pane_id": id.0 })).await
+        self.ok(wire::M_PANE_CLOSE, json!({ "pane_id": id.0 }))
+            .await
     }
 
-    async fn report_pane_metadata(&self, id: &HerdrPaneId, key: &str, value: &str) -> Result<(), HerdrError> {
-        let p = json!({ "pane_id": id.0, "source": wire::METADATA_SOURCE, "tokens": { key: value } });
+    async fn report_pane_metadata(
+        &self,
+        id: &HerdrPaneId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), HerdrError> {
+        let p =
+            json!({ "pane_id": id.0, "source": wire::METADATA_SOURCE, "tokens": { key: value } });
         self.ok(wire::M_PANE_REPORT_METADATA, p).await
     }
 
-    async fn report_workspace_metadata(&self, id: &HerdrWorkspaceId, key: &str, value: &str) -> Result<(), HerdrError> {
+    async fn report_workspace_metadata(
+        &self,
+        id: &HerdrWorkspaceId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), HerdrError> {
         let p = json!({ "workspace_id": id.0, "source": wire::METADATA_SOURCE, "tokens": { key: value } });
         self.ok(wire::M_WORKSPACE_REPORT_METADATA, p).await
     }
@@ -417,12 +542,23 @@ impl HerdrApi for HerdrClient {
     async fn start_agent(&self, req: StartAgent) -> Result<StartOutcome, HerdrError> {
         let reject = |e: HerdrError| match e {
             HerdrError::Timeout => Ok(StartOutcome::Unknown),
-            HerdrError::Rejected { message, .. } if message.contains("agent_not_ready") => Ok(StartOutcome::BlockedNeedsHuman),
-            HerdrError::Rejected { message, .. } => Ok(StartOutcome::NeedsRevision { reason: message }),
+            HerdrError::Rejected { message, .. } if message.contains("agent_not_ready") => {
+                Ok(StartOutcome::BlockedNeedsHuman)
+            }
+            HerdrError::Rejected { message, .. } => {
+                Ok(StartOutcome::NeedsRevision { reason: message })
+            }
             other => Err(other),
         };
-        let name = match self.request(wire::M_PANE_GET, json!({ "pane_id": req.pane.0 })).await {
-            Ok(v) => v.pointer("/pane/label").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned),
+        let name = match self
+            .request(wire::M_PANE_GET, json!({ "pane_id": req.pane.0 }))
+            .await
+        {
+            Ok(v) => v
+                .pointer("/pane/label")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
             Err(e) => return reject(e),
         }
         .unwrap_or_else(|| req.kind.clone());
@@ -435,7 +571,10 @@ impl HerdrApi for HerdrClient {
     }
 
     async fn agent(&self, pane: &HerdrPaneId) -> Result<Option<AgentInfo>, HerdrError> {
-        match self.request(wire::M_AGENT_GET, json!({ "target": pane.0 })).await {
+        match self
+            .request(wire::M_AGENT_GET, json!({ "target": pane.0 }))
+            .await
+        {
             Ok(v) => Ok(v.get("agent").and_then(wire::parse_agent)),
             Err(e) if wire::is_code(&e, "agent_not_found") => Ok(None),
             Err(e) => Err(e),
@@ -443,7 +582,11 @@ impl HerdrApi for HerdrClient {
     }
 
     async fn process_info(&self, pane: &HerdrPaneId) -> Result<ProcessInfo, HerdrError> {
-        wire::parse_process_info(&self.request(wire::M_PANE_PROCESS_INFO, json!({ "pane_id": pane.0 })).await?)
+        wire::parse_process_info(
+            &self
+                .request(wire::M_PANE_PROCESS_INFO, json!({ "pane_id": pane.0 }))
+                .await?,
+        )
     }
 
     /// Text goes through `pane.send_text`, key names through `pane.send_keys` (consecutive keys are
@@ -455,14 +598,26 @@ impl HerdrApi for HerdrClient {
                 KeyInput::Key(name) => batch.push(name),
                 KeyInput::Text(text) => {
                     if !batch.is_empty() {
-                        self.ok(wire::M_PANE_SEND_KEYS, json!({ "pane_id": pane.0, "keys": std::mem::take(&mut batch) })).await?;
+                        self.ok(
+                            wire::M_PANE_SEND_KEYS,
+                            json!({ "pane_id": pane.0, "keys": std::mem::take(&mut batch) }),
+                        )
+                        .await?;
                     }
-                    self.ok(wire::M_PANE_SEND_TEXT, json!({ "pane_id": pane.0, "text": text })).await?;
+                    self.ok(
+                        wire::M_PANE_SEND_TEXT,
+                        json!({ "pane_id": pane.0, "text": text }),
+                    )
+                    .await?;
                 }
             }
         }
         if !batch.is_empty() {
-            self.ok(wire::M_PANE_SEND_KEYS, json!({ "pane_id": pane.0, "keys": batch })).await?;
+            self.ok(
+                wire::M_PANE_SEND_KEYS,
+                json!({ "pane_id": pane.0, "keys": batch }),
+            )
+            .await?;
         }
         Ok(())
     }

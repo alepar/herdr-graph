@@ -84,7 +84,10 @@ impl FakeThreads {
     /// The native agent explicitly accepts: a pending Required episode becomes `accepted`, an ordinary
     /// invitation becomes joined. The only way acceptance ever appears.
     pub fn accept(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) {
-        if let Some(m) = self.lock().members.get_mut(&(thread.0.clone(), seat.0.clone()))
+        if let Some(m) = self
+            .lock()
+            .members
+            .get_mut(&(thread.0.clone(), seat.0.clone()))
             && m.state == InvitationState::Pending
         {
             m.state = InvitationState::Accepted;
@@ -93,7 +96,10 @@ impl FakeThreads {
 
     /// The native agent leaves an ordinary thread voluntarily.
     pub fn leave(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) {
-        if let Some(m) = self.lock().members.get_mut(&(thread.0.clone(), seat.0.clone()))
+        if let Some(m) = self
+            .lock()
+            .members
+            .get_mut(&(thread.0.clone(), seat.0.clone()))
             && m.constraint == InviteConstraint::Ordinary
         {
             m.state = InvitationState::Released;
@@ -102,9 +108,13 @@ impl FakeThreads {
 
     /// Create a thread the graph did not manage (a participation thread).
     pub fn add_thread(&self, thread: &str, topic: &str) {
-        self.lock()
-            .threads
-            .insert(thread.to_owned(), FakeThread { scope: ChannelScope::Teamspace, topic: topic.to_owned() });
+        self.lock().threads.insert(
+            thread.to_owned(),
+            FakeThread {
+                scope: ChannelScope::Teamspace,
+                topic: topic.to_owned(),
+            },
+        );
     }
 
     pub fn thread(&self, thread: &ThreadRef) -> Option<FakeThread> {
@@ -116,7 +126,10 @@ impl FakeThreads {
     }
 
     pub fn member(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) -> Option<FakeMember> {
-        self.lock().members.get(&(thread.0.clone(), seat.0.clone())).cloned()
+        self.lock()
+            .members
+            .get(&(thread.0.clone(), seat.0.clone()))
+            .cloned()
     }
 
     pub fn notifications(&self) -> Vec<FakeNotification> {
@@ -129,7 +142,11 @@ impl FakeThreads {
     }
 
     pub fn call_count(&self, name: &str) -> usize {
-        self.lock().calls.iter().filter(|c| c.as_str() == name).count()
+        self.lock()
+            .calls
+            .iter()
+            .filter(|c| c.as_str() == name)
+            .count()
     }
 
     fn gate(st: &State) -> Result<(), ThreadsError> {
@@ -137,14 +154,18 @@ impl FakeThreads {
             return Err(ThreadsError::ServiceBusy);
         }
         if st.disconnected {
-            return Err(ThreadsError::Disconnected("fake threads disconnected".into()));
+            return Err(ThreadsError::Disconnected(
+                "fake threads disconnected".into(),
+            ));
         }
         Ok(())
     }
 }
 
 fn require_thread<'a>(st: &'a State, thread: &ThreadRef) -> Result<&'a FakeThread, ThreadsError> {
-    st.threads.get(&thread.0).ok_or_else(|| ThreadsError::Rejected(format!("unknown thread {}", thread.0)))
+    st.threads
+        .get(&thread.0)
+        .ok_or_else(|| ThreadsError::Rejected(format!("unknown thread {}", thread.0)))
 }
 
 #[async_trait::async_trait]
@@ -159,7 +180,12 @@ impl ThreadsPort for FakeThreads {
         Self::gate(&st)?;
         let thread = thread_for_ensure_key(op_key);
         st.calls.push("ensure_thread".into());
-        st.threads.entry(thread.0.clone()).or_insert_with(|| FakeThread { scope, topic: topic.to_owned() });
+        st.threads
+            .entry(thread.0.clone())
+            .or_insert_with(|| FakeThread {
+                scope,
+                topic: topic.to_owned(),
+            });
         st.seen_ops.insert(op_key.0.clone());
         Ok(thread)
     }
@@ -186,14 +212,20 @@ impl ThreadsPort for FakeThreads {
             // confirmation (spec §7.1), a fresh episode when the previous one ended.
             if constraint == InviteConstraint::Required
                 && !(existing.constraint == InviteConstraint::Required
-                    && matches!(existing.state, InvitationState::Pending | InvitationState::Accepted))
+                    && matches!(
+                        existing.state,
+                        InvitationState::Pending | InvitationState::Accepted
+                    ))
             {
                 existing.constraint = constraint;
                 existing.state = InvitationState::Pending;
                 existing.requirement = Some(format!("requirement-{n}"));
                 existing.revision += 1;
             } else if constraint == InviteConstraint::Ordinary
-                && matches!(existing.state, InvitationState::Released | InvitationState::Retired)
+                && matches!(
+                    existing.state,
+                    InvitationState::Released | InvitationState::Retired
+                )
             {
                 existing.state = InvitationState::Pending;
             }
@@ -205,7 +237,8 @@ impl ThreadsPort for FakeThreads {
                 constraint,
                 state: InvitationState::Pending,
                 invitation: format!("inv-{n}"),
-                requirement: (constraint == InviteConstraint::Required).then(|| format!("requirement-{n}")),
+                requirement: (constraint == InviteConstraint::Required)
+                    .then(|| format!("requirement-{n}")),
                 revision: 1,
             },
         );
@@ -227,12 +260,15 @@ impl ThreadsPort for FakeThreads {
     ) -> Result<Option<MembershipDetail>, ThreadsError> {
         let st = self.lock();
         Self::gate(&st)?;
-        Ok(st.members.get(&(thread.0.clone(), seat.0.clone())).map(|m| MembershipDetail {
-            state: m.state,
-            invitation: Some(m.invitation.clone()),
-            requirement: m.requirement.clone(),
-            revision: m.requirement.is_some().then_some(m.revision),
-        }))
+        Ok(st
+            .members
+            .get(&(thread.0.clone(), seat.0.clone()))
+            .map(|m| MembershipDetail {
+                state: m.state,
+                invitation: Some(m.invitation.clone()),
+                requirement: m.requirement.clone(),
+                revision: m.requirement.is_some().then_some(m.revision),
+            }))
     }
 
     async fn notify(
@@ -257,7 +293,12 @@ impl ThreadsPort for FakeThreads {
         Ok(())
     }
 
-    async fn set_topic(&self, thread: &ThreadRef, topic: &str, op_key: &OpKey) -> Result<(), ThreadsError> {
+    async fn set_topic(
+        &self,
+        thread: &ThreadRef,
+        topic: &str,
+        op_key: &OpKey,
+    ) -> Result<(), ThreadsError> {
         let mut st = self.lock();
         Self::gate(&st)?;
         require_thread(&st, thread)?;
@@ -281,7 +322,10 @@ impl ThreadsPort for FakeThreads {
         st.seen_ops.insert(op_key.0.clone());
         if let Some(m) = st.members.get_mut(&(thread.0.clone(), seat.0.clone()))
             && m.constraint == InviteConstraint::Required
-            && matches!(m.state, InvitationState::Pending | InvitationState::Accepted)
+            && matches!(
+                m.state,
+                InvitationState::Pending | InvitationState::Accepted
+            )
         {
             m.state = InvitationState::Released;
         }
@@ -298,7 +342,10 @@ impl ThreadsPort for FakeThreads {
         Err(ThreadsError::Unsupported)
     }
 
-    async fn receipt_state(&self, _messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
+    async fn receipt_state(
+        &self,
+        _messages: &[MessageRef],
+    ) -> Result<Vec<MessageReceipts>, ThreadsError> {
         Err(ThreadsError::Unsupported)
     }
 

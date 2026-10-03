@@ -36,7 +36,11 @@ fn remote(e: ClientError) -> anyhow::Error {
 
 /// `{candidates, rendered}`: from the daemon when one runs, else straight from the committed graph.
 fn candidates() -> anyhow::Result<Value> {
-    match call_daemon("undo.list", json!({ "limit": DEFAULT_LIMIT }), CallMode::NoEnsure) {
+    match call_daemon(
+        "undo.list",
+        json!({ "limit": DEFAULT_LIMIT }),
+        CallMode::NoEnsure,
+    ) {
         Ok(v) => Ok(v),
         Err(ClientError::Unavailable(_)) => {
             let env = Env::from_process();
@@ -44,7 +48,8 @@ fn candidates() -> anyhow::Result<Value> {
                 .ok_or(ClientError::NoInstance)?;
             let paths = InstancePaths::new(&root);
             let store = GitStore::open(&paths.root)?;
-            crate::undo::commands::list_json(&store, DEFAULT_LIMIT).map_err(|e| anyhow::anyhow!("{}", e.message))
+            crate::undo::commands::list_json(&store, DEFAULT_LIMIT)
+                .map_err(|e| anyhow::anyhow!("{}", e.message))
         }
         Err(e) => Err(remote(e)),
     }
@@ -65,7 +70,9 @@ fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     if !std::io::stdin().is_terminal() {
-        println!("to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user");
+        println!(
+            "to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user"
+        );
         return Ok(ExitCode::SUCCESS);
     }
     interactive(&cands)
@@ -86,18 +93,32 @@ fn finished(state: &str) -> bool {
 
 fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
     let answer = prompt("Select action number: ")?;
-    let Some(pick) = answer.parse::<usize>().ok().and_then(|n| cands.iter().find(|c| c["index"] == n)) else {
+    let Some(pick) = answer
+        .parse::<usize>()
+        .ok()
+        .and_then(|n| cands.iter().find(|c| c["index"] == n))
+    else {
         println!("not applied: {answer:?} is not one of the listed numbers");
         return Ok(ExitCode::from(1));
     };
     let act = pick["act"].as_str().unwrap_or_default().to_owned();
-    let plan = call_daemon("plan.create", json!({ "words": ["undo", act] }), CallMode::Ensure).map_err(remote)?;
+    let plan = call_daemon(
+        "plan.create",
+        json!({ "words": ["undo", act] }),
+        CallMode::Ensure,
+    )
+    .map_err(remote)?;
     print!("{}", plan["rendered"].as_str().unwrap_or_default());
     if plan["plan"]["repair_required"].is_string() {
         println!("not applied");
         return Ok(ExitCode::from(1));
     }
-    if !matches!(prompt("Apply this undo? [y/n] ")?.to_ascii_lowercase().as_str(), "y" | "yes") {
+    if !matches!(
+        prompt("Apply this undo? [y/n] ")?
+            .to_ascii_lowercase()
+            .as_str(),
+        "y" | "yes"
+    ) {
         println!("not applied");
         return Ok(ExitCode::SUCCESS);
     }
@@ -113,7 +134,8 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
     std::io::stdout().flush()?;
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let reply = call_daemon("ops.get", json!({ "op": op }), CallMode::NoEnsure).map_err(remote)?;
+        let reply =
+            call_daemon("ops.get", json!({ "op": op }), CallMode::NoEnsure).map_err(remote)?;
         let state = reply["op"]["state"].as_str().unwrap_or("unknown");
         if finished(state) || Instant::now() >= deadline {
             println!("{op} {state}");
@@ -124,8 +146,12 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
             if let Some(r) = reply["op"]["rejection"].as_object() {
                 println!(
                     "{}: {}",
-                    r.get("reason").and_then(Value::as_str).unwrap_or("rejected"),
-                    r.get("explanation").and_then(Value::as_str).unwrap_or_default()
+                    r.get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("rejected"),
+                    r.get("explanation")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
                 );
             }
             return Ok(super::plan::exit_for_state(state));

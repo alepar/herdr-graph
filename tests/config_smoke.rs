@@ -33,14 +33,18 @@ use herdr_graph::plan::core_kinds::register_core_kinds;
 use herdr_graph::plan::kind::KindRegistry;
 use herdr_graph::plan::store::PlanStore;
 use herdr_graph::ports::clock::SystemClock;
+use herdr_graph::ports::herdr::{
+    AgentSession, AgentStatus, HerdrApi, HerdrSnapshot, KeyInput, PaneInfo,
+};
 use herdr_graph::ports::store::Store;
-use herdr_graph::ports::herdr::{AgentSession, AgentStatus, HerdrApi, HerdrSnapshot, KeyInput, PaneInfo};
 use herdr_graph::reconcile::{Reconciler, ReconcilerConfig, RequesterNotifier, register_mutations};
 use herdr_graph::store::GitStore;
 use herdr_graph::store::init::init_instance;
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
-use herdr_graph::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore};
+use herdr_graph::writer::{
+    Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore,
+};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -54,7 +58,10 @@ static RESULTS: Mutex<()> = Mutex::new(());
 
 fn results_path() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-    tmp.parent().map(Path::to_path_buf).unwrap_or(tmp).join("hg-config-smoke.json")
+    tmp.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or(tmp)
+        .join("hg-config-smoke.json")
 }
 
 /// Print the `CONFIG` line and merge `{config, status, reason?}` into the result file (latest run wins).
@@ -65,8 +72,10 @@ fn record(config: &str, status: &str, reason: Option<&str>) {
     }
     let _guard = RESULTS.lock().unwrap_or_else(|e| e.into_inner());
     let path = results_path();
-    let mut rows: Vec<serde_json::Value> =
-        std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default();
+    let mut rows: Vec<serde_json::Value> = std::fs::read(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
     rows.retain(|r| r["config"] != config);
     let mut row = json!({ "config": config, "status": status });
     if let Some(r) = reason {
@@ -74,7 +83,11 @@ fn record(config: &str, status: &str, reason: Option<&str>) {
     }
     rows.push(row);
     rows.sort_by_key(|r| r["config"].as_str().unwrap_or_default().to_owned());
-    std::fs::write(&path, serde_json::to_vec_pretty(&rows).expect("serialize results")).expect("write result file");
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&rows).expect("serialize results"),
+    )
+    .expect("write result file");
 }
 
 fn skipped(config: &str, reason: &str) {
@@ -94,7 +107,10 @@ impl Mutation for TestSetModel {
         let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
         rec.overrides.model = cx.request.args["model"].as_str().map(str::to_owned);
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "set model".into(), action: None })
+        Ok(Applied {
+            summary: "set model".into(),
+            action: None,
+        })
     }
 }
 
@@ -117,16 +133,28 @@ impl Mutation for TestSetOccupant {
             ended: None,
             end_reason: None,
         };
-        rec.occupant = Some(Occupant { native_session: ns.id.clone(), harness, since: cx.now });
+        rec.occupant = Some(Occupant {
+            native_session: ns.id.clone(),
+            harness,
+            since: cx.now,
+        });
         rec.sessions.push(ns);
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "set occupant".into(), action: None })
+        Ok(Applied {
+            summary: "set occupant".into(),
+            action: None,
+        })
     }
 }
 
 struct LogNotifier;
 impl RequesterNotifier for LogNotifier {
-    fn notify(&self, _op: &herdr_graph::model::OpId, _severity: herdr_graph::ports::threads::Severity, text: &str) {
+    fn notify(
+        &self,
+        _op: &herdr_graph::model::OpId,
+        _severity: herdr_graph::ports::threads::Severity,
+        text: &str,
+    ) {
         eprintln!("notify: {text}");
     }
 }
@@ -162,7 +190,10 @@ impl Rig {
             Err(e) => panic!("private herdr failed to start: {e:#}"),
         };
         let instance = herdr.root.join("graph");
-        herdr.guard().check(&instance).expect("instance is inside the private root");
+        herdr
+            .guard()
+            .check(&instance)
+            .expect("instance is inside the private root");
         init_instance(&instance).expect("init instance");
 
         let mut kinds = KindRegistry::default();
@@ -177,7 +208,13 @@ impl Rig {
         let store = Arc::new(GitStore::open(&instance).unwrap());
         let journal = Arc::new(Journal::open(&Journal::path_in(&instance)).unwrap());
         let clock = Arc::new(SystemClock);
-        let writer = WriterCore::new(store.clone(), journal.clone(), Arc::new(reg), clock.clone(), WriterConfig::default());
+        let writer = WriterCore::new(
+            store.clone(),
+            journal.clone(),
+            Arc::new(reg),
+            clock.clone(),
+            WriterConfig::default(),
+        );
         let deps = PlanDeps {
             kinds,
             plans,
@@ -192,8 +229,25 @@ impl Rig {
         cfg.exit_timeout = Duration::from_secs(20);
         cfg.exit_followup = Duration::from_secs(3);
         cfg.relaunch_grace = Duration::from_secs(0);
-        let rec = Reconciler::new(store.clone(), journal.clone(), writer.clone(), client.clone(), clock, Arc::new(LogNotifier), cfg);
-        Some(Rig { herdr, client, deps, writer, store, journal, rec, instance })
+        let rec = Reconciler::new(
+            store.clone(),
+            journal.clone(),
+            writer.clone(),
+            client.clone(),
+            clock,
+            Arc::new(LogNotifier),
+            cfg,
+        );
+        Some(Rig {
+            herdr,
+            client,
+            deps,
+            writer,
+            store,
+            journal,
+            rec,
+            instance,
+        })
     }
 
     /// Plan and apply one change; it must commit.
@@ -202,11 +256,22 @@ impl Rig {
             .unwrap_or_else(|e| panic!("plan {change}: {}", e.message));
         let id: herdr_graph::model::PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
         let sp = self.deps.plans.get(&id).unwrap().unwrap();
-        let op = admit_apply(&self.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-            .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
+        let op = admit_apply(
+            &self.deps,
+            &CallerInfo::default(),
+            sp.plan.id.as_str(),
+            Some(&sp.hash),
+            "relay",
+        )
+        .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
         self.writer.drain().unwrap();
         let row = self.writer.journal().get(&op).unwrap().unwrap();
-        assert_eq!(row.state, herdr_graph::model::operation::OpState::Committed, "{change}: {:?}", row.rejection);
+        assert_eq!(
+            row.state,
+            herdr_graph::model::operation::OpState::Committed,
+            "{change}: {:?}",
+            row.rejection
+        );
     }
 
     fn bookkeeping(&self, args: serde_json::Value) {
@@ -232,37 +297,66 @@ impl Rig {
         loop {
             let report = self.rec.step_fresh().await;
             self.writer.drain().unwrap();
-            let pending = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap();
+            let pending = self
+                .journal
+                .effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
+                .unwrap();
             if pending.is_empty() && report.planned.is_empty() && report.executed.is_empty() {
                 return;
             }
-            assert!(Instant::now() < deadline, "did not converge within 30 s; pending: {pending:?}");
+            assert!(
+                Instant::now() < deadline,
+                "did not converge within 30 s; pending: {pending:?}"
+            );
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }
 
     fn problem_effects(&self) -> Vec<String> {
         self.journal
-            .effects_with_status(&[EffectStatus::Failed, EffectStatus::NeedsRevision, EffectStatus::BlockedNeedsHuman])
+            .effects_with_status(&[
+                EffectStatus::Failed,
+                EffectStatus::NeedsRevision,
+                EffectStatus::BlockedNeedsHuman,
+            ])
             .unwrap()
             .into_iter()
-            .map(|r| format!("{} {} {:?}: {:?}", r.kind.as_str(), r.object, r.status, r.last_error))
+            .map(|r| {
+                format!(
+                    "{} {} {:?}: {:?}",
+                    r.kind.as_str(),
+                    r.object,
+                    r.status,
+                    r.last_error
+                )
+            })
             .collect()
     }
 
     fn view(&self) -> CommitView<'_> {
-        CommitView { store: &*self.store, at: self.store.head().unwrap() }
+        CommitView {
+            store: &*self.store,
+            at: self.store.head().unwrap(),
+        }
     }
 
     fn seat(&self, name: &str) -> SeatRecord {
-        let mut found: Vec<_> = layout::all_seats(&self.view()).unwrap().into_iter().filter(|(_, s)| s.name == name).collect();
+        let mut found: Vec<_> = layout::all_seats(&self.view())
+            .unwrap()
+            .into_iter()
+            .filter(|(_, s)| s.name == name)
+            .collect();
         assert_eq!(found.len(), 1, "seat {name}");
         found.remove(0).1
     }
 
     fn only_clone(&self, seat: &SeatRecord) -> CloneRecord {
-        let mut cs: Vec<_> =
-            layout::all_clones(&self.view()).unwrap().into_iter().map(|(_, c)| c).filter(|c| c.seat == seat.id).collect();
+        let mut cs: Vec<_> = layout::all_clones(&self.view())
+            .unwrap()
+            .into_iter()
+            .map(|(_, c)| c)
+            .filter(|c| c.seat == seat.id)
+            .collect();
         assert_eq!(cs.len(), 1, "one clone of {}", seat.name);
         cs.remove(0)
     }
@@ -285,15 +379,26 @@ impl Rig {
     }
 
     /// Wait until the clone's pane reports an agent of `kind` in `status`.
-    async fn wait_agent(&self, clone: &CloneId, kind: &str, status: AgentStatus, within: Duration) -> PaneInfo {
+    async fn wait_agent(
+        &self,
+        clone: &CloneId,
+        kind: &str,
+        status: AgentStatus,
+        within: Duration,
+    ) -> PaneInfo {
         let deadline = Instant::now() + within;
         loop {
             if let Some((_, p)) = self.pane_of(clone).await
-                && p.agent.as_ref().is_some_and(|a| a.kind == kind && a.status == status)
+                && p.agent
+                    .as_ref()
+                    .is_some_and(|a| a.kind == kind && a.status == status)
             {
                 return p;
             }
-            assert!(Instant::now() < deadline, "no {kind} agent in {status:?} on {clone} within {within:?}");
+            assert!(
+                Instant::now() < deadline,
+                "no {kind} agent in {status:?} on {clone} within {within:?}"
+            );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
@@ -315,9 +420,15 @@ impl Rig {
             ("HERDR_GRAPH", "1".to_owned()),
             ("HERDR_GRAPH_SEAT", seat.id.to_string()),
             ("HERDR_GRAPH_CLONE", clone.id.to_string()),
-            ("HERDR_GRAPH_INSTANCE", self.instance.to_string_lossy().into_owned()),
+            (
+                "HERDR_GRAPH_INSTANCE",
+                self.instance.to_string_lossy().into_owned(),
+            ),
         ] {
-            assert!(env_dump.contains(&format!("{k}={v}")), "{k}={v} missing from pane env: {env_dump}");
+            assert!(
+                env_dump.contains(&format!("{k}={v}")),
+                "{k}={v} missing from pane env: {env_dump}"
+            );
         }
     }
 }
@@ -326,8 +437,11 @@ impl Rig {
 fn on_path(name: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path)
-            .any(|d| d.join(name).metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+        std::env::split_paths(&path).any(|d| {
+            d.join(name)
+                .metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
     })
 }
 
@@ -343,27 +457,60 @@ async fn config_shell_seat_tab_pane_env() {
     rig.apply("teamspace create t");
     rig.apply("seat create s --teamspace t --active --harness shell");
     rig.converge().await;
-    assert!(rig.problem_effects().is_empty(), "{:?}", rig.problem_effects());
+    assert!(
+        rig.problem_effects().is_empty(),
+        "{:?}",
+        rig.problem_effects()
+    );
 
     let seat = rig.seat("s");
     let clone = rig.only_clone(&seat);
     let snap = rig.snapshot().await;
 
     // Plain names: the creation nonce was removed by the rename.
-    let ws = snap.workspaces.iter().find(|w| w.label == "t").unwrap_or_else(|| panic!("workspace t in {:?}", snap.workspaces));
-    let tab = ws.tabs.iter().find(|t| t.label == "s").unwrap_or_else(|| panic!("tab s in {:?}", ws.tabs));
+    let ws = snap
+        .workspaces
+        .iter()
+        .find(|w| w.label == "t")
+        .unwrap_or_else(|| panic!("workspace t in {:?}", snap.workspaces));
+    let tab = ws
+        .tabs
+        .iter()
+        .find(|t| t.label == "s")
+        .unwrap_or_else(|| panic!("tab s in {:?}", ws.tabs));
     assert!(
-        snap.workspaces.iter().flat_map(|w| w.tabs.iter().map(|t| &t.label)).all(|l| !l.contains(" · ")),
+        snap.workspaces
+            .iter()
+            .flat_map(|w| w.tabs.iter().map(|t| &t.label))
+            .all(|l| !l.contains(" · ")),
         "a nonce label is left: {snap:?}"
     );
-    let pane = tab.panes.iter().find(|p| p.metadata.get("hg").is_some_and(|v| *v == format!("hg={}", clone.id)));
+    let pane = tab.panes.iter().find(|p| {
+        p.metadata
+            .get("hg")
+            .is_some_and(|v| *v == format!("hg={}", clone.id))
+    });
     let pane = pane.unwrap_or_else(|| panic!("pane with hg={} in {tab:?}", clone.id));
 
     // No agent.start: no start effect in the journal and no agent on the pane.
-    assert!(pane.agent.is_none(), "shell seat has an agent: {:?}", pane.agent);
-    let all = [EffectStatus::Pending, EffectStatus::Done, EffectStatus::Obsolete, EffectStatus::Failed, EffectStatus::Unknown];
     assert!(
-        rig.journal.effects_with_status(&all).unwrap().iter().all(|r| r.kind != EffectKind::StartAgent),
+        pane.agent.is_none(),
+        "shell seat has an agent: {:?}",
+        pane.agent
+    );
+    let all = [
+        EffectStatus::Pending,
+        EffectStatus::Done,
+        EffectStatus::Obsolete,
+        EffectStatus::Failed,
+        EffectStatus::Unknown,
+    ];
+    assert!(
+        rig.journal
+            .effects_with_status(&all)
+            .unwrap()
+            .iter()
+            .all(|r| r.kind != EffectKind::StartAgent),
         "a StartAgent effect was journaled for a shell seat"
     );
 
@@ -374,11 +521,18 @@ async fn config_shell_seat_tab_pane_env() {
     let deadline = Instant::now() + Duration::from_secs(20);
     // The pane shell may still be starting up: wait for it, then type once.
     loop {
-        let p = rig.client.process_info(&pane_id).await.expect("process_info");
+        let p = rig
+            .client
+            .process_info(&pane_id)
+            .await
+            .expect("process_info");
         if p.is_shell {
             break;
         }
-        assert!(Instant::now() < deadline, "pane never showed a shell: {p:?}");
+        assert!(
+            Instant::now() < deadline,
+            "pane never showed a shell: {p:?}"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -386,19 +540,38 @@ async fn config_shell_seat_tab_pane_env() {
         "echo \"$HERDR_GRAPH|$HERDR_GRAPH_SEAT|$HERDR_GRAPH_CLONE|$HERDR_GRAPH_INSTANCE\" > {}",
         out.display()
     );
-    rig.client.send_keys(&pane_id, &[KeyInput::Text(cmd), KeyInput::Key("enter".into())]).await.expect("send_keys");
+    rig.client
+        .send_keys(
+            &pane_id,
+            &[KeyInput::Text(cmd), KeyInput::Key("enter".into())],
+        )
+        .await
+        .expect("send_keys");
     let content = loop {
         if let Ok(c) = std::fs::read_to_string(&out)
             && c.ends_with('\n')
         {
             break c;
         }
-        assert!(Instant::now() < deadline, "env file {} never appeared", out.display());
+        assert!(
+            Instant::now() < deadline,
+            "env file {} never appeared",
+            out.display()
+        );
         tokio::time::sleep(Duration::from_millis(200)).await;
     };
     let got: Vec<&str> = content.trim_end().split('|').collect();
-    let want = ["1".to_owned(), seat.id.to_string(), clone.id.to_string(), rig.instance.to_string_lossy().into_owned()];
-    assert_eq!(got, want.iter().map(String::as_str).collect::<Vec<_>>(), "pane env");
+    let want = [
+        "1".to_owned(),
+        seat.id.to_string(),
+        clone.id.to_string(),
+        rig.instance.to_string_lossy().into_owned(),
+    ];
+    assert_eq!(
+        got,
+        want.iter().map(String::as_str).collect::<Vec<_>>(),
+        "pane env"
+    );
 
     record(CONFIG, "VERIFIED", None);
 }
@@ -431,7 +604,12 @@ fn reported_session(pane: &PaneInfo) -> Option<String> {
 }
 
 /// Launch a seat of `harness`, capture the session, replace it (model change) and verify the resume.
-async fn agent_launch_and_resume(config: &str, harness: Harness, model_var: &str, default_model: &str) {
+async fn agent_launch_and_resume(
+    config: &str,
+    harness: Harness,
+    model_var: &str,
+    default_model: &str,
+) {
     let prof = profile(harness);
     let kind = prof.agent_kind.expect("agent harness");
     let Some(rig) = Rig::start().await else {
@@ -439,22 +617,39 @@ async fn agent_launch_and_resume(config: &str, harness: Harness, model_var: &str
     };
     let hname = kind;
     rig.apply("teamspace create t");
-    rig.apply(&format!("seat create s --teamspace t --active --harness {hname}"));
+    rig.apply(&format!(
+        "seat create s --teamspace t --active --harness {hname}"
+    ));
     rig.converge().await;
-    assert!(rig.problem_effects().is_empty(), "{:?}", rig.problem_effects());
+    assert!(
+        rig.problem_effects().is_empty(),
+        "{:?}",
+        rig.problem_effects()
+    );
     let seat = rig.seat("s");
     let clone = rig.only_clone(&seat);
 
     // agent.start detected idle.
-    let pane = rig.wait_agent(&clone.id, kind, AgentStatus::Idle, Duration::from_secs(120)).await;
-    let first_pid = rig.client.process_info(&pane.id).await.unwrap().foreground_pid;
+    let pane = rig
+        .wait_agent(&clone.id, kind, AgentStatus::Idle, Duration::from_secs(120))
+        .await;
+    let first_pid = rig
+        .client
+        .process_info(&pane.id)
+        .await
+        .unwrap()
+        .foreground_pid;
     let env_dump = rig.foreground_env(&pane.id).await;
     rig.expect_env(&seat, &clone, &env_dump);
 
     let Some(native) = reported_session(&pane) else {
         // Spike 5: Herdr may not report agent_session (claude gets its id from the graph's SessionStart hook,
         // which this smoke does not install). Without an id there is no recorded occupant to resume.
-        record(config, "PARTIAL", Some("launch+env verified; agent_session not reported, resume not exercised"));
+        record(
+            config,
+            "PARTIAL",
+            Some("launch+env verified; agent_session not reported, resume not exercised"),
+        );
         return;
     };
     println!("{config}: agent_session = {native}");
@@ -464,29 +659,52 @@ async fn agent_launch_and_resume(config: &str, harness: Harness, model_var: &str
     let model = std::env::var(model_var).unwrap_or_else(|_| default_model.to_owned());
     rig.bookkeeping(json!({"sub": "test_set_model", "seat": seat.id, "model": model}));
     rig.converge().await;
-    assert!(rig.problem_effects().is_empty(), "{:?}", rig.problem_effects());
+    assert!(
+        rig.problem_effects().is_empty(),
+        "{:?}",
+        rig.problem_effects()
+    );
 
-    let all = [EffectStatus::Pending, EffectStatus::Done, EffectStatus::Failed, EffectStatus::Unknown, EffectStatus::NeedsRevision];
+    let all = [
+        EffectStatus::Pending,
+        EffectStatus::Done,
+        EffectStatus::Failed,
+        EffectStatus::Unknown,
+        EffectStatus::NeedsRevision,
+    ];
     let replaced = rig.journal.effects_with_status(&all).unwrap();
     assert!(
-        replaced.iter().any(|r| r.kind == EffectKind::ReplaceSession && r.status == EffectStatus::Done),
+        replaced
+            .iter()
+            .any(|r| r.kind == EffectKind::ReplaceSession && r.status == EffectStatus::Done),
         "no completed ReplaceSession: {replaced:?}"
     );
 
     // The new occupant is a fresh process started with the resume arguments, idle again, same env.
-    let pane = rig.wait_agent(&clone.id, kind, AgentStatus::Idle, Duration::from_secs(120)).await;
+    let pane = rig
+        .wait_agent(&clone.id, kind, AgentStatus::Idle, Duration::from_secs(120))
+        .await;
     let info = rig.client.process_info(&pane.id).await.unwrap();
-    assert_ne!(info.foreground_pid, first_pid, "the occupant was not replaced");
+    assert_ne!(
+        info.foreground_pid, first_pid,
+        "the occupant was not replaced"
+    );
     let prefix = prof.resume_prefix.expect("resume supported");
     let mut resume: Vec<String> = prefix.iter().map(|s| s.to_string()).collect();
     resume.push(native.clone());
     assert!(
-        info.foreground_argv.windows(resume.len()).any(|w| w == resume.as_slice()),
+        info.foreground_argv
+            .windows(resume.len())
+            .any(|w| w == resume.as_slice()),
         "argv {:?} does not contain {resume:?}",
         info.foreground_argv
     );
     for a in prof.launch_args {
-        assert!(info.foreground_argv.iter().any(|x| x == a), "launch arg {a} missing from {:?}", info.foreground_argv);
+        assert!(
+            info.foreground_argv.iter().any(|x| x == a),
+            "launch arg {a} missing from {:?}",
+            info.foreground_argv
+        );
     }
     let env_dump = rig.foreground_env(&pane.id).await;
     rig.expect_env(&seat, &clone, &env_dump);
@@ -519,12 +737,20 @@ async fn config_codex_launch_and_resume() {
 fn zz_config_matrix_summary() {
     let path = results_path();
     println!("config smoke results: {}", path.display());
-    let Some(rows) = std::fs::read(&path).ok().and_then(|raw| serde_json::from_slice::<Vec<serde_json::Value>>(&raw).ok()) else {
+    let Some(rows) = std::fs::read(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Vec<serde_json::Value>>(&raw).ok())
+    else {
         println!("(no results recorded yet)");
         return;
     };
     println!("{:<8} {:<10} reason", "config", "status");
     for r in rows {
-        println!("{:<8} {:<10} {}", r["config"].as_str().unwrap_or("?"), r["status"].as_str().unwrap_or("?"), r["reason"].as_str().unwrap_or(""));
+        println!(
+            "{:<8} {:<10} {}",
+            r["config"].as_str().unwrap_or("?"),
+            r["status"].as_str().unwrap_or("?"),
+            r["reason"].as_str().unwrap_or("")
+        );
     }
 }

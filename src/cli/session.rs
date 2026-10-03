@@ -6,7 +6,9 @@
 //! binding up); when neither is set it does nothing. It must never fail the hook: every error prints to
 //! stderr and the exit status stays 0.
 use crate::config::Env;
-use crate::daemon::client::{CallMode, ClientError, call_daemon_with_timeout, caller_info_from_env};
+use crate::daemon::client::{
+    CallMode, ClientError, call_daemon_with_timeout, caller_info_from_env,
+};
 use crate::transcripts::capture::{SpooledReport, parse_claude_hook, report_args, spool_report};
 use clap::Subcommand;
 use std::io::Read;
@@ -48,15 +50,31 @@ fn report(from_hook: &str) -> anyhow::Result<()> {
     std::io::stdin().read_to_string(&mut stdin)?;
     let hook = parse_claude_hook(&stdin)?;
     let cwd = std::env::current_dir().unwrap_or_default();
-    let Some(args) = report_args(&hook, env.graph_clone.as_deref(), env.pane_id.as_deref(), cwd) else {
+    let Some(args) = report_args(
+        &hook,
+        env.graph_clone.as_deref(),
+        env.pane_id.as_deref(),
+        cwd,
+    ) else {
         return Ok(());
     };
-    match call_daemon_with_timeout("session.report", args.clone(), CallMode::NoEnsure, HOOK_CALL_TIMEOUT) {
+    match call_daemon_with_timeout(
+        "session.report",
+        args.clone(),
+        CallMode::NoEnsure,
+        HOOK_CALL_TIMEOUT,
+    ) {
         Ok(_) | Err(ClientError::NoInstance) => Ok(()),
         Err(e) => {
-            let (root, _) = crate::config::locate_instance(&env, &crate::config::plugin_config_dir_via_herdr)
-                .ok_or_else(|| anyhow::anyhow!("no instance to spool into ({e})"))?;
-            let spooled = SpooledReport { version: 1, caller: caller_info_from_env(), args, spooled_at: chrono::Utc::now() };
+            let (root, _) =
+                crate::config::locate_instance(&env, &crate::config::plugin_config_dir_via_herdr)
+                    .ok_or_else(|| anyhow::anyhow!("no instance to spool into ({e})"))?;
+            let spooled = SpooledReport {
+                version: 1,
+                caller: caller_info_from_env(),
+                args,
+                spooled_at: chrono::Utc::now(),
+            };
             spool_report(&root, &spooled)?;
             eprintln!("herdr-graph: session-report: daemon not ready ({e}); spooled");
             Ok(())

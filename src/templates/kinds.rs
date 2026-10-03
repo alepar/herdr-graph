@@ -11,11 +11,13 @@ use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, RetireMechan
 use crate::model::effective::{EffectiveSeatConfig, resolve, session_replacements};
 use crate::model::seat::{SeatRecord, TemplateRef};
 use crate::model::template::{CopiedFrom, Relationship, Startup, TemplateMember, TemplateRecord};
-use crate::model::{ActionId, AnyId, AppId, CloneId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId, TemplateId};
+use crate::model::{
+    ActionId, AnyId, AppId, CloneId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId, TemplateId,
+};
 use crate::plan::core_kinds::{
-    Acc, SeatFacts, TsInfo, basename, clone_slug_for, do_resurrect_seat, do_retire_seat, ensure_ts_live, mechanism, mm,
-    new_clone_record, open_clone_effects, parse_args, read_seat, read_ts, rev_of, retired_by, retired_with, seat_slug_for,
-    write_action,
+    Acc, SeatFacts, TsInfo, basename, clone_slug_for, do_resurrect_seat, do_retire_seat,
+    ensure_ts_live, mechanism, mm, new_clone_record, open_clone_effects, parse_args, read_seat,
+    read_ts, retired_by, retired_with, rev_of, seat_slug_for, write_action,
 };
 use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
@@ -26,8 +28,12 @@ use crate::store::record::read_toml;
 use crate::store::slug::{slugify, unique_slug};
 use crate::store::tree::TreeRead;
 use crate::templates::document::TemplateDocument;
-use crate::templates::structure::{effective_structure_with, member_seat_record, read_seat_rec, read_template};
-use crate::templates::withdrawal::{Verdict, ambiguity, classify, live_others, membership, withdraw_plan};
+use crate::templates::structure::{
+    effective_structure_with, member_seat_record, read_seat_rec, read_template,
+};
+use crate::templates::withdrawal::{
+    Verdict, ambiguity, classify, live_others, membership, withdraw_plan,
+};
 use crate::writer::{Applied, MutationCx, MutationError};
 use serde::Deserialize;
 use serde_json::json;
@@ -58,39 +64,58 @@ impl Ids<'_> {
     fn get<I: ReservedId>(&mut self, slot: &str) -> Result<I, PlanError> {
         match self {
             Ids::Mint(r) => Ok(r.get_or_mint(slot)),
-            Ids::Fixed(r) => {
-                r.get(slot).ok_or_else(|| PlanError::Invalid(format!("plan reserved no id for slot {slot}")))
-            }
+            Ids::Fixed(r) => r
+                .get(slot)
+                .ok_or_else(|| PlanError::Invalid(format!("plan reserved no id for slot {slot}"))),
         }
     }
 }
 
 fn reserved_id<I: ReservedId>(plan: &Plan, slot: &str) -> Result<I, MutationError> {
-    plan.reserved.get(slot).ok_or_else(|| MutationError::Bug(format!("plan reserved no id for slot {slot}")))
+    plan.reserved
+        .get(slot)
+        .ok_or_else(|| MutationError::Bug(format!("plan reserved no id for slot {slot}")))
 }
 
 fn templates_root() -> RepoPath {
     RepoPath::new("templates").expect("static path")
 }
 
-fn resolve_template(tree: &dyn TreeRead, s: &str) -> Result<(ObjectLocation, TemplateRecord), PlanError> {
+fn resolve_template(
+    tree: &dyn TreeRead,
+    s: &str,
+) -> Result<(ObjectLocation, TemplateRecord), PlanError> {
     if let Ok(id) = TemplateId::parse(s) {
-        return read_template(tree, &id)?.ok_or_else(|| PlanError::Invalid(format!("no template {id}")));
+        return read_template(tree, &id)?
+            .ok_or_else(|| PlanError::Invalid(format!("no template {id}")));
     }
-    let mut found: Vec<_> = layout::list_templates(tree)?.into_iter().filter(|(_, t)| t.name == s).collect();
+    let mut found: Vec<_> = layout::list_templates(tree)?
+        .into_iter()
+        .filter(|(_, t)| t.name == s)
+        .collect();
     match found.len() {
         0 => Err(PlanError::Invalid(format!("no template named {s:?}"))),
         1 => Ok(found.remove(0)),
-        _ => Err(PlanError::Invalid(format!("template name {s:?} is ambiguous; use an id"))),
+        _ => Err(PlanError::Invalid(format!(
+            "template name {s:?} is ambiguous; use an id"
+        ))),
     }
 }
 
-fn read_app(tree: &dyn TreeRead, id: &AppId) -> Result<Option<(ObjectLocation, ApplicationRecord)>, StoreError> {
-    let Some(loc) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+fn read_app(
+    tree: &dyn TreeRead,
+    id: &AppId,
+) -> Result<Option<(ObjectLocation, ApplicationRecord)>, StoreError> {
+    let Some(loc) = layout::locate(tree, &id.to_any())? else {
+        return Ok(None);
+    };
     Ok(read_toml::<ApplicationRecord>(tree, &loc.record_path)?.map(|r| (loc, r)))
 }
 
-fn resolve_application(tree: &dyn TreeRead, s: &str) -> Result<(ObjectLocation, ApplicationRecord), PlanError> {
+fn resolve_application(
+    tree: &dyn TreeRead,
+    s: &str,
+) -> Result<(ObjectLocation, ApplicationRecord), PlanError> {
     let (loc, rec) = if let Ok(id) = AppId::parse(s) {
         read_app(tree, &id)?.ok_or_else(|| PlanError::Invalid(format!("no application {id}")))?
     } else {
@@ -101,21 +126,36 @@ fn resolve_application(tree: &dyn TreeRead, s: &str) -> Result<(ObjectLocation, 
         match found.len() {
             0 => return Err(PlanError::Invalid(format!("no application named {s:?}"))),
             1 => found.remove(0),
-            _ => return Err(PlanError::Invalid(format!("application name {s:?} is ambiguous; use an id"))),
+            _ => {
+                return Err(PlanError::Invalid(format!(
+                    "application name {s:?} is ambiguous; use an id"
+                )));
+            }
         }
     };
     if rec.lifecycle == AppLifecycle::Retired {
-        return Err(PlanError::Invalid(format!("application {} is already retired", rec.id)));
+        return Err(PlanError::Invalid(format!(
+            "application {} is already retired",
+            rec.id
+        )));
     }
     Ok((loc, rec))
 }
 
-fn agents_md(tree: &dyn TreeRead, tpl_dir: &RepoPath, member_name: &str) -> Result<Option<Vec<u8>>, StoreError> {
+fn agents_md(
+    tree: &dyn TreeRead,
+    tpl_dir: &RepoPath,
+    member_name: &str,
+) -> Result<Option<Vec<u8>>, StoreError> {
     tree.read_file(&layout::member_agents_md(tpl_dir, &slugify(member_name)))
 }
 
 /// `doc` with `agents_md` filled from the template folder (so a diff against an edit is meaningful).
-fn doc_with_agents(tree: &dyn TreeRead, tpl_dir: &RepoPath, rec: &TemplateRecord) -> Result<TemplateDocument, StoreError> {
+fn doc_with_agents(
+    tree: &dyn TreeRead,
+    tpl_dir: &RepoPath,
+    rec: &TemplateRecord,
+) -> Result<TemplateDocument, StoreError> {
     let mut doc = TemplateDocument::from_record(rec);
     for m in &mut doc.members {
         m.agents_md = agents_md(tree, tpl_dir, &m.name)?.and_then(|b| String::from_utf8(b).ok());
@@ -123,17 +163,29 @@ fn doc_with_agents(tree: &dyn TreeRead, tpl_dir: &RepoPath, rec: &TemplateRecord
     Ok(doc)
 }
 
-fn write_agents(cx: &mut MutationCx<'_>, tpl_dir: &RepoPath, doc: &TemplateDocument) -> Result<(), MutationError> {
+fn write_agents(
+    cx: &mut MutationCx<'_>,
+    tpl_dir: &RepoPath,
+    doc: &TemplateDocument,
+) -> Result<(), MutationError> {
     for m in &doc.members {
         if let Some(text) = &m.agents_md {
-            cx.tree.put_file(layout::member_agents_md(tpl_dir, &slugify(&m.name)), text.clone().into_bytes());
+            cx.tree.put_file(
+                layout::member_agents_md(tpl_dir, &slugify(&m.name)),
+                text.clone().into_bytes(),
+            );
         }
     }
     Ok(())
 }
 
 fn str_array<'a>(items: impl IntoIterator<Item = &'a str>) -> toml::Value {
-    toml::Value::Array(items.into_iter().map(|s| toml::Value::String(s.to_owned())).collect())
+    toml::Value::Array(
+        items
+            .into_iter()
+            .map(|s| toml::Value::String(s.to_owned()))
+            .collect(),
+    )
 }
 
 fn state_value(lifecycle: &str) -> toml::Value {
@@ -143,14 +195,26 @@ fn state_value(lifecycle: &str) -> toml::Value {
 }
 
 fn created_object(acc: &mut Acc, id: AnyId, lifecycle: &str) {
-    acc.affected.push(AffectedObject { object: id, before: None, after: Some(state_value(lifecycle)) });
+    acc.affected.push(AffectedObject {
+        object: id,
+        before: None,
+        after: Some(state_value(lifecycle)),
+    });
 }
 
 fn startup_lifecycle(s: Startup) -> &'static str {
-    if s == Startup::Active { "active" } else { "dormant" }
+    if s == Startup::Active {
+        "active"
+    } else {
+        "dormant"
+    }
 }
 
-fn read_json_arg(words: &[String], caller: &CallerInfo, usage: &str) -> Result<serde_json::Value, PlanError> {
+fn read_json_arg(
+    words: &[String],
+    caller: &CallerInfo,
+    usage: &str,
+) -> Result<serde_json::Value, PlanError> {
     let from = flag(words, "--from").ok_or_else(|| PlanError::Usage(usage.into()))?;
     let mut path = PathBuf::from(from);
     if path.is_relative()
@@ -182,7 +246,10 @@ fn flag_values(words: &[String], name: &str) -> Vec<String> {
 }
 
 /// The live application that provides `seat` (its first live application), if any.
-fn seat_owner(tree: &dyn TreeRead, seat: &SeatRecord) -> Result<Option<ApplicationRecord>, StoreError> {
+fn seat_owner(
+    tree: &dyn TreeRead,
+    seat: &SeatRecord,
+) -> Result<Option<ApplicationRecord>, StoreError> {
     for id in &seat.applications {
         if let Some((_, a)) = read_app(tree, id)?
             && a.lifecycle == AppLifecycle::Active
@@ -217,18 +284,37 @@ fn create_effects(
         }),
     )];
     if let Some(clone) = clone {
-        v.push(PlanEffect::new("clone.add", clone.clone(), json!({ "seat": seat, "name": member.name })));
+        v.push(PlanEffect::new(
+            "clone.add",
+            clone.clone(),
+            json!({ "seat": seat, "name": member.name }),
+        ));
         if ts.rec.lifecycle == Lifecycle::Dormant && activated.insert(ts.rec.id.clone()) {
-            v.push(PlanEffect::new("teamspace.activate", ts.rec.id.clone(), json!({ "name": ts.rec.name })).induced());
+            v.push(
+                PlanEffect::new(
+                    "teamspace.activate",
+                    ts.rec.id.clone(),
+                    json!({ "name": ts.rec.name }),
+                )
+                .induced(),
+            );
         }
-        v.push(PlanEffect::new("runtime.open_tab", seat.clone(), json!({ "name": member.name })));
+        v.push(PlanEffect::new(
+            "runtime.open_tab",
+            seat.clone(),
+            json!({ "name": member.name }),
+        ));
         v.extend(open_clone_effects(clone, seat, cfg));
     }
     v
 }
 
 /// Retire effects for a seat leaving `app` by withdrawal.
-fn withdrawal_effects(tree: &dyn TreeRead, seat: &SeatId, app: &AppId) -> Result<Vec<PlanEffect>, PlanError> {
+fn withdrawal_effects(
+    tree: &dyn TreeRead,
+    seat: &SeatId,
+    app: &AppId,
+) -> Result<Vec<PlanEffect>, PlanError> {
     let f = read_seat(tree, seat)?;
     let archive = layout::archived_seat_dir(&f.ts.loc.folder, basename(&f.loc.folder), &f.rec.id);
     let mut v = vec![PlanEffect::new(
@@ -239,11 +325,23 @@ fn withdrawal_effects(tree: &dyn TreeRead, seat: &SeatId, app: &AppId) -> Result
             "path_from": f.loc.folder.as_str(), "path_to": archive.as_str(),
         }),
     )];
-    for (_, c) in f.clones.iter().filter(|(_, c)| c.lifecycle == CloneLifecycle::Active) {
-        v.push(PlanEffect::new("clone.retire", c.id.clone(), json!({ "seat": f.rec.id, "name": c.name })));
+    for (_, c) in f
+        .clones
+        .iter()
+        .filter(|(_, c)| c.lifecycle == CloneLifecycle::Active)
+    {
+        v.push(PlanEffect::new(
+            "clone.retire",
+            c.id.clone(),
+            json!({ "seat": f.rec.id, "name": c.name }),
+        ));
     }
     if f.rec.lifecycle == Lifecycle::Active {
-        v.push(PlanEffect::new("runtime.close_tab", f.rec.id.clone(), json!({ "name": f.rec.name })));
+        v.push(PlanEffect::new(
+            "runtime.close_tab",
+            f.rec.id.clone(),
+            json!({ "name": f.rec.name }),
+        ));
     }
     Ok(v)
 }
@@ -269,10 +367,14 @@ fn create_member_seat(
     let active = member.startup == Startup::Active;
     if active {
         rec.activation.last_op = Some(cx.op.clone());
-        let clone_id = clone_id.ok_or_else(|| MutationError::Bug("active member without a clone id".into()))?;
+        let clone_id = clone_id
+            .ok_or_else(|| MutationError::Bug("active member without a clone id".into()))?;
         let cslug = clone_slug_for(&cx.tree, &seat_dir, &member.name, clone_id).map_err(mm)?;
         let mut clone = new_clone_record(seat_id, &member.name, clone_id.clone());
-        cx.tree.put_record(layout::clone_record(&layout::clone_dir(&seat_dir, &cslug)), &mut clone)?;
+        cx.tree.put_record(
+            layout::clone_record(&layout::clone_dir(&seat_dir, &cslug)),
+            &mut clone,
+        )?;
         created_object(acc, clone_id.to_any(), "active");
         if ts.rec.lifecycle == Lifecycle::Dormant {
             let mut t = ts.rec.clone();
@@ -280,7 +382,8 @@ fn create_member_seat(
             cx.tree.put_record(ts.loc.record_path.clone(), &mut t)?;
         }
     }
-    cx.tree.put_record(layout::seat_record(&seat_dir), &mut rec)?;
+    cx.tree
+        .put_record(layout::seat_record(&seat_dir), &mut rec)?;
     created_object(acc, seat_id.to_any(), startup_lifecycle(member.startup));
     if let Some(bytes) = agents_md(&cx.tree, tpl_dir, &member.name)? {
         cx.tree.put_file(seat_dir.join("AGENTS.md")?, bytes);
@@ -291,7 +394,12 @@ fn create_member_seat(
 fn seat_ids_of(acc: &Acc, prefix_seat: bool) -> Vec<AnyId> {
     acc.affected
         .iter()
-        .filter(|a| a.before.is_none() && a.object.as_str().starts_with(if prefix_seat { "st_" } else { "cl_" }))
+        .filter(|a| {
+            a.before.is_none()
+                && a.object
+                    .as_str()
+                    .starts_with(if prefix_seat { "st_" } else { "cl_" })
+        })
         .map(|a| a.object.clone())
         .collect()
 }
@@ -324,17 +432,32 @@ impl OrgKind for TemplateCreate {
         let document = read_json_arg(words, caller, usage)?;
         Ok(json!({ "name": name, "document": document }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, reserved: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        reserved: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: CreateArgs = parse_args(args)?;
         let mut doc = a.document;
         doc.name = a.name.clone();
         doc.validate().map_err(invalid)?;
-        if layout::list_templates(cx.tree)?.iter().any(|(_, t)| t.name == a.name) {
-            return Err(PlanError::Invalid(format!("a template named {:?} already exists", a.name)));
+        if layout::list_templates(cx.tree)?
+            .iter()
+            .any(|(_, t)| t.name == a.name)
+        {
+            return Err(PlanError::Invalid(format!(
+                "a template named {:?} already exists",
+                a.name
+            )));
         }
         let id: TemplateId = reserved.get_or_mint("template");
         let rec = doc.to_record(id.clone(), 0, &BTreeMap::new(), reserved);
-        let slug = unique_slug(&a.name, id.suffix6(), &layout::taken_slugs(cx.tree, &templates_root())?);
+        let slug = unique_slug(
+            &a.name,
+            id.suffix6(),
+            &layout::taken_slugs(cx.tree, &templates_root())?,
+        );
         Ok(PlanBody {
             effects: vec![PlanEffect::new(
                 "template.create",
@@ -351,18 +474,31 @@ impl OrgKind for TemplateCreate {
             summary: format!("create template {}", a.name),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, plan: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: CreateArgs = parse_args(args).map_err(mm)?;
         let mut doc = a.document;
         doc.name = a.name.clone();
         let id: TemplateId = reserved_id(plan, "template")?;
         let mut reserved = plan.reserved.clone();
         let mut rec = doc.to_record(id.clone(), 0, &BTreeMap::new(), &mut reserved);
-        let slug = unique_slug(&a.name, id.suffix6(), &layout::taken_slugs(&cx.tree, &templates_root())?);
+        let slug = unique_slug(
+            &a.name,
+            id.suffix6(),
+            &layout::taken_slugs(&cx.tree, &templates_root())?,
+        );
         let dir = layout::template_dir(&slug);
-        cx.tree.put_record(layout::template_record(&dir), &mut rec)?;
+        cx.tree
+            .put_record(layout::template_record(&dir), &mut rec)?;
         write_agents(cx, &dir, &doc)?;
-        Ok(Applied { summary: format!("create template {}", a.name), action: None })
+        Ok(Applied {
+            summary: format!("create template {}", a.name),
+            action: None,
+        })
     }
 }
 
@@ -386,13 +522,26 @@ impl OrgKind for TemplateCopy {
     }
     fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
         let usage = || PlanError::Usage("template copy <template> <new-name>".into());
-        Ok(json!({ "template": positional(words, 0).ok_or_else(usage)?, "name": positional(words, 1).ok_or_else(usage)? }))
+        Ok(
+            json!({ "template": positional(words, 0).ok_or_else(usage)?, "name": positional(words, 1).ok_or_else(usage)? }),
+        )
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, reserved: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        reserved: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: CopyArgs = parse_args(args)?;
         let (_, src) = resolve_template(cx.tree, &a.template)?;
-        if layout::list_templates(cx.tree)?.iter().any(|(_, t)| t.name == a.name) {
-            return Err(PlanError::Invalid(format!("a template named {:?} already exists", a.name)));
+        if layout::list_templates(cx.tree)?
+            .iter()
+            .any(|(_, t)| t.name == a.name)
+        {
+            return Err(PlanError::Invalid(format!(
+                "a template named {:?} already exists",
+                a.name
+            )));
         }
         let id: TemplateId = reserved.get_or_mint("template");
         Ok(PlanBody {
@@ -410,7 +559,12 @@ impl OrgKind for TemplateCopy {
             summary: format!("copy template {} to {}", src.name, a.name),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, plan: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: CopyArgs = parse_args(args).map_err(mm)?;
         let (src_loc, src) = resolve_template(&cx.tree, &a.template).map_err(mm)?;
         let id: TemplateId = reserved_id(plan, "template")?;
@@ -418,16 +572,28 @@ impl OrgKind for TemplateCopy {
         rec.id = id.clone();
         rec.name = a.name.clone();
         rec.name_history = vec![];
-        rec.copied_from = Some(CopiedFrom { template: src.id.clone(), at: cx.now });
-        let slug = unique_slug(&a.name, id.suffix6(), &layout::taken_slugs(&cx.tree, &templates_root())?);
+        rec.copied_from = Some(CopiedFrom {
+            template: src.id.clone(),
+            at: cx.now,
+        });
+        let slug = unique_slug(
+            &a.name,
+            id.suffix6(),
+            &layout::taken_slugs(&cx.tree, &templates_root())?,
+        );
         let dir = layout::template_dir(&slug);
-        cx.tree.put_record(layout::template_record(&dir), &mut rec)?;
+        cx.tree
+            .put_record(layout::template_record(&dir), &mut rec)?;
         for m in &src.members {
             if let Some(bytes) = agents_md(&cx.tree, &src_loc.folder, &m.name)? {
-                cx.tree.put_file(layout::member_agents_md(&dir, &slugify(&m.name)), bytes);
+                cx.tree
+                    .put_file(layout::member_agents_md(&dir, &slugify(&m.name)), bytes);
             }
         }
-        Ok(Applied { summary: format!("copy template {} to {}", src.name, a.name), action: None })
+        Ok(Applied {
+            summary: format!("copy template {} to {}", src.name, a.name),
+            action: None,
+        })
     }
 }
 
@@ -455,8 +621,16 @@ struct WithdrawOp {
 }
 
 enum AddOp {
-    Create { member: TemplateMember, seat: SeatId, clone: Option<CloneId> },
-    Resurrect { member: TemplateMember, seat: SeatId, new_clone: Option<CloneId> },
+    Create {
+        member: TemplateMember,
+        seat: SeatId,
+        clone: Option<CloneId>,
+    },
+    Resurrect {
+        member: TemplateMember,
+        seat: SeatId,
+        new_clone: Option<CloneId>,
+    },
 }
 
 struct AppEdit {
@@ -485,7 +659,10 @@ fn find_withdrawn(
     member: &MemberId,
     app: &ApplicationRecord,
 ) -> Result<Option<SeatRecord>, StoreError> {
-    let want = TemplateRef { template: tpl.clone(), member: member.clone() };
+    let want = TemplateRef {
+        template: tpl.clone(),
+        member: member.clone(),
+    };
     Ok(layout::all_seats(tree)?
         .into_iter()
         .map(|(_, s)| s)
@@ -494,7 +671,9 @@ fn find_withdrawn(
                 && s.template_ref.as_ref() == Some(&want)
                 && s.teamspace == app.teamspace
                 && s.applications.contains(&app.id)
-                && s.retired.as_ref().is_some_and(|r| r.mechanism == RetireMechanism::ApplicationWithdrawal)
+                && s.retired
+                    .as_ref()
+                    .is_some_and(|r| r.mechanism == RetireMechanism::ApplicationWithdrawal)
         })
         .max_by_key(|s| s.retired.as_ref().map(|r| r.at)))
 }
@@ -517,7 +696,10 @@ fn compute_edit(
     for app in templated {
         let ts = read_ts(tree, &app.teamspace)?;
         if ts.rec.lifecycle == Lifecycle::Retired {
-            warnings.push(format!("application {} skipped: its teamspace {} is retired", app.name, ts.rec.name));
+            warnings.push(format!(
+                "application {} skipped: its teamspace {} is retired",
+                app.name, ts.rec.name
+            ));
             continue;
         }
         let others = live_others(tree, &app)?;
@@ -533,33 +715,59 @@ fn compute_edit(
                     Verdict::Keep(why) => Outcome::Keep(why),
                     Verdict::Retire => {
                         if repair_required.is_none() {
-                            let clones: Vec<CloneRecord> =
-                                layout::list_clones(tree, &loc.folder)?.into_iter().map(|(_, c)| c).collect();
+                            let clones: Vec<CloneRecord> = layout::list_clones(tree, &loc.folder)?
+                                .into_iter()
+                                .map(|(_, c)| c)
+                                .collect();
                             repair_required = ambiguity(tree, &app, &s, &clones, &others)?;
                         }
                         Outcome::Retire
                     }
                 },
             };
-            withdraw.push(WithdrawOp { member: mem.clone(), seat: seat_id.clone(), outcome });
+            withdraw.push(WithdrawOp {
+                member: mem.clone(),
+                seat: seat_id.clone(),
+                outcome,
+            });
         }
         let mut adds = Vec::new();
         for d in effective_structure_with(tree, new, &app)?.to_create() {
-            let Some(mem) = d.member.clone() else { continue };
-            let member = new.members.iter().find(|m| m.id == mem).expect("structure lists template members").clone();
+            let Some(mem) = d.member.clone() else {
+                continue;
+            };
+            let member = new
+                .members
+                .iter()
+                .find(|m| m.id == mem)
+                .expect("structure lists template members")
+                .clone();
             if let Some(seat) = find_withdrawn(tree, &new.id, &mem, &app)? {
                 let action = seat.retired.as_ref().and_then(|r| r.action.clone());
                 let set = retired_by(tree, action.as_ref())?;
-                let (loc, _) = read_seat_rec(tree, &seat.id)?.expect("the withdrawn seat was just read");
-                let revived = layout::list_clones(tree, &loc.folder)?.into_iter().any(|(_, c)| {
-                    c.lifecycle == CloneLifecycle::Retired && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
-                });
+                let (loc, _) =
+                    read_seat_rec(tree, &seat.id)?.expect("the withdrawn seat was just read");
+                let revived = layout::list_clones(tree, &loc.folder)?
+                    .into_iter()
+                    .any(|(_, c)| {
+                        c.lifecycle == CloneLifecycle::Retired
+                            && retired_with(
+                                &set,
+                                action.as_ref(),
+                                &c.id.to_any(),
+                                c.retired.as_ref(),
+                            )
+                    });
                 let new_clone = if member.startup == Startup::Active && !revived {
                     Some(ids.get::<CloneId>(&format!("clone:{}:{}", app.id, mem))?)
                 } else {
                     None
                 };
-                adds.push(AddOp::Resurrect { member, seat: seat.id, new_clone });
+                adds.push(AddOp::Resurrect {
+                    member,
+                    seat: seat.id,
+                    new_clone,
+                });
             } else {
                 let seat = ids.get::<SeatId>(&format!("seat:{}:{}", app.id, mem))?;
                 let clone = if member.startup == Startup::Active {
@@ -567,14 +775,34 @@ fn compute_edit(
                 } else {
                     None
                 };
-                adds.push(AddOp::Create { member, seat, clone });
+                adds.push(AddOp::Create {
+                    member,
+                    seat,
+                    clone,
+                });
             }
         }
-        let rel_added =
-            new.relationships.iter().filter(|r| !old.relationships.contains(r)).cloned().collect::<Vec<_>>();
-        let rel_removed =
-            old.relationships.iter().filter(|r| !new.relationships.contains(r)).cloned().collect::<Vec<_>>();
-        apps.push(AppEdit { app, ts, withdraw, adds, rel_added, rel_removed, replaced_seats: vec![] });
+        let rel_added = new
+            .relationships
+            .iter()
+            .filter(|r| !old.relationships.contains(r))
+            .cloned()
+            .collect::<Vec<_>>();
+        let rel_removed = old
+            .relationships
+            .iter()
+            .filter(|r| !new.relationships.contains(r))
+            .cloned()
+            .collect::<Vec<_>>();
+        apps.push(AppEdit {
+            app,
+            ts,
+            withdraw,
+            adds,
+            rel_added,
+            rel_removed,
+            replaced_seats: vec![],
+        });
     }
 
     // Seats staying alive whose effective launch config changes: one `session.replace` per occupied clone.
@@ -591,14 +819,31 @@ fn compute_edit(
             if retiring.contains(&id) {
                 continue;
             }
-            let Some((loc, seat)) = read_seat_rec(tree, &id)? else { continue };
-            let Some(r) = &seat.template_ref else { continue };
+            let Some((loc, seat)) = read_seat_rec(tree, &id)? else {
+                continue;
+            };
+            let Some(r) = &seat.template_ref else {
+                continue;
+            };
             if seat.lifecycle == Lifecycle::Retired || r.template != old.id {
                 continue;
             }
-            let old_cfg = resolve(&graph.defaults, Some(old), old.members.iter().find(|m| m.id == r.member), &seat);
-            let new_cfg = resolve(&graph.defaults, Some(new), new.members.iter().find(|m| m.id == r.member), &seat);
-            let clones: Vec<CloneRecord> = layout::list_clones(tree, &loc.folder)?.into_iter().map(|(_, c)| c).collect();
+            let old_cfg = resolve(
+                &graph.defaults,
+                Some(old),
+                old.members.iter().find(|m| m.id == r.member),
+                &seat,
+            );
+            let new_cfg = resolve(
+                &graph.defaults,
+                Some(new),
+                new.members.iter().find(|m| m.id == r.member),
+                &seat,
+            );
+            let clones: Vec<CloneRecord> = layout::list_clones(tree, &loc.folder)?
+                .into_iter()
+                .map(|(_, c)| c)
+                .collect();
             let effects = session_replacements(&seat, &clones, &old_cfg, &new_cfg);
             if effects.is_empty() {
                 continue;
@@ -609,7 +854,12 @@ fn compute_edit(
             }
         }
     }
-    Ok(EditPlan { apps, replacements, warnings, repair_required })
+    Ok(EditPlan {
+        apps,
+        replacements,
+        warnings,
+        repair_required,
+    })
 }
 
 fn build_new_record(
@@ -625,7 +875,11 @@ fn build_new_record(
         )));
     }
     // A member written without an id that matches an existing member by name keeps that member's id.
-    let by_name: BTreeMap<String, MemberId> = old.members.iter().map(|m| (m.name.clone(), m.id.clone())).collect();
+    let by_name: BTreeMap<String, MemberId> = old
+        .members
+        .iter()
+        .map(|m| (m.name.clone(), m.id.clone()))
+        .collect();
     let mut rec = doc.to_record(old.id.clone(), old.rev, &by_name, reserved);
     rec.name_history = old.name_history.clone();
     rec.copied_from = old.copied_from.clone();
@@ -646,7 +900,12 @@ impl OrgKind for TemplateEdit {
         let document = read_json_arg(words, caller, usage)?;
         Ok(json!({ "template": tpl, "document": document }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, reserved: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        reserved: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: EditArgs = parse_args(args)?;
         let (loc, old) = resolve_template(cx.tree, &a.template)?;
         let _act: ActionId = reserved.get_or_mint("act");
@@ -655,7 +914,10 @@ impl OrgKind for TemplateEdit {
         let after = merged_after(&new, &a.document);
         let changes = TemplateDocument::diff(&before, &after);
         if changes.is_empty() {
-            return Err(PlanError::Invalid(format!("template {} is unchanged by this document", old.name)));
+            return Err(PlanError::Invalid(format!(
+                "template {} is unchanged by this document",
+                old.name
+            )));
         }
         let edit = compute_edit(cx.tree, &old, &new, &mut Ids::Mint(reserved))?;
 
@@ -697,8 +959,18 @@ impl OrgKind for TemplateEdit {
             }
             for add in &ae.adds {
                 match add {
-                    AddOp::Create { member, seat, clone } => {
-                        let stand_in = member_seat_record(seat.clone(), &new.id, member, &ae.app.teamspace, &ae.app.id);
+                    AddOp::Create {
+                        member,
+                        seat,
+                        clone,
+                    } => {
+                        let stand_in = member_seat_record(
+                            seat.clone(),
+                            &new.id,
+                            member,
+                            &ae.app.teamspace,
+                            &ae.app.id,
+                        );
                         let cfg = resolve(&graph.defaults, Some(&new), Some(member), &stand_in);
                         effects.extend(create_effects(
                             &new.id,
@@ -716,9 +988,21 @@ impl OrgKind for TemplateEdit {
                             json!({ "member": member.id, "seat": seat }),
                         ));
                     }
-                    AddOp::Resurrect { member, seat, new_clone } => {
+                    AddOp::Resurrect {
+                        member,
+                        seat,
+                        new_clone,
+                    } => {
                         effects.extend(resurrect_effects(
-                            cx.tree, &new, &graph, member, seat, new_clone.as_ref(), &ae.app, &ae.ts, &mut activated,
+                            cx.tree,
+                            &new,
+                            &graph,
+                            member,
+                            seat,
+                            new_clone.as_ref(),
+                            &ae.app,
+                            &ae.ts,
+                            &mut activated,
                         )?);
                         effects.push(PlanEffect::new(
                             "application.map",
@@ -752,7 +1036,12 @@ impl OrgKind for TemplateEdit {
             summary: format!("edit template {}", old.name),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, plan: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: EditArgs = parse_args(args).map_err(mm)?;
         let (loc, old) = resolve_template(&cx.tree, &a.template).map_err(mm)?;
         let act: ActionId = reserved_id(plan, "act")?;
@@ -761,7 +1050,8 @@ impl OrgKind for TemplateEdit {
         let before = doc_with_agents(&cx.tree, &loc.folder, &old)?;
         let after = merged_after(&new, &a.document);
         let changes = TemplateDocument::diff(&before, &after);
-        let edit = compute_edit(&cx.tree, &old, &new, &mut Ids::Fixed(&plan.reserved)).map_err(mm)?;
+        let edit =
+            compute_edit(&cx.tree, &old, &new, &mut Ids::Fixed(&plan.reserved)).map_err(mm)?;
 
         // The template itself (the applications below resolve their config against the new record).
         cx.tree.put_record(loc.record_path.clone(), &mut new)?;
@@ -774,7 +1064,14 @@ impl OrgKind for TemplateEdit {
             let mut app = ae.app.clone();
             for w in &ae.withdraw {
                 match &w.outcome {
-                    Outcome::Retire => do_retire_seat(cx, &w.seat, &act, RetireMechanism::ApplicationWithdrawal, &mut acc, false)?,
+                    Outcome::Retire => do_retire_seat(
+                        cx,
+                        &w.seat,
+                        &act,
+                        RetireMechanism::ApplicationWithdrawal,
+                        &mut acc,
+                        false,
+                    )?,
                     Outcome::Keep(_) => detach_seat(cx, &w.seat, &app.id)?,
                     Outcome::Gone => {}
                 }
@@ -783,19 +1080,46 @@ impl OrgKind for TemplateEdit {
             }
             for add in &ae.adds {
                 match add {
-                    AddOp::Create { member, seat, clone } => {
-                        create_member_seat(cx, &new, &loc.folder, member, &app.id, &app.teamspace, seat, clone.as_ref(), &mut acc)?;
+                    AddOp::Create {
+                        member,
+                        seat,
+                        clone,
+                    } => {
+                        create_member_seat(
+                            cx,
+                            &new,
+                            &loc.folder,
+                            member,
+                            &app.id,
+                            &app.teamspace,
+                            seat,
+                            clone.as_ref(),
+                            &mut acc,
+                        )?;
                         app.member_map.insert(member.id.clone(), seat.clone());
                         created.push(seat.to_any());
                     }
-                    AddOp::Resurrect { member, seat, new_clone } => {
-                        resurrect_member_seat(cx, member, seat, new_clone.as_ref(), &app.id, &mut acc)?;
+                    AddOp::Resurrect {
+                        member,
+                        seat,
+                        new_clone,
+                    } => {
+                        resurrect_member_seat(
+                            cx,
+                            member,
+                            seat,
+                            new_clone.as_ref(),
+                            &app.id,
+                            &mut acc,
+                        )?;
                         app.member_map.insert(member.id.clone(), seat.clone());
                         resurrected.push(seat.to_any());
                     }
                 }
             }
-            app.contributions.relationships.retain(|r| !ae.rel_removed.contains(r));
+            app.contributions
+                .relationships
+                .retain(|r| !ae.rel_removed.contains(r));
             for r in &ae.rel_added {
                 if !app.contributions.relationships.contains(r) {
                     app.contributions.relationships.push(r.clone());
@@ -810,9 +1134,18 @@ impl OrgKind for TemplateEdit {
         comp.insert("template".into(), toml::Value::String(old.id.to_string()));
         comp.insert("before".into(), toml::Value::Table(before.to_table()));
         comp.insert("after".into(), toml::Value::Table(after.to_table()));
-        comp.insert("changed_fields".into(), str_array(changes.iter().map(|c| c.path.as_str())));
-        comp.insert("created".into(), str_array(created.iter().map(|i| i.as_str())));
-        comp.insert("resurrected".into(), str_array(resurrected.iter().map(|i| i.as_str())));
+        comp.insert(
+            "changed_fields".into(),
+            str_array(changes.iter().map(|c| c.path.as_str())),
+        );
+        comp.insert(
+            "created".into(),
+            str_array(created.iter().map(|i| i.as_str())),
+        );
+        comp.insert(
+            "resurrected".into(),
+            str_array(resurrected.iter().map(|i| i.as_str())),
+        );
         acc.affected.insert(
             0,
             AffectedObject {
@@ -822,7 +1155,10 @@ impl OrgKind for TemplateEdit {
             },
         );
         write_action(cx, &act, ActionKind::TemplateEdit, acc, comp)?;
-        Ok(Applied { summary: format!("edit template {}", old.name), action: Some(act) })
+        Ok(Applied {
+            summary: format!("edit template {}", old.name),
+            action: Some(act),
+        })
     }
 }
 
@@ -830,7 +1166,11 @@ impl OrgKind for TemplateEdit {
 fn merged_after(new: &TemplateRecord, doc: &TemplateDocument) -> TemplateDocument {
     let mut after = TemplateDocument::from_record(new);
     for m in &mut after.members {
-        m.agents_md = doc.members.iter().find(|d| d.name == m.name).and_then(|d| d.agents_md.clone());
+        m.agents_md = doc
+            .members
+            .iter()
+            .find(|d| d.name == m.name)
+            .and_then(|d| d.agents_md.clone());
     }
     after
 }
@@ -872,8 +1212,14 @@ fn resurrect_effects(
     )];
     let mut revived = Vec::new();
     for (_, c) in &f.clones {
-        if c.lifecycle == CloneLifecycle::Retired && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref()) {
-            v.push(PlanEffect::new("clone.resurrect", c.id.clone(), json!({ "seat": seat, "name": c.name })));
+        if c.lifecycle == CloneLifecycle::Retired
+            && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
+        {
+            v.push(PlanEffect::new(
+                "clone.resurrect",
+                c.id.clone(),
+                json!({ "seat": seat, "name": c.name }),
+            ));
             revived.push(c.id.clone());
         }
     }
@@ -882,12 +1228,27 @@ fn resurrect_effects(
         cfg_seat.lifecycle = Lifecycle::Active;
         let cfg = resolve(&graph.defaults, Some(tpl), Some(member), &cfg_seat);
         if ts.rec.lifecycle == Lifecycle::Dormant && activated.insert(ts.rec.id.clone()) {
-            v.push(PlanEffect::new("teamspace.activate", ts.rec.id.clone(), json!({ "name": ts.rec.name })).induced());
+            v.push(
+                PlanEffect::new(
+                    "teamspace.activate",
+                    ts.rec.id.clone(),
+                    json!({ "name": ts.rec.name }),
+                )
+                .induced(),
+            );
         }
         if let Some(c) = new_clone {
-            v.push(PlanEffect::new("clone.add", c.clone(), json!({ "seat": seat, "name": f.rec.name })));
+            v.push(PlanEffect::new(
+                "clone.add",
+                c.clone(),
+                json!({ "seat": seat, "name": f.rec.name }),
+            ));
         }
-        v.push(PlanEffect::new("runtime.open_tab", seat.clone(), json!({ "name": f.rec.name })));
+        v.push(PlanEffect::new(
+            "runtime.open_tab",
+            seat.clone(),
+            json!({ "name": f.rec.name }),
+        ));
         for c in revived.iter().chain(new_clone) {
             v.extend(open_clone_effects(c, seat, &cfg));
         }
@@ -927,7 +1288,10 @@ fn resurrect_member_seat(
                 .folder;
             let slug = clone_slug_for(&cx.tree, &live, &f.rec.name, cid).map_err(mm)?;
             let mut clone = new_clone_record(seat, &f.rec.name, cid.clone());
-            cx.tree.put_record(layout::clone_record(&layout::clone_dir(&live, &slug)), &mut clone)?;
+            cx.tree.put_record(
+                layout::clone_record(&layout::clone_dir(&live, &slug)),
+                &mut clone,
+            )?;
         }
     }
     Ok(())
@@ -960,28 +1324,49 @@ fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, Plan
     let ts = read_ts(tree, &ts_id)?;
     ensure_ts_live(&ts)?;
     if a.name.trim().is_empty() {
-        return Err(PlanError::Usage("application apply needs a non-empty --name".into()));
+        return Err(PlanError::Usage(
+            "application apply needs a non-empty --name".into(),
+        ));
     }
-    if layout::list_applications(tree)?.iter().any(|(_, x)| x.name == a.name && x.lifecycle == AppLifecycle::Active) {
-        return Err(PlanError::Invalid(format!("an application named {:?} is already active", a.name)));
+    if layout::list_applications(tree)?
+        .iter()
+        .any(|(_, x)| x.name == a.name && x.lifecycle == AppLifecycle::Active)
+    {
+        return Err(PlanError::Invalid(format!(
+            "an application named {:?} is already active",
+            a.name
+        )));
     }
     let mut reused = BTreeMap::new();
     for (mem, seat_ref) in &a.reuse {
-        let mem = MemberId::parse(mem).map_err(|e| PlanError::Invalid(format!("--reuse {mem}: {e}")))?;
+        let mem =
+            MemberId::parse(mem).map_err(|e| PlanError::Invalid(format!("--reuse {mem}: {e}")))?;
         if !tpl.members.iter().any(|m| m.id == mem) {
-            return Err(PlanError::Invalid(format!("--reuse: {mem} is not a member of template {}", tpl.name)));
+            return Err(PlanError::Invalid(format!(
+                "--reuse: {mem} is not a member of template {}",
+                tpl.name
+            )));
         }
         let seat_id = grammar::resolve_seat(tree, seat_ref, Scope::Live)?;
         let f = read_seat(tree, &seat_id)?;
         if f.rec.lifecycle == Lifecycle::Retired {
-            return Err(PlanError::Invalid(format!("--reuse: seat {seat_id} is retired")));
+            return Err(PlanError::Invalid(format!(
+                "--reuse: seat {seat_id} is retired"
+            )));
         }
         if reused.values().any(|x: &SeatFacts| x.rec.id == seat_id) {
-            return Err(PlanError::Invalid(format!("--reuse: seat {seat_id} is mapped to two members")));
+            return Err(PlanError::Invalid(format!(
+                "--reuse: seat {seat_id} is mapped to two members"
+            )));
         }
         reused.insert(mem, f);
     }
-    Ok(HydratePlan { loc, tpl, ts, reused })
+    Ok(HydratePlan {
+        loc,
+        tpl,
+        ts,
+        reused,
+    })
 }
 
 struct ApplicationApply;
@@ -1001,14 +1386,21 @@ impl OrgKind for ApplicationApply {
         let name = flag(words, "--name").ok_or_else(usage)?;
         let mut reuse = BTreeMap::new();
         for pair in flag_values(words, "--reuse") {
-            let (m, s) = pair.split_once('=').ok_or_else(|| PlanError::Usage(format!("--reuse expects <mem>=<seat>, got {pair:?}")))?;
+            let (m, s) = pair.split_once('=').ok_or_else(|| {
+                PlanError::Usage(format!("--reuse expects <mem>=<seat>, got {pair:?}"))
+            })?;
             if reuse.insert(m.to_owned(), s.to_owned()).is_some() {
                 return Err(PlanError::Usage(format!("--reuse names member {m} twice")));
             }
         }
         Ok(json!({ "template": tpl, "teamspace": ts, "name": name, "reuse": reuse }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, reserved: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        reserved: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: ApplyArgs = parse_args(args)?;
         let h = hydrate_facts(cx.tree, &a)?;
         let graph = layout::read_graph(cx.tree)?;
@@ -1019,7 +1411,10 @@ impl OrgKind for ApplicationApply {
             app.clone(),
             json!({ "name": a.name, "template": h.tpl.id, "teamspace": h.ts.rec.id }),
         )];
-        let mut relied_on = vec![rev_of(h.tpl.id.clone(), h.tpl.rev), rev_of(h.ts.rec.id.clone(), h.ts.rec.rev)];
+        let mut relied_on = vec![
+            rev_of(h.tpl.id.clone(), h.tpl.rev),
+            rev_of(h.ts.rec.id.clone(), h.ts.rec.rev),
+        ];
         let mut activated = BTreeSet::new();
         for m in &h.tpl.members {
             if let Some(f) = h.reused.get(&m.id) {
@@ -1033,8 +1428,8 @@ impl OrgKind for ApplicationApply {
                 continue;
             }
             let seat: SeatId = reserved.get_or_mint(&format!("seat:{}", m.id));
-            let clone: Option<CloneId> =
-                (m.startup == Startup::Active).then(|| reserved.get_or_mint(&format!("clone:{}", m.id)));
+            let clone: Option<CloneId> = (m.startup == Startup::Active)
+                .then(|| reserved.get_or_mint(&format!("clone:{}", m.id)));
             let stand_in = member_seat_record(seat.clone(), &h.tpl.id, m, &h.ts.rec.id, &app);
             let cfg = resolve(&graph.defaults, Some(&h.tpl), Some(m), &stand_in);
             effects.extend(create_effects(
@@ -1063,7 +1458,12 @@ impl OrgKind for ApplicationApply {
             summary: format!("apply template {} as {}", h.tpl.name, a.name),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, plan: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: ApplyArgs = parse_args(args).map_err(mm)?;
         let h = hydrate_facts(&cx.tree, &a).map_err(mm)?;
         let app_id: AppId = reserved_id(plan, "app")?;
@@ -1076,12 +1476,19 @@ impl OrgKind for ApplicationApply {
             if let Some(f) = h.reused.get(&m.id) {
                 // Reuse is recorded on both sides: here with the providing application, and on the provider.
                 let owner = seat_owner(&cx.tree, &f.rec).map_err(MutationError::Store)?;
-                reused.push(Reuse { seat: f.rec.id.clone(), from: owner.as_ref().map(|o| o.id.clone()) });
+                reused.push(Reuse {
+                    seat: f.rec.id.clone(),
+                    from: owner.as_ref().map(|o| o.id.clone()),
+                });
                 if let Some(o) = owner {
-                    let (oloc, mut orec) = read_app(&cx.tree, &o.id)?
-                        .ok_or_else(|| MutationError::Bug(format!("application {} vanished", o.id)))?;
+                    let (oloc, mut orec) = read_app(&cx.tree, &o.id)?.ok_or_else(|| {
+                        MutationError::Bug(format!("application {} vanished", o.id))
+                    })?;
                     if !orec.reused.iter().any(|r| r.seat == f.rec.id) {
-                        orec.reused.push(Reuse { seat: f.rec.id.clone(), from: Some(o.id.clone()) });
+                        orec.reused.push(Reuse {
+                            seat: f.rec.id.clone(),
+                            from: Some(o.id.clone()),
+                        });
                         cx.tree.put_record(oloc.record_path, &mut orec)?;
                     }
                 }
@@ -1101,7 +1508,17 @@ impl OrgKind for ApplicationApply {
             } else {
                 None
             };
-            create_member_seat(cx, &h.tpl, &h.loc.folder, m, &app_id, &h.ts.rec.id, &seat, clone.as_ref(), &mut acc)?;
+            create_member_seat(
+                cx,
+                &h.tpl,
+                &h.loc.folder,
+                m,
+                &app_id,
+                &h.ts.rec.id,
+                &seat,
+                clone.as_ref(),
+                &mut acc,
+            )?;
             member_map.insert(m.id.clone(), seat);
         }
         let mut app = ApplicationRecord {
@@ -1117,23 +1534,47 @@ impl OrgKind for ApplicationApply {
             additions: vec![],
             exclusions: vec![],
             reused,
-            contributions: crate::model::application::Contributions { relationships: h.tpl.relationships.clone() },
-            created_by: CreatedBy { op: cx.op.clone(), action: act.clone() },
+            contributions: crate::model::application::Contributions {
+                relationships: h.tpl.relationships.clone(),
+            },
+            created_by: CreatedBy {
+                op: cx.op.clone(),
+                action: act.clone(),
+            },
         };
-        cx.tree.put_record(layout::application_record(&app_id), &mut app)?;
+        cx.tree
+            .put_record(layout::application_record(&app_id), &mut app)?;
         created_object(&mut acc, app_id.to_any(), "active");
 
-        let created: Vec<AnyId> =
-            std::iter::once(app_id.to_any()).chain(seat_ids_of(&acc, true)).chain(seat_ids_of(&acc, false)).collect();
+        let created: Vec<AnyId> = std::iter::once(app_id.to_any())
+            .chain(seat_ids_of(&acc, true))
+            .chain(seat_ids_of(&acc, false))
+            .collect();
         let mut comp = toml::Table::new();
-        comp.insert("application".into(), toml::Value::String(app_id.to_string()));
-        comp.insert("created".into(), str_array(created.iter().map(|i| i.as_str())));
-        comp.insert("reused".into(), str_array(reused_ids.iter().map(|i| i.as_str())));
-        let rels: Vec<toml::Value> =
-            h.tpl.relationships.iter().filter_map(|r| toml::Value::try_from(r).ok()).collect();
+        comp.insert(
+            "application".into(),
+            toml::Value::String(app_id.to_string()),
+        );
+        comp.insert(
+            "created".into(),
+            str_array(created.iter().map(|i| i.as_str())),
+        );
+        comp.insert(
+            "reused".into(),
+            str_array(reused_ids.iter().map(|i| i.as_str())),
+        );
+        let rels: Vec<toml::Value> = h
+            .tpl
+            .relationships
+            .iter()
+            .filter_map(|r| toml::Value::try_from(r).ok())
+            .collect();
         comp.insert("relationships_added".into(), toml::Value::Array(rels));
         write_action(cx, &act, ActionKind::Hydrate, acc, comp)?;
-        Ok(Applied { summary: format!("apply template {} as {}", h.tpl.name, a.name), action: Some(act) })
+        Ok(Applied {
+            summary: format!("apply template {} as {}", h.tpl.name, a.name),
+            action: Some(act),
+        })
     }
 }
 
@@ -1155,16 +1596,25 @@ impl OrgKind for ApplicationRetire {
         &[("application", "retire")]
     }
     fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
-        let app = positional(words, 0).ok_or_else(|| PlanError::Usage("application retire <application>".into()))?;
+        let app = positional(words, 0)
+            .ok_or_else(|| PlanError::Usage("application retire <application>".into()))?;
         Ok(json!({ "application": app }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, reserved: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        reserved: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: RetireArgs = parse_args(args)?;
         let (_, app) = resolve_application(cx.tree, &a.application)?;
         let _act: ActionId = reserved.get_or_mint("act");
         let preview = withdraw_plan(cx.tree, &app)?;
-        let mut effects =
-            vec![PlanEffect::new("application.retire", app.id.clone(), json!({ "name": app.name, "template": app.template }))];
+        let mut effects = vec![PlanEffect::new(
+            "application.retire",
+            app.id.clone(),
+            json!({ "name": app.name, "template": app.template }),
+        )];
         let mut relied_on = vec![rev_of(app.id.clone(), app.rev)];
         for seat in &preview.retire {
             effects.extend(withdrawal_effects(cx.tree, seat, &app.id)?);
@@ -1173,8 +1623,14 @@ impl OrgKind for ApplicationRetire {
             }
         }
         for (seat, why) in &preview.keep {
-            let name = read_seat_rec(cx.tree, seat)?.map(|(_, s)| s.name).unwrap_or_default();
-            effects.push(PlanEffect::new("seat.keep", seat.clone(), json!({ "name": name, "reason": why })));
+            let name = read_seat_rec(cx.tree, seat)?
+                .map(|(_, s)| s.name)
+                .unwrap_or_default();
+            effects.push(PlanEffect::new(
+                "seat.keep",
+                seat.clone(),
+                json!({ "name": name, "reason": why }),
+            ));
         }
         for r in &preview.relationships_removed {
             effects.push(PlanEffect::new(
@@ -1191,20 +1647,35 @@ impl OrgKind for ApplicationRetire {
             summary: format!("retire application {}", app.name),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, plan: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: RetireArgs = parse_args(args).map_err(mm)?;
         let (loc, mut app) = resolve_application(&cx.tree, &a.application).map_err(mm)?;
         let act: ActionId = reserved_id(plan, "act")?;
         let preview = withdraw_plan(&cx.tree, &app)?;
         let mut acc = Acc::default();
         for seat in &preview.retire {
-            do_retire_seat(cx, seat, &act, RetireMechanism::ApplicationWithdrawal, &mut acc, false)?;
+            do_retire_seat(
+                cx,
+                seat,
+                &act,
+                RetireMechanism::ApplicationWithdrawal,
+                &mut acc,
+                false,
+            )?;
         }
         for (seat, _) in &preview.keep {
             detach_seat(cx, seat, &app.id)?;
         }
-        let removed: Vec<toml::Value> =
-            preview.relationships_removed.iter().filter_map(|r| toml::Value::try_from(r).ok()).collect();
+        let removed: Vec<toml::Value> = preview
+            .relationships_removed
+            .iter()
+            .filter_map(|r| toml::Value::try_from(r).ok())
+            .collect();
         let kept: Vec<toml::Value> = preview
             .keep
             .iter()
@@ -1216,21 +1687,38 @@ impl OrgKind for ApplicationRetire {
             })
             .collect();
         app.lifecycle = AppLifecycle::Retired;
-        app.retired = Some(Retirement { op: cx.op.clone(), action: Some(act.clone()), at: cx.now, mechanism: mechanism(cx) });
+        app.retired = Some(Retirement {
+            op: cx.op.clone(),
+            action: Some(act.clone()),
+            at: cx.now,
+            mechanism: mechanism(cx),
+        });
         app.contributions.relationships.clear();
         cx.tree.put_record(loc.record_path, &mut app)?;
         acc.retired.insert(0, app.id.to_any());
         acc.affected.insert(
             0,
-            AffectedObject { object: app.id.to_any(), before: Some(state_value("active")), after: Some(state_value("retired")) },
+            AffectedObject {
+                object: app.id.to_any(),
+                before: Some(state_value("active")),
+                after: Some(state_value("retired")),
+            },
         );
         let mut comp = toml::Table::new();
-        comp.insert("application".into(), toml::Value::String(app.id.to_string()));
-        comp.insert("retired".into(), str_array(preview.retire.iter().map(|s| s.as_str())));
+        comp.insert(
+            "application".into(),
+            toml::Value::String(app.id.to_string()),
+        );
+        comp.insert(
+            "retired".into(),
+            str_array(preview.retire.iter().map(|s| s.as_str())),
+        );
         comp.insert("kept".into(), toml::Value::Array(kept));
         comp.insert("relationships_removed".into(), toml::Value::Array(removed));
         write_action(cx, &act, ActionKind::ApplicationRetire, acc, comp)?;
-        Ok(Applied { summary: format!("retire application {}", app.name), action: Some(act) })
+        Ok(Applied {
+            summary: format!("retire application {}", app.name),
+            action: Some(act),
+        })
     }
 }
-

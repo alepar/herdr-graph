@@ -95,7 +95,11 @@ fn is_unresolved(journal: &Journal, row: &OpRow) -> Result<bool, JournalError> {
 const ALL: usize = usize::MAX >> 1;
 
 /// Newest first. Ops of retired requesters stay listed (spec §3.7).
-pub fn list_ops(journal: &Journal, unresolved: bool, limit: usize) -> Result<Vec<OpSummary>, JournalError> {
+pub fn list_ops(
+    journal: &Journal,
+    unresolved: bool,
+    limit: usize,
+) -> Result<Vec<OpSummary>, JournalError> {
     let mut out = Vec::new();
     for row in journal.list(&[], ALL)? {
         if out.len() >= limit {
@@ -117,7 +121,8 @@ pub fn pending_for(
     let mut out = Vec::new();
     for row in journal.list(&[], ALL)? {
         let r = &row.request.requester;
-        let matches = seat.is_none_or(|s| r.seat.as_ref() == Some(s)) && clone.is_none_or(|c| r.clone.as_ref() == Some(c));
+        let matches = seat.is_none_or(|s| r.seat.as_ref() == Some(s))
+            && clone.is_none_or(|c| r.clone.as_ref() == Some(c));
         if matches && is_unresolved(journal, &row)? {
             out.push(summary_of(&row));
         }
@@ -127,8 +132,13 @@ pub fn pending_for(
 
 /// `ops.get` payload: the summary plus journal detail and the reminder state.
 pub fn op_detail(journal: &Journal, op: &OpId) -> Result<Value, OpsError> {
-    let row = journal.get(op)?.ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
-    let sent = journal.meta_get(&reminder_count_key(op))?.and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+    let row = journal
+        .get(op)?
+        .ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
+    let sent = journal
+        .meta_get(&reminder_count_key(op))?
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
     Ok(json!({
         "op": summary_of(&row),
         "request": { "kind": row.request.kind, "args": row.request.args, "supersedes": row.request.supersedes },
@@ -163,39 +173,74 @@ fn refusal_for(state: OpState) -> String {
     match state {
         OpState::Committed | OpState::Applying => format!(
             "op is {}: post-commit cancellation requires a superseding request, e.g. `herdr-graph plan seat deactivate <seat>` with supersedes",
-            serde_json::to_value(state).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+            serde_json::to_value(state)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default()
         ),
         other => format!(
             "op is already {}; nothing to cancel",
-            serde_json::to_value(other).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default()
+            serde_json::to_value(other)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default()
         ),
     }
 }
 
 /// `cancel <op>` (spec §3.7): admitted|failed → cancelled; rejected → reminders stopped; anything else refused.
 pub fn cancel(journal: &Journal, op: &OpId, now: Timestamp) -> Result<CancelReply, JournalError> {
-    let reply = |result, state, message: &str| CancelReply { op: op.clone(), result, state, message: message.to_owned() };
+    let reply = |result, state, message: &str| CancelReply {
+        op: op.clone(),
+        result,
+        state,
+        message: message.to_owned(),
+    };
     let Some(row) = journal.get(op)? else {
-        return Ok(reply(CancelResult::Refused, None, &format!("unknown operation {op}")));
+        return Ok(reply(
+            CancelResult::Refused,
+            None,
+            &format!("unknown operation {op}"),
+        ));
     };
     if row.state == OpState::Rejected {
         journal.meta_set(&reminders_stopped_key(op), &now.to_rfc3339())?;
-        return Ok(reply(CancelResult::RemindersStopped, Some(OpState::Rejected), "op already rejected; reminders stopped"));
+        return Ok(reply(
+            CancelResult::RemindersStopped,
+            Some(OpState::Rejected),
+            "op already rejected; reminders stopped",
+        ));
     }
     match journal.cancel(op, now)? {
-        CancelOutcome::Cancelled => Ok(reply(CancelResult::Cancelled, Some(OpState::Cancelled), "op cancelled")),
-        CancelOutcome::NotCancellable(state) => Ok(reply(CancelResult::Refused, Some(state), &refusal_for(state))),
-        CancelOutcome::Unknown => Ok(reply(CancelResult::Refused, None, &format!("unknown operation {op}"))),
+        CancelOutcome::Cancelled => Ok(reply(
+            CancelResult::Cancelled,
+            Some(OpState::Cancelled),
+            "op cancelled",
+        )),
+        CancelOutcome::NotCancellable(state) => Ok(reply(
+            CancelResult::Refused,
+            Some(state),
+            &refusal_for(state),
+        )),
+        CancelOutcome::Unknown => Ok(reply(
+            CancelResult::Refused,
+            None,
+            &format!("unknown operation {op}"),
+        )),
     }
 }
 
 fn live_seat_record(store: &dyn Store, seat: &SeatId) -> Result<SeatRecord, OpsError> {
     let head = store.head()?;
     let view = CommitView { store, at: head };
-    let loc = layout::locate(&view, &seat.to_any())?.ok_or_else(|| OpsError::Invalid(format!("no seat {seat}")))?;
-    let rec = read_toml::<SeatRecord>(&view, &loc.record_path)?.ok_or_else(|| OpsError::Invalid(format!("no seat {seat}")))?;
+    let loc = layout::locate(&view, &seat.to_any())?
+        .ok_or_else(|| OpsError::Invalid(format!("no seat {seat}")))?;
+    let rec = read_toml::<SeatRecord>(&view, &loc.record_path)?
+        .ok_or_else(|| OpsError::Invalid(format!("no seat {seat}")))?;
     if rec.lifecycle == Lifecycle::Retired {
-        return Err(OpsError::Invalid(format!("seat {seat} is retired; reassign to a live seat")));
+        return Err(OpsError::Invalid(format!(
+            "seat {seat} is retired; reassign to a live seat"
+        )));
     }
     Ok(rec)
 }
@@ -203,11 +248,25 @@ fn live_seat_record(store: &dyn Store, seat: &SeatId) -> Result<SeatRecord, OpsE
 /// `reassign <op> --to <seat>`: the requester becomes `to` (a live seat) and its teamspace. The op's rejection
 /// reminders start over for the new requester. For a committed op the operation record is updated too, by a
 /// `bookkeeping.reassign` op admitted straight into the journal (the writer picks it up on its next pass).
-pub fn reassign(journal: &Journal, store: &dyn Store, op: &OpId, to: &SeatId, now: Timestamp) -> Result<(), OpsError> {
-    let row = journal.get(op)?.ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
+pub fn reassign(
+    journal: &Journal,
+    store: &dyn Store,
+    op: &OpId,
+    to: &SeatId,
+    now: Timestamp,
+) -> Result<(), OpsError> {
+    let row = journal
+        .get(op)?
+        .ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
     let seat = live_seat_record(store, to)?;
     let old = &row.request.requester;
-    let requester = Requester { teamspace: Some(seat.teamspace.clone()), seat: Some(seat.id.clone()), clone: None, native_session: None, human: old.human };
+    let requester = Requester {
+        teamspace: Some(seat.teamspace.clone()),
+        seat: Some(seat.id.clone()),
+        clone: None,
+        native_session: None,
+        human: old.human,
+    };
     // The writer builds the git operation record from the request it read before the reassign, so the follow-up
     // is admitted for admitted/applying ops too; it runs after the op (higher seq). The state check, the
     // requester update and the follow-up admission are one journal transaction.
@@ -222,9 +281,13 @@ pub fn reassign(journal: &Journal, store: &dyn Store, op: &OpId, to: &SeatId, no
     match journal.reassign_requester(op, &requester, &follow_up, now)? {
         ReassignOutcome::Reassigned(_) => {}
         ReassignOutcome::NotReassignable(s) => {
-            return Err(OpsError::Invalid(format!("op {op} is already resolved ({s:?}); nothing to reassign")));
+            return Err(OpsError::Invalid(format!(
+                "op {op} is already resolved ({s:?}); nothing to reassign"
+            )));
         }
-        ReassignOutcome::Unknown => return Err(OpsError::Invalid(format!("unknown operation {op}"))),
+        ReassignOutcome::Unknown => {
+            return Err(OpsError::Invalid(format!("unknown operation {op}")));
+        }
     }
     journal.meta_delete(&reminder_count_key(op))?;
     Ok(())
@@ -255,25 +318,39 @@ pub fn check_instruction(
     object: &AnyId,
     rev: u64,
 ) -> Result<InstructionStatus, OpsError> {
-    let row = journal.get(op)?.ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
+    let row = journal
+        .get(op)?
+        .ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
     if matches!(row.state, OpState::Superseded | OpState::Cancelled) {
         return Ok(InstructionStatus::Obsolete);
     }
     let head = store.head()?;
-    let Some(loc) = store.locate(&head, object)? else { return Ok(InstructionStatus::Obsolete) };
+    let Some(loc) = store.locate(&head, object)? else {
+        return Ok(InstructionStatus::Obsolete);
+    };
     let table: Option<toml::Table> = read_record(store, &head, &loc.record_path)?;
-    let committed = table.and_then(|t| t.get("rev").and_then(|v| v.as_integer())).map(|r| r as u64);
-    Ok(if committed == Some(rev) { InstructionStatus::Current } else { InstructionStatus::Obsolete })
+    let committed = table
+        .and_then(|t| t.get("rev").and_then(|v| v.as_integer()))
+        .map(|r| r as u64);
+    Ok(if committed == Some(rev) {
+        InstructionStatus::Current
+    } else {
+        InstructionStatus::Obsolete
+    })
 }
 
 /// A replacement request may supersede an op only while the original exists and is committed, rejected, failed or
 /// admitted. (The writer marks it `superseded` when the replacement commits; reminders stop and the reconciler's
 /// fencing obsoletes the original's remaining effects, latest intent winning.)
 pub fn validate_supersedes(journal: &Journal, op: &OpId) -> Result<(), OpsError> {
-    let row = journal.get(op)?.ok_or_else(|| OpsError::Invalid(format!("cannot supersede unknown operation {op}")))?;
+    let row = journal
+        .get(op)?
+        .ok_or_else(|| OpsError::Invalid(format!("cannot supersede unknown operation {op}")))?;
     match row.state {
         OpState::Committed | OpState::Rejected | OpState::Failed | OpState::Admitted => Ok(()),
-        other => Err(OpsError::Invalid(format!("cannot supersede op {op}: it is {other:?}"))),
+        other => Err(OpsError::Invalid(format!(
+            "cannot supersede op {op}: it is {other:?}"
+        ))),
     }
 }
 
@@ -295,12 +372,22 @@ impl Mutation for ReassignRecord {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .ok_or_else(|| MutationError::Bug("bookkeeping.reassign needs a requester".into()))?;
         // An op that ended rejected or failed has no operation record: nothing to update.
-        let no_record = || Applied { summary: format!("no operation record for {op}; nothing to update"), action: None };
-        let Some(loc) = layout::locate(&cx.tree, &op.to_any())? else { return Ok(no_record()) };
-        let Some(mut rec) = read_toml::<OperationRecord>(&cx.tree, &loc.record_path)? else { return Ok(no_record()) };
+        let no_record = || Applied {
+            summary: format!("no operation record for {op}; nothing to update"),
+            action: None,
+        };
+        let Some(loc) = layout::locate(&cx.tree, &op.to_any())? else {
+            return Ok(no_record());
+        };
+        let Some(mut rec) = read_toml::<OperationRecord>(&cx.tree, &loc.record_path)? else {
+            return Ok(no_record());
+        };
         rec.requester = requester;
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: format!("reassign {op}"), action: None })
+        Ok(Applied {
+            summary: format!("reassign {op}"),
+            action: None,
+        })
     }
 }
 
@@ -330,9 +417,16 @@ fn jerr(e: JournalError) -> CommandError {
     CommandError::internal(e.to_string())
 }
 
-fn id_arg<T: std::str::FromStr<Err = crate::model::IdError>>(args: &Value, key: &str) -> Result<T, CommandError> {
-    let s = args.get(key).and_then(|v| v.as_str()).ok_or_else(|| CommandError::bad_request(format!("missing {key}")))?;
-    s.parse().map_err(|e| CommandError::bad_request(format!("{key}: {e}")))
+fn id_arg<T: std::str::FromStr<Err = crate::model::IdError>>(
+    args: &Value,
+    key: &str,
+) -> Result<T, CommandError> {
+    let s = args
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CommandError::bad_request(format!("missing {key}")))?;
+    s.parse()
+        .map_err(|e| CommandError::bad_request(format!("{key}: {e}")))
 }
 
 /// `ops.list` payload, shared by the daemon handler and the CLI's daemon-less read.
@@ -347,8 +441,14 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
     reg.command("ops.list", move |_cx: CommandCtx, args: Value| {
         let d = d.clone();
         async move {
-            let unresolved = args.get("unresolved").and_then(|v| v.as_bool()).unwrap_or(false);
-            let limit = args.get("limit").and_then(|v| v.as_u64()).map_or(200, |n| n as usize);
+            let unresolved = args
+                .get("unresolved")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map_or(200, |n| n as usize);
             list_json(&d.journal, unresolved, limit).map_err(jerr)
         }
     });
@@ -361,7 +461,8 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
     reg.command("ops.cancel", move |_cx: CommandCtx, args: Value| {
         let d = d.clone();
         async move {
-            let reply = cancel(&d.journal, &id_arg::<OpId>(&args, "op")?, d.clock.now()).map_err(jerr)?;
+            let reply =
+                cancel(&d.journal, &id_arg::<OpId>(&args, "op")?, d.clock.now()).map_err(jerr)?;
             if reply.result == CancelResult::Refused {
                 return Err(CommandError::rejected(reply.message));
             }
@@ -373,11 +474,22 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
         let d = d.clone();
         async move {
             let op: OpId = id_arg(&args, "op")?;
-            let to = args.get("to").and_then(|v| v.as_str()).ok_or_else(|| CommandError::bad_request("missing to"))?.to_owned();
+            let to = args
+                .get("to")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CommandError::bad_request("missing to"))?
+                .to_owned();
             tokio::task::spawn_blocking(move || {
-                let head = d.store.head().map_err(|e| CommandError::internal(e.to_string()))?;
-                let view = CommitView { store: &*d.store, at: head };
-                let seat = grammar::resolve_seat(&view, &to, Scope::Live).map_err(|e| CommandError::bad_request(e.to_string()))?;
+                let head = d
+                    .store
+                    .head()
+                    .map_err(|e| CommandError::internal(e.to_string()))?;
+                let view = CommitView {
+                    store: &*d.store,
+                    at: head,
+                };
+                let seat = grammar::resolve_seat(&view, &to, Scope::Live)
+                    .map_err(|e| CommandError::bad_request(e.to_string()))?;
                 reassign(&d.journal, &*d.store, &op, &seat, d.clock.now()).map_err(err)?;
                 Ok(json!({ "op": op, "requester_seat": seat }))
             })
@@ -386,19 +498,27 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
         }
     });
     let d = deps;
-    reg.command("ops.check_instruction", move |_cx: CommandCtx, args: Value| {
-        let d = d.clone();
-        async move {
-            let op: OpId = id_arg(&args, "op")?;
-            let object: AnyId = id_arg(&args, "object")?;
-            let rev = args.get("rev").and_then(|v| v.as_u64()).ok_or_else(|| CommandError::bad_request("missing rev"))?;
-            let status = tokio::task::spawn_blocking(move || check_instruction(&d.journal, &*d.store, &op, &object, rev))
+    reg.command(
+        "ops.check_instruction",
+        move |_cx: CommandCtx, args: Value| {
+            let d = d.clone();
+            async move {
+                let op: OpId = id_arg(&args, "op")?;
+                let object: AnyId = id_arg(&args, "object")?;
+                let rev = args
+                    .get("rev")
+                    .and_then(|v| v.as_u64())
+                    .ok_or_else(|| CommandError::bad_request("missing rev"))?;
+                let status = tokio::task::spawn_blocking(move || {
+                    check_instruction(&d.journal, &*d.store, &op, &object, rev)
+                })
                 .await
                 .map_err(|e| CommandError::internal(e.to_string()))?
                 .map_err(err)?;
-            Ok(json!({ "status": status }))
-        }
-    });
+                Ok(json!({ "status": status }))
+            }
+        },
+    );
 }
 
 #[cfg(test)]
@@ -439,16 +559,33 @@ mod tests {
         two_seats(&fx);
         let op = admitted_op(&fx);
         let r = cancel(j(&fx), &op, t0()).unwrap();
-        assert_eq!((r.result, r.state), (CancelResult::Cancelled, Some(OpState::Cancelled)));
+        assert_eq!(
+            (r.result, r.state),
+            (CancelResult::Cancelled, Some(OpState::Cancelled))
+        );
         assert_eq!(j(&fx).get(&op).unwrap().unwrap().state, OpState::Cancelled);
         fx.w.drain().unwrap();
-        assert_eq!(j(&fx).get(&op).unwrap().unwrap().state, OpState::Cancelled, "the writer never applies a cancelled op");
+        assert_eq!(
+            j(&fx).get(&op).unwrap().unwrap().state,
+            OpState::Cancelled,
+            "the writer never applies a cancelled op"
+        );
 
         let committed = commit(&fx, "seat rename one uno");
         let r = cancel(j(&fx), &committed.op, t0()).unwrap();
-        assert_eq!((r.result, r.state), (CancelResult::Refused, Some(OpState::Committed)));
-        assert!(r.message.contains("supersed") && r.message.contains("committed"), "{}", r.message);
-        assert_eq!(j(&fx).get(&committed.op).unwrap().unwrap().state, OpState::Committed);
+        assert_eq!(
+            (r.result, r.state),
+            (CancelResult::Refused, Some(OpState::Committed))
+        );
+        assert!(
+            r.message.contains("supersed") && r.message.contains("committed"),
+            "{}",
+            r.message
+        );
+        assert_eq!(
+            j(&fx).get(&committed.op).unwrap().unwrap().state,
+            OpState::Committed
+        );
 
         let unknown = cancel(j(&fx), &OpId::new(), t0()).unwrap();
         assert_eq!(unknown.result, CancelResult::Refused);
@@ -462,11 +599,29 @@ mod tests {
         let rejected = rejected_op(&fx, requester_of(&one));
         assert_eq!(list_ops(j(&fx), true, 50).unwrap().len(), 1);
         let r = cancel(j(&fx), &rejected.op, t0()).unwrap();
-        assert_eq!((r.result, r.state), (CancelResult::RemindersStopped, Some(OpState::Rejected)));
+        assert_eq!(
+            (r.result, r.state),
+            (CancelResult::RemindersStopped, Some(OpState::Rejected))
+        );
         assert_eq!(r.message, "op already rejected; reminders stopped");
-        assert_eq!(j(&fx).get(&rejected.op).unwrap().unwrap().state, OpState::Rejected, "state unchanged");
-        assert!(list_ops(j(&fx), true, 50).unwrap().is_empty(), "no longer unresolved");
-        assert_eq!(list_ops(j(&fx), false, 50).unwrap().iter().filter(|o| o.op == rejected.op).count(), 1, "still in history");
+        assert_eq!(
+            j(&fx).get(&rejected.op).unwrap().unwrap().state,
+            OpState::Rejected,
+            "state unchanged"
+        );
+        assert!(
+            list_ops(j(&fx), true, 50).unwrap().is_empty(),
+            "no longer unresolved"
+        );
+        assert_eq!(
+            list_ops(j(&fx), false, 50)
+                .unwrap()
+                .iter()
+                .filter(|o| o.op == rejected.op)
+                .count(),
+            1,
+            "still in history"
+        );
     }
 
     #[test]
@@ -483,7 +638,11 @@ mod tests {
         let op = j(&fx).admit(&req, t0()).unwrap();
         j(&fx).begin_applying(&op, t0()).unwrap().unwrap();
         j(&fx).finish_failed(&op, "boom", t0()).unwrap();
-        assert_eq!(list_ops(j(&fx), true, 50).unwrap().len(), 1, "failed is unresolved");
+        assert_eq!(
+            list_ops(j(&fx), true, 50).unwrap().len(),
+            1,
+            "failed is unresolved"
+        );
         let r = cancel(j(&fx), &op, t0()).unwrap();
         assert_eq!(r.result, CancelResult::Cancelled);
         assert!(list_ops(j(&fx), true, 50).unwrap().is_empty());
@@ -501,8 +660,16 @@ mod tests {
         assert_eq!(row.request.requester.seat, Some(two.id.clone()));
         assert_eq!(row.request.requester.teamspace, Some(two.teamspace.clone()));
         assert_eq!(row.request.requester.clone, None);
-        assert_eq!(row.state, OpState::Rejected, "reassign does not resolve the op");
-        assert_eq!(list_ops(j(&fx), true, 50).unwrap().len(), 1, "still discoverable");
+        assert_eq!(
+            row.state,
+            OpState::Rejected,
+            "reassign does not resolve the op"
+        );
+        assert_eq!(
+            list_ops(j(&fx), true, 50).unwrap().len(),
+            1,
+            "still discoverable"
+        );
         assert!(pending_for(j(&fx), Some(&one.id), None).unwrap().is_empty());
         assert_eq!(pending_for(j(&fx), Some(&two.id), None).unwrap().len(), 1);
 
@@ -521,7 +688,11 @@ mod tests {
         let two = seat(&fx, "two");
         let done = commit(&fx, "seat rename one uno");
         reassign(j(&fx), &*fx.store, &done.op, &two.id, t0()).unwrap();
-        assert_eq!(fx.w.drain().unwrap().len(), 1, "the bookkeeping op was admitted and applies");
+        assert_eq!(
+            fx.w.drain().unwrap().len(),
+            1,
+            "the bookkeeping op was admitted and applies"
+        );
         let v = view(&fx);
         let loc = layout::locate(&v, &done.op.to_any()).unwrap().unwrap();
         let rec: OperationRecord = read_toml(&v, &loc.record_path).unwrap().unwrap();
@@ -536,16 +707,31 @@ mod tests {
         two_seats(&fx);
         let two = seat(&fx, "two");
         let sp = plan(&fx, "seat rename one uno");
-        let op = crate::plan::commands::admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap();
+        let op = crate::plan::commands::admit_apply(
+            &fx.deps,
+            &CallerInfo::default(),
+            sp.plan.id.as_str(),
+            Some(&sp.hash),
+            "relay",
+        )
+        .unwrap();
         assert_eq!(j(&fx).get(&op).unwrap().unwrap().state, OpState::Admitted);
         reassign(j(&fx), &*fx.store, &op, &two.id, t0()).unwrap();
-        assert_eq!(fx.w.drain().unwrap().len(), 2, "the op and the follow-up bookkeeping op");
+        assert_eq!(
+            fx.w.drain().unwrap().len(),
+            2,
+            "the op and the follow-up bookkeeping op"
+        );
         let row = j(&fx).get(&op).unwrap().unwrap();
         assert_eq!(row.state, OpState::Committed);
         let v = view(&fx);
         let loc = layout::locate(&v, &op.to_any()).unwrap().unwrap();
         let rec: OperationRecord = read_toml(&v, &loc.record_path).unwrap().unwrap();
-        assert_eq!(rec.requester.seat, Some(two.id.clone()), "the committed record names the new requester");
+        assert_eq!(
+            rec.requester.seat,
+            Some(two.id.clone()),
+            "the committed record names the new requester"
+        );
         assert_eq!(row.request.requester.seat, Some(two.id));
     }
 
@@ -572,7 +758,11 @@ mod tests {
             .into_iter()
             .find(|r| r.request.args["sub"] == "reassign")
             .expect("follow-up admitted");
-        assert_eq!(follow.state, OpState::Committed, "the follow-up commits as a no-op, not a rejection");
+        assert_eq!(
+            follow.state,
+            OpState::Committed,
+            "the follow-up commits as a no-op, not a rejection"
+        );
         assert!(follow.rejection.is_none());
     }
 
@@ -587,21 +777,36 @@ mod tests {
         let obj = one.id.to_any();
         let st = |op: &OpId, rev| check_instruction(j(&fx), &*fx.store, op, &obj, rev).unwrap();
         assert_eq!(st(&leave.op, rev), InstructionStatus::Current);
-        assert_eq!(st(&leave.op, rev - 1), InstructionStatus::Obsolete, "stale rev");
+        assert_eq!(
+            st(&leave.op, rev - 1),
+            InstructionStatus::Obsolete,
+            "stale rev"
+        );
         // seat moves on: the instruction becomes obsolete
         commit(&fx, "participation join th_a --scope seat --seat one");
-        assert_eq!(st(&leave.op, rev), InstructionStatus::Obsolete, "rev advanced");
+        assert_eq!(
+            st(&leave.op, rev),
+            InstructionStatus::Obsolete,
+            "rev advanced"
+        );
         // superseded op: obsolete even at the right rev
         let rev_now = head_rev_of(&fx, &obj);
         assert_eq!(st(&leave.op, rev_now), InstructionStatus::Current);
         j(&fx).supersede(&leave.op, &OpId::new(), t0()).unwrap();
-        assert_eq!(st(&leave.op, rev_now), InstructionStatus::Obsolete, "superseded op");
+        assert_eq!(
+            st(&leave.op, rev_now),
+            InstructionStatus::Obsolete,
+            "superseded op"
+        );
         // cancelled op and missing object
         let cancelled = admitted_op(&fx);
         cancel(j(&fx), &cancelled, t0()).unwrap();
         assert_eq!(st(&cancelled, rev_now), InstructionStatus::Obsolete);
         let ghost = SeatId::new().to_any();
-        assert_eq!(check_instruction(j(&fx), &*fx.store, &cancelled, &ghost, 1).unwrap(), InstructionStatus::Obsolete);
+        assert_eq!(
+            check_instruction(j(&fx), &*fx.store, &cancelled, &ghost, 1).unwrap(),
+            InstructionStatus::Obsolete
+        );
         assert!(check_instruction(j(&fx), &*fx.store, &OpId::new(), &obj, 1).is_err());
         assert_eq!(InstructionStatus::Current.as_str(), "current");
         assert_eq!(InstructionStatus::Obsolete.as_str(), "obsolete");
@@ -617,22 +822,46 @@ mod tests {
         let rejected = rejected_op(&fx, requester_of(&one));
         validate_supersedes(j(&fx), &rejected.op).unwrap();
         let threads = Arc::new(RecordingThreads::default());
-        let sched = ReminderScheduler { journal: j(&fx).clone(), store: fx.store.clone(), threads: threads.clone(), clock: fx.clock.clone() };
+        let sched = ReminderScheduler {
+            journal: j(&fx).clone(),
+            store: fx.store.clone(),
+            threads: threads.clone(),
+            clock: fx.clock.clone(),
+        };
         assert_eq!(sched.tick().await.len(), 1, "initial notify at rejection");
 
         // the replacement: same intent, plan carries supersedes
-        let caller = CallerInfo { graph_seat: Some(one.id.to_string()), ..Default::default() };
-        let sp = plan_as(&fx, &caller, &format!("seat rename two zwei --supersedes {}", rejected.op));
+        let caller = CallerInfo {
+            graph_seat: Some(one.id.to_string()),
+            ..Default::default()
+        };
+        let sp = plan_as(
+            &fx,
+            &caller,
+            &format!("seat rename two zwei --supersedes {}", rejected.op),
+        );
         assert_eq!(sp.supersedes, Some(rejected.op.clone()));
         let done = apply_plan(&fx, &sp);
         assert_eq!(done.state, OpState::Committed, "{:?}", done.rejection);
         let orig = j(&fx).get(&rejected.op).unwrap().unwrap();
-        assert_eq!((orig.state, orig.superseded_by), (OpState::Superseded, Some(done.op.clone())));
-        assert!(list_ops(j(&fx), true, 50).unwrap().is_empty(), "superseded is resolved");
-        assert!(validate_supersedes(j(&fx), &rejected.op).is_err(), "cannot supersede twice");
+        assert_eq!(
+            (orig.state, orig.superseded_by),
+            (OpState::Superseded, Some(done.op.clone()))
+        );
+        assert!(
+            list_ops(j(&fx), true, 50).unwrap().is_empty(),
+            "superseded is resolved"
+        );
+        assert!(
+            validate_supersedes(j(&fx), &rejected.op).is_err(),
+            "cannot supersede twice"
+        );
 
         fx.clock.advance(chrono::Duration::hours(30));
-        assert!(sched.tick().await.is_empty(), "no more reminders for a superseded op");
+        assert!(
+            sched.tick().await.is_empty(),
+            "no more reminders for a superseded op"
+        );
         assert_eq!(threads.sent().len(), 1);
     }
 
@@ -668,15 +897,32 @@ mod tests {
             };
             fx.w.admit(req).unwrap()
         };
-        let ids = |v: Vec<OpSummary>| v.into_iter().map(|s| s.op).collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(ids(pending_for(j(&fx), Some(&one.id), None).unwrap()), [a.op.clone(), queued.clone()].into());
-        assert_eq!(ids(pending_for(j(&fx), Some(&two.id), None).unwrap()), [b.op.clone()].into());
+        let ids = |v: Vec<OpSummary>| {
+            v.into_iter()
+                .map(|s| s.op)
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert_eq!(
+            ids(pending_for(j(&fx), Some(&one.id), None).unwrap()),
+            [a.op.clone(), queued.clone()].into()
+        );
+        assert_eq!(
+            ids(pending_for(j(&fx), Some(&two.id), None).unwrap()),
+            [b.op.clone()].into()
+        );
         assert_eq!(pending_for(j(&fx), None, None).unwrap().len(), 3);
         let someone_else = SeatId::new();
-        assert!(pending_for(j(&fx), Some(&someone_else), None).unwrap().is_empty());
+        assert!(
+            pending_for(j(&fx), Some(&someone_else), None)
+                .unwrap()
+                .is_empty()
+        );
         // resolved ops drop out: committed ones were never listed
         cancel(j(&fx), &a.op, t0()).unwrap();
-        assert_eq!(ids(pending_for(j(&fx), Some(&one.id), None).unwrap()), [queued].into());
+        assert_eq!(
+            ids(pending_for(j(&fx), Some(&one.id), None).unwrap()),
+            [queued].into()
+        );
         let s = &pending_for(j(&fx), Some(&two.id), None).unwrap()[0];
         assert_eq!(s.rejection.as_ref().unwrap().reason, "unknown_plan");
         assert!(s.summary.starts_with("seat_retire"), "{}", s.summary);
@@ -705,27 +951,67 @@ mod tests {
         let one = seat(&fx, "one");
         let rejected = rejected_op(&fx, requester_of(&one));
         let mut reg = Registry::default();
-        register_commands(&mut reg, OpsDeps { journal: j(&fx).clone(), store: fx.store.clone(), clock: fx.clock.clone() });
+        register_commands(
+            &mut reg,
+            OpsDeps {
+                journal: j(&fx).clone(),
+                store: fx.store.clone(),
+                clock: fx.clock.clone(),
+            },
+        );
         let call = |kind: &'static str, args: Value| {
             let h = reg.handler(kind).unwrap();
-            async move { h.call(CommandCtx { request_id: "r".into(), caller: CallerInfo::default() }, args).await }
+            async move {
+                h.call(
+                    CommandCtx {
+                        request_id: "r".into(),
+                        caller: CallerInfo::default(),
+                    },
+                    args,
+                )
+                .await
+            }
         };
-        let v = call("ops.list", json!({ "unresolved": true })).await.unwrap();
+        let v = call("ops.list", json!({ "unresolved": true }))
+            .await
+            .unwrap();
         assert_eq!(v["ops"].as_array().unwrap().len(), 1);
         let v = call("ops.get", json!({ "op": rejected.op })).await.unwrap();
         assert_eq!(v["op"]["state"], "rejected");
         assert_eq!(v["reminders"]["sent"], 0);
-        call("ops.reassign", json!({ "op": rejected.op, "to": "two" })).await.unwrap();
+        call("ops.reassign", json!({ "op": rejected.op, "to": "two" }))
+            .await
+            .unwrap();
         let two = seat(&fx, "two");
-        assert_eq!(j(&fx).get(&rejected.op).unwrap().unwrap().request.requester.seat, Some(two.id.clone()));
-        let v = call("ops.check_instruction", json!({ "op": rejected.op, "object": two.id, "rev": two.rev })).await.unwrap();
+        assert_eq!(
+            j(&fx)
+                .get(&rejected.op)
+                .unwrap()
+                .unwrap()
+                .request
+                .requester
+                .seat,
+            Some(two.id.clone())
+        );
+        let v = call(
+            "ops.check_instruction",
+            json!({ "op": rejected.op, "object": two.id, "rev": two.rev }),
+        )
+        .await
+        .unwrap();
         assert_eq!(v["status"], "current");
         let done = commit(&fx, "seat rename one uno");
-        let e = call("ops.cancel", json!({ "op": done.op })).await.unwrap_err();
+        let e = call("ops.cancel", json!({ "op": done.op }))
+            .await
+            .unwrap_err();
         assert!(e.message.contains("supersed"), "{}", e.message);
-        let v = call("ops.cancel", json!({ "op": rejected.op })).await.unwrap();
+        let v = call("ops.cancel", json!({ "op": rejected.op }))
+            .await
+            .unwrap();
         assert_eq!(v["result"], "reminders_stopped");
-        let e = call("ops.get", json!({ "op": "nonsense" })).await.unwrap_err();
+        let e = call("ops.get", json!({ "op": "nonsense" }))
+            .await
+            .unwrap_err();
         assert!(e.message.contains("op"), "{}", e.message);
     }
 }

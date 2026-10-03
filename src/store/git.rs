@@ -40,20 +40,30 @@ impl GitStore {
         if !has_graph {
             return Err(no_instance());
         }
-        Ok(Self { root: root.to_path_buf(), repo: Mutex::new(repo), locate_cache: Mutex::new(HashMap::new()) })
+        Ok(Self {
+            root: root.to_path_buf(),
+            repo: Mutex::new(repo),
+            locate_cache: Mutex::new(HashMap::new()),
+        })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    pub fn with_repo<T>(&self, f: impl FnOnce(&Repository) -> Result<T, git2::Error>) -> Result<T, StoreError> {
+    pub fn with_repo<T>(
+        &self,
+        f: impl FnOnce(&Repository) -> Result<T, git2::Error>,
+    ) -> Result<T, StoreError> {
         let repo = self.repo.lock().unwrap_or_else(|e| e.into_inner());
         f(&repo).map_err(git_err)
     }
 
     pub fn at(&self, c: &CommitId) -> CommitView<'_> {
-        CommitView { store: self, at: c.clone() }
+        CommitView {
+            store: self,
+            at: c.clone(),
+        }
     }
 
     fn commit_oid(c: &CommitId) -> Result<Oid, StoreError> {
@@ -62,7 +72,9 @@ impl GitStore {
 
     fn commit_tree<'r>(repo: &'r Repository, c: &CommitId) -> Result<git2::Tree<'r>, StoreError> {
         let oid = Self::commit_oid(c)?;
-        let commit = repo.find_commit(oid).map_err(|_| StoreError::UnknownCommit(c.0.clone()))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|_| StoreError::UnknownCommit(c.0.clone()))?;
         commit.tree().map_err(git_err)
     }
 
@@ -96,7 +108,8 @@ impl GitStore {
 
 impl Store for GitStore {
     fn head(&self) -> Result<CommitId, StoreError> {
-        self.with_repo(|r| r.refname_to_id("refs/heads/main")).map(|o| CommitId(o.to_string()))
+        self.with_repo(|r| r.refname_to_id("refs/heads/main"))
+            .map(|o| CommitId(o.to_string()))
     }
 
     fn read_file(&self, at: &CommitId, path: &RepoPath) -> Result<Option<Vec<u8>>, StoreError> {
@@ -152,17 +165,31 @@ impl Store for GitStore {
             } else {
                 EntryKind::File
             };
-            out.push(DirEntry { name: name.to_owned(), kind });
+            out.push(DirEntry {
+                name: name.to_owned(),
+                kind,
+            });
         }
         Ok(out)
     }
 
     fn locate(&self, at: &CommitId, id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
         let key = (at.clone(), id.clone());
-        if let Some(hit) = self.locate_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        if let Some(hit) = self
+            .locate_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+        {
             return Ok(hit.clone());
         }
-        let found = super::layout::locate(&CommitView { store: self, at: at.clone() }, id)?;
+        let found = super::layout::locate(
+            &CommitView {
+                store: self,
+                at: at.clone(),
+            },
+            id,
+        )?;
         let mut cache = self.locate_cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.len() > LOCATE_CACHE_MAX {
             cache.clear();

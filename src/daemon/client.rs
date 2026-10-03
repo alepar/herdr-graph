@@ -2,7 +2,8 @@
 use super::registry::CallerInfo;
 use crate::config::{Env, plugin_config_dir_via_herdr, socket_path};
 use crate::ipc::{
-    FrameError, IPC_VERSION, IpcCommand, IpcErrorCode, IpcRequest, IpcResponse, IpcResult, read_frame, write_frame,
+    FrameError, IPC_VERSION, IpcCommand, IpcErrorCode, IpcRequest, IpcResponse, IpcResult,
+    read_frame, write_frame,
 };
 use std::io::IsTerminal;
 use std::os::unix::net::UnixStream;
@@ -41,12 +42,19 @@ impl Client {
         Ok(Client { stream })
     }
 
-    pub fn call(&mut self, kind: &str, args: serde_json::Value) -> Result<serde_json::Value, ClientError> {
+    pub fn call(
+        &mut self,
+        kind: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
         let request_id = ulid::Ulid::new().to_string();
         let req = IpcRequest {
             version: IPC_VERSION,
             request_id: request_id.clone(),
-            command: IpcCommand { kind: kind.to_string(), args },
+            command: IpcCommand {
+                kind: kind.to_string(),
+                args,
+            },
         };
         write_frame(&mut self.stream, &req)?;
         let resp: IpcResponse = read_frame(&mut self.stream)?;
@@ -65,7 +73,10 @@ impl Client {
 
 /// `hello` against a socket path: Some(reply) iff a daemon answers.
 pub fn hello(socket: &Path) -> Option<serde_json::Value> {
-    Client::connect(socket, Duration::from_secs(2)).ok()?.call("hello", serde_json::json!({})).ok()
+    Client::connect(socket, Duration::from_secs(2))
+        .ok()?
+        .call("hello", serde_json::json!({}))
+        .ok()
 }
 
 pub fn caller_info_from_env() -> CallerInfo {
@@ -92,7 +103,11 @@ pub enum CallMode {
 /// Unavailable("not inside Herdr"); else run ensure (STARTUP_WAIT) once and retry once; still failing → Unavailable(<reason>).
 /// Verifies `hello.herdr_socket` matches this process's HERDR_SOCKET_PATH when both are set (decision 1).
 /// Injects args["_caller"].
-pub fn call_daemon(kind: &str, args: serde_json::Value, mode: CallMode) -> Result<serde_json::Value, ClientError> {
+pub fn call_daemon(
+    kind: &str,
+    args: serde_json::Value,
+    mode: CallMode,
+) -> Result<serde_json::Value, ClientError> {
     call_daemon_with_timeout(kind, args, mode, CALL_TIMEOUT)
 }
 
@@ -104,7 +119,8 @@ pub fn call_daemon_with_timeout(
     timeout: Duration,
 ) -> Result<serde_json::Value, ClientError> {
     let env = Env::from_process();
-    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr).ok_or(ClientError::NoInstance)?;
+    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
+        .ok_or(ClientError::NoInstance)?;
     if mode == CallMode::Ensure && env.herdr_socket.is_none() {
         return Err(ClientError::Unavailable("not inside Herdr".into()));
     }
@@ -115,7 +131,8 @@ pub fn call_daemon_with_timeout(
             if mode == CallMode::NoEnsure {
                 return Err(ClientError::Unavailable(format!("not running ({first})")));
             }
-            super::ensure::ensure(&env, ENSURE_TIMEOUT).map_err(|e| ClientError::Unavailable(format!("{e:#}")))?;
+            super::ensure::ensure(&env, ENSURE_TIMEOUT)
+                .map_err(|e| ClientError::Unavailable(format!("{e:#}")))?;
             Client::connect(&socket, timeout)
                 .map_err(|e| ClientError::Unavailable(format!("not running after ensure ({e})")))?
         }
@@ -126,13 +143,18 @@ pub fn call_daemon_with_timeout(
         if theirs.as_deref() != Some(mine.as_path()) {
             return Err(ClientError::Unavailable(format!(
                 "daemon for this instance is attached to Herdr socket {}; this pane uses {}",
-                theirs.map(|p| p.display().to_string()).unwrap_or_else(|| "<unknown>".into()),
+                theirs
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<unknown>".into()),
                 mine.display()
             )));
         }
     }
     if let Some(obj) = args.as_object_mut() {
-        obj.insert("_caller".into(), serde_json::to_value(caller_info_from_env()).expect("caller info serializes"));
+        obj.insert(
+            "_caller".into(),
+            serde_json::to_value(caller_info_from_env()).expect("caller info serializes"),
+        );
     }
     client.call(kind, args)
 }

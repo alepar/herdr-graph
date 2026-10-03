@@ -55,18 +55,32 @@ pub enum Scope {
     Retired,
 }
 
-fn pick<T: std::fmt::Display>(what: &str, s: &str, mut found: Vec<(T, String)>) -> Result<T, PlanError> {
+fn pick<T: std::fmt::Display>(
+    what: &str,
+    s: &str,
+    mut found: Vec<(T, String)>,
+) -> Result<T, PlanError> {
     match found.len() {
         0 => Err(PlanError::Invalid(format!("no {what} named {s:?}"))),
         1 => Ok(found.remove(0).0),
         _ => {
-            let list: Vec<String> = found.iter().map(|(id, ctx)| format!("{id} ({ctx})")).collect();
-            Err(PlanError::Invalid(format!("{what} name {s:?} is ambiguous: {}; use an id", list.join(", "))))
+            let list: Vec<String> = found
+                .iter()
+                .map(|(id, ctx)| format!("{id} ({ctx})"))
+                .collect();
+            Err(PlanError::Invalid(format!(
+                "{what} name {s:?} is ambiguous: {}; use an id",
+                list.join(", ")
+            )))
         }
     }
 }
 
-pub fn resolve_teamspace(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<TeamspaceId, PlanError> {
+pub fn resolve_teamspace(
+    tree: &dyn TreeRead,
+    s: &str,
+    scope: Scope,
+) -> Result<TeamspaceId, PlanError> {
     if let Ok(id) = TeamspaceId::parse(s) {
         return match layout::locate(tree, &id.to_any())? {
             Some(_) => Ok(id),
@@ -75,7 +89,9 @@ pub fn resolve_teamspace(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<T
     }
     let found = layout::list_teamspaces(tree)?
         .into_iter()
-        .filter(|(_, t)| t.name == s && (t.lifecycle == Lifecycle::Retired) == (scope == Scope::Retired))
+        .filter(|(_, t)| {
+            t.name == s && (t.lifecycle == Lifecycle::Retired) == (scope == Scope::Retired)
+        })
         .map(|(_, t)| (t.id, "teamspace".to_owned()))
         .collect();
     pick("teamspace", s, found)
@@ -91,9 +107,14 @@ pub fn resolve_seat(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<SeatId
     let teamspaces = layout::list_teamspaces(tree)?;
     let found = layout::all_seats(tree)?
         .into_iter()
-        .filter(|(_, r)| r.name == s && (r.lifecycle == Lifecycle::Retired) == (scope == Scope::Retired))
+        .filter(|(_, r)| {
+            r.name == s && (r.lifecycle == Lifecycle::Retired) == (scope == Scope::Retired)
+        })
         .map(|(_, r)| {
-            let ts = teamspaces.iter().find(|(_, t)| t.id == r.teamspace).map(|(_, t)| t.name.clone());
+            let ts = teamspaces
+                .iter()
+                .find(|(_, t)| t.id == r.teamspace)
+                .map(|(_, t)| t.name.clone());
             (r.id, format!("teamspace {}", ts.unwrap_or_default()))
         })
         .collect();
@@ -110,9 +131,14 @@ pub fn resolve_clone(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<Clone
     let seats = layout::all_seats(tree)?;
     let found = layout::all_clones(tree)?
         .into_iter()
-        .filter(|(_, c)| c.name == s && (c.lifecycle == CloneLifecycle::Retired) == (scope == Scope::Retired))
+        .filter(|(_, c)| {
+            c.name == s && (c.lifecycle == CloneLifecycle::Retired) == (scope == Scope::Retired)
+        })
         .map(|(_, c)| {
-            let seat = seats.iter().find(|(_, st)| st.id == c.seat).map(|(_, st)| st.name.clone());
+            let seat = seats
+                .iter()
+                .find(|(_, st)| st.id == c.seat)
+                .map(|(_, st)| st.name.clone());
             (c.id, format!("seat {}", seat.unwrap_or_default()))
         })
         .collect();
@@ -124,7 +150,13 @@ pub fn resolve_object(tree: &dyn TreeRead, s: &str) -> Result<AnyId, PlanError> 
     if let Ok(id) = AnyId::parse(s) {
         return match layout::locate(tree, &id)? {
             Some(_) => Ok(id),
-            None if matches!(id.kind(), IdKind::Member | IdKind::NativeSession | IdKind::Effect | IdKind::Plan) => Ok(id),
+            None if matches!(
+                id.kind(),
+                IdKind::Member | IdKind::NativeSession | IdKind::Effect | IdKind::Plan
+            ) =>
+            {
+                Ok(id)
+            }
             None => Err(PlanError::Invalid(format!("no object {id}"))),
         };
     }

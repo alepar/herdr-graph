@@ -32,7 +32,8 @@ pub fn graph_token(id: &AnyId) -> String {
     format!("{TOKEN_PREFIX}{id}")
 }
 pub fn parse_graph_token(s: &str) -> Option<AnyId> {
-    s.strip_prefix(TOKEN_PREFIX).and_then(|r| AnyId::parse(r).ok())
+    s.strip_prefix(TOKEN_PREFIX)
+        .and_then(|r| AnyId::parse(r).ok())
 }
 
 pub const NONCE_SEP: &str = " ·";
@@ -67,7 +68,10 @@ pub fn resolve_cwd(
         return (p.to_path_buf(), CwdSource::ProjectRepo);
     }
     (
-        instance.join(".graph-local").join("cwd").join(seat.as_str()),
+        instance
+            .join(".graph-local")
+            .join("cwd")
+            .join(seat.as_str()),
         CwdSource::InstanceFallback,
     )
 }

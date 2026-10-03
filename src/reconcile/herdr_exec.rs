@@ -5,7 +5,8 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
-    LiveIndex, LiveRef, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects, set_live_ref, token_of,
+    LiveIndex, LiveRef, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
+    set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
@@ -14,7 +15,9 @@ use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::harness::{Harness, profile};
 use crate::model::launch::{graph_token, nonce_label};
 use crate::model::{AnyId, CloneId, SeatId, TeamspaceId};
-use crate::ports::herdr::{CreateTab, CreateWorkspace, HerdrError, SplitDirection, SplitPane, StartAgent};
+use crate::ports::herdr::{
+    CreateTab, CreateWorkspace, HerdrError, SplitDirection, SplitPane, StartAgent,
+};
 use crate::ports::store::StoreError;
 use crate::store::tree::TreeRead;
 use std::collections::BTreeSet;
@@ -54,7 +57,10 @@ impl EffectSource for HerdrSource {
         match self.cache.get(cx.tree, cx.head, &self.instance) {
             Ok(d) => plan_effects(&d, cx.snapshot, cx.journal, cx.now),
             Err(e) => {
-                eprintln!("herdr-graph: reconcile: cannot read desired state at {}: {e}", cx.head.0);
+                eprintln!(
+                    "herdr-graph: reconcile: cannot read desired state at {}: {e}",
+                    cx.head.0
+                );
                 Vec::new()
             }
         }
@@ -85,7 +91,9 @@ fn idempotent(r: Result<(), HerdrError>) -> ExecOutcome {
 /// Closing something already gone is success.
 fn close_outcome(r: Result<(), HerdrError>) -> ExecOutcome {
     match r {
-        Err(HerdrError::Rejected { message, .. }) if message.contains("not found") => ExecOutcome::Done,
+        Err(HerdrError::Rejected { message, .. }) if message.contains("not found") => {
+            ExecOutcome::Done
+        }
         other => idempotent(other),
     }
 }
@@ -111,7 +119,9 @@ impl HerdrExecutor {
     }
 
     fn record_launch(&self, p: &DesiredPane) {
-        let _ = self.journal.meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
+        let _ = self
+            .journal
+            .meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
     }
 
     /// A new pane for `clone` is a bare shell: forget the previous pane's launch so `start_needed` fires again.
@@ -132,28 +142,38 @@ impl HerdrExecutor {
     /// Is `e` still implied by the committed state? (Fence, spec §4.4.)
     fn implied(&self, d: &DesiredRuntime, e: &EffectRecord) -> bool {
         match &e.kind {
-            EffectKind::CreateWorkspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some_and(|w| !w.is_unknown()),
+            EffectKind::CreateWorkspace => ts_of(e)
+                .and_then(|t| d.workspace(&t))
+                .is_some_and(|w| !w.is_unknown()),
             EffectKind::RenameWorkspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
-            EffectKind::CreateTab => {
-                seat_of(e).and_then(|s| d.tab(&s)).is_some_and(|t| !t.moved_out && !t.is_unknown())
-            }
+            EffectKind::CreateTab => seat_of(e)
+                .and_then(|s| d.tab(&s))
+                .is_some_and(|t| !t.moved_out && !t.is_unknown()),
             EffectKind::RenameTab => seat_of(e).and_then(|s| d.tab(&s)).is_some(),
             EffectKind::StampToken => match e.object.kind() {
                 crate::model::IdKind::Teamspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
                 _ => clone_of(e).and_then(|c| d.pane(&c)).is_some(),
             },
-            EffectKind::SplitPane => clone_of(e).and_then(|c| d.pane(&c)).is_some_and(|p| !p.is_unknown()),
+            EffectKind::SplitPane => clone_of(e)
+                .and_then(|c| d.pane(&c))
+                .is_some_and(|p| !p.is_unknown()),
             EffectKind::RenamePane => clone_of(e).and_then(|c| d.pane(&c)).is_some(),
-            EffectKind::StartAgent => clone_of(e).and_then(|c| d.pane(&c)).is_some_and(|p| p.occupant.is_none()),
-            EffectKind::RelaunchOccupant => {
-                clone_of(e).and_then(|c| d.pane(&c)).is_some_and(|p| p.occupant.is_none())
-            }
-            EffectKind::ReplaceSession => clone_of(e).and_then(|c| d.pane(&c).map(|p| (c, p))).is_some_and(|(c, p)| {
-                // A replacement that has begun is finished even though the observer already recorded the old
-                // occupant as gone; one whose start outcome was lost (`Unknown`) is resolved from the snapshot.
-                (p.occupant.is_some() || e.status == EffectStatus::Unknown || session::has_state(&self.journal, &e.id))
-                    && self.launched(&c).is_some_and(|l| l != p.launch_shape())
-            }),
+            EffectKind::StartAgent => clone_of(e)
+                .and_then(|c| d.pane(&c))
+                .is_some_and(|p| p.occupant.is_none()),
+            EffectKind::RelaunchOccupant => clone_of(e)
+                .and_then(|c| d.pane(&c))
+                .is_some_and(|p| p.occupant.is_none()),
+            EffectKind::ReplaceSession => clone_of(e)
+                .and_then(|c| d.pane(&c).map(|p| (c, p)))
+                .is_some_and(|(c, p)| {
+                    // A replacement that has begun is finished even though the observer already recorded the old
+                    // occupant as gone; one whose start outcome was lost (`Unknown`) is resolved from the snapshot.
+                    (p.occupant.is_some()
+                        || e.status == EffectStatus::Unknown
+                        || session::has_state(&self.journal, &e.id))
+                        && self.launched(&c).is_some_and(|l| l != p.launch_shape())
+                }),
             EffectKind::ClosePane => clone_of(e).is_some_and(|c| d.pane(&c).is_none()),
             EffectKind::CloseTab => seat_of(e).is_some_and(|s| d.tab(&s).is_none()),
             EffectKind::CloseWorkspace => ts_of(e).is_some_and(|t| d.workspace(&t).is_none()),
@@ -161,34 +181,90 @@ impl HerdrExecutor {
         }
     }
 
-    async fn create_workspace(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, e: &EffectRecord) -> ExecOutcome {
-        let Some(ts) = ts_of(e) else { return ExecOutcome::Failed("create_workspace needs a teamspace".into()) };
-        let Some(w) = d.workspace(&ts) else { return ExecOutcome::Obsolete };
+    async fn create_workspace(
+        &self,
+        cx: &ExecCx<'_>,
+        d: &DesiredRuntime,
+        e: &EffectRecord,
+    ) -> ExecOutcome {
+        let Some(ts) = ts_of(e) else {
+            return ExecOutcome::Failed("create_workspace needs a teamspace".into());
+        };
+        let Some(w) = d.workspace(&ts) else {
+            return ExecOutcome::Obsolete;
+        };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
         let inc = cx.snapshot.incarnation.clone();
         if let Some(l) = idx.workspace(&ts) {
-            set_live_ref(&self.journal, &e.object, &LiveRef { workspace: Some(l.ws.id.clone()), tab: None, pane: None, incarnation: inc });
+            set_live_ref(
+                &self.journal,
+                &e.object,
+                &LiveRef {
+                    workspace: Some(l.ws.id.clone()),
+                    tab: None,
+                    pane: None,
+                    incarnation: inc,
+                },
+            );
             return ExecOutcome::Done;
         }
-        let label = e.nonce_label.clone().unwrap_or_else(|| nonce_label(&w.name, &e.id));
+        let label = e
+            .nonce_label
+            .clone()
+            .unwrap_or_else(|| nonce_label(&w.name, &e.id));
         // Lost-response recovery: a workspace carrying our nonce label is the one we created.
         if let Some(found) = cx.snapshot.workspaces.iter().find(|x| x.label == label) {
-            set_live_ref(&self.journal, &e.object, &LiveRef { workspace: Some(found.id.clone()), tab: None, pane: None, incarnation: inc });
+            set_live_ref(
+                &self.journal,
+                &e.object,
+                &LiveRef {
+                    workspace: Some(found.id.clone()),
+                    tab: None,
+                    pane: None,
+                    incarnation: inc,
+                },
+            );
             return ExecOutcome::Done;
         }
-        match cx.herdr.create_workspace(CreateWorkspace { label, cwd: w.cwd.clone(), env: w.env.clone() }).await {
+        match cx
+            .herdr
+            .create_workspace(CreateWorkspace {
+                label,
+                cwd: w.cwd.clone(),
+                env: w.env.clone(),
+            })
+            .await
+        {
             Ok(c) => {
                 crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
-                set_live_ref(&self.journal, &e.object, &LiveRef { workspace: c.workspace, tab: None, pane: None, incarnation: inc });
+                set_live_ref(
+                    &self.journal,
+                    &e.object,
+                    &LiveRef {
+                        workspace: c.workspace,
+                        tab: None,
+                        pane: None,
+                        incarnation: inc,
+                    },
+                );
                 ExecOutcome::Done
             }
             Err(err) => create_outcome(err),
         }
     }
 
-    async fn create_tab(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, e: &EffectRecord) -> ExecOutcome {
-        let Some(seat) = seat_of(e) else { return ExecOutcome::Failed("create_tab needs a seat".into()) };
-        let Some(tab) = d.tab(&seat) else { return ExecOutcome::Obsolete };
+    async fn create_tab(
+        &self,
+        cx: &ExecCx<'_>,
+        d: &DesiredRuntime,
+        e: &EffectRecord,
+    ) -> ExecOutcome {
+        let Some(seat) = seat_of(e) else {
+            return ExecOutcome::Failed("create_tab needs a seat".into());
+        };
+        let Some(tab) = d.tab(&seat) else {
+            return ExecOutcome::Obsolete;
+        };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
         let inc = cx.snapshot.incarnation.clone();
         let Some(ws) = idx.workspace(&tab.ts) else {
@@ -197,44 +273,88 @@ impl HerdrExecutor {
         let missing = idx.missing_clones(&seat);
         let first_clone = missing.first().map(|p| p.clone.clone());
         let adopt = |ws_id: &crate::model::HerdrWorkspaceId, t: &crate::ports::herdr::TabInfo| {
-            let seat_ref = LiveRef { workspace: Some(ws_id.clone()), tab: Some(t.id.clone()), pane: None, incarnation: inc.clone() };
+            let seat_ref = LiveRef {
+                workspace: Some(ws_id.clone()),
+                tab: Some(t.id.clone()),
+                pane: None,
+                incarnation: inc.clone(),
+            };
             set_live_ref(&self.journal, &e.object, &seat_ref);
             if let (Some(c), Some(p)) = (&first_clone, t.panes.first()) {
-                let r = LiveRef { pane: Some(p.id.clone()), ..seat_ref.clone() };
+                let r = LiveRef {
+                    pane: Some(p.id.clone()),
+                    ..seat_ref.clone()
+                };
                 set_live_ref(&self.journal, &c.to_any(), &r);
             }
             self.write_binding(
                 cx,
                 &e.object,
-                Binding { token: None, workspace_id: Some(ws_id.clone()), tab_id: Some(t.id.clone()), pane_id: None, terminal_id: None, incarnation: inc.clone() },
+                Binding {
+                    token: None,
+                    workspace_id: Some(ws_id.clone()),
+                    tab_id: Some(t.id.clone()),
+                    pane_id: None,
+                    terminal_id: None,
+                    incarnation: inc.clone(),
+                },
             );
         };
         if let Some((w, t)) = idx.tab_for_seat(&seat) {
             adopt(&w.id, t);
             return ExecOutcome::Done;
         }
-        let label = e.nonce_label.clone().unwrap_or_else(|| nonce_label(&tab.name, &e.id));
+        let label = e
+            .nonce_label
+            .clone()
+            .unwrap_or_else(|| nonce_label(&tab.name, &e.id));
         // Lost-response recovery: tabs have no tokens, so the nonce label is the only handle.
         if let Some(t) = ws.ws.tabs.iter().find(|t| t.label == label) {
             adopt(&ws.ws.id, t);
             return ExecOutcome::Done;
         }
-        let Some(first) = missing.first() else { return ExecOutcome::Obsolete };
+        let Some(first) = missing.first() else {
+            return ExecOutcome::Obsolete;
+        };
         self.clear_launch(&first.clone);
         match cx
             .herdr
-            .create_tab(CreateTab { workspace: ws.ws.id.clone(), label, cwd: first.cwd.clone(), env: first.env.clone() })
+            .create_tab(CreateTab {
+                workspace: ws.ws.id.clone(),
+                label,
+                cwd: first.cwd.clone(),
+                env: first.env.clone(),
+            })
             .await
         {
             Ok(c) => {
                 crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
-                let seat_ref = LiveRef { workspace: c.workspace.clone(), tab: c.tab.clone(), pane: None, incarnation: inc.clone() };
+                let seat_ref = LiveRef {
+                    workspace: c.workspace.clone(),
+                    tab: c.tab.clone(),
+                    pane: None,
+                    incarnation: inc.clone(),
+                };
                 set_live_ref(&self.journal, &e.object, &seat_ref);
-                set_live_ref(&self.journal, &first.clone.to_any(), &LiveRef { pane: c.pane.clone(), ..seat_ref });
+                set_live_ref(
+                    &self.journal,
+                    &first.clone.to_any(),
+                    &LiveRef {
+                        pane: c.pane.clone(),
+                        ..seat_ref
+                    },
+                );
                 self.write_binding(
                     cx,
                     &e.object,
-                    Binding { token: None, workspace_id: c.workspace, tab_id: c.tab, pane_id: None, terminal_id: None, incarnation: inc },
+                    Binding {
+                        token: None,
+                        workspace_id: c.workspace,
+                        tab_id: c.tab,
+                        pane_id: None,
+                        terminal_id: None,
+                        incarnation: inc,
+                    },
                 );
                 ExecOutcome::Done
             }
@@ -242,9 +362,18 @@ impl HerdrExecutor {
         }
     }
 
-    async fn split_pane(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, e: &EffectRecord) -> ExecOutcome {
-        let Some(clone) = clone_of(e) else { return ExecOutcome::Failed("split_pane needs a clone".into()) };
-        let Some(p) = d.pane(&clone) else { return ExecOutcome::Obsolete };
+    async fn split_pane(
+        &self,
+        cx: &ExecCx<'_>,
+        d: &DesiredRuntime,
+        e: &EffectRecord,
+    ) -> ExecOutcome {
+        let Some(clone) = clone_of(e) else {
+            return ExecOutcome::Failed("split_pane needs a clone".into());
+        };
+        let Some(p) = d.pane(&clone) else {
+            return ExecOutcome::Obsolete;
+        };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
         let inc = cx.snapshot.incarnation.clone();
         if idx.pane(&clone).is_some() {
@@ -253,22 +382,45 @@ impl HerdrExecutor {
         let Some((ws, tab)) = idx.tab_for_seat(&p.seat) else {
             return ExecOutcome::Transient("seat tab is not present yet".into());
         };
-        let mk_ref = |pane: HerdrPaneId| LiveRef { workspace: Some(ws.id.clone()), tab: Some(tab.id.clone()), pane: Some(pane), incarnation: inc.clone() };
+        let mk_ref = |pane: HerdrPaneId| LiveRef {
+            workspace: Some(ws.id.clone()),
+            tab: Some(tab.id.clone()),
+            pane: Some(pane),
+            incarnation: inc.clone(),
+        };
         if e.status == EffectStatus::Unknown {
             // A split whose response was lost left an unstamped pane that no sibling clone is bound to.
-            let taken: BTreeSet<HerdrPaneId> =
-                d.panes_of(&p.seat).filter(|q| q.clone != clone).filter_map(|q| self.open_pane_id(&idx, &q.clone)).collect();
-            if let Some(found) = tab.panes.iter().find(|x| token_of(&x.metadata).is_none() && !taken.contains(&x.id)) {
+            let taken: BTreeSet<HerdrPaneId> = d
+                .panes_of(&p.seat)
+                .filter(|q| q.clone != clone)
+                .filter_map(|q| self.open_pane_id(&idx, &q.clone))
+                .collect();
+            if let Some(found) = tab
+                .panes
+                .iter()
+                .find(|x| token_of(&x.metadata).is_none() && !taken.contains(&x.id))
+            {
                 set_live_ref(&self.journal, &e.object, &mk_ref(found.id.clone()));
                 return ExecOutcome::Done;
             }
         }
         self.clear_launch(&clone);
-        let target = tab.panes.iter().find(|x| token_of(&x.metadata).is_some()).or(tab.panes.first());
-        let Some(target) = target else { return ExecOutcome::Transient("seat tab has no pane to split".into()) };
+        let target = tab
+            .panes
+            .iter()
+            .find(|x| token_of(&x.metadata).is_some())
+            .or(tab.panes.first());
+        let Some(target) = target else {
+            return ExecOutcome::Transient("seat tab has no pane to split".into());
+        };
         match cx
             .herdr
-            .split_pane(SplitPane { target: target.id.clone(), direction: SplitDirection::Right, cwd: p.cwd.clone(), env: p.env.clone() })
+            .split_pane(SplitPane {
+                target: target.id.clone(),
+                direction: SplitDirection::Right,
+                cwd: p.cwd.clone(),
+                env: p.env.clone(),
+            })
             .await
         {
             Ok(c) => {
@@ -287,49 +439,96 @@ impl HerdrExecutor {
         let inc = cx.snapshot.incarnation.clone();
         let token = graph_token(&e.object);
         if let Some(ts) = ts_of(e) {
-            let Some(l) = idx.workspace(&ts) else { return ExecOutcome::Transient("workspace is not present".into()) };
+            let Some(l) = idx.workspace(&ts) else {
+                return ExecOutcome::Transient("workspace is not present".into());
+            };
             let id = l.ws.id.clone();
-            if let Err(err) = cx.herdr.report_workspace_metadata(&id, TOKEN_KEY, &token).await {
+            if let Err(err) = cx
+                .herdr
+                .report_workspace_metadata(&id, TOKEN_KEY, &token)
+                .await
+            {
                 return transient_or_failed(err);
             }
             self.write_binding(
                 cx,
                 &e.object,
-                Binding { token: Some(token), workspace_id: Some(id), tab_id: None, pane_id: None, terminal_id: None, incarnation: inc },
+                Binding {
+                    token: Some(token),
+                    workspace_id: Some(id),
+                    tab_id: None,
+                    pane_id: None,
+                    terminal_id: None,
+                    incarnation: inc,
+                },
             );
             return ExecOutcome::Done;
         }
-        let Some(clone) = clone_of(e) else { return ExecOutcome::Failed("stamp_token needs a teamspace or clone".into()) };
-        let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Transient("pane is not present".into()) };
+        let Some(clone) = clone_of(e) else {
+            return ExecOutcome::Failed("stamp_token needs a teamspace or clone".into());
+        };
+        let Some(lp) = idx.pane(&clone) else {
+            return ExecOutcome::Transient("pane is not present".into());
+        };
         let (ws, tab, pane) = (lp.ws.id.clone(), lp.tab.id.clone(), lp.pane.clone());
-        if let Err(err) = cx.herdr.report_pane_metadata(&pane.id, TOKEN_KEY, &token).await {
+        if let Err(err) = cx
+            .herdr
+            .report_pane_metadata(&pane.id, TOKEN_KEY, &token)
+            .await
+        {
             return transient_or_failed(err);
         }
         // Any other clone's live ref that still names this pane is stale now (the pane was adopted).
         for c in d.clones.keys().filter(|c| **c != clone) {
-            if live_ref(&self.journal, &c.to_any()).is_some_and(|l| l.pane.as_ref() == Some(&pane.id)) {
+            if live_ref(&self.journal, &c.to_any())
+                .is_some_and(|l| l.pane.as_ref() == Some(&pane.id))
+            {
                 delete_live_ref(&self.journal, &c.to_any());
             }
         }
         self.write_binding(
             cx,
             &e.object,
-            Binding { token: Some(token), workspace_id: Some(ws), tab_id: Some(tab), pane_id: Some(pane.id), terminal_id: pane.terminal_id, incarnation: inc },
+            Binding {
+                token: Some(token),
+                workspace_id: Some(ws),
+                tab_id: Some(tab),
+                pane_id: Some(pane.id),
+                terminal_id: pane.terminal_id,
+                incarnation: inc,
+            },
         );
         ExecOutcome::Done
     }
 
-    async fn start(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, e: &EffectRecord, relaunch: bool) -> ExecOutcome {
-        let Some(clone) = clone_of(e) else { return ExecOutcome::Failed("start needs a clone".into()) };
-        let Some(p) = d.pane(&clone) else { return ExecOutcome::Obsolete };
+    async fn start(
+        &self,
+        cx: &ExecCx<'_>,
+        d: &DesiredRuntime,
+        e: &EffectRecord,
+        relaunch: bool,
+    ) -> ExecOutcome {
+        let Some(clone) = clone_of(e) else {
+            return ExecOutcome::Failed("start needs a clone".into());
+        };
+        let Some(p) = d.pane(&clone) else {
+            return ExecOutcome::Obsolete;
+        };
         let prof = profile(p.harness);
-        let Some(kind) = prof.agent_kind else { return ExecOutcome::Done };
+        let Some(kind) = prof.agent_kind else {
+            return ExecOutcome::Done;
+        };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
-        let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Transient("pane is not present".into()) };
+        let Some(lp) = idx.pane(&clone) else {
+            return ExecOutcome::Transient("pane is not present".into());
+        };
         if relaunch && let Some(wait) = self.grace_remaining(cx) {
             return ExecOutcome::DeferredUntil(
                 cx.now + wait,
-                format!("{}s of relaunch grace left after the incarnation change", wait.num_seconds().max(1)),
+                format!(
+                    "{}s of relaunch grace left after the incarnation change",
+                    wait.num_seconds().max(1)
+                ),
             );
         }
         // §4.1 readiness: no agent on the pane and the foreground is the shell.
@@ -347,7 +546,14 @@ impl HerdrExecutor {
             Err(err) => return transient_or_failed(err),
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
-        let started = cx.herdr.start_agent(StartAgent { pane: lp.pane.id.clone(), kind: kind.to_owned(), args }).await;
+        let started = cx
+            .herdr
+            .start_agent(StartAgent {
+                pane: lp.pane.id.clone(),
+                kind: kind.to_owned(),
+                args,
+            })
+            .await;
         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
         let out = start_outcome(started);
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
@@ -358,21 +564,30 @@ impl HerdrExecutor {
 
     /// Time left of the 90 s grace after the last incarnation change (r2), if any.
     fn grace_remaining(&self, cx: &ExecCx<'_>) -> Option<chrono::Duration> {
-        let raw = self.journal.meta_get("incarnation:changed_at").ok().flatten()?;
+        let raw = self
+            .journal
+            .meta_get("incarnation:changed_at")
+            .ok()
+            .flatten()?;
         let at = chrono::DateTime::parse_from_rfc3339(&raw).ok()?.to_utc();
         let until = at + chrono::Duration::from_std(self.cfg.relaunch_grace).ok()?;
         (cx.now < until).then(|| until - cx.now)
     }
 
     async fn replace(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, e: &EffectRecord) -> ExecOutcome {
-        let Some(clone) = clone_of(e) else { return ExecOutcome::Failed("replace_session needs a clone".into()) };
-        let Some(p) = d.pane(&clone) else { return ExecOutcome::Obsolete };
+        let Some(clone) = clone_of(e) else {
+            return ExecOutcome::Failed("replace_session needs a clone".into());
+        };
+        let Some(p) = d.pane(&clone) else {
+            return ExecOutcome::Obsolete;
+        };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
-        let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Transient("pane is not present".into()) };
-        let Some(from) = self
-            .launched(&clone)
-            .and_then(|l| serde_json::from_value::<Harness>(l.get("harness").cloned().unwrap_or_default()).ok())
-        else {
+        let Some(lp) = idx.pane(&clone) else {
+            return ExecOutcome::Transient("pane is not present".into());
+        };
+        let Some(from) = self.launched(&clone).and_then(|l| {
+            serde_json::from_value::<Harness>(l.get("harness").cloned().unwrap_or_default()).ok()
+        }) else {
             return ExecOutcome::Obsolete;
         };
         let to_prof = profile(p.harness);
@@ -380,10 +595,21 @@ impl HerdrExecutor {
         let resume = (from == p.harness && to_prof.supports_resume())
             .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
             .flatten();
-        let to = to_prof
-            .agent_kind
-            .map(|kind| Relaunch { kind, args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args) });
-        let out = advance_replacement(cx.herdr, &self.cfg, &self.journal, &e.id, &lp.pane.id, from, to, cx.now).await;
+        let to = to_prof.agent_kind.map(|kind| Relaunch {
+            kind,
+            args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
+        });
+        let out = advance_replacement(
+            cx.herdr,
+            &self.cfg,
+            &self.journal,
+            &e.id,
+            &lp.pane.id,
+            from,
+            to,
+            cx.now,
+        )
+        .await;
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
         }
@@ -422,7 +648,9 @@ impl EffectExecutor for HerdrExecutor {
     async fn execute(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
         let d = match self.desired(cx) {
             Ok(d) => d,
-            Err(err) => return ExecOutcome::Transient(format!("cannot read committed state: {err}")),
+            Err(err) => {
+                return ExecOutcome::Transient(format!("cannot read committed state: {err}"));
+            }
         };
         if !self.implied(&d, e) {
             return ExecOutcome::Obsolete;
@@ -437,7 +665,9 @@ impl EffectExecutor for HerdrExecutor {
             EffectKind::RelaunchOccupant => self.start(cx, &d, e, true).await,
             EffectKind::ReplaceSession => self.replace(cx, &d, e).await,
             EffectKind::RenameWorkspace => {
-                let Some(ts) = ts_of(e) else { return ExecOutcome::Failed("needs a teamspace".into()) };
+                let Some(ts) = ts_of(e) else {
+                    return ExecOutcome::Failed("needs a teamspace".into());
+                };
                 let (Some(w), Some(l)) = (d.workspace(&ts), idx.workspace(&ts)) else {
                     return ExecOutcome::Transient("workspace is not present".into());
                 };
@@ -447,7 +677,9 @@ impl EffectExecutor for HerdrExecutor {
                 idempotent(cx.herdr.rename_workspace(&l.ws.id, &w.name).await)
             }
             EffectKind::RenameTab => {
-                let Some(seat) = seat_of(e) else { return ExecOutcome::Failed("needs a seat".into()) };
+                let Some(seat) = seat_of(e) else {
+                    return ExecOutcome::Failed("needs a seat".into());
+                };
                 let (Some(t), Some((_, live))) = (d.tab(&seat), idx.tab_for_seat(&seat)) else {
                     return ExecOutcome::Transient("tab is not present".into());
                 };
@@ -457,7 +689,9 @@ impl EffectExecutor for HerdrExecutor {
                 idempotent(cx.herdr.rename_tab(&live.id, &t.name).await)
             }
             EffectKind::RenamePane => {
-                let Some(clone) = clone_of(e) else { return ExecOutcome::Failed("needs a clone".into()) };
+                let Some(clone) = clone_of(e) else {
+                    return ExecOutcome::Failed("needs a clone".into());
+                };
                 let (Some(p), Some(lp)) = (d.pane(&clone), idx.pane(&clone)) else {
                     return ExecOutcome::Transient("pane is not present".into());
                 };
@@ -467,8 +701,12 @@ impl EffectExecutor for HerdrExecutor {
                 idempotent(cx.herdr.rename_pane(&lp.pane.id, &p.name).await)
             }
             EffectKind::ClosePane => {
-                let Some(clone) = clone_of(e) else { return ExecOutcome::Done };
-                let Some(lp) = idx.pane(&clone) else { return ExecOutcome::Done };
+                let Some(clone) = clone_of(e) else {
+                    return ExecOutcome::Done;
+                };
+                let Some(lp) = idx.pane(&clone) else {
+                    return ExecOutcome::Done;
+                };
                 if idx.pane_claimed_by(&lp.pane.id, &clone).is_some() {
                     // The pane belongs to another clone's committed binding now (adopted by an undo).
                     delete_live_ref(&self.journal, &clone.to_any());
@@ -477,14 +715,20 @@ impl EffectExecutor for HerdrExecutor {
                 close_outcome(cx.herdr.close_pane(&lp.pane.id).await)
             }
             EffectKind::CloseTab => {
-                let Some((_, t)) = seat_of(e).and_then(|s| idx.tab_for_seat(&s)) else { return ExecOutcome::Done };
+                let Some((_, t)) = seat_of(e).and_then(|s| idx.tab_for_seat(&s)) else {
+                    return ExecOutcome::Done;
+                };
                 close_outcome(cx.herdr.close_tab(&t.id).await)
             }
             EffectKind::CloseWorkspace => {
-                let Some(l) = ts_of(e).and_then(|t| idx.workspace(&t)) else { return ExecOutcome::Done };
+                let Some(l) = ts_of(e).and_then(|t| idx.workspace(&t)) else {
+                    return ExecOutcome::Done;
+                };
                 close_outcome(cx.herdr.close_workspace(&l.ws.id).await)
             }
-            other => ExecOutcome::Failed(format!("herdr executor does not handle {}", other.as_str())),
+            other => {
+                ExecOutcome::Failed(format!("herdr executor does not handle {}", other.as_str()))
+            }
         }
     }
 }

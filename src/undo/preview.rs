@@ -21,7 +21,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
-pub const CLOSES_PANE_WARNING: &str = "this undo closes your pane; the op id is printed before it closes";
+pub const CLOSES_PANE_WARNING: &str =
+    "this undo closes your pane; the op id is printed before it closes";
 
 fn invalid(m: impl Into<String>) -> PlanError {
     PlanError::Invalid(m.into())
@@ -42,13 +43,23 @@ fn retired_by_act(r: &Option<Retirement>, act: &ActionRecord) -> bool {
     r.as_ref().and_then(|x| x.action.as_ref()) == Some(&act.id)
 }
 
-pub(crate) fn read_clone(tree: &dyn TreeRead, id: &CloneId) -> Result<Option<CloneRecord>, PlanError> {
-    let Some(loc) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+pub(crate) fn read_clone(
+    tree: &dyn TreeRead,
+    id: &CloneId,
+) -> Result<Option<CloneRecord>, PlanError> {
+    let Some(loc) = layout::locate(tree, &id.to_any())? else {
+        return Ok(None);
+    };
     Ok(read_toml::<CloneRecord>(tree, &loc.record_path)?)
 }
 
-pub(crate) fn read_application(tree: &dyn TreeRead, id: &AppId) -> Result<Option<ApplicationRecord>, PlanError> {
-    let Some(loc) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+pub(crate) fn read_application(
+    tree: &dyn TreeRead,
+    id: &AppId,
+) -> Result<Option<ApplicationRecord>, PlanError> {
+    let Some(loc) = layout::locate(tree, &id.to_any())? else {
+        return Ok(None);
+    };
     Ok(read_toml::<ApplicationRecord>(tree, &loc.record_path)?)
 }
 
@@ -89,7 +100,12 @@ impl Restore {
                     out.push(c.id.clone());
                 }
             }
-            out.extend(self.new_clones.iter().filter(|(s, _)| s == seat).map(|(_, c)| c.clone()));
+            out.extend(
+                self.new_clones
+                    .iter()
+                    .filter(|(s, _)| s == seat)
+                    .map(|(_, c)| c.clone()),
+            );
         }
         for c in &self.clones {
             if out.contains(c) {
@@ -106,7 +122,11 @@ impl Restore {
     }
 }
 
-pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut Reserved) -> Result<Restore, PlanError> {
+pub fn compute_restore(
+    tree: &dyn TreeRead,
+    act: &ActionRecord,
+    reserved: &mut Reserved,
+) -> Result<Restore, PlanError> {
     let mut r = Restore::default();
     let mut standalone: Vec<CloneId> = Vec::new();
     for id in &act.retired {
@@ -114,24 +134,34 @@ pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut R
             IdKind::Teamspace => {
                 let ts_id = TeamspaceId::parse(id.as_str()).map_err(|e| invalid(e.to_string()))?;
                 match read_ts(tree, &ts_id) {
-                    Ok(ts) if ts.rec.lifecycle == Lifecycle::Retired && retired_by_act(&ts.rec.retired, act) => {
-                        r.teamspaces.push((ts_id, before_state(act, id).as_deref() == Some("active")));
+                    Ok(ts)
+                        if ts.rec.lifecycle == Lifecycle::Retired
+                            && retired_by_act(&ts.rec.retired, act) =>
+                    {
+                        r.teamspaces
+                            .push((ts_id, before_state(act, id).as_deref() == Some("active")));
                         r.set.insert(id.clone());
                     }
-                    _ => r.warnings.push(format!("teamspace {id} is no longer retired by this action; left alone")),
+                    _ => r.warnings.push(format!(
+                        "teamspace {id} is no longer retired by this action; left alone"
+                    )),
                 }
             }
             IdKind::Seat => {
                 let seat_id = SeatId::parse(id.as_str()).map_err(|e| invalid(e.to_string()))?;
                 let Ok(f) = read_seat(tree, &seat_id) else {
-                    r.warnings.push(format!("seat {id} no longer exists; left alone"));
+                    r.warnings
+                        .push(format!("seat {id} no longer exists; left alone"));
                     continue;
                 };
                 if f.rec.lifecycle != Lifecycle::Retired || !retired_by_act(&f.rec.retired, act) {
-                    r.warnings.push(format!("seat {id} is no longer retired by this action; left alone"));
+                    r.warnings.push(format!(
+                        "seat {id} is no longer retired by this action; left alone"
+                    ));
                     continue;
                 }
-                r.seats.push((seat_id, before_state(act, id).as_deref() == Some("active")));
+                r.seats
+                    .push((seat_id, before_state(act, id).as_deref() == Some("active")));
                 r.set.insert(id.clone());
                 for (_, c) in &f.clones {
                     if c.lifecycle == CloneLifecycle::Retired
@@ -151,11 +181,16 @@ pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut R
             IdKind::Application => {
                 let app_id = AppId::parse(id.as_str()).map_err(|e| invalid(e.to_string()))?;
                 match read_application(tree, &app_id)? {
-                    Some(a) if a.lifecycle == AppLifecycle::Retired && retired_by_act(&a.retired, act) => {
+                    Some(a)
+                        if a.lifecycle == AppLifecycle::Retired
+                            && retired_by_act(&a.retired, act) =>
+                    {
                         r.app = Some(app_id);
                         r.set.insert(id.clone());
                     }
-                    _ => r.warnings.push(format!("application {id} is no longer retired by this action; left alone")),
+                    _ => r.warnings.push(format!(
+                        "application {id} is no longer retired by this action; left alone"
+                    )),
                 }
             }
             _ => {}
@@ -166,16 +201,22 @@ pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut R
             continue;
         }
         let Some(rec) = read_clone(tree, &c)? else {
-            r.warnings.push(format!("clone {c} no longer exists; left alone"));
+            r.warnings
+                .push(format!("clone {c} no longer exists; left alone"));
             continue;
         };
         if rec.lifecycle != CloneLifecycle::Retired || !retired_by_act(&rec.retired, act) {
-            r.warnings.push(format!("clone {c} is no longer retired by this action; left alone"));
+            r.warnings.push(format!(
+                "clone {c} is no longer retired by this action; left alone"
+            ));
             continue;
         }
         let seat = read_seat(tree, &rec.seat)?;
         if seat.rec.lifecycle == Lifecycle::Retired {
-            r.warnings.push(format!("clone {c} belongs to retired seat {}; left alone", rec.seat));
+            r.warnings.push(format!(
+                "clone {c} belongs to retired seat {}; left alone",
+                rec.seat
+            ));
             continue;
         }
         r.set.insert(c.to_any());
@@ -184,7 +225,9 @@ pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut R
     // Seats whose teamspace stays retired cannot come back.
     for (seat, _) in &r.seats {
         let f = read_seat(tree, seat)?;
-        if f.ts.rec.lifecycle == Lifecycle::Retired && !r.teamspaces.iter().any(|(t, _)| t == &f.ts.rec.id) {
+        if f.ts.rec.lifecycle == Lifecycle::Retired
+            && !r.teamspaces.iter().any(|(t, _)| t == &f.ts.rec.id)
+        {
             r.repair.get_or_insert_with(|| {
                 format!(
                     "seat {} ({}) belongs to teamspace {} ({}) which is retired; undo the action that retired the \
@@ -215,12 +258,20 @@ pub fn compute_restore(tree: &dyn TreeRead, act: &ActionRecord, reserved: &mut R
     Ok(r)
 }
 
-
 /// The warning for an undo that closes the caller's own pane: the pane is bound to a clone (or its seat's tab)
 /// that `effects` retire or close.
-pub fn closes_caller(tree: &dyn TreeRead, caller_pane: &str, effects: &[PlanEffect]) -> Result<Option<String>, PlanError> {
+pub fn closes_caller(
+    tree: &dyn TreeRead,
+    caller_pane: &str,
+    effects: &[PlanEffect],
+) -> Result<Option<String>, PlanError> {
     for (_, c) in layout::all_clones(tree)? {
-        let bound_here = c.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).is_some_and(|p| p.0 == caller_pane);
+        let bound_here = c
+            .runtime
+            .bound
+            .as_ref()
+            .and_then(|b| b.pane_id.as_ref())
+            .is_some_and(|p| p.0 == caller_pane);
         if c.lifecycle != CloneLifecycle::Active || !bound_here {
             continue;
         }
@@ -228,8 +279,11 @@ pub fn closes_caller(tree: &dyn TreeRead, caller_pane: &str, effects: &[PlanEffe
         let closes = effects.iter().any(|e| {
             // A clone displaced by the undo's own adoption hands its pane over: that pane is adopted, not closed.
             let displaced = e.detail["displaced_by_undo"] == json!(true);
-            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane") && e.object == clone && !displaced)
-                || (matches!(e.kind.as_str(), "seat.retire" | "runtime.close_tab") && e.object == seat)
+            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane")
+                && e.object == clone
+                && !displaced)
+                || (matches!(e.kind.as_str(), "seat.retire" | "runtime.close_tab")
+                    && e.object == seat)
         });
         if closes {
             return Ok(Some(CLOSES_PANE_WARNING.to_owned()));
@@ -266,7 +320,11 @@ pub fn restore_preview(
             json!({ "name": t.rec.name, "to": if *active { "active" } else { "dormant" } }),
         ));
         if *active {
-            effects.push(PlanEffect::new("runtime.open_workspace", ts.clone(), json!({ "name": t.rec.name })));
+            effects.push(PlanEffect::new(
+                "runtime.open_workspace",
+                ts.clone(),
+                json!({ "name": t.rec.name }),
+            ));
         }
     }
     let mut activated = BTreeSet::new();
@@ -280,11 +338,19 @@ pub fn restore_preview(
         ));
         for (_, c) in &f.clones {
             if r.clones.contains(&c.id) {
-                effects.push(PlanEffect::new("clone.resurrect", c.id.clone(), json!({ "seat": seat, "name": c.name })));
+                effects.push(PlanEffect::new(
+                    "clone.resurrect",
+                    c.id.clone(),
+                    json!({ "seat": seat, "name": c.name }),
+                ));
             }
         }
         for (_, c) in r.new_clones.iter().filter(|(s, _)| s == seat) {
-            effects.push(PlanEffect::new("clone.add", c.clone(), json!({ "seat": seat, "name": f.rec.name })));
+            effects.push(PlanEffect::new(
+                "clone.add",
+                c.clone(),
+                json!({ "seat": seat, "name": f.rec.name }),
+            ));
         }
         if *active {
             if f.ts.rec.lifecycle == Lifecycle::Dormant
@@ -292,36 +358,67 @@ pub fn restore_preview(
                 && activated.insert(f.ts.rec.id.clone())
             {
                 effects.push(
-                    PlanEffect::new("teamspace.activate", f.ts.rec.id.clone(), json!({ "name": f.ts.rec.name })).induced(),
+                    PlanEffect::new(
+                        "teamspace.activate",
+                        f.ts.rec.id.clone(),
+                        json!({ "name": f.ts.rec.name }),
+                    )
+                    .induced(),
                 );
             }
-            effects.push(PlanEffect::new("runtime.open_tab", seat.clone(), json!({ "name": f.rec.name })));
+            effects.push(PlanEffect::new(
+                "runtime.open_tab",
+                seat.clone(),
+                json!({ "name": f.rec.name }),
+            ));
             let own: Vec<CloneId> = f
                 .clones
                 .iter()
                 .filter(|(_, c)| r.clones.contains(&c.id))
                 .map(|(_, c)| c.id.clone())
-                .chain(r.new_clones.iter().filter(|(s, _)| s == seat).map(|(_, c)| c.clone()))
+                .chain(
+                    r.new_clones
+                        .iter()
+                        .filter(|(s, _)| s == seat)
+                        .map(|(_, c)| c.clone()),
+                )
                 .collect();
             runtime_effects(tree, &f.rec, &own, adopt.as_ref(), &mut effects)?;
         }
     }
     for c in &r.clones {
-        let Some(rec) = read_clone(tree, c)? else { continue };
+        let Some(rec) = read_clone(tree, c)? else {
+            continue;
+        };
         if r.seats.iter().any(|(s, _)| s == &rec.seat) {
             continue;
         }
         relied_on.push(rev_of(c.clone(), rec.rev));
-        effects.push(PlanEffect::new("clone.resurrect", c.clone(), json!({ "seat": rec.seat, "name": rec.name })));
+        effects.push(PlanEffect::new(
+            "clone.resurrect",
+            c.clone(),
+            json!({ "seat": rec.seat, "name": rec.name }),
+        ));
         let f = read_seat(tree, &rec.seat)?;
         if f.rec.lifecycle == Lifecycle::Active {
-            runtime_effects(tree, &f.rec, std::slice::from_ref(c), adopt.as_ref(), &mut effects)?;
+            runtime_effects(
+                tree,
+                &f.rec,
+                std::slice::from_ref(c),
+                adopt.as_ref(),
+                &mut effects,
+            )?;
         }
     }
     if let Some(app) = &r.app {
-        let a = read_application(tree, app)?.ok_or_else(|| invalid(format!("no application {app}")))?;
+        let a =
+            read_application(tree, app)?.ok_or_else(|| invalid(format!("no application {app}")))?;
         relied_on.push(rev_of(app.clone(), a.rev));
-        effects.push(PlanEffect::new("application.resurrect", app.clone(), json!({ "name": a.name, "to": "active" })));
+        effects.push(PlanEffect::new(
+            "application.resurrect",
+            app.clone(),
+            json!({ "name": a.name, "to": "active" }),
+        ));
     }
 
     if let Some(a) = &adopt
@@ -355,7 +452,13 @@ pub fn restore_preview(
     {
         warnings.push(w);
     }
-    Ok(PlanBody { effects, relied_on, warnings, repair_required: repair, summary: format!("undo {}", act.id) })
+    Ok(PlanBody {
+        effects,
+        relied_on,
+        warnings,
+        repair_required: repair,
+        summary: format!("undo {}", act.id),
+    })
 }
 
 /// Pane effects for the clones `own` of one restored active seat: the caller's pane replaces the adopted
@@ -394,7 +497,10 @@ fn runtime_effects(
 #[derive(Debug)]
 pub enum Inverse {
     /// The edit document that puts the changed fields back, on top of the template as it is now.
-    Ready { template: TemplateId, document: Box<TemplateDocument> },
+    Ready {
+        template: TemplateId,
+        document: Box<TemplateDocument>,
+    },
     /// A later edit or a seat override touches a changed field.
     Conflict(String),
 }
@@ -414,12 +520,20 @@ fn comp_doc(act: &ActionRecord, key: &str) -> Result<TemplateDocument, PlanError
 
 /// `a` and `b` name the same field, or one contains the other (`members.x` and `members.x.name`).
 fn related(a: &str, b: &str) -> bool {
-    a == b || a.strip_prefix(b).is_some_and(|r| r.starts_with('.')) || b.strip_prefix(a).is_some_and(|r| r.starts_with('.'))
+    a == b
+        || a.strip_prefix(b).is_some_and(|r| r.starts_with('.'))
+        || b.strip_prefix(a).is_some_and(|r| r.starts_with('.'))
 }
 
-fn patch_json<T: Serialize + DeserializeOwned>(t: &mut T, key: &str, v: Option<&Value>) -> Result<(), PlanError> {
+fn patch_json<T: Serialize + DeserializeOwned>(
+    t: &mut T,
+    key: &str,
+    v: Option<&Value>,
+) -> Result<(), PlanError> {
     let mut j = serde_json::to_value(&*t).map_err(|e| invalid(e.to_string()))?;
-    let obj = j.as_object_mut().ok_or_else(|| invalid("expected an object"))?;
+    let obj = j
+        .as_object_mut()
+        .ok_or_else(|| invalid("expected an object"))?;
     match v {
         Some(v) => obj.insert(key.to_owned(), v.clone()),
         None => obj.remove(key),
@@ -429,11 +543,18 @@ fn patch_json<T: Serialize + DeserializeOwned>(t: &mut T, key: &str, v: Option<&
 }
 
 fn member_key(m: &DocumentMember) -> String {
-    m.id.as_ref().map_or_else(|| m.name.clone(), |i| i.to_string())
+    m.id.as_ref()
+        .map_or_else(|| m.name.clone(), |i| i.to_string())
 }
 
-fn member_mut<'a>(cur: &'a mut TemplateDocument, k: &str) -> Result<&'a mut DocumentMember, PlanError> {
-    cur.members.iter_mut().find(|m| member_key(m) == k).ok_or_else(|| invalid(format!("member {k} no longer exists")))
+fn member_mut<'a>(
+    cur: &'a mut TemplateDocument,
+    k: &str,
+) -> Result<&'a mut DocumentMember, PlanError> {
+    cur.members
+        .iter_mut()
+        .find(|m| member_key(m) == k)
+        .ok_or_else(|| invalid(format!("member {k} no longer exists")))
 }
 
 /// Put one changed field back to its `before` value in `cur`.
@@ -510,11 +631,16 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
     let before = comp_doc(act, "before")?;
     let after = comp_doc(act, "after")?;
     let Some((_, rec)) = read_template(tree, &tpl)? else {
-        return Ok(Inverse::Conflict(format!("template {tpl} no longer exists")));
+        return Ok(Inverse::Conflict(format!(
+            "template {tpl} no longer exists"
+        )));
     };
     let cur = TemplateDocument::from_record(&rec);
     let changes = TemplateDocument::diff(&before, &after);
-    let drift: Vec<String> = TemplateDocument::diff(&after, &cur).into_iter().map(|c| c.path).collect();
+    let drift: Vec<String> = TemplateDocument::diff(&after, &cur)
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
     let later: Vec<ActionRecord> = layout::list_actions(tree)?
         .into_iter()
         .map(|(_, a)| a)
@@ -533,19 +659,30 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             a.compensation
                 .get("changed_fields")
                 .and_then(|v| v.as_array())
-                .is_some_and(|f| f.iter().filter_map(|x| x.as_str()).any(|p| related(p, &c.path)))
+                .is_some_and(|f| {
+                    f.iter()
+                        .filter_map(|x| x.as_str())
+                        .any(|p| related(p, &c.path))
+                })
         });
         return Ok(Inverse::Conflict(match by {
             Some(a) => {
-                format!("template field {} was changed again by a later edit ({}); undo that edit first", c.path, a.id)
+                format!(
+                    "template field {} was changed again by a later edit ({}); undo that edit first",
+                    c.path, a.id
+                )
             }
             None => format!("template field {} has changed since this edit", c.path),
         }));
     }
     for c in &changes {
-        let Some((member, field)) = override_of(&c.path) else { continue };
+        let Some((member, field)) = override_of(&c.path) else {
+            continue;
+        };
         for (_, seat) in layout::all_seats(tree)? {
-            let Some(tr) = &seat.template_ref else { continue };
+            let Some(tr) = &seat.template_ref else {
+                continue;
+            };
             if seat.lifecycle == Lifecycle::Retired
                 || tr.template != tpl
                 || member.is_some_and(|m| m != tr.member.as_str())
@@ -562,9 +699,18 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
     }
     let mut doc = cur;
     for c in &changes {
-        restore_field(&mut doc, &before, &c.path, c.before.as_ref(), c.after.as_ref())?;
+        restore_field(
+            &mut doc,
+            &before,
+            &c.path,
+            c.before.as_ref(),
+            c.after.as_ref(),
+        )?;
     }
-    Ok(Inverse::Ready { template: tpl, document: Box::new(doc) })
+    Ok(Inverse::Ready {
+        template: tpl,
+        document: Box::new(doc),
+    })
 }
 
 /// Arguments of the template edit that applies the inverse patch.

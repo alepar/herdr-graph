@@ -9,7 +9,10 @@ pub const MAIN_REF: &str = "refs/heads/main";
 #[derive(Debug)]
 pub enum CasError {
     /// `refs/heads/main` is not at the expected commit.
-    Mismatch { expected: Oid, found: Oid },
+    Mismatch {
+        expected: Oid,
+        found: Oid,
+    },
     /// The ref lock stayed held for every retry.
     LockContention,
     Git(git2::Error),
@@ -25,7 +28,10 @@ impl std::fmt::Display for CasError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CasError::Mismatch { expected, found } => {
-                write!(f, "refs/heads/main moved: expected {expected}, found {found}")
+                write!(
+                    f,
+                    "refs/heads/main moved: expected {expected}, found {found}"
+                )
             }
             CasError::LockContention => f.write_str("git lock contention on refs/heads/main"),
             CasError::Git(e) => write!(f, "git: {e}"),
@@ -34,7 +40,12 @@ impl std::fmt::Display for CasError {
 }
 
 /// Create (but do not publish) a commit on top of `parent` with `tree`.
-pub fn create_commit(repo: &Repository, parent: Oid, tree: Oid, message: &str) -> Result<Oid, git2::Error> {
+pub fn create_commit(
+    repo: &Repository,
+    parent: Oid,
+    tree: Oid,
+    message: &str,
+) -> Result<Oid, git2::Error> {
     let sig = graph_signature()?;
     let parent = repo.find_commit(parent)?;
     let tree = repo.find_tree(tree)?;
@@ -43,7 +54,13 @@ pub fn create_commit(repo: &Repository, parent: Oid, tree: Oid, message: &str) -
 
 /// Move `refs/heads/main` from `expected` to `new` inside one ref transaction. A held ref lock is
 /// retried `cfg.lock_retries` times, `cfg.lock_backoff` apart.
-pub fn cas_main(repo: &Repository, expected: Oid, new: Oid, message: &str, cfg: &WriterConfig) -> Result<(), CasError> {
+pub fn cas_main(
+    repo: &Repository,
+    expected: Oid,
+    new: Oid,
+    message: &str,
+    cfg: &WriterConfig,
+) -> Result<(), CasError> {
     let first_line = message.lines().next().unwrap_or("graph commit");
     let mut attempt = 0;
     loop {
@@ -60,7 +77,12 @@ pub fn cas_main(repo: &Repository, expected: Oid, new: Oid, message: &str, cfg: 
     }
 }
 
-fn cas_main_once(repo: &Repository, expected: Oid, new: Oid, reflog_msg: &str) -> Result<(), CasError> {
+fn cas_main_once(
+    repo: &Repository,
+    expected: Oid,
+    new: Oid,
+    reflog_msg: &str,
+) -> Result<(), CasError> {
     let mut tx = repo.transaction()?;
     tx.lock_ref(MAIN_REF)?;
     failpoint!("writer.in_ref_transaction");

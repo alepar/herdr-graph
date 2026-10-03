@@ -42,7 +42,9 @@ impl UndoDeps {
 
 /// `undo.list` payload: `{candidates: [...], rendered: "<numbered text>"}`.
 pub fn list_json(store: &dyn Store, limit: usize) -> Result<Value, CommandError> {
-    let head = store.head().map_err(|e| CommandError::internal(e.to_string()))?;
+    let head = store
+        .head()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
     let view = CommitView { store, at: head };
     let list = list_candidates(&view, limit).map_err(|e| CommandError::internal(e.to_string()))?;
     Ok(json!({ "candidates": list, "rendered": render_list(&list) }))
@@ -55,7 +57,10 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {
     reg.command("undo.list", move |_cx: CommandCtx, args: Value| {
         let d = d.clone();
         async move {
-            let limit = args.get("limit").and_then(Value::as_u64).map_or(DEFAULT_LIMIT, |n| n as usize);
+            let limit = args
+                .get("limit")
+                .and_then(Value::as_u64)
+                .map_or(DEFAULT_LIMIT, |n| n as usize);
             list_json(&*d.store, limit)
         }
     });
@@ -68,8 +73,15 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {
                 .and_then(Value::as_str)
                 .ok_or_else(|| CommandError::bad_request("undo.apply needs {plan}"))?
                 .to_owned();
-            let confirm = args.get("confirm").and_then(Value::as_str).map(str::to_owned);
-            let mode = args.get("mode").and_then(Value::as_str).unwrap_or("relay").to_owned();
+            let confirm = args
+                .get("confirm")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let mode = args
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("relay")
+                .to_owned();
             // The caller's pane as Herdr shows it now (workspace, tab, terminal, incarnation): the undo commits
             // the adopted clone's binding itself, so the reconciler never sees a restored clone without a pane.
             let mut extra = serde_json::Map::new();
@@ -77,13 +89,23 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {
                 && let Ok(snap) = d.herdr.snapshot().await
                 && let Some(b) = caller_binding(&snap, pane)
             {
-                extra.insert(ADOPT_BINDING_KEY.into(), serde_json::to_value(b).map_err(|e| CommandError::internal(e.to_string()))?);
+                extra.insert(
+                    ADOPT_BINDING_KEY.into(),
+                    serde_json::to_value(b).map_err(|e| CommandError::internal(e.to_string()))?,
+                );
             }
             let op = {
                 let d = d.clone();
                 let caller = cx.caller.clone();
                 tokio::task::spawn_blocking(move || {
-                    admit_apply_with(&d.plan_deps(), &caller, &plan, confirm.as_deref(), &mode, extra)
+                    admit_apply_with(
+                        &d.plan_deps(),
+                        &caller,
+                        &plan,
+                        confirm.as_deref(),
+                        &mode,
+                        extra,
+                    )
                 })
                 .await
                 .map_err(|e| CommandError::internal(e.to_string()))??

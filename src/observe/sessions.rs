@@ -1,6 +1,7 @@
 //! Native session capture per harness profile (spec §4.1 table, §8.1).
 use crate::model::harness::{
-    Harness, SessionIdSource, TranscriptLocator, claude_transcript_path, profile, session_id_from_argv,
+    Harness, SessionIdSource, TranscriptLocator, claude_transcript_path, profile,
+    session_id_from_argv,
 };
 use crate::ports::herdr::{AgentSession, PaneInfo, ProcessInfo};
 use serde::{Deserialize, Serialize};
@@ -31,18 +32,26 @@ pub fn capture_session(
     for source in prof.session_id_sources {
         match source {
             SessionIdSource::GraphHookReport => {}
-            SessionIdSource::HerdrAgentSession => match pane.agent.as_ref().and_then(|a| a.session.as_ref()) {
-                Some(AgentSession::Id(s)) if !s.is_empty() => id = Some(s.clone()),
-                Some(AgentSession::Path(p)) => {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()).filter(|s| !s.is_empty()) {
-                        id = Some(stem.to_owned());
-                        from_path = Some(p.clone());
+            SessionIdSource::HerdrAgentSession => {
+                match pane.agent.as_ref().and_then(|a| a.session.as_ref()) {
+                    Some(AgentSession::Id(s)) if !s.is_empty() => id = Some(s.clone()),
+                    Some(AgentSession::Path(p)) => {
+                        if let Some(stem) = p
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            id = Some(stem.to_owned());
+                            from_path = Some(p.clone());
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             SessionIdSource::ProcessInfoArgv { marker } => {
-                id = process.and_then(|p| session_id_from_argv(&p.foreground_argv, marker)).filter(|s| !s.is_empty());
+                id = process
+                    .and_then(|p| session_id_from_argv(&p.foreground_argv, marker))
+                    .filter(|s| !s.is_empty());
             }
         }
         if id.is_some() {
@@ -54,10 +63,19 @@ pub fn capture_session(
         TranscriptLocator::None | TranscriptLocator::HookReportedOrUnresolved => None,
         TranscriptLocator::ClaudeProjects => from_path.or_else(|| {
             let primary = claude_transcript_path(claude_root, recorded_cwd, &native_session_id);
-            if primary.is_file() { Some(primary) } else { glob_transcript(claude_root, &native_session_id) }
+            if primary.is_file() {
+                Some(primary)
+            } else {
+                glob_transcript(claude_root, &native_session_id)
+            }
         }),
     };
-    Some(SessionCapture { harness, native_session_id, transcript_path, cwd: recorded_cwd.to_path_buf() })
+    Some(SessionCapture {
+        harness,
+        native_session_id,
+        transcript_path,
+        cwd: recorded_cwd.to_path_buf(),
+    })
 }
 
 /// First match of `<root>/projects/*/<id>.jsonl` in directory-name order.
@@ -69,5 +87,7 @@ fn glob_transcript(root: &Path, id: &str) -> Option<PathBuf> {
         .filter(|p| p.is_dir())
         .collect();
     dirs.sort();
-    dirs.into_iter().map(|d| d.join(format!("{id}.jsonl"))).find(|p| p.is_file())
+    dirs.into_iter()
+        .map(|d| d.join(format!("{id}.jsonl")))
+        .find(|p| p.is_file())
 }

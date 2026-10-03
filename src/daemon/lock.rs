@@ -21,12 +21,21 @@ pub struct DaemonLock {
 impl DaemonLock {
     /// flock(LOCK_EX | LOCK_NB). Ok(None) when another process holds it. On success truncates and writes LockInfo JSON.
     pub fn try_acquire(path: &Path, info: &LockInfo) -> std::io::Result<Option<DaemonLock>> {
-        let mut file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).read(true).open(path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .read(true)
+            .open(path)?;
         // SAFETY: fd is a valid open file descriptor owned by `file`.
         let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if rc != 0 {
             let err = std::io::Error::last_os_error();
-            return if err.kind() == std::io::ErrorKind::WouldBlock { Ok(None) } else { Err(err) };
+            return if err.kind() == std::io::ErrorKind::WouldBlock {
+                Ok(None)
+            } else {
+                Err(err)
+            };
         }
         file.set_len(0)?;
         file.write_all(&serde_json::to_vec(info).map_err(std::io::Error::other)?)?;
@@ -71,7 +80,9 @@ mod tests {
     fn second_acquire_fails_while_held() {
         let t = tempfile::tempdir().unwrap();
         let p = t.path().join("daemon.lock");
-        let first = DaemonLock::try_acquire(&p, &info(1)).unwrap().expect("first acquire");
+        let first = DaemonLock::try_acquire(&p, &info(1))
+            .unwrap()
+            .expect("first acquire");
         // A second open file description conflicts even within one process.
         assert!(DaemonLock::try_acquire(&p, &info(2)).unwrap().is_none());
         // The loser must not have clobbered the holder's info.
@@ -88,7 +99,11 @@ mod tests {
         assert!(!is_held(&p), "no file means not held");
         let l = DaemonLock::try_acquire(&p, &info(1)).unwrap().unwrap();
         assert!(is_held(&p));
-        assert_eq!(read_info(&p).unwrap().pid, 1, "probe must not clobber the holder's info");
+        assert_eq!(
+            read_info(&p).unwrap().pid,
+            1,
+            "probe must not clobber the holder's info"
+        );
         drop(l);
         assert!(!is_held(&p));
     }

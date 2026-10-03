@@ -1,5 +1,5 @@
 //! Instance path layout (spec §2.3), enumerators and id → location resolution.
-use super::record::{parse_toml, read_toml, Record};
+use super::record::{Record, parse_toml, read_toml};
 use super::tree::TreeRead;
 use crate::model::action::ActionRecord;
 use crate::model::application::ApplicationRecord;
@@ -34,7 +34,10 @@ pub fn teamspace_dir(slug: &str) -> RepoPath {
     j(&teamspaces_root(), slug)
 }
 pub fn archived_teamspace_dir(slug: &str, id: &TeamspaceId) -> RepoPath {
-    p(&format!("archive/teamspaces/{slug}-{}", id.suffix6().to_ascii_lowercase()))
+    p(&format!(
+        "archive/teamspaces/{slug}-{}",
+        id.suffix6().to_ascii_lowercase()
+    ))
 }
 pub fn teamspace_record(dir: &RepoPath) -> RepoPath {
     j(dir, "teamspace.toml")
@@ -43,7 +46,10 @@ pub fn seat_dir(ts_dir: &RepoPath, slug: &str) -> RepoPath {
     j(ts_dir, &format!("seats/{slug}"))
 }
 pub fn archived_seat_dir(ts_dir: &RepoPath, slug: &str, id: &SeatId) -> RepoPath {
-    j(ts_dir, &format!("archive/seats/{slug}-{}", id.suffix6().to_ascii_lowercase()))
+    j(
+        ts_dir,
+        &format!("archive/seats/{slug}-{}", id.suffix6().to_ascii_lowercase()),
+    )
 }
 pub fn seat_record(dir: &RepoPath) -> RepoPath {
     j(dir, "seat.toml")
@@ -102,7 +108,11 @@ fn sub_files(tr: &dyn TreeRead, parent: &RepoPath) -> Result<Vec<RepoPath>, Stor
 }
 
 fn loc_of<R: Record>(path: RepoPath, folder: RepoPath, rec: &R) -> ObjectLocation {
-    ObjectLocation { id: rec.any_id(), record_path: path, folder }
+    ObjectLocation {
+        id: rec.any_id(),
+        record_path: path,
+        folder,
+    }
 }
 
 /// Folder records: every `<parent>/*/<file>`; subdirs without the record file are ignored.
@@ -135,10 +145,18 @@ fn file_records<R: Record>(tr: &dyn TreeRead, dirs: &[RepoPath]) -> Listed<R> {
 }
 
 pub fn list_teamspaces(tr: &dyn TreeRead) -> Listed<TeamspaceRecord> {
-    folder_records(tr, &[teamspaces_root(), p("archive/teamspaces")], "teamspace.toml")
+    folder_records(
+        tr,
+        &[teamspaces_root(), p("archive/teamspaces")],
+        "teamspace.toml",
+    )
 }
 pub fn list_seats(tr: &dyn TreeRead, ts_dir: &RepoPath) -> Listed<SeatRecord> {
-    folder_records(tr, &[j(ts_dir, "seats"), j(ts_dir, "archive/seats")], "seat.toml")
+    folder_records(
+        tr,
+        &[j(ts_dir, "seats"), j(ts_dir, "archive/seats")],
+        "seat.toml",
+    )
 }
 pub fn all_seats(tr: &dyn TreeRead) -> Listed<SeatRecord> {
     let mut out = Vec::new();
@@ -180,9 +198,10 @@ pub fn list_operations(tr: &dyn TreeRead) -> Listed<OperationRecord> {
 
 pub fn read_graph(tr: &dyn TreeRead) -> Result<GraphRecord, StoreError> {
     let path = graph_toml();
-    let bytes = tr
-        .read_file(&path)?
-        .ok_or_else(|| StoreError::Corrupt { path: path.as_str().into(), reason: "missing".into() })?;
+    let bytes = tr.read_file(&path)?.ok_or_else(|| StoreError::Corrupt {
+        path: path.as_str().into(),
+        reason: "missing".into(),
+    })?;
     parse_toml(&path, &bytes)
 }
 
@@ -191,11 +210,19 @@ fn find_by_id<R: Record>(l: Listed<R>, id: &AnyId) -> Result<Option<ObjectLocati
 }
 
 /// First `<dir>/<id>.toml` that exists, for each dir in `dirs`.
-fn find_file(tr: &dyn TreeRead, dirs: &[RepoPath], id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
+fn find_file(
+    tr: &dyn TreeRead,
+    dirs: &[RepoPath],
+    id: &AnyId,
+) -> Result<Option<ObjectLocation>, StoreError> {
     for dir in dirs {
         let path = dir.join(&format!("{id}.toml"))?;
         if tr.read_file(&path)?.is_some() {
-            return Ok(Some(ObjectLocation { id: id.clone(), record_path: path, folder: dir.clone() }));
+            return Ok(Some(ObjectLocation {
+                id: id.clone(),
+                record_path: path,
+                folder: dir.clone(),
+            }));
         }
     }
     Ok(None)
@@ -221,5 +248,10 @@ pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, S
 
 /// Sibling slugs already taken under a dir (for unique_slug): the names of its subdirectories.
 pub fn taken_slugs(tr: &dyn TreeRead, parent: &RepoPath) -> Result<BTreeSet<String>, StoreError> {
-    Ok(tr.list_dir(parent)?.into_iter().filter(|e| e.kind == EntryKind::Dir).map(|e| e.name).collect())
+    Ok(tr
+        .list_dir(parent)?
+        .into_iter()
+        .filter(|e| e.kind == EntryKind::Dir)
+        .map(|e| e.name)
+        .collect())
 }

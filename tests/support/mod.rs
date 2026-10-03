@@ -12,7 +12,10 @@ pub fn herdr_binary() -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|d| d.join("herdr"))
-        .find(|p| p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0))
+        .find(|p| {
+            p.metadata()
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
 }
 
 /// Report a skipped test and return; the caller returns right after.

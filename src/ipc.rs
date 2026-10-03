@@ -157,7 +157,10 @@ mod tests {
         IpcRequest {
             version: IPC_VERSION,
             request_id: "r1".into(),
-            command: IpcCommand { kind: "status".into(), args: serde_json::json!({"a": 1}) },
+            command: IpcCommand {
+                kind: "status".into(),
+                args: serde_json::json!({"a": 1}),
+            },
         }
     }
 
@@ -180,7 +183,11 @@ mod tests {
     #[test]
     fn decode_incomplete_returns_none() {
         let bytes = encode_frame(&req()).unwrap();
-        assert!(decode_frame::<IpcRequest>(&bytes[..bytes.len() - 1]).unwrap().is_none());
+        assert!(
+            decode_frame::<IpcRequest>(&bytes[..bytes.len() - 1])
+                .unwrap()
+                .is_none()
+        );
         assert!(decode_frame::<IpcRequest>(&bytes[..3]).unwrap().is_none());
         let (m, used) = decode_frame::<IpcRequest>(&bytes).unwrap().unwrap();
         assert_eq!((m, used), (req(), bytes.len()));
@@ -189,7 +196,10 @@ mod tests {
     #[test]
     fn oversize_frame_rejected() {
         let hdr = (MAX_FRAME_LEN + 1).to_be_bytes();
-        assert!(matches!(decode_frame::<IpcRequest>(&hdr), Err(FrameError::TooLarge(_))));
+        assert!(matches!(
+            decode_frame::<IpcRequest>(&hdr),
+            Err(FrameError::TooLarge(_))
+        ));
         assert!(matches!(
             read_frame::<_, IpcRequest>(&mut Cursor::new(hdr.to_vec())),
             Err(FrameError::TooLarge(_))
@@ -210,17 +220,27 @@ mod tests {
     async fn async_read_eof_is_none() {
         let (a, mut b) = tokio::io::duplex(64);
         drop(a);
-        assert!(read_frame_async::<_, IpcRequest>(&mut b).await.unwrap().is_none());
+        assert!(
+            read_frame_async::<_, IpcRequest>(&mut b)
+                .await
+                .unwrap()
+                .is_none()
+        );
         // EOF in the middle of a header is an error, not a clean close.
         let (mut a, mut b) = tokio::io::duplex(64);
-        tokio::io::AsyncWriteExt::write_all(&mut a, &[0, 0]).await.unwrap();
+        tokio::io::AsyncWriteExt::write_all(&mut a, &[0, 0])
+            .await
+            .unwrap();
         drop(a);
         assert!(read_frame_async::<_, IpcRequest>(&mut b).await.is_err());
     }
 
     #[test]
     fn response_error_shape() {
-        let r = IpcResult::Error { code: IpcErrorCode::Rejected, message: "no".into() };
+        let r = IpcResult::Error {
+            code: IpcErrorCode::Rejected,
+            message: "no".into(),
+        };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["status"], "error");
         assert_eq!(v["code"], "rejected");

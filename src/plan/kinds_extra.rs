@@ -7,7 +7,9 @@ use super::types::{Plan, PlanEffect, Reserved};
 use crate::daemon::registry::CallerInfo;
 use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::clone::CloneRecord;
-use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource};
+use crate::model::common::{
+    Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource,
+};
 use crate::model::effective::{resolve_in, session_replacements};
 use crate::model::harness::Harness;
 use crate::model::launch::graph_token;
@@ -39,7 +41,8 @@ pub fn register_kinds(reg: &mut KindRegistry) {
 // ---------------------------------------------------------------------------------------------
 
 fn parse_args<T: DeserializeOwned>(v: &serde_json::Value) -> Result<T, PlanError> {
-    serde_json::from_value(v.clone()).map_err(|e| PlanError::Invalid(format!("malformed arguments: {e}")))
+    serde_json::from_value(v.clone())
+        .map_err(|e| PlanError::Invalid(format!("malformed arguments: {e}")))
 }
 
 /// A state mismatch seen while applying: the op is rejected, not retried.
@@ -55,7 +58,10 @@ fn mm(e: PlanError) -> MutationError {
 }
 
 fn rev_of(id: impl Into<AnyId>, rev: u64) -> ReliedOn {
-    ReliedOn { object: id.into(), version: Version::Rev(rev) }
+    ReliedOn {
+        object: id.into(),
+        version: Version::Rev(rev),
+    }
 }
 
 fn basename(p: &RepoPath) -> &str {
@@ -63,7 +69,13 @@ fn basename(p: &RepoPath) -> &str {
 }
 
 fn body(effects: Vec<PlanEffect>, relied_on: Vec<ReliedOn>, summary: String) -> PlanBody {
-    PlanBody { effects, relied_on, warnings: vec![], repair_required: None, summary }
+    PlanBody {
+        effects,
+        relied_on,
+        warnings: vec![],
+        repair_required: None,
+        summary,
+    }
 }
 
 /// Every value of a repeatable `--name v` / `--name=v` flag, in order. Unlike `grammar::flag`, a value that
@@ -94,7 +106,8 @@ struct TsInfo {
 }
 
 fn read_ts(tree: &dyn TreeRead, id: &TeamspaceId) -> Result<TsInfo, PlanError> {
-    let loc = layout::locate(tree, &id.to_any())?.ok_or_else(|| PlanError::Invalid(format!("no teamspace {id}")))?;
+    let loc = layout::locate(tree, &id.to_any())?
+        .ok_or_else(|| PlanError::Invalid(format!("no teamspace {id}")))?;
     let rec = read_toml::<TeamspaceRecord>(tree, &loc.record_path)?
         .ok_or_else(|| PlanError::Invalid(format!("no teamspace {id}")))?;
     Ok(TsInfo { loc, rec })
@@ -108,10 +121,14 @@ struct SeatFacts {
 
 fn live_seat(tree: &dyn TreeRead, seat_ref: &str) -> Result<SeatFacts, PlanError> {
     let id = grammar::resolve_seat(tree, seat_ref, Scope::Live)?;
-    let loc = layout::locate(tree, &id.to_any())?.ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
-    let rec = read_toml::<SeatRecord>(tree, &loc.record_path)?.ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
+    let loc = layout::locate(tree, &id.to_any())?
+        .ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
+    let rec = read_toml::<SeatRecord>(tree, &loc.record_path)?
+        .ok_or_else(|| PlanError::Invalid(format!("no seat {id}")))?;
     if rec.lifecycle == Lifecycle::Retired {
-        return Err(PlanError::Invalid(format!("seat {id} is retired; use `seat resurrect`")));
+        return Err(PlanError::Invalid(format!(
+            "seat {id} is retired; use `seat resurrect`"
+        )));
     }
     let clones = layout::list_clones(tree, &loc.folder)?;
     Ok(SeatFacts { loc, rec, clones })
@@ -124,8 +141,10 @@ struct CloneFacts {
 
 fn live_clone(tree: &dyn TreeRead, clone_ref: &str) -> Result<CloneFacts, PlanError> {
     let id = grammar::resolve_clone(tree, clone_ref, Scope::Live)?;
-    let loc = layout::locate(tree, &id.to_any())?.ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
-    let rec = read_toml::<CloneRecord>(tree, &loc.record_path)?.ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+    let loc = layout::locate(tree, &id.to_any())?
+        .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+    let rec = read_toml::<CloneRecord>(tree, &loc.record_path)?
+        .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
     if rec.lifecycle == CloneLifecycle::Retired {
         return Err(PlanError::Invalid(format!("clone {id} is retired")));
     }
@@ -152,7 +171,11 @@ struct TeamspaceRenameArgs {
 
 struct TeamspaceRename;
 impl TeamspaceRename {
-    fn paths(tree: &dyn TreeRead, ts: &TsInfo, new_name: &str) -> Result<(RepoPath, RepoPath), PlanError> {
+    fn paths(
+        tree: &dyn TreeRead,
+        ts: &TsInfo,
+        new_name: &str,
+    ) -> Result<(RepoPath, RepoPath), PlanError> {
         let mut taken = layout::taken_slugs(tree, &layout::teamspaces_root())?;
         taken.remove(basename(&ts.loc.folder));
         let slug = unique_slug(new_name, ts.rec.id.suffix6(), &taken);
@@ -161,15 +184,22 @@ impl TeamspaceRename {
 
     fn facts(tree: &dyn TreeRead, a: &TeamspaceRenameArgs) -> Result<TsInfo, PlanError> {
         if a.name.trim().is_empty() {
-            return Err(PlanError::Invalid("teamspace name must not be empty".into()));
+            return Err(PlanError::Invalid(
+                "teamspace name must not be empty".into(),
+            ));
         }
         let id = grammar::resolve_teamspace(tree, &a.teamspace, Scope::Live)?;
         let ts = read_ts(tree, &id)?;
         if ts.rec.lifecycle == Lifecycle::Retired {
-            return Err(PlanError::Invalid(format!("teamspace {id} is retired; resurrect it first")));
+            return Err(PlanError::Invalid(format!(
+                "teamspace {id} is retired; resurrect it first"
+            )));
         }
         if ts.rec.name == a.name {
-            return Err(PlanError::Invalid(format!("teamspace {id} is already named {:?}", a.name)));
+            return Err(PlanError::Invalid(format!(
+                "teamspace {id} is already named {:?}",
+                a.name
+            )));
         }
         Ok(ts)
     }
@@ -187,7 +217,12 @@ impl OrgKind for TeamspaceRename {
         let name = positional(words, 1).ok_or_else(usage)?;
         Ok(json!({ "teamspace": ts, "name": name }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, _: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: TeamspaceRenameArgs = parse_args(args)?;
         let ts = Self::facts(cx.tree, &a)?;
         let (from, to) = Self::paths(cx.tree, &ts, &a.name)?;
@@ -197,7 +232,11 @@ impl OrgKind for TeamspaceRename {
             json!({ "from": ts.rec.name, "to": a.name, "path_from": from.as_str(), "path_to": to.as_str() }),
         )];
         if ts.rec.lifecycle == Lifecycle::Active {
-            effects.push(PlanEffect::new("runtime.rename_workspace", ts.rec.id.clone(), json!({ "name": a.name })));
+            effects.push(PlanEffect::new(
+                "runtime.rename_workspace",
+                ts.rec.id.clone(),
+                json!({ "name": a.name }),
+            ));
         }
         for (_, seat) in layout::list_seats(cx.tree, &ts.loc.folder)? {
             if seat.lifecycle != Lifecycle::Retired {
@@ -209,9 +248,18 @@ impl OrgKind for TeamspaceRename {
             }
         }
         let summary = format!("rename teamspace {} to {}", ts.rec.name, a.name);
-        Ok(body(effects, vec![rev_of(ts.rec.id.clone(), ts.rec.rev)], summary))
+        Ok(body(
+            effects,
+            vec![rev_of(ts.rec.id.clone(), ts.rec.rev)],
+            summary,
+        ))
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, _: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: TeamspaceRenameArgs = parse_args(args).map_err(mm)?;
         let ts = Self::facts(&cx.tree, &a).map_err(mm)?;
         let (from, to) = Self::paths(&cx.tree, &ts, &a.name).map_err(mm)?;
@@ -228,7 +276,10 @@ impl OrgKind for TeamspaceRename {
         if from != to {
             cx.tree.move_dir(&from, &to)?;
         }
-        Ok(Applied { summary: format!("rename teamspace {} to {}", ts.rec.name, a.name), action: None })
+        Ok(Applied {
+            summary: format!("rename teamspace {} to {}", ts.rec.name, a.name),
+            action: None,
+        })
     }
 }
 
@@ -259,10 +310,20 @@ struct SeatOverrideArgs {
     clear: Vec<String>,
 }
 
-const CLEARABLE: &[&str] = &["harness", "model", "args", "summaries", "instructions_sections"];
+const CLEARABLE: &[&str] = &[
+    "harness",
+    "model",
+    "args",
+    "summaries",
+    "instructions_sections",
+];
 
 fn canonical_field(f: &str) -> Option<&'static str> {
-    let f = if f == "sections" { "instructions_sections" } else { f };
+    let f = if f == "sections" {
+        "instructions_sections"
+    } else {
+        f
+    };
     CLEARABLE.iter().copied().find(|c| *c == f)
 }
 
@@ -276,7 +337,12 @@ fn apply_override(rec: &mut SeatRecord, a: &SeatOverrideArgs) -> Result<(), Plan
             Some("args") => o.args = None,
             Some("summaries") => o.summaries = None,
             Some("instructions_sections") => o.instructions_sections.clear(),
-            _ => return Err(PlanError::Invalid(format!("cannot clear {f:?}; one of {}", CLEARABLE.join(", ")))),
+            _ => {
+                return Err(PlanError::Invalid(format!(
+                    "cannot clear {f:?}; one of {}",
+                    CLEARABLE.join(", ")
+                )));
+            }
         }
     }
     let s = &a.set;
@@ -293,7 +359,11 @@ fn apply_override(rec: &mut SeatRecord, a: &SeatOverrideArgs) -> Result<(), Plan
         o.summaries = Some(b);
     }
     for sec in s.instructions_sections.iter().flatten() {
-        match o.instructions_sections.iter_mut().find(|x| x.name == sec.name) {
+        match o
+            .instructions_sections
+            .iter_mut()
+            .find(|x| x.name == sec.name)
+        {
             Some(existing) => existing.body = sec.body.clone(),
             None => o.instructions_sections.push(sec.clone()),
         }
@@ -308,7 +378,10 @@ impl SeatOverride {
         let mut rec = f.rec.clone();
         apply_override(&mut rec, a)?;
         if rec.overrides == f.rec.overrides {
-            return Err(PlanError::Invalid(format!("seat {} already has these overrides; nothing to change", f.rec.id)));
+            return Err(PlanError::Invalid(format!(
+                "seat {} already has these overrides; nothing to change",
+                f.rec.id
+            )));
         }
         Ok(rec)
     }
@@ -331,8 +404,10 @@ impl OrgKind for SeatOverride {
         let seat = positional(words, 0).ok_or_else(usage)?;
         let mut set = OverrideSet::default();
         if let Some(h) = flag(words, "--harness") {
-            set.harness =
-                Some(serde_json::from_value(json!(h)).map_err(|_| PlanError::Usage(format!("unknown harness {h:?}")))?);
+            set.harness = Some(
+                serde_json::from_value(json!(h))
+                    .map_err(|_| PlanError::Usage(format!("unknown harness {h:?}")))?,
+            );
         }
         set.model = flag(words, "--model");
         if let Some(a) = flags(words, "--args").pop() {
@@ -342,7 +417,11 @@ impl OrgKind for SeatOverride {
             set.summaries = Some(match s.as_str() {
                 "true" => true,
                 "false" => false,
-                other => return Err(PlanError::Usage(format!("--summaries takes true or false, not {other:?}"))),
+                other => {
+                    return Err(PlanError::Usage(format!(
+                        "--summaries takes true or false, not {other:?}"
+                    )));
+                }
             });
         }
         let mut sections = Vec::new();
@@ -350,22 +429,32 @@ impl OrgKind for SeatOverride {
             let (name, file) = spec
                 .split_once('=')
                 .filter(|(n, f)| !n.is_empty() && !f.is_empty())
-                .ok_or_else(|| PlanError::Usage(format!("--section takes <name>=<file>, not {spec:?}")))?;
+                .ok_or_else(|| {
+                    PlanError::Usage(format!("--section takes <name>=<file>, not {spec:?}"))
+                })?;
             let path = match &caller.cwd {
                 Some(cwd) => cwd.join(file),
                 None => std::path::PathBuf::from(file),
             };
-            let text = std::fs::read_to_string(&path)
-                .map_err(|e| PlanError::Invalid(format!("cannot read section file {}: {e}", path.display())))?;
-            sections.push(InstructionSection { name: name.to_owned(), body: text });
+            let text = std::fs::read_to_string(&path).map_err(|e| {
+                PlanError::Invalid(format!("cannot read section file {}: {e}", path.display()))
+            })?;
+            sections.push(InstructionSection {
+                name: name.to_owned(),
+                body: text,
+            });
         }
         if !sections.is_empty() {
             set.instructions_sections = Some(sections);
         }
         let mut clear = Vec::new();
         for f in flags(words, "--clear") {
-            let c = canonical_field(&f)
-                .ok_or_else(|| PlanError::Usage(format!("cannot clear {f:?}; one of {}", CLEARABLE.join(", "))))?;
+            let c = canonical_field(&f).ok_or_else(|| {
+                PlanError::Usage(format!(
+                    "cannot clear {f:?}; one of {}",
+                    CLEARABLE.join(", ")
+                ))
+            })?;
             if !clear.contains(&c.to_owned()) {
                 clear.push(c.to_owned());
             }
@@ -383,30 +472,51 @@ impl OrgKind for SeatOverride {
         if set == OverrideSet::default() && clear.is_empty() {
             return Err(usage());
         }
-        Ok(serde_json::to_value(SeatOverrideArgs { seat, set, clear }).expect("override args serialize"))
+        Ok(serde_json::to_value(SeatOverrideArgs { seat, set, clear })
+            .expect("override args serialize"))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, _: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: SeatOverrideArgs = parse_args(args)?;
         let f = live_seat(cx.tree, &a.seat)?;
         let edited = Self::edited(&f, &a)?;
         let old = resolve_in(cx.tree, &f.rec)?;
         let new = resolve_in(cx.tree, &edited)?;
-        let mut effects =
-            vec![PlanEffect::new("seat.override", f.rec.id.clone(), json!({ "set": a.set, "clear": a.clear }))];
+        let mut effects = vec![PlanEffect::new(
+            "seat.override",
+            f.rec.id.clone(),
+            json!({ "set": a.set, "clear": a.clear }),
+        )];
         if f.rec.lifecycle == Lifecycle::Active {
             let clones: Vec<CloneRecord> = f.clones.iter().map(|(_, c)| c.clone()).collect();
             effects.extend(session_replacements(&f.rec, &clones, &old, &new));
         }
         let summary = format!("override seat {} config", f.rec.name);
-        Ok(body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary))
+        Ok(body(
+            effects,
+            vec![rev_of(f.rec.id.clone(), f.rec.rev)],
+            summary,
+        ))
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, _: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: SeatOverrideArgs = parse_args(args).map_err(mm)?;
         let f = live_seat(&cx.tree, &a.seat).map_err(mm)?;
         let mut rec = Self::edited(&f, &a).map_err(mm)?;
         attribute(cx, &mut rec);
         cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-        Ok(Applied { summary: format!("override seat {} config", f.rec.name), action: None })
+        Ok(Applied {
+            summary: format!("override seat {} config", f.rec.name),
+            action: None,
+        })
     }
 }
 
@@ -431,8 +541,16 @@ struct ParticipationArgs {
     clone: Option<String>,
 }
 
-fn parse_participation(verb: &str, words: &[String], caller: &CallerInfo) -> Result<serde_json::Value, PlanError> {
-    let usage = || PlanError::Usage(format!("participation {verb} <thread> --scope seat|clone [--seat s] [--clone c]"));
+fn parse_participation(
+    verb: &str,
+    words: &[String],
+    caller: &CallerInfo,
+) -> Result<serde_json::Value, PlanError> {
+    let usage = || {
+        PlanError::Usage(format!(
+            "participation {verb} <thread> --scope seat|clone [--seat s] [--clone c]"
+        ))
+    };
     let thread = positional(words, 0).ok_or_else(usage)?;
     let scope = match flag(words, "--scope").as_deref() {
         Some("seat") => PScope::Seat,
@@ -443,24 +561,43 @@ fn parse_participation(verb: &str, words: &[String], caller: &CallerInfo) -> Res
     let args = match scope {
         PScope::Seat => {
             if clone.is_some() {
-                return Err(PlanError::Usage("--clone only applies to --scope clone".into()));
+                return Err(PlanError::Usage(
+                    "--clone only applies to --scope clone".into(),
+                ));
             }
-            let seat = seat.or_else(|| caller.graph_seat.clone()).ok_or_else(usage)?;
-            ParticipationArgs { thread, scope, seat: Some(seat), clone: None }
+            let seat = seat
+                .or_else(|| caller.graph_seat.clone())
+                .ok_or_else(usage)?;
+            ParticipationArgs {
+                thread,
+                scope,
+                seat: Some(seat),
+                clone: None,
+            }
         }
         PScope::Clone => {
             if seat.is_some() {
-                return Err(PlanError::Usage("--seat only applies to --scope seat".into()));
+                return Err(PlanError::Usage(
+                    "--seat only applies to --scope seat".into(),
+                ));
             }
-            let clone = clone.or_else(|| caller.graph_clone.clone()).ok_or_else(usage)?;
-            ParticipationArgs { thread, scope, seat: None, clone: Some(clone) }
+            let clone = clone
+                .or_else(|| caller.graph_clone.clone())
+                .ok_or_else(usage)?;
+            ParticipationArgs {
+                thread,
+                scope,
+                seat: None,
+                clone: Some(clone),
+            }
         }
     };
     Ok(serde_json::to_value(args).expect("participation args serialize"))
 }
 
 fn need<'a>(v: &'a Option<String>, what: &str) -> Result<&'a str, PlanError> {
-    v.as_deref().ok_or_else(|| PlanError::Invalid(format!("malformed arguments: missing {what}")))
+    v.as_deref()
+        .ok_or_else(|| PlanError::Invalid(format!("malformed arguments: missing {what}")))
 }
 
 struct ParticipationJoin;
@@ -473,7 +610,11 @@ enum Dir {
     Leave,
 }
 
-fn participation_plan(cx: &PlanCx<'_>, args: &serde_json::Value, dir: Dir) -> Result<PlanBody, PlanError> {
+fn participation_plan(
+    cx: &PlanCx<'_>,
+    args: &serde_json::Value,
+    dir: Dir,
+) -> Result<PlanBody, PlanError> {
     let a: ParticipationArgs = parse_args(args)?;
     let word = if dir == Dir::Join { "join" } else { "leave" };
     match a.scope {
@@ -482,15 +623,25 @@ fn participation_plan(cx: &PlanCx<'_>, args: &serde_json::Value, dir: Dir) -> Re
             let present = f.rec.participation.seat_wide.contains(&a.thread);
             match (dir, present) {
                 (Dir::Join, true) => {
-                    return Err(PlanError::Invalid(format!("seat {} already participates in {}", f.rec.id, a.thread)));
+                    return Err(PlanError::Invalid(format!(
+                        "seat {} already participates in {}",
+                        f.rec.id, a.thread
+                    )));
                 }
                 (Dir::Leave, false) => {
-                    return Err(PlanError::Invalid(format!("seat {} does not participate in {}", f.rec.id, a.thread)));
+                    return Err(PlanError::Invalid(format!(
+                        "seat {} does not participate in {}",
+                        f.rec.id, a.thread
+                    )));
                 }
                 _ => {}
             }
             let detail = json!({ "thread": a.thread, "scope": "seat", "seat": f.rec.id });
-            let mut effects = vec![PlanEffect::new(&format!("participation.{word}"), f.rec.id.clone(), detail)];
+            let mut effects = vec![PlanEffect::new(
+                &format!("participation.{word}"),
+                f.rec.id.clone(),
+                detail,
+            )];
             if dir == Dir::Leave {
                 // The rev the seat has once this op commits: the instruction is `current` until it moves again.
                 effects.push(PlanEffect::new(
@@ -500,35 +651,63 @@ fn participation_plan(cx: &PlanCx<'_>, args: &serde_json::Value, dir: Dir) -> Re
                 ));
             }
             let summary = format!("seat {} {word} {}", f.rec.name, a.thread);
-            Ok(body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary))
+            Ok(body(
+                effects,
+                vec![rev_of(f.rec.id.clone(), f.rec.rev)],
+                summary,
+            ))
         }
         PScope::Clone => {
             let f = live_clone(cx.tree, need(&a.clone, "clone")?)?;
             let opted_out = f.rec.opt_outs.contains(&a.thread);
             match (dir, opted_out) {
                 (Dir::Join, false) => {
-                    return Err(PlanError::Invalid(format!("clone {} has no opt-out for {}; nothing to join", f.rec.id, a.thread)));
+                    return Err(PlanError::Invalid(format!(
+                        "clone {} has no opt-out for {}; nothing to join",
+                        f.rec.id, a.thread
+                    )));
                 }
                 (Dir::Leave, true) => {
-                    return Err(PlanError::Invalid(format!("clone {} already opted out of {}", f.rec.id, a.thread)));
+                    return Err(PlanError::Invalid(format!(
+                        "clone {} already opted out of {}",
+                        f.rec.id, a.thread
+                    )));
                 }
                 _ => {}
             }
             let detail = json!({ "thread": a.thread, "scope": "clone", "clone": f.rec.id, "seat": f.rec.seat });
-            let effects = vec![PlanEffect::new(&format!("participation.{word}"), f.rec.id.clone(), detail)];
+            let effects = vec![PlanEffect::new(
+                &format!("participation.{word}"),
+                f.rec.id.clone(),
+                detail,
+            )];
             let summary = format!("clone {} {word} {}", f.rec.name, a.thread);
-            Ok(body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary))
+            Ok(body(
+                effects,
+                vec![rev_of(f.rec.id.clone(), f.rec.rev)],
+                summary,
+            ))
         }
     }
 }
 
-fn participation_mutate(cx: &mut MutationCx<'_>, args: &serde_json::Value, dir: Dir) -> Result<Applied, MutationError> {
+fn participation_mutate(
+    cx: &mut MutationCx<'_>,
+    args: &serde_json::Value,
+    dir: Dir,
+) -> Result<Applied, MutationError> {
     let a: ParticipationArgs = parse_args(args).map_err(mm)?;
     let word = if dir == Dir::Join { "join" } else { "leave" };
     // Re-run the planning checks against the overlay so a raced state change is rejected, not applied twice.
     let at = cx.tree.base().clone();
     let caller = CallerInfo::default();
-    let pcx = PlanCx { tree: &cx.tree, at, caller: &caller, now: cx.now, instance: std::path::Path::new("") };
+    let pcx = PlanCx {
+        tree: &cx.tree,
+        at,
+        caller: &caller,
+        now: cx.now,
+        instance: std::path::Path::new(""),
+    };
     participation_plan(&pcx, args, dir).map_err(mm)?;
     match a.scope {
         PScope::Seat => {
@@ -540,7 +719,10 @@ fn participation_mutate(cx: &mut MutationCx<'_>, args: &serde_json::Value, dir: 
             }
             attribute(cx, &mut rec);
             cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-            Ok(Applied { summary: format!("seat {} {word} {}", f.rec.name, a.thread), action: None })
+            Ok(Applied {
+                summary: format!("seat {} {word} {}", f.rec.name, a.thread),
+                action: None,
+            })
         }
         PScope::Clone => {
             let f = live_clone(&cx.tree, need(&a.clone, "clone").map_err(mm)?).map_err(mm)?;
@@ -550,7 +732,10 @@ fn participation_mutate(cx: &mut MutationCx<'_>, args: &serde_json::Value, dir: 
                 Dir::Leave => rec.opt_outs.push(a.thread.clone()),
             }
             cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-            Ok(Applied { summary: format!("clone {} {word} {}", f.rec.name, a.thread), action: None })
+            Ok(Applied {
+                summary: format!("clone {} {word} {}", f.rec.name, a.thread),
+                action: None,
+            })
         }
     }
 }
@@ -565,10 +750,20 @@ impl OrgKind for ParticipationJoin {
     fn parse(&self, words: &[String], caller: &CallerInfo) -> Result<serde_json::Value, PlanError> {
         parse_participation("join", words, caller)
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, _: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         participation_plan(cx, args, Dir::Join)
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, _: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
         participation_mutate(cx, args, Dir::Join)
     }
 }
@@ -583,10 +778,20 @@ impl OrgKind for ParticipationLeave {
     fn parse(&self, words: &[String], caller: &CallerInfo) -> Result<serde_json::Value, PlanError> {
         parse_participation("leave", words, caller)
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, _: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         participation_plan(cx, args, Dir::Leave)
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, _: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
         participation_mutate(cx, args, Dir::Leave)
     }
 }
@@ -612,25 +817,43 @@ impl OrgKind for CloneRebind {
     fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
         let usage = || PlanError::Usage("clone rebind <clone> --pane <pane>".into());
         let clone = positional(words, 0).ok_or_else(usage)?;
-        let pane = flag(words, "--pane").filter(|p| !p.is_empty()).ok_or_else(usage)?;
+        let pane = flag(words, "--pane")
+            .filter(|p| !p.is_empty())
+            .ok_or_else(usage)?;
         Ok(json!({ "clone": clone, "pane": pane }))
     }
-    fn plan(&self, cx: &PlanCx<'_>, args: &serde_json::Value, _: &mut Reserved) -> Result<PlanBody, PlanError> {
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
         let a: CloneRebindArgs = parse_args(args)?;
         let f = live_clone(cx.tree, &a.clone)?;
         let from = f.rec.runtime.bound.as_ref().and_then(|b| b.pane_id.clone());
         let mut warnings = Vec::new();
         let mut repair_required = None;
         for (_, other) in layout::all_clones(cx.tree)? {
-            let bound_here = other.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).is_some_and(|p| p.0 == a.pane);
+            let bound_here = other
+                .runtime
+                .bound
+                .as_ref()
+                .and_then(|b| b.pane_id.as_ref())
+                .is_some_and(|p| p.0 == a.pane);
             if other.id != f.rec.id && other.lifecycle == CloneLifecycle::Active && bound_here {
-                let why = format!("pane {} is already bound to clone {} ({}); rebind that clone first", a.pane, other.id, other.name);
+                let why = format!(
+                    "pane {} is already bound to clone {} ({}); rebind that clone first",
+                    a.pane, other.id, other.name
+                );
                 warnings.push(why.clone());
                 repair_required = Some(why);
             }
         }
         if f.rec.reload_required {
-            warnings.push(format!("clone {} was flagged reload_required; rebinding clears the flag", f.rec.id));
+            warnings.push(format!(
+                "clone {} was flagged reload_required; rebinding clears the flag",
+                f.rec.id
+            ));
         }
         let effects = vec![
             PlanEffect::new(
@@ -638,7 +861,11 @@ impl OrgKind for CloneRebind {
                 f.rec.id.clone(),
                 json!({ "pane": a.pane, "from": from.map(|p| p.0), "seat": f.rec.seat }),
             ),
-            PlanEffect::new("runtime.stamp_token", f.rec.id.clone(), json!({ "clone": f.rec.id, "pane": a.pane })),
+            PlanEffect::new(
+                "runtime.stamp_token",
+                f.rec.id.clone(),
+                json!({ "clone": f.rec.id, "pane": a.pane }),
+            ),
         ];
         Ok(PlanBody {
             effects,
@@ -648,7 +875,12 @@ impl OrgKind for CloneRebind {
             summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane),
         })
     }
-    fn mutate(&self, cx: &mut MutationCx<'_>, args: &serde_json::Value, _: &Plan) -> Result<Applied, MutationError> {
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
         let a: CloneRebindArgs = parse_args(args).map_err(mm)?;
         let f = live_clone(&cx.tree, &a.clone).map_err(mm)?;
         let mut rec = f.rec.clone();
@@ -657,7 +889,11 @@ impl OrgKind for CloneRebind {
         let same_pane = old.pane_id.as_ref() == Some(&pane);
         rec.runtime.bound = Some(Binding {
             token: Some(graph_token(&rec.id.to_any())),
-            workspace_id: if same_pane { old.workspace_id.clone() } else { None },
+            workspace_id: if same_pane {
+                old.workspace_id.clone()
+            } else {
+                None
+            },
             tab_id: if same_pane { old.tab_id.clone() } else { None },
             pane_id: Some(pane),
             // The terminal id the clone had may belong to a server that restarted since; the observer fills in
@@ -673,8 +909,12 @@ impl OrgKind for CloneRebind {
         let seat = live_seat(&cx.tree, rec.seat.as_str()).map_err(mm)?;
         let mut seat_rec = seat.rec;
         attribute(cx, &mut seat_rec);
-        cx.tree.put_record(seat.loc.record_path.clone(), &mut seat_rec)?;
-        Ok(Applied { summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane), action: None })
+        cx.tree
+            .put_record(seat.loc.record_path.clone(), &mut seat_rec)?;
+        Ok(Applied {
+            summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane),
+            action: None,
+        })
     }
 }
 
@@ -687,10 +927,10 @@ pub(crate) mod testkit {
     use super::super::types::StoredPlan;
     use super::*;
     use crate::journal::{Journal, OpRow};
-    use crate::model::{CloneId, PlanId, SeatId};
     use crate::model::change::{ChangeRequest, Requester};
     use crate::model::common::Occupant;
     use crate::model::operation::OpState;
+    use crate::model::{CloneId, PlanId, SeatId};
     use crate::ports::clock::ManualClock;
     use crate::ports::store::Store;
     use crate::store::GitStore;
@@ -726,14 +966,23 @@ pub(crate) mod testkit {
                 });
             }
             if let Some(p) = cx.request.args["pane"].as_str() {
-                rec.runtime.bound = Some(Binding { pane_id: Some(HerdrPaneId(p.into())), ..Default::default() });
+                rec.runtime.bound = Some(Binding {
+                    pane_id: Some(HerdrPaneId(p.into())),
+                    ..Default::default()
+                });
                 rec.runtime.availability = Availability::Present;
             }
-            if cx.request.args["reload_required"].as_bool().unwrap_or(false) {
+            if cx.request.args["reload_required"]
+                .as_bool()
+                .unwrap_or(false)
+            {
                 rec.reload_required = true;
             }
             cx.tree.put_record(loc.record_path, &mut rec)?;
-            Ok(Applied { summary: "test occupy".into(), action: None })
+            Ok(Applied {
+                summary: "test occupy".into(),
+                action: None,
+            })
         }
     }
 
@@ -746,7 +995,10 @@ pub(crate) mod testkit {
             let mut rec: SeatRecord = read_toml(&cx.tree, &loc.record_path)?.unwrap();
             rec.channel.thread_id = Some(cx.request.args["thread"].as_str().unwrap().to_owned());
             cx.tree.put_record(loc.record_path, &mut rec)?;
-            Ok(Applied { summary: "test channel".into(), action: None })
+            Ok(Applied {
+                summary: "test channel".into(),
+                action: None,
+            })
         }
     }
 
@@ -762,7 +1014,10 @@ pub(crate) mod testkit {
         };
         let op = fx.w.admit(req).unwrap();
         fx.w.drain().unwrap();
-        assert_eq!(fx.w.journal().get(&op).unwrap().unwrap().state, OpState::Committed);
+        assert_eq!(
+            fx.w.journal().get(&op).unwrap().unwrap().state,
+            OpState::Committed
+        );
     }
 
     pub fn fx() -> Fx {
@@ -782,10 +1037,28 @@ pub(crate) mod testkit {
         let store = Arc::new(GitStore::open(&root).unwrap());
         let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
         let clock = Arc::new(ManualClock::new(t0()));
-        let w = WriterCore::new(store.clone(), journal, Arc::new(reg), clock.clone(), WriterConfig::default());
-        let deps =
-            PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root.clone() };
-        Fx { _tmp: tmp, deps, w, store, clock }
+        let w = WriterCore::new(
+            store.clone(),
+            journal,
+            Arc::new(reg),
+            clock.clone(),
+            WriterConfig::default(),
+        );
+        let deps = PlanDeps {
+            kinds,
+            plans,
+            store: store.clone(),
+            writer: w.clone(),
+            clock: clock.clone(),
+            instance: root.clone(),
+        };
+        Fx {
+            _tmp: tmp,
+            deps,
+            w,
+            store,
+            clock,
+        }
     }
 
     impl Fx {
@@ -800,7 +1073,8 @@ pub(crate) mod testkit {
     }
 
     pub fn plan_as(fx: &Fx, caller: &CallerInfo, change: &str) -> StoredPlan {
-        let v = create_plan(&fx.deps, caller, words(change)).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+        let v = create_plan(&fx.deps, caller, words(change))
+            .unwrap_or_else(|e| panic!("{change}: {}", e.message));
         let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
         fx.deps.plans.get(&id).unwrap().unwrap()
     }
@@ -810,8 +1084,14 @@ pub(crate) mod testkit {
     }
 
     pub fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
-        let op = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-            .unwrap_or_else(|e| panic!("admit: {}", e.message));
+        let op = admit_apply(
+            &fx.deps,
+            &CallerInfo::default(),
+            sp.plan.id.as_str(),
+            Some(&sp.hash),
+            "relay",
+        )
+        .unwrap_or_else(|e| panic!("admit: {}", e.message));
         fx.w.drain().unwrap();
         fx.w.journal().get(&op).unwrap().unwrap()
     }
@@ -819,7 +1099,12 @@ pub(crate) mod testkit {
     /// Plan and apply one change; it must commit.
     pub fn commit(fx: &Fx, change: &str) -> OpRow {
         let row = apply_plan(fx, &plan(fx, change));
-        assert_eq!(row.state, OpState::Committed, "{change}: {:?}", row.rejection);
+        assert_eq!(
+            row.state,
+            OpState::Committed,
+            "{change}: {:?}",
+            row.rejection
+        );
         row
     }
 
@@ -854,32 +1139,52 @@ pub(crate) mod testkit {
         };
         let op = fx.w.admit(req).unwrap();
         fx.w.drain().unwrap();
-        assert_eq!(fx.w.journal().get(&op).unwrap().unwrap().state, OpState::Committed);
+        assert_eq!(
+            fx.w.journal().get(&op).unwrap().unwrap().state,
+            OpState::Committed
+        );
     }
 
     pub fn view(fx: &Fx) -> CommitView<'_> {
-        CommitView { store: &*fx.store, at: fx.store.head().unwrap() }
+        CommitView {
+            store: &*fx.store,
+            at: fx.store.head().unwrap(),
+        }
     }
 
     pub fn seat(fx: &Fx, name: &str) -> SeatRecord {
-        let mut found: Vec<_> =
-            layout::all_seats(&view(fx)).unwrap().into_iter().filter(|(_, s)| s.name == name).collect();
+        let mut found: Vec<_> = layout::all_seats(&view(fx))
+            .unwrap()
+            .into_iter()
+            .filter(|(_, s)| s.name == name)
+            .collect();
         assert_eq!(found.len(), 1, "seat {name}");
         found.remove(0).1
     }
 
     pub fn clones_of(fx: &Fx, seat_id: &SeatId) -> Vec<CloneRecord> {
-        layout::all_clones(&view(fx)).unwrap().into_iter().map(|(_, c)| c).filter(|c| &c.seat == seat_id).collect()
+        layout::all_clones(&view(fx))
+            .unwrap()
+            .into_iter()
+            .map(|(_, c)| c)
+            .filter(|c| &c.seat == seat_id)
+            .collect()
     }
 
     pub fn requester_of(seat: &SeatRecord) -> Requester {
-        Requester { teamspace: Some(seat.teamspace.clone()), seat: Some(seat.id.clone()), ..Default::default() }
+        Requester {
+            teamspace: Some(seat.teamspace.clone()),
+            seat: Some(seat.id.clone()),
+            ..Default::default()
+        }
     }
 
     pub fn head_rev_of(fx: &Fx, id: &AnyId) -> u64 {
         let head = fx.store.head().unwrap();
         let loc = fx.store.locate(&head, id).unwrap().unwrap();
-        let t: toml::Table = crate::ports::store::read_record(&*fx.store, &head, &loc.record_path).unwrap().unwrap();
+        let t: toml::Table = crate::ports::store::read_record(&*fx.store, &head, &loc.record_path)
+            .unwrap()
+            .unwrap();
         t["rev"].as_integer().unwrap() as u64
     }
 }
@@ -895,8 +1200,11 @@ mod tests {
     }
 
     fn ts_named(fx: &Fx, name: &str) -> TeamspaceRecord {
-        let mut v: Vec<_> =
-            layout::list_teamspaces(&view(fx)).unwrap().into_iter().filter(|(_, t)| t.name == name).collect();
+        let mut v: Vec<_> = layout::list_teamspaces(&view(fx))
+            .unwrap()
+            .into_iter()
+            .filter(|(_, t)| t.name == name)
+            .collect();
         assert_eq!(v.len(), 1, "teamspace {name}");
         v.remove(0).1
     }
@@ -907,22 +1215,44 @@ mod tests {
         commit(&fx, "teamspace create alpha --active");
         commit(&fx, "seat create one --teamspace alpha --active");
         let before = ts_named(&fx, "alpha");
-        let loc_before = layout::locate(&view(&fx), &before.id.to_any()).unwrap().unwrap();
+        let loc_before = layout::locate(&view(&fx), &before.id.to_any())
+            .unwrap()
+            .unwrap();
         let sp = plan(&fx, "teamspace rename alpha beta");
         let ks = kinds_of(&sp);
         assert!(ks.contains(&"teamspace.rename".to_owned()), "{ks:?}");
-        assert!(ks.contains(&"runtime.rename_workspace".to_owned()), "active teamspace renames its workspace: {ks:?}");
-        assert_eq!(ks.iter().filter(|k| *k == "threads.notify_rename").count(), 1, "one per seat: {ks:?}");
+        assert!(
+            ks.contains(&"runtime.rename_workspace".to_owned()),
+            "active teamspace renames its workspace: {ks:?}"
+        );
+        assert_eq!(
+            ks.iter().filter(|k| *k == "threads.notify_rename").count(),
+            1,
+            "one per seat: {ks:?}"
+        );
         assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
         let after = ts_named(&fx, "beta");
         assert_eq!(after.id, before.id);
         assert_eq!(after.name_history.len(), 1);
         let h = &after.name_history[0];
-        assert_eq!((h.old.as_str(), h.new.as_str(), h.source), ("alpha", "beta", NameSource::Request));
-        let loc_after = layout::locate(&view(&fx), &after.id.to_any()).unwrap().unwrap();
+        assert_eq!(
+            (h.old.as_str(), h.new.as_str(), h.source),
+            ("alpha", "beta", NameSource::Request)
+        );
+        let loc_after = layout::locate(&view(&fx), &after.id.to_any())
+            .unwrap()
+            .unwrap();
         assert_ne!(loc_before.folder, loc_after.folder, "folder moved");
-        assert!(loc_after.folder.as_str().contains("beta"), "{}", loc_after.folder.as_str());
-        assert_eq!(seat(&fx, "one").teamspace, after.id, "seat travels with its teamspace folder");
+        assert!(
+            loc_after.folder.as_str().contains("beta"),
+            "{}",
+            loc_after.folder.as_str()
+        );
+        assert_eq!(
+            seat(&fx, "one").teamspace,
+            after.id,
+            "seat travels with its teamspace folder"
+        );
     }
 
     #[test]
@@ -934,7 +1264,9 @@ mod tests {
     }
 
     fn create_plan_err(fx: &Fx, change: &str) -> String {
-        super::super::commands::create_plan(&fx.deps, &CallerInfo::default(), words(change)).unwrap_err().message
+        super::super::commands::create_plan(&fx.deps, &CallerInfo::default(), words(change))
+            .unwrap_err()
+            .message
     }
 
     #[test]
@@ -944,7 +1276,10 @@ mod tests {
         commit(&fx, "seat create one --teamspace alpha");
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("rules.md"), "be brief").unwrap();
-        let caller = CallerInfo { cwd: Some(dir.path().into()), ..Default::default() };
+        let caller = CallerInfo {
+            cwd: Some(dir.path().into()),
+            ..Default::default()
+        };
         let sp = plan_as(
             &fx,
             &caller,
@@ -956,9 +1291,18 @@ mod tests {
         assert_eq!(o.model.as_deref(), Some("m1"));
         assert_eq!(o.args, Some(vec!["--fast".to_owned()]));
         assert_eq!(o.summaries, Some(false));
-        assert_eq!(o.instructions_sections, vec![InstructionSection { name: "style".into(), body: "be brief".into() }]);
+        assert_eq!(
+            o.instructions_sections,
+            vec![InstructionSection {
+                name: "style".into(),
+                body: "be brief".into()
+            }]
+        );
 
-        commit(&fx, "seat override one --clear model --clear args --clear sections --clear summaries");
+        commit(
+            &fx,
+            "seat override one --clear model --clear args --clear sections --clear summaries",
+        );
         let o = seat(&fx, "one").overrides;
         assert_eq!((o.model, o.args, o.summaries), (None, None, None));
         assert!(o.instructions_sections.is_empty());
@@ -987,10 +1331,21 @@ mod tests {
         let s = seat(&fx, "one");
         let clone = clones_of(&fx, &s.id).remove(0);
         // No occupant yet: nothing to replace.
-        assert_eq!(kinds_of(&plan(&fx, "seat override one --model fancy")).iter().filter(|k| *k == "session.replace").count(), 0);
+        assert_eq!(
+            kinds_of(&plan(&fx, "seat override one --model fancy"))
+                .iter()
+                .filter(|k| *k == "session.replace")
+                .count(),
+            0
+        );
         occupy(&fx, &clone.id, true, None);
         let sp = plan(&fx, "seat override one --model fancy");
-        let repl: Vec<_> = sp.plan.effects.iter().filter(|e| e.kind == "session.replace").collect();
+        let repl: Vec<_> = sp
+            .plan
+            .effects
+            .iter()
+            .filter(|e| e.kind == "session.replace")
+            .collect();
         assert_eq!(repl.len(), 1, "{:?}", kinds_of(&sp));
         assert_eq!(repl[0].object, clone.id.to_any());
         assert_eq!(repl[0].detail["to"]["model"], "fancy");
@@ -1004,12 +1359,24 @@ mod tests {
         let fx = fx();
         commit(&fx, "teamspace create alpha");
         commit(&fx, "seat create one --teamspace alpha");
-        assert!(crate::model::effective::resolve_in(&view(&fx), &seat(&fx, "one")).unwrap().summaries);
+        assert!(
+            crate::model::effective::resolve_in(&view(&fx), &seat(&fx, "one"))
+                .unwrap()
+                .summaries
+        );
         commit(&fx, "seat override one --summaries false");
         let s = seat(&fx, "one");
-        assert!(!crate::model::effective::resolve_in(&view(&fx), &s).unwrap().summaries);
+        assert!(
+            !crate::model::effective::resolve_in(&view(&fx), &s)
+                .unwrap()
+                .summaries
+        );
         commit(&fx, "seat override one --clear summaries");
-        assert!(crate::model::effective::resolve_in(&view(&fx), &seat(&fx, "one")).unwrap().summaries);
+        assert!(
+            crate::model::effective::resolve_in(&view(&fx), &seat(&fx, "one"))
+                .unwrap()
+                .summaries
+        );
     }
 
     #[test]
@@ -1020,7 +1387,10 @@ mod tests {
         let sp = plan(&fx, "participation join th_general --scope seat --seat one");
         assert_eq!(kinds_of(&sp), vec!["participation.join"]);
         assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
-        assert_eq!(seat(&fx, "one").participation.seat_wide, vec!["th_general".to_owned()]);
+        assert_eq!(
+            seat(&fx, "one").participation.seat_wide,
+            vec!["th_general".to_owned()]
+        );
         let e = create_plan_err(&fx, "participation join th_general --scope seat --seat one");
         assert!(e.contains("already participates"), "{e}");
     }
@@ -1032,15 +1402,30 @@ mod tests {
         commit(&fx, "seat create one --teamspace alpha --active");
         commit(&fx, "participation join th_general --scope seat --seat one");
         let s = seat(&fx, "one");
-        let sp = plan(&fx, "participation leave th_general --scope seat --seat one");
-        let instr = sp.plan.effects.iter().find(|e| e.kind == "participation.leave_instruction").expect("instruction effect");
+        let sp = plan(
+            &fx,
+            "participation leave th_general --scope seat --seat one",
+        );
+        let instr = sp
+            .plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "participation.leave_instruction")
+            .expect("instruction effect");
         assert_eq!(instr.detail["seat"], json!(s.id));
-        assert_eq!(instr.detail["rev"], json!(s.rev + 1), "rev the seat has after the op commits");
+        assert_eq!(
+            instr.detail["rev"],
+            json!(s.rev + 1),
+            "rev the seat has after the op commits"
+        );
         assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
         let after = seat(&fx, "one");
         assert!(after.participation.seat_wide.is_empty());
         assert_eq!(after.rev, s.rev + 1, "the planned rev is the committed rev");
-        let e = create_plan_err(&fx, "participation leave th_general --scope seat --seat one");
+        let e = create_plan_err(
+            &fx,
+            "participation leave th_general --scope seat --seat one",
+        );
         assert!(e.contains("does not participate"), "{e}");
     }
 
@@ -1051,13 +1436,29 @@ mod tests {
         commit(&fx, "seat create one --teamspace alpha --active");
         let clone = clones_of(&fx, &seat(&fx, "one").id).remove(0);
         let cid = clone.id.to_string();
-        let sp = plan(&fx, &format!("participation leave th_x --scope clone --clone {cid}"));
-        assert_eq!(kinds_of(&sp), vec!["participation.leave"], "clone scope has no leave instruction");
+        let sp = plan(
+            &fx,
+            &format!("participation leave th_x --scope clone --clone {cid}"),
+        );
+        assert_eq!(
+            kinds_of(&sp),
+            vec!["participation.leave"],
+            "clone scope has no leave instruction"
+        );
         assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
-        assert_eq!(clones_of(&fx, &clone.seat)[0].opt_outs, vec!["th_x".to_owned()]);
-        commit(&fx, &format!("participation join th_x --scope clone --clone {cid}"));
+        assert_eq!(
+            clones_of(&fx, &clone.seat)[0].opt_outs,
+            vec!["th_x".to_owned()]
+        );
+        commit(
+            &fx,
+            &format!("participation join th_x --scope clone --clone {cid}"),
+        );
         assert!(clones_of(&fx, &clone.seat)[0].opt_outs.is_empty());
-        let e = create_plan_err(&fx, &format!("participation join th_x --scope clone --clone {cid}"));
+        let e = create_plan_err(
+            &fx,
+            &format!("participation join th_x --scope clone --clone {cid}"),
+        );
         assert!(e.contains("no opt-out"), "{e}");
     }
 
@@ -1067,13 +1468,25 @@ mod tests {
         commit(&fx, "teamspace create alpha");
         commit(&fx, "seat create one --teamspace alpha");
         let s = seat(&fx, "one");
-        let caller = CallerInfo { graph_seat: Some(s.id.to_string()), ..Default::default() };
+        let caller = CallerInfo {
+            graph_seat: Some(s.id.to_string()),
+            ..Default::default()
+        };
         let sp = plan_as(&fx, &caller, "participation join th_a --scope seat");
         assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
-        assert_eq!(seat(&fx, "one").participation.seat_wide, vec!["th_a".to_owned()]);
+        assert_eq!(
+            seat(&fx, "one").participation.seat_wide,
+            vec!["th_a".to_owned()]
+        );
         assert!(create_plan_err(&fx, "participation join th_a --scope seat").contains("--scope"));
         assert!(create_plan_err(&fx, "participation join th_a --scope team").contains("--scope"));
-        assert!(create_plan_err(&fx, "participation join th_a --scope seat --seat one --clone c").contains("only applies"));
+        assert!(
+            create_plan_err(
+                &fx,
+                "participation join th_a --scope seat --seat one --clone c"
+            )
+            .contains("only applies")
+        );
     }
 
     #[test]
@@ -1098,7 +1511,11 @@ mod tests {
         assert_eq!(b.token, Some(graph_token(&c.id.to_any())));
         assert!(!c.reload_required);
         assert_eq!(c.runtime.availability, Availability::Present);
-        assert_eq!(seat(&fx, "one").activation.last_op, Some(row.op.clone()), "re-stamp is attributed to the rebind op");
+        assert_eq!(
+            seat(&fx, "one").activation.last_op,
+            Some(row.op.clone()),
+            "re-stamp is attributed to the rebind op"
+        );
     }
 
     #[test]
@@ -1112,12 +1529,24 @@ mod tests {
         occupy(&fx, &c2.id, false, Some("p_taken"));
         let sp = plan(&fx, &format!("clone rebind {} --pane p_taken", c1.id));
         let why = sp.plan.repair_required.clone().expect("conflict refuses");
-        assert!(why.contains(c2.id.as_str()), "plan names the clone holding the pane: {why}");
+        assert!(
+            why.contains(c2.id.as_str()),
+            "plan names the clone holding the pane: {why}"
+        );
         assert!(sp.plan.warnings.iter().any(|w| w.contains(c2.id.as_str())));
         // apply is refused: the admission gate refuses a plan needing repair
-        let err = super::super::commands::admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-            .unwrap_err();
+        let err = super::super::commands::admit_apply(
+            &fx.deps,
+            &CallerInfo::default(),
+            sp.plan.id.as_str(),
+            Some(&sp.hash),
+            "relay",
+        )
+        .unwrap_err();
         assert!(err.message.contains("repair"), "{}", err.message);
-        assert!(clones_of(&fx, &c1.seat)[0].runtime.bound.is_none(), "nothing changed");
+        assert!(
+            clones_of(&fx, &c1.seat)[0].runtime.bound.is_none(),
+            "nothing changed"
+        );
     }
 }

@@ -110,12 +110,15 @@ pub trait ThreadsPort: Send + Sync {
         thread: &ThreadRef,
         seat: &ThreadsSeatRef,
     ) -> Result<Option<MembershipDetail>, ThreadsError> {
-        Ok(self.membership(thread, seat).await?.map(|state| MembershipDetail {
-            state,
-            invitation: None,
-            requirement: None,
-            revision: None,
-        }))
+        Ok(self
+            .membership(thread, seat)
+            .await?
+            .map(|state| MembershipDetail {
+                state,
+                invitation: None,
+                requirement: None,
+                revision: None,
+            }))
     }
     async fn notify(
         &self,
@@ -124,7 +127,12 @@ pub trait ThreadsPort: Send + Sync {
         body: &str,
         op_key: &OpKey,
     ) -> Result<(), ThreadsError>;
-    async fn set_topic(&self, thread: &ThreadRef, topic: &str, op_key: &OpKey) -> Result<(), ThreadsError>;
+    async fn set_topic(
+        &self,
+        thread: &ThreadRef,
+        topic: &str,
+        op_key: &OpKey,
+    ) -> Result<(), ThreadsError>;
     async fn release_requirement(
         &self,
         thread: &ThreadRef,
@@ -139,7 +147,10 @@ pub trait ThreadsPort: Send + Sync {
         body: &str,
         op_key: &OpKey,
     ) -> Result<MessageRef, ThreadsError>;
-    async fn receipt_state(&self, messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError>;
+    async fn receipt_state(
+        &self,
+        messages: &[MessageRef],
+    ) -> Result<Vec<MessageReceipts>, ThreadsError>;
     /// Which delivery path this connection supports (spec §7.4).
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError>;
 }

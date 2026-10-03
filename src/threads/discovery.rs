@@ -43,13 +43,18 @@ fn trip(p: &Path) {
 }
 
 fn absolute(p: &Option<PathBuf>) -> Option<&Path> {
-    p.as_deref().filter(|p| p.is_absolute() && !p.as_os_str().is_empty())
+    p.as_deref()
+        .filter(|p| p.is_absolute() && !p.as_os_str().is_empty())
 }
 
 impl DiscoveryInputs {
     /// The only function that touches the process environment (empty values count as unset).
     pub fn from_process(config_state_dir: Option<PathBuf>) -> Self {
-        let var = |n: &str| std::env::var_os(n).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let var = |n: &str| {
+            std::env::var_os(n)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
         Self {
             env_state_dir: var("HERDR_GRAPH_THREADS_STATE_DIR"),
             config_state_dir,
@@ -93,9 +98,11 @@ pub fn resolve_state_dir(i: &DiscoveryInputs) -> Result<Option<(PathBuf, Source)
             p.is_dir()
         });
     match (xdg, home) {
-        (Some(x), Some(h)) if x != h => {
-            Err(format!("both {} and {} exist; set threads_state_dir in config.toml", x.display(), h.display()))
-        }
+        (Some(x), Some(h)) if x != h => Err(format!(
+            "both {} and {} exist; set threads_state_dir in config.toml",
+            x.display(),
+            h.display()
+        )),
         (Some(x), _) => Ok(Some((x, Source::XdgDefault))),
         (None, Some(h)) => Ok(Some((h, Source::HomeDefault))),
         (None, None) => Ok(None),
@@ -122,7 +129,10 @@ mod tests {
             home: Some(home),
             ..Default::default()
         };
-        assert_eq!(resolve_state_dir(&i).unwrap(), Some((PathBuf::from("/abs/env"), Source::EnvVar)));
+        assert_eq!(
+            resolve_state_dir(&i).unwrap(),
+            Some((PathBuf::from("/abs/env"), Source::EnvVar))
+        );
     }
 
     #[test]
@@ -130,8 +140,15 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let home = t.path().to_path_buf();
         mk(&home.join(".local/state/herdr/plugins/herdr-threads"));
-        let i = DiscoveryInputs { config_state_dir: Some("/abs/cfg".into()), home: Some(home), ..Default::default() };
-        assert_eq!(resolve_state_dir(&i).unwrap(), Some((PathBuf::from("/abs/cfg"), Source::Config)));
+        let i = DiscoveryInputs {
+            config_state_dir: Some("/abs/cfg".into()),
+            home: Some(home),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_state_dir(&i).unwrap(),
+            Some((PathBuf::from("/abs/cfg"), Source::Config))
+        );
     }
 
     #[test]
@@ -139,14 +156,20 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let own = mk(&t.path().join("herdr/plugins/herdr-graph"));
         let sibling = mk(&t.path().join("herdr/plugins/herdr-threads"));
-        let i = DiscoveryInputs { own_plugin_state_dir: Some(own.clone()), ..Default::default() };
+        let i = DiscoveryInputs {
+            own_plugin_state_dir: Some(own.clone()),
+            ..Default::default()
+        };
         let (dir, src) = resolve_state_dir(&i).unwrap().unwrap();
         assert_eq!((dir.clone(), src), (sibling, Source::PluginSibling));
         assert_ne!(dir, own);
         // A plugin dir with another name is never mistaken for the graph's own dir.
         let other = mk(&t.path().join("x/plugins/other"));
         mk(&t.path().join("x/plugins/herdr-threads"));
-        let i = DiscoveryInputs { own_plugin_state_dir: Some(other), ..Default::default() };
+        let i = DiscoveryInputs {
+            own_plugin_state_dir: Some(other),
+            ..Default::default()
+        };
         assert_eq!(resolve_state_dir(&i).unwrap(), None);
     }
 
@@ -155,16 +178,29 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let xdg = mk(&t.path().join("xdg"));
         let want = mk(&xdg.join("herdr/plugins/herdr-threads"));
-        let i = DiscoveryInputs { xdg_state_home: Some(xdg), home: Some(t.path().join("home")), ..Default::default() };
-        assert_eq!(resolve_state_dir(&i).unwrap(), Some((want, Source::XdgDefault)));
+        let i = DiscoveryInputs {
+            xdg_state_home: Some(xdg),
+            home: Some(t.path().join("home")),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_state_dir(&i).unwrap(),
+            Some((want, Source::XdgDefault))
+        );
     }
 
     #[test]
     fn home_default_when_present() {
         let t = tempfile::tempdir().unwrap();
         let want = mk(&t.path().join(".local/state/herdr/plugins/herdr-threads"));
-        let i = DiscoveryInputs { home: Some(t.path().to_path_buf()), ..Default::default() };
-        assert_eq!(resolve_state_dir(&i).unwrap(), Some((want, Source::HomeDefault)));
+        let i = DiscoveryInputs {
+            home: Some(t.path().to_path_buf()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_state_dir(&i).unwrap(),
+            Some((want, Source::HomeDefault))
+        );
     }
 
     #[test]
@@ -174,7 +210,11 @@ mod tests {
         mk(&home.join(".local/state/herdr/plugins/herdr-threads"));
         let xdg = mk(&t.path().join("xdg"));
         mk(&xdg.join("herdr/plugins/herdr-threads"));
-        let i = DiscoveryInputs { xdg_state_home: Some(xdg), home: Some(home), ..Default::default() };
+        let i = DiscoveryInputs {
+            xdg_state_home: Some(xdg),
+            home: Some(home),
+            ..Default::default()
+        };
         let err = resolve_state_dir(&i).unwrap_err();
         assert!(err.contains("threads_state_dir"), "{err}");
     }
@@ -182,7 +222,10 @@ mod tests {
     #[test]
     fn nothing_found_is_none() {
         let t = tempfile::tempdir().unwrap();
-        let i = DiscoveryInputs { home: Some(t.path().to_path_buf()), ..Default::default() };
+        let i = DiscoveryInputs {
+            home: Some(t.path().to_path_buf()),
+            ..Default::default()
+        };
         assert_eq!(resolve_state_dir(&i).unwrap(), None);
     }
 

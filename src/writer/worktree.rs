@@ -43,7 +43,9 @@ fn disk_blob(path: &Path) -> Result<Option<Oid>, StoreError> {
     match std::fs::symlink_metadata(path) {
         Ok(m) if m.is_file() => {
             let bytes = std::fs::read(path)?;
-            Ok(Some(Oid::hash_object(ObjectType::Blob, &bytes).map_err(git_err)?))
+            Ok(Some(
+                Oid::hash_object(ObjectType::Blob, &bytes).map_err(git_err)?,
+            ))
         }
         Ok(_) => Ok(None),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -70,14 +72,21 @@ pub fn fast_forward(
 ) -> Result<FfReport, StoreError> {
     let dirty_entries = read_dirty_preserving(root)?;
     let new_tree = repo.find_tree(new).map_err(git_err)?;
-    let old_tree = old.map(|o| repo.find_tree(o)).transpose().map_err(git_err)?;
-    let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None).map_err(git_err)?;
+    let old_tree = old
+        .map(|o| repo.find_tree(o))
+        .transpose()
+        .map_err(git_err)?;
+    let diff = repo
+        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)
+        .map_err(git_err)?;
     let mut report = FfReport::default();
     let mut deleted_dirs: BTreeSet<String> = BTreeSet::new();
 
     for delta in diff.deltas() {
         let (old_f, new_f) = (delta.old_file(), delta.new_file());
-        let Some(rel) = new_f.path().or(old_f.path()).and_then(|p| p.to_str()) else { continue };
+        let Some(rel) = new_f.path().or(old_f.path()).and_then(|p| p.to_str()) else {
+            continue;
+        };
         let disk = root.join(rel);
         let on_disk = disk_blob(&disk)?;
         match delta.status() {
@@ -115,7 +124,11 @@ pub fn fast_forward(
                 if let Some(parent) = disk.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                crate::fsutil::write_atomic_in(&local_dir(root).join("tmp"), &disk, blob.content())?;
+                crate::fsutil::write_atomic_in(
+                    &local_dir(root).join("tmp"),
+                    &disk,
+                    blob.content(),
+                )?;
                 report.updated.push(rel.to_owned());
             }
             _ => {}
@@ -123,9 +136,14 @@ pub fn fast_forward(
     }
 
     // Folders that disappeared from `new` but still hold files (untracked or dirty leftovers).
-    let gone: Vec<&String> =
-        deleted_dirs.iter().filter(|d| new_tree.get_path(Path::new(d.as_str())).is_err()).collect();
-    let key = op.map_or_else(|| format!("recovery-{}", now.format("%Y%m%dT%H%M%S%.6fZ")), |o| o.as_str().to_owned());
+    let gone: Vec<&String> = deleted_dirs
+        .iter()
+        .filter(|d| new_tree.get_path(Path::new(d.as_str())).is_err())
+        .collect();
+    let key = op.map_or_else(
+        || format!("recovery-{}", now.format("%Y%m%dT%H%M%S%.6fZ")),
+        |o| o.as_str().to_owned(),
+    );
     let orphan_root = local_dir(root).join("orphans").join(key);
     for dir in gone {
         let abs = root.join(dir);
@@ -135,13 +153,18 @@ pub fn fast_forward(
         let mut files = Vec::new();
         collect_files(&abs, &mut files)?;
         for f in files {
-            let rel = f.strip_prefix(root).map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?;
+            let rel = f
+                .strip_prefix(root)
+                .map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?;
             let dest = crate::fsutil::unique_path(&orphan_root.join(rel));
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::rename(&f, &dest)?;
-            report.orphaned.push((rel.to_string_lossy().into_owned(), dest.to_string_lossy().into_owned()));
+            report.orphaned.push((
+                rel.to_string_lossy().into_owned(),
+                dest.to_string_lossy().into_owned(),
+            ));
         }
         std::fs::remove_dir_all(&abs)?;
     }
@@ -156,8 +179,11 @@ pub fn fast_forward(
     // idempotency keys, but remove markers whose disk content now matches main.
     let unresolved = |path: &str| -> Result<bool, StoreError> {
         let disk = root.join(path);
-        let expected = new_tree.get_path(Path::new(path)).ok()
-            .filter(|e| e.kind() == Some(ObjectType::Blob)).map(|e| e.id());
+        let expected = new_tree
+            .get_path(Path::new(path))
+            .ok()
+            .filter(|e| e.kind() == Some(ObjectType::Blob))
+            .map(|e| e.id());
         Ok(disk_blob(&disk)? != expected
             || (expected.is_none() && std::fs::symlink_metadata(&disk).is_ok()))
     };
@@ -173,14 +199,22 @@ pub fn fast_forward(
             continue;
         }
         active_dirty.push(path.clone());
-        if !entries.iter().any(|e| e.path == *path && e.op.as_ref() == op) {
-            entries.push(DirtyEntry { path: path.clone(), op: op.cloned(), at: now });
+        if !entries
+            .iter()
+            .any(|e| e.path == *path && e.op.as_ref() == op)
+        {
+            entries.push(DirtyEntry {
+                path: path.clone(),
+                op: op.cloned(),
+                at: now,
+            });
         }
     }
     report.dirty = active_dirty;
     let mut bytes = Vec::new();
     for entry in entries {
-        serde_json::to_writer(&mut bytes, &entry).map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
+        serde_json::to_writer(&mut bytes, &entry)
+            .map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
         bytes.push(b'\n');
     }
     crate::fsutil::write_atomic(&dirty_file(root), &bytes)?;
@@ -208,16 +242,23 @@ fn read_dirty_preserving(root: &Path) -> Result<Vec<DirtyEntry>, StoreError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    text.lines().map(|line| {
-        serde_json::from_str(line).map_err(|e| StoreError::Io(std::io::Error::other(e)))
-    }).collect()
+    text.lines()
+        .map(|line| {
+            serde_json::from_str(line).map_err(|e| StoreError::Io(std::io::Error::other(e)))
+        })
+        .collect()
 }
 
 /// Dirty entries, deduped by path, newest wins; a missing file means none.
 pub fn read_dirty(root: &Path) -> Vec<DirtyEntry> {
-    let Ok(text) = std::fs::read_to_string(dirty_file(root)) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(dirty_file(root)) else {
+        return Vec::new();
+    };
     let mut by_path: std::collections::BTreeMap<String, DirtyEntry> = Default::default();
-    for e in text.lines().filter_map(|l| serde_json::from_str::<DirtyEntry>(l).ok()) {
+    for e in text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<DirtyEntry>(l).ok())
+    {
         match by_path.get(&e.path) {
             Some(prev) if prev.at > e.at => {}
             _ => {
@@ -230,8 +271,12 @@ pub fn read_dirty(root: &Path) -> Vec<DirtyEntry> {
 
 /// Every parsable dirty entry in file order, not deduped: two ops that dirty the same file are both kept.
 pub fn read_dirty_all(root: &Path) -> Vec<DirtyEntry> {
-    let Ok(text) = std::fs::read_to_string(dirty_file(root)) else { return Vec::new() };
-    text.lines().filter_map(|l| serde_json::from_str::<DirtyEntry>(l).ok()).collect()
+    let Ok(text) = std::fs::read_to_string(dirty_file(root)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<DirtyEntry>(l).ok())
+        .collect()
 }
 
 /// The commit the working tree currently mirrors (.graph-local/view_rev).
@@ -253,9 +298,21 @@ mod tests {
         let at = chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap();
         let (a, b) = (OpId::new(), OpId::new());
         let lines = [
-            DirtyEntry { path: "x.md".into(), op: Some(a), at },
-            DirtyEntry { path: "x.md".into(), op: Some(b), at },
-            DirtyEntry { path: "y.md".into(), op: None, at },
+            DirtyEntry {
+                path: "x.md".into(),
+                op: Some(a),
+                at,
+            },
+            DirtyEntry {
+                path: "x.md".into(),
+                op: Some(b),
+                at,
+            },
+            DirtyEntry {
+                path: "y.md".into(),
+                op: None,
+                at,
+            },
         ];
         let mut text = String::new();
         for e in &lines {
@@ -265,7 +322,11 @@ mod tests {
         text.push_str("not json\n");
         std::fs::write(dirty_file(tmp.path()), text).unwrap();
         assert_eq!(read_dirty_all(tmp.path()), lines.to_vec());
-        assert_eq!(read_dirty(tmp.path()).len(), 2, "the deduping reader still collapses by path");
+        assert_eq!(
+            read_dirty(tmp.path()).len(),
+            2,
+            "the deduping reader still collapses by path"
+        );
     }
 
     fn tree_of(repo: &Repository, files: &[(&str, &str)]) -> Oid {
@@ -292,7 +353,9 @@ mod tests {
     }
 
     fn at(sec: u32) -> Timestamp {
-        chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, sec).unwrap()
+        chrono::Utc
+            .with_ymd_and_hms(2026, 10, 2, 12, 0, sec)
+            .unwrap()
     }
 
     fn files_under(dir: &Path) -> Vec<(PathBuf, String)> {
@@ -324,10 +387,15 @@ mod tests {
             assert_eq!(r.orphaned.len(), 1, "run {n}: {r:?}");
             assert!(!root.join("dir").exists());
         }
-        let mut copies: Vec<String> =
-            files_under(&local_dir(root).join("orphans")).into_iter().map(|(_, c)| c).collect();
+        let mut copies: Vec<String> = files_under(&local_dir(root).join("orphans"))
+            .into_iter()
+            .map(|(_, c)| c)
+            .collect();
         copies.sort();
-        assert_eq!(copies, vec!["first copy".to_owned(), "second copy".to_owned()]);
+        assert_eq!(
+            copies,
+            vec!["first copy".to_owned(), "second copy".to_owned()]
+        );
     }
 
     #[test]
@@ -342,10 +410,22 @@ mod tests {
         std::fs::write(root.join("keep.md"), "k").unwrap();
         std::fs::write(root.join("dir/notes.md"), "new copy").unwrap();
         let op = OpId::new();
-        let dest = local_dir(root).join("orphans").join(op.as_str()).join("dir/notes.md");
+        let dest = local_dir(root)
+            .join("orphans")
+            .join(op.as_str())
+            .join("dir/notes.md");
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::fs::write(&dest, "original").unwrap();
-        let r = fast_forward(&repo, root, Some(old), new, &CommitId("c".into()), Some(&op), at(1)).unwrap();
+        let r = fast_forward(
+            &repo,
+            root,
+            Some(old),
+            new,
+            &CommitId("c".into()),
+            Some(&op),
+            at(1),
+        )
+        .unwrap();
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "original");
         let suffixed = PathBuf::from(format!("{}.1", dest.display()));
         assert_eq!(std::fs::read_to_string(&suffixed).unwrap(), "new copy");
@@ -369,7 +449,10 @@ mod tests {
         // No changed paths: stale markers must still be refreshed.
         fast_forward(&repo, root, Some(new), new, &c, None, at(3)).unwrap();
         let dirty = read_dirty(root);
-        assert_eq!(dirty.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["b.md"]);
+        assert_eq!(
+            dirty.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            vec!["b.md"]
+        );
         assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "mine");
         std::fs::write(root.join("b.md"), "new").unwrap();
         fast_forward(&repo, root, Some(new), new, &c, None, at(4)).unwrap();
@@ -402,8 +485,14 @@ mod tests {
         std::fs::write(root.join("dir/a.md"), "mine").unwrap();
         let report = fast_forward(&repo, root, Some(old), new, &c, None, at(2)).unwrap();
         assert_eq!(report.orphaned.len(), 1);
-        assert_eq!(std::fs::read_to_string(&report.orphaned[0].1).unwrap(), "mine");
-        assert!(read_dirty(root).is_empty(), "the edited file is now in orphans");
+        assert_eq!(
+            std::fs::read_to_string(&report.orphaned[0].1).unwrap(),
+            "mine"
+        );
+        assert!(
+            read_dirty(root).is_empty(),
+            "the edited file is now in orphans"
+        );
     }
 
     #[test]
@@ -420,7 +509,10 @@ mod tests {
         assert_eq!(view_rev(root), Some(c_old.clone()));
         let r = fast_forward(&repo, root, Some(old), new, &c_new, None, at(2)).unwrap();
         assert_eq!(r.updated, vec!["a.md".to_owned()], "{r:?}");
-        assert!(r.dirty.is_empty(), "no torn or half-applied file is classified as a user edit: {r:?}");
+        assert!(
+            r.dirty.is_empty(),
+            "no torn or half-applied file is classified as a user edit: {r:?}"
+        );
         assert_eq!(std::fs::read_to_string(root.join("a.md")).unwrap(), "new a");
         assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "new b");
         assert_eq!(view_rev(root), Some(c_new));
@@ -428,7 +520,9 @@ mod tests {
         collect_files(root, &mut all).unwrap();
         let leftovers: Vec<_> = all
             .iter()
-            .filter(|p| !p.starts_with(root.join(".git")) && p.extension().is_some_and(|e| e == "tmp"))
+            .filter(|p| {
+                !p.starts_with(root.join(".git")) && p.extension().is_some_and(|e| e == "tmp")
+            })
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }

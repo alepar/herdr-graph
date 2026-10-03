@@ -5,12 +5,14 @@ use super::adapter::ServiceThreads;
 use crate::model::clone::{InvitationState, InviteConstraint};
 use crate::ports::threads::*;
 use herdr_threads::daemon::transport::{read_frame, write_frame};
-use herdr_threads::protocol::ids::{InvitationId, RequirementId, SeatId, ServiceAuthorId, ThreadId};
+use herdr_threads::protocol::ids::{
+    InvitationId, RequirementId, SeatId, ServiceAuthorId, ThreadId,
+};
 use herdr_threads::protocol::results::{ApiError, ErrorCode};
 use herdr_threads::protocol::service::{
-    ManagedThread, RequiredMembership, RequirementState, ServiceInvitation, ServiceMembership, ServiceOperation,
-    ServiceRegistration, ServiceRequest, ServiceResult, ServiceWireRequest, ServiceWireResponse,
-    VoluntaryMembershipState,
+    ManagedThread, RequiredMembership, RequirementState, ServiceInvitation, ServiceMembership,
+    ServiceOperation, ServiceRegistration, ServiceRequest, ServiceResult, ServiceWireRequest,
+    ServiceWireResponse, VoluntaryMembershipState,
 };
 use herdr_threads::protocol::wire::PROTOCOL_VERSION;
 use serde_json::json;
@@ -71,7 +73,10 @@ impl Service {
             }
             ServiceRequest::Operation(op) => {
                 if let Some(key) = op.operation_key() {
-                    self.mutations.lock().unwrap().push((key.as_str().to_owned(), request.request_id.clone()));
+                    self.mutations
+                        .lock()
+                        .unwrap()
+                        .push((key.as_str().to_owned(), request.request_id.clone()));
                     if self.drop_next_mutation.swap(false, Ordering::SeqCst) {
                         return None;
                     }
@@ -175,12 +180,18 @@ impl Service {
 
 async fn serve(listener: tokio::net::UnixListener, svc: Arc<Service>) {
     loop {
-        let Ok((mut stream, _)) = listener.accept().await else { return };
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
         let svc = svc.clone();
         tokio::spawn(async move {
             while let Ok(bytes) = read_frame(&mut stream).await {
-                let Ok(request) = serde_json::from_slice::<ServiceWireRequest>(&bytes) else { return };
-                let Some(result) = svc.answer(&request) else { return };
+                let Ok(request) = serde_json::from_slice::<ServiceWireRequest>(&bytes) else {
+                    return;
+                };
+                let Some(result) = svc.answer(&request) else {
+                    return;
+                };
                 let response = ServiceWireResponse {
                     version: PROTOCOL_VERSION,
                     request_id: request.request_id.clone(),
@@ -188,7 +199,10 @@ async fn serve(listener: tokio::net::UnixListener, svc: Arc<Service>) {
                     daemon_boot: BOOT.into(),
                     result,
                 };
-                if write_frame(&mut stream, &serde_json::to_vec(&response).unwrap()).await.is_err() {
+                if write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -213,7 +227,13 @@ async fn fx() -> Fx {
     let intents = ServiceThreads::intents_dir_in(dir.path());
     let instance = uuid::Uuid::new_v4();
     let threads = ServiceThreads::with_system_clock(socket, intents.clone(), instance).unwrap();
-    Fx { _dir: dir, svc, threads, intents, instance }
+    Fx {
+        _dir: dir,
+        svc,
+        threads,
+        intents,
+        instance,
+    }
 }
 
 fn seat(s: &str) -> ThreadsSeatRef {
@@ -224,52 +244,162 @@ fn seat(s: &str) -> ThreadsSeatRef {
 async fn ensure_invite_membership_release_round_trip() {
     let fx = fx().await;
     let key = OpKey("ensure:st_01ABC".into());
-    let thread = fx.threads.ensure_thread(ChannelScope::Seat, "alpha/foreman", &key).await.unwrap();
-    assert_eq!(thread, ThreadRef("hg-st_01abc".into()), "thread id derived from the object id");
-    assert!(fx.threads.membership(&thread, &seat("seat-A")).await.unwrap().is_none(), "no invitation yet");
+    let thread = fx
+        .threads
+        .ensure_thread(ChannelScope::Seat, "alpha/foreman", &key)
+        .await
+        .unwrap();
+    assert_eq!(
+        thread,
+        ThreadRef("hg-st_01abc".into()),
+        "thread id derived from the object id"
+    );
+    assert!(
+        fx.threads
+            .membership(&thread, &seat("seat-A"))
+            .await
+            .unwrap()
+            .is_none(),
+        "no invitation yet"
+    );
 
-    fx.threads.invite(&thread, &seat("seat-A"), InviteConstraint::Required, &OpKey("invite:1".into())).await.unwrap();
-    let d = fx.threads.membership_detail(&thread, &seat("seat-A")).await.unwrap().unwrap();
-    assert_eq!(d.state, InvitationState::Pending, "never accepted by anyone");
+    fx.threads
+        .invite(
+            &thread,
+            &seat("seat-A"),
+            InviteConstraint::Required,
+            &OpKey("invite:1".into()),
+        )
+        .await
+        .unwrap();
+    let d = fx
+        .threads
+        .membership_detail(&thread, &seat("seat-A"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        d.state,
+        InvitationState::Pending,
+        "never accepted by anyone"
+    );
     assert_eq!(d.invitation.as_deref(), Some("inv-1"));
     assert_eq!(d.requirement.as_deref(), Some("requirement-1"));
     assert_eq!(d.revision, Some(3));
-    assert_eq!(fx.threads.membership(&thread, &seat("seat-A")).await.unwrap(), Some(InvitationState::Pending));
+    assert_eq!(
+        fx.threads
+            .membership(&thread, &seat("seat-A"))
+            .await
+            .unwrap(),
+        Some(InvitationState::Pending)
+    );
 
-    fx.threads.set_topic(&thread, "alpha/boss", &OpKey("topic:1".into())).await.unwrap();
-    fx.threads.notify(&thread, Severity::Info, "hello", &OpKey("notify:1".into())).await.unwrap();
+    fx.threads
+        .set_topic(&thread, "alpha/boss", &OpKey("topic:1".into()))
+        .await
+        .unwrap();
+    fx.threads
+        .notify(&thread, Severity::Info, "hello", &OpKey("notify:1".into()))
+        .await
+        .unwrap();
 
-    fx.threads.release_requirement(&thread, &seat("seat-A"), &OpKey("release:1".into())).await.unwrap();
-    assert_eq!(fx.threads.membership(&thread, &seat("seat-A")).await.unwrap(), Some(InvitationState::Released));
+    fx.threads
+        .release_requirement(&thread, &seat("seat-A"), &OpKey("release:1".into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.threads
+            .membership(&thread, &seat("seat-A"))
+            .await
+            .unwrap(),
+        Some(InvitationState::Released)
+    );
     // Releasing an already-released requirement is clean and sends nothing.
     let before = fx.svc.mutations.lock().unwrap().len();
-    fx.threads.release_requirement(&thread, &seat("seat-A"), &OpKey("release:2".into())).await.unwrap();
-    fx.threads.release_requirement(&thread, &seat("seat-B"), &OpKey("release:3".into())).await.unwrap();
+    fx.threads
+        .release_requirement(&thread, &seat("seat-A"), &OpKey("release:2".into()))
+        .await
+        .unwrap();
+    fx.threads
+        .release_requirement(&thread, &seat("seat-B"), &OpKey("release:3".into()))
+        .await
+        .unwrap();
     assert_eq!(fx.svc.mutations.lock().unwrap().len(), before);
 
-    assert_eq!(fx.svc.registers.load(Ordering::SeqCst), 1, "one registration for the whole session");
-    let keys: Vec<String> = fx.svc.mutations.lock().unwrap().iter().map(|m| m.0.clone()).collect();
+    assert_eq!(
+        fx.svc.registers.load(Ordering::SeqCst),
+        1,
+        "one registration for the whole session"
+    );
+    let keys: Vec<String> = fx
+        .svc
+        .mutations
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|m| m.0.clone())
+        .collect();
     assert_eq!(keys.len(), 5);
     assert!(keys.contains(&"ensure:st_01ABC".to_owned()));
-    assert!(keys.iter().any(|k| k.starts_with("release:1:requirement-1")), "release key carries the queried requirement: {keys:?}");
-    assert!(std::fs::read_dir(&fx.intents).unwrap().next().is_none(), "completed intents are cleaned up");
+    assert!(
+        keys.iter()
+            .any(|k| k.starts_with("release:1:requirement-1")),
+        "release key carries the queried requirement: {keys:?}"
+    );
+    assert!(
+        std::fs::read_dir(&fx.intents).unwrap().next().is_none(),
+        "completed intents are cleaned up"
+    );
 }
 
 #[tokio::test]
 async fn ordinary_membership_maps_voluntary_state() {
     let fx = fx().await;
-    let thread = fx.threads.ensure_thread(ChannelScope::Teamspace, "t", &OpKey("ensure:ts_X".into())).await.unwrap();
-    fx.threads.invite(&thread, &seat("seat-A"), InviteConstraint::Ordinary, &OpKey("invite:o".into())).await.unwrap();
-    let d = fx.threads.membership_detail(&thread, &seat("seat-A")).await.unwrap().unwrap();
+    let thread = fx
+        .threads
+        .ensure_thread(ChannelScope::Teamspace, "t", &OpKey("ensure:ts_X".into()))
+        .await
+        .unwrap();
+    fx.threads
+        .invite(
+            &thread,
+            &seat("seat-A"),
+            InviteConstraint::Ordinary,
+            &OpKey("invite:o".into()),
+        )
+        .await
+        .unwrap();
+    let d = fx
+        .threads
+        .membership_detail(&thread, &seat("seat-A"))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!((d.state, d.requirement), (InvitationState::Pending, None));
     for (voluntary, want) in [
-        (VoluntaryMembershipState::Joined, Some(InvitationState::Accepted)),
-        (VoluntaryMembershipState::Left, Some(InvitationState::Released)),
-        (VoluntaryMembershipState::Retired, Some(InvitationState::Retired)),
+        (
+            VoluntaryMembershipState::Joined,
+            Some(InvitationState::Accepted),
+        ),
+        (
+            VoluntaryMembershipState::Left,
+            Some(InvitationState::Released),
+        ),
+        (
+            VoluntaryMembershipState::Retired,
+            Some(InvitationState::Retired),
+        ),
         (VoluntaryMembershipState::Absent, None),
     ] {
         fx.svc.members.lock().unwrap()[0].voluntary_state = voluntary;
-        assert_eq!(fx.threads.membership(&thread, &seat("seat-A")).await.unwrap(), want, "{voluntary:?}");
+        assert_eq!(
+            fx.threads
+                .membership(&thread, &seat("seat-A"))
+                .await
+                .unwrap(),
+            want,
+            "{voluntary:?}"
+        );
     }
 }
 
@@ -278,22 +408,42 @@ async fn busy_service_is_reported_once_per_call_never_forced() {
     let fx = fx().await;
     fx.svc.busy.store(true, Ordering::SeqCst);
     for n in 1..=3 {
-        let r = fx.threads.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_B".into())).await;
+        let r = fx
+            .threads
+            .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_B".into()))
+            .await;
         assert!(matches!(r, Err(ThreadsError::ServiceBusy)), "{r:?}");
-        assert_eq!(fx.svc.registers.load(Ordering::SeqCst), n, "exactly one registration attempt per call");
+        assert_eq!(
+            fx.svc.registers.load(Ordering::SeqCst),
+            n,
+            "exactly one registration attempt per call"
+        );
     }
     assert!(fx.svc.mutations.lock().unwrap().is_empty());
     fx.svc.busy.store(false, Ordering::SeqCst);
-    fx.threads.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_B".into())).await.unwrap();
+    fx.threads
+        .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_B".into()))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn no_daemon_is_a_disconnect() {
     let dir = tempfile::tempdir().unwrap();
-    let t = ServiceThreads::with_system_clock(dir.path().join("absent.sock"), dir.path().join("i/intents"), uuid::Uuid::new_v4()).unwrap();
-    let r = t.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_X".into())).await;
+    let t = ServiceThreads::with_system_clock(
+        dir.path().join("absent.sock"),
+        dir.path().join("i/intents"),
+        uuid::Uuid::new_v4(),
+    )
+    .unwrap();
+    let r = t
+        .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_X".into()))
+        .await;
     assert!(matches!(r, Err(ThreadsError::Disconnected(_))), "{r:?}");
-    assert!(matches!(t.membership(&ThreadRef("t".into()), &seat("s")).await, Err(ThreadsError::Disconnected(_))));
+    assert!(matches!(
+        t.membership(&ThreadRef("t".into()), &seat("s")).await,
+        Err(ThreadsError::Disconnected(_))
+    ));
 }
 
 #[tokio::test]
@@ -301,14 +451,27 @@ async fn unresolved_mutation_is_replayed_with_its_original_envelope() {
     let fx = fx().await;
     fx.svc.drop_next_mutation.store(true, Ordering::SeqCst);
     let key = OpKey("ensure:st_R".into());
-    let first = fx.threads.ensure_thread(ChannelScope::Seat, "t", &key).await;
-    assert!(matches!(first, Err(ThreadsError::Disconnected(_))), "outcome unknown: {first:?}");
+    let first = fx
+        .threads
+        .ensure_thread(ChannelScope::Seat, "t", &key)
+        .await;
+    assert!(
+        matches!(first, Err(ThreadsError::Disconnected(_))),
+        "outcome unknown: {first:?}"
+    );
     // The next attempt registers again and replays the saved intent instead of building a new one.
-    let thread = fx.threads.ensure_thread(ChannelScope::Seat, "t", &key).await.unwrap();
+    let thread = fx
+        .threads
+        .ensure_thread(ChannelScope::Seat, "t", &key)
+        .await
+        .unwrap();
     assert_eq!(thread, ThreadRef("hg-st_r".into()));
     let seen = fx.svc.mutations.lock().unwrap().clone();
     assert_eq!(seen.len(), 2, "{seen:?}");
-    assert_eq!(seen[0], seen[1], "same operation key and the same request id: an exact replay");
+    assert_eq!(
+        seen[0], seen[1],
+        "same operation key and the same request id: an exact replay"
+    );
     assert_eq!(fx.svc.registers.load(Ordering::SeqCst), 2);
 }
 
@@ -317,13 +480,32 @@ async fn unresolved_intents_survive_a_restart_of_the_adapter() {
     let fx = fx().await;
     fx.svc.drop_next_mutation.store(true, Ordering::SeqCst);
     let key = OpKey("ensure:st_P".into());
-    assert!(fx.threads.ensure_thread(ChannelScope::Seat, "t", &key).await.is_err());
+    assert!(
+        fx.threads
+            .ensure_thread(ChannelScope::Seat, "t", &key)
+            .await
+            .is_err()
+    );
     // A new adapter over the same intents directory (the daemon restarted) replays it before anything new.
     let socket = fx._dir.path().join("t.sock");
     let again = ServiceThreads::with_system_clock(socket, fx.intents.clone(), fx.instance).unwrap();
-    again.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_Q".into())).await.unwrap();
-    let keys: Vec<String> = fx.svc.mutations.lock().unwrap().iter().map(|m| m.0.clone()).collect();
-    assert_eq!(keys, vec!["ensure:st_P", "ensure:st_P", "ensure:st_Q"], "the old intent first, then the new operation");
+    again
+        .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_Q".into()))
+        .await
+        .unwrap();
+    let keys: Vec<String> = fx
+        .svc
+        .mutations
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|m| m.0.clone())
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["ensure:st_P", "ensure:st_P", "ensure:st_Q"],
+        "the old intent first, then the new operation"
+    );
 }
 
 #[cfg(feature = "threads-service-ack")]
@@ -335,24 +517,71 @@ mod ack {
     #[tokio::test]
     async fn send_request_and_receipt_state_round_trip() {
         let fx = fx().await;
-        let thread = fx.threads.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_S".into())).await.unwrap();
-        let seats = [ThreadsSeatRef("seat-a".into()), ThreadsSeatRef("seat-b".into())];
-        let msg = fx.threads.send_request(&thread, &seats, "process rq_1", &OpKey("deliver:rq_1".into())).await.unwrap();
+        let thread = fx
+            .threads
+            .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_S".into()))
+            .await
+            .unwrap();
+        let seats = [
+            ThreadsSeatRef("seat-a".into()),
+            ThreadsSeatRef("seat-b".into()),
+        ];
+        let msg = fx
+            .threads
+            .send_request(
+                &thread,
+                &seats,
+                "process rq_1",
+                &OpKey("deliver:rq_1".into()),
+            )
+            .await
+            .unwrap();
         assert_eq!(msg, MessageRef("msg-1".into()));
         let sent = fx.svc.sent.lock().unwrap().clone();
-        assert_eq!(sent, vec![(thread.0.clone(), vec!["seat-a".to_owned(), "seat-b".to_owned()])]);
+        assert_eq!(
+            sent,
+            vec![(
+                thread.0.clone(),
+                vec!["seat-a".to_owned(), "seat-b".to_owned()]
+            )]
+        );
         fx.svc.acked.lock().unwrap().push("seat-a".into());
-        let r = fx.threads.receipt_state(std::slice::from_ref(&msg)).await.unwrap();
+        let r = fx
+            .threads
+            .receipt_state(std::slice::from_ref(&msg))
+            .await
+            .unwrap();
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].message, msg);
         assert_eq!(r[0].recipients.len(), 2);
-        assert!(matches!(r[0].recipients[0].state, ReceiptState::Acknowledged { at } if at.timestamp_millis() == 1_700_000_000_000));
+        assert!(
+            matches!(r[0].recipients[0].state, ReceiptState::Acknowledged { at } if at.timestamp_millis() == 1_700_000_000_000)
+        );
         assert_eq!(r[0].recipients[1].state, ReceiptState::Pending);
         // The same delivery key again carries the same operation key, which the daemon deduplicates
         // (journaled exactly-once server side; this stand-in does not model that).
-        fx.threads.send_request(&thread, &seats, "process rq_1", &OpKey("deliver:rq_1".into())).await.unwrap();
-        let keys: Vec<String> = fx.svc.mutations.lock().unwrap().iter().map(|m| m.0.clone()).collect();
-        assert_eq!(keys.iter().filter(|k| k.as_str() == "deliver:rq_1").count(), 2, "{keys:?}");
+        fx.threads
+            .send_request(
+                &thread,
+                &seats,
+                "process rq_1",
+                &OpKey("deliver:rq_1".into()),
+            )
+            .await
+            .unwrap();
+        let keys: Vec<String> = fx
+            .svc
+            .mutations
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|m| m.0.clone())
+            .collect();
+        assert_eq!(
+            keys.iter().filter(|k| k.as_str() == "deliver:rq_1").count(),
+            2,
+            "{keys:?}"
+        );
     }
 
     /// A service that refuses `service_session_v2` registration as unsupported, like every service before the
@@ -361,15 +590,22 @@ mod ack {
     async fn v2_registration_unsupported_falls_back() {
         let fx = fx().await;
         // The stand-in's Register ignores the capability and succeeds, i.e. it supports v2.
-        assert_eq!(fx.threads.delivery_capability().await.unwrap(), DeliveryCapability::ServiceAck);
+        assert_eq!(
+            fx.threads.delivery_capability().await.unwrap(),
+            DeliveryCapability::ServiceAck
+        );
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("old.sock");
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
         tokio::spawn(async move {
             loop {
-                let Ok((mut s, _)) = listener.accept().await else { return };
+                let Ok((mut s, _)) = listener.accept().await else {
+                    return;
+                };
                 tokio::spawn(async move {
-                    let Ok(bytes) = read_frame(&mut s).await else { return };
+                    let Ok(bytes) = read_frame(&mut s).await else {
+                        return;
+                    };
                     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                     let response = json!({
                         "version": PROTOCOL_VERSION, "request_id": v["request_id"], "instance": v["expected_instance"],
@@ -381,10 +617,30 @@ mod ack {
                 });
             }
         });
-        let old = ServiceThreads::with_system_clock(socket, dir.path().join("i/intents"), uuid::Uuid::new_v4()).unwrap();
-        assert_eq!(old.delivery_capability().await.unwrap(), DeliveryCapability::NotifyFallback);
-        assert_eq!(old.delivery_capability().await.unwrap(), DeliveryCapability::NotifyFallback, "cached");
-        let none = ServiceThreads::with_system_clock(dir.path().join("none.sock"), dir.path().join("j/intents"), uuid::Uuid::new_v4()).unwrap();
-        assert!(matches!(none.delivery_capability().await, Err(ThreadsError::Disconnected(_))));
+        let old = ServiceThreads::with_system_clock(
+            socket,
+            dir.path().join("i/intents"),
+            uuid::Uuid::new_v4(),
+        )
+        .unwrap();
+        assert_eq!(
+            old.delivery_capability().await.unwrap(),
+            DeliveryCapability::NotifyFallback
+        );
+        assert_eq!(
+            old.delivery_capability().await.unwrap(),
+            DeliveryCapability::NotifyFallback,
+            "cached"
+        );
+        let none = ServiceThreads::with_system_clock(
+            dir.path().join("none.sock"),
+            dir.path().join("j/intents"),
+            uuid::Uuid::new_v4(),
+        )
+        .unwrap();
+        assert!(matches!(
+            none.delivery_capability().await,
+            Err(ThreadsError::Disconnected(_))
+        ));
     }
 }

@@ -34,28 +34,46 @@ pub struct CommandError {
 
 impl CommandError {
     pub fn bad_request(m: impl Into<String>) -> Self {
-        Self { code: IpcErrorCode::BadRequest, message: m.into() }
+        Self {
+            code: IpcErrorCode::BadRequest,
+            message: m.into(),
+        }
     }
     pub fn rejected(m: impl Into<String>) -> Self {
-        Self { code: IpcErrorCode::Rejected, message: m.into() }
+        Self {
+            code: IpcErrorCode::Rejected,
+            message: m.into(),
+        }
     }
     pub fn unavailable(m: impl Into<String>) -> Self {
-        Self { code: IpcErrorCode::Unavailable, message: m.into() }
+        Self {
+            code: IpcErrorCode::Unavailable,
+            message: m.into(),
+        }
     }
     pub fn internal(m: impl Into<String>) -> Self {
-        Self { code: IpcErrorCode::Internal, message: m.into() }
+        Self {
+            code: IpcErrorCode::Internal,
+            message: m.into(),
+        }
     }
     /// The request's budget ran out while `op` was still non-terminal.
     pub fn still_running(op: &crate::model::OpId, state: crate::model::operation::OpState) -> Self {
         Self {
             code: IpcErrorCode::StillRunning,
-            message: format!("{op} is still {state:?} (it finishes in the background; check with herdr-graph op {op})"),
+            message: format!(
+                "{op} is still {state:?} (it finishes in the background; check with herdr-graph op {op})"
+            ),
         }
     }
 }
 
 pub trait CommandHandler: Send + Sync + 'static {
-    fn call(&self, cx: CommandCtx, args: serde_json::Value) -> BoxFut<Result<serde_json::Value, CommandError>>;
+    fn call(
+        &self,
+        cx: CommandCtx,
+        args: serde_json::Value,
+    ) -> BoxFut<Result<serde_json::Value, CommandError>>;
 }
 
 impl<F, Fut> CommandHandler for F
@@ -63,7 +81,11 @@ where
     F: Fn(CommandCtx, serde_json::Value) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<serde_json::Value, CommandError>> + Send + 'static,
 {
-    fn call(&self, cx: CommandCtx, args: serde_json::Value) -> BoxFut<Result<serde_json::Value, CommandError>> {
+    fn call(
+        &self,
+        cx: CommandCtx,
+        args: serde_json::Value,
+    ) -> BoxFut<Result<serde_json::Value, CommandError>> {
         Box::pin(self(cx, args))
     }
 }
@@ -123,7 +145,10 @@ impl Registry {
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
         let item: (String, LoopFn) = (name.to_string(), Box::new(move |sd| Box::pin(f(sd))));
-        self.loops.get_mut().unwrap_or_else(|e| e.into_inner()).push(item);
+        self.loops
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(item);
     }
 
     /// Contribute a value to the `status` reply under `components.<name>`.
@@ -156,15 +181,21 @@ mod tests {
     #[should_panic(expected = "duplicate command kind")]
     fn duplicate_kind_panics() {
         let mut r = Registry::default();
-        r.command("a.b", |_cx: CommandCtx, _a: serde_json::Value| async { Ok(serde_json::json!(1)) });
-        r.command("a.b", |_cx: CommandCtx, _a: serde_json::Value| async { Ok(serde_json::json!(2)) });
+        r.command("a.b", |_cx: CommandCtx, _a: serde_json::Value| async {
+            Ok(serde_json::json!(1))
+        });
+        r.command("a.b", |_cx: CommandCtx, _a: serde_json::Value| async {
+            Ok(serde_json::json!(2))
+        });
     }
 
     #[test]
     fn command_kinds_sorted() {
         let mut r = Registry::default();
         for k in ["z.z", "a.a"] {
-            r.command(k, |_cx: CommandCtx, _a: serde_json::Value| async { Ok(serde_json::Value::Null) });
+            r.command(k, |_cx: CommandCtx, _a: serde_json::Value| async {
+                Ok(serde_json::Value::Null)
+            });
         }
         assert_eq!(r.command_kinds(), vec!["a.a", "z.z"]);
     }

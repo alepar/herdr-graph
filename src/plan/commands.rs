@@ -73,7 +73,9 @@ pub fn render(p: &Plan, hash: &str) -> String {
         }
     }
     if let Some(r) = &p.repair_required {
-        out.push_str(&format!("repair required (this plan cannot be applied): {r}\n"));
+        out.push_str(&format!(
+            "repair required (this plan cannot be applied): {r}\n"
+        ));
     }
     out
 }
@@ -90,18 +92,33 @@ fn plan_json(s: &StoredPlan) -> Value {
 /// Requester from the caller's environment: the seat/clone named by `HERDR_GRAPH_*` (when parseable) and
 /// whether a human is at a terminal.
 fn requester_for(deps: &PlanDeps, caller: &CallerInfo, human: bool) -> Requester {
-    let seat = caller.graph_seat.as_deref().and_then(|s| s.parse::<SeatId>().ok());
-    let clone = caller.graph_clone.as_deref().and_then(|s| s.parse::<CloneId>().ok());
+    let seat = caller
+        .graph_seat
+        .as_deref()
+        .and_then(|s| s.parse::<SeatId>().ok());
+    let clone = caller
+        .graph_clone
+        .as_deref()
+        .and_then(|s| s.parse::<CloneId>().ok());
     let mut teamspace = None;
     if let (Some(seat), Ok(head)) = (&seat, deps.store.head()) {
-        let view = CommitView { store: &*deps.store, at: head };
+        let view = CommitView {
+            store: &*deps.store,
+            at: head,
+        };
         if let Ok(Some(loc)) = layout::locate(&view, &seat.to_any())
             && let Ok(Some(rec)) = read_toml::<SeatRecord>(&view, &loc.record_path)
         {
             teamspace = Some(rec.teamspace);
         }
     }
-    Requester { teamspace, seat, clone, native_session: None, human }
+    Requester {
+        teamspace,
+        seat,
+        clone,
+        native_session: None,
+        human,
+    }
 }
 
 /// Remove a `--supersedes <op>` (or `--supersedes=<op>`) pair from the change words.
@@ -110,14 +127,20 @@ fn take_supersedes(words: Vec<String>) -> Result<(Vec<String>, Option<OpId>), Co
     let mut op = None;
     let mut it = words.into_iter();
     while let Some(w) = it.next() {
-        let value = if w == "--supersedes" {
-            Some(it.next().ok_or_else(|| CommandError::bad_request("--supersedes needs an operation id"))?)
-        } else {
-            w.strip_prefix("--supersedes=").map(str::to_owned)
-        };
+        let value =
+            if w == "--supersedes" {
+                Some(it.next().ok_or_else(|| {
+                    CommandError::bad_request("--supersedes needs an operation id")
+                })?)
+            } else {
+                w.strip_prefix("--supersedes=").map(str::to_owned)
+            };
         match value {
             Some(v) => {
-                op = Some(v.parse::<OpId>().map_err(|e| CommandError::bad_request(format!("--supersedes: {e}")))?);
+                op = Some(
+                    v.parse::<OpId>()
+                        .map_err(|e| CommandError::bad_request(format!("--supersedes: {e}")))?,
+                );
             }
             None => out.push(w),
         }
@@ -126,13 +149,29 @@ fn take_supersedes(words: Vec<String>) -> Result<(Vec<String>, Option<OpId>), Co
 }
 
 /// `plan.create`: parse the words with the registered kinds, plan against the head revision, store the plan.
-pub fn create_plan(deps: &PlanDeps, caller: &CallerInfo, words: Vec<String>) -> Result<Value, CommandError> {
+pub fn create_plan(
+    deps: &PlanDeps,
+    caller: &CallerInfo,
+    words: Vec<String>,
+) -> Result<Value, CommandError> {
     let (words, supersedes) = take_supersedes(words)?;
     let (kind, rest) = deps.kinds.resolve(&words).map_err(plan_err)?;
     let args = kind.parse(&rest, caller).map_err(plan_err)?;
-    let at = deps.store.head().map_err(|e| CommandError::internal(e.to_string()))?;
-    let view = CommitView { store: &*deps.store, at: at.clone() };
-    let pcx = PlanCx { tree: &view, at, caller, now: deps.clock.now(), instance: &deps.instance };
+    let at = deps
+        .store
+        .head()
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    let view = CommitView {
+        store: &*deps.store,
+        at: at.clone(),
+    };
+    let pcx = PlanCx {
+        tree: &view,
+        at,
+        caller,
+        now: deps.clock.now(),
+        instance: &deps.instance,
+    };
     let plan = make_plan(&*kind, &pcx, args, Reserved::default()).map_err(plan_err)?;
     let stored = StoredPlan {
         hash: plan_hash(&plan),
@@ -147,7 +186,9 @@ pub fn create_plan(deps: &PlanDeps, caller: &CallerInfo, words: Vec<String>) -> 
 }
 
 fn load_plan(deps: &PlanDeps, id: &str) -> Result<StoredPlan, CommandError> {
-    let id: PlanId = id.parse().map_err(|e| CommandError::bad_request(format!("plan id: {e}")))?;
+    let id: PlanId = id
+        .parse()
+        .map_err(|e| CommandError::bad_request(format!("plan id: {e}")))?;
     deps.plans
         .get(&id)
         .map_err(io_err)?
@@ -184,7 +225,9 @@ pub fn admit_apply_with(
 ) -> Result<OpId, CommandError> {
     let stored = load_plan(deps, plan)?;
     let Some(confirm) = confirm else {
-        return Err(CommandError::bad_request("confirmation required; there is no bypass"));
+        return Err(CommandError::bad_request(
+            "confirmation required; there is no bypass",
+        ));
     };
     if confirm != stored.hash {
         return Err(CommandError::bad_request(format!(
@@ -194,21 +237,40 @@ pub fn admit_apply_with(
     }
     let mode = match mode {
         "tty" if caller.tty => ConfirmMode::Tty,
-        "tty" => return Err(CommandError::bad_request("tty confirmation requires a terminal; use the relay flow")),
+        "tty" => {
+            return Err(CommandError::bad_request(
+                "tty confirmation requires a terminal; use the relay flow",
+            ));
+        }
         "relay" => ConfirmMode::Relay,
-        other => return Err(CommandError::bad_request(format!("unknown confirmation mode {other:?}"))),
+        other => {
+            return Err(CommandError::bad_request(format!(
+                "unknown confirmation mode {other:?}"
+            )));
+        }
     };
     if let Some(why) = &stored.plan.repair_required {
-        return Err(CommandError::rejected(format!("plan {} requires repair and cannot be applied: {why}", stored.plan.id)));
+        return Err(CommandError::rejected(format!(
+            "plan {} requires repair and cannot be applied: {why}",
+            stored.plan.id
+        )));
     }
-    let confirmation = Confirmation { mode, plan_hash: stored.hash.clone(), at: deps.clock.now() };
+    let confirmation = Confirmation {
+        mode,
+        plan_hash: stored.hash.clone(),
+        at: deps.clock.now(),
+    };
     let req = ChangeRequest {
         kind: stored.plan.request.kind,
         args: stored.plan.request.args.clone(),
         relied_on: vec![],
         requester: requester_for(deps, caller, mode == ConfirmMode::Tty),
         supersedes: stored.supersedes.clone(),
-        confirmed: Some(ConfirmedPlan { plan: stored.plan.id.clone(), confirmation, observed: extra }),
+        confirmed: Some(ConfirmedPlan {
+            plan: stored.plan.id.clone(),
+            confirmation,
+            observed: extra,
+        }),
     };
     deps.writer.admit(req).map_err(writer_err)
 }
@@ -255,7 +317,11 @@ pub async fn wait_result(deps: &PlanDeps, op: &OpId) -> Result<Value, CommandErr
 fn words_of(args: &Value) -> Result<Vec<String>, CommandError> {
     args.get("words")
         .and_then(|w| w.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_owned))
+                .collect()
+        })
         .ok_or_else(|| CommandError::bad_request("plan.create needs {words: [...]}"))
 }
 
@@ -280,7 +346,8 @@ pub fn register_commands(reg: &mut Registry, deps: PlanDeps) {
     reg.command("plan.show", move |_cx: CommandCtx, args: Value| {
         let d = d.clone();
         async move {
-            let plan = str_arg(&args, "plan").ok_or_else(|| CommandError::bad_request("plan.show needs {plan}"))?;
+            let plan = str_arg(&args, "plan")
+                .ok_or_else(|| CommandError::bad_request("plan.show needs {plan}"))?;
             show_plan(&d, plan)
         }
     });
@@ -288,15 +355,19 @@ pub fn register_commands(reg: &mut Registry, deps: PlanDeps) {
     reg.command("plan.apply", move |cx: CommandCtx, args: Value| {
         let d = d.clone();
         async move {
-            let plan = str_arg(&args, "plan").ok_or_else(|| CommandError::bad_request("plan.apply needs {plan}"))?.to_owned();
+            let plan = str_arg(&args, "plan")
+                .ok_or_else(|| CommandError::bad_request("plan.apply needs {plan}"))?
+                .to_owned();
             let confirm = str_arg(&args, "confirm").map(str::to_owned);
             let mode = str_arg(&args, "mode").unwrap_or("relay").to_owned();
             let op = {
                 let d = d.clone();
                 let caller = cx.caller.clone();
-                tokio::task::spawn_blocking(move || admit_apply(&d, &caller, &plan, confirm.as_deref(), &mode))
-                    .await
-                    .map_err(|e| CommandError::internal(e.to_string()))??
+                tokio::task::spawn_blocking(move || {
+                    admit_apply(&d, &caller, &plan, confirm.as_deref(), &mode)
+                })
+                .await
+                .map_err(|e| CommandError::internal(e.to_string()))??
             };
             wait_result(&d, &op).await
         }

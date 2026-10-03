@@ -8,7 +8,9 @@
 use super::mapping::PaneSeatMap;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
-use crate::model::clone::{CloneRecord, Invitation, InvitationState, InviteConstraint, ThreadsLink};
+use crate::model::clone::{
+    CloneRecord, Invitation, InvitationState, InviteConstraint, ThreadsLink,
+};
 use crate::model::common::{Channel, CloneLifecycle, CommitId, Lifecycle, NameSource};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::operation::OpState;
@@ -65,7 +67,9 @@ impl Graph {
     }
 
     fn ts_active(&self, id: &TeamspaceId) -> bool {
-        self.teamspaces.get(id).is_some_and(|t| t.lifecycle == Lifecycle::Active)
+        self.teamspaces
+            .get(id)
+            .is_some_and(|t| t.lifecycle == Lifecycle::Active)
     }
 
     pub fn seat_active(&self, s: &SeatRecord) -> bool {
@@ -73,7 +77,8 @@ impl Graph {
     }
 
     pub fn clone_active(&self, c: &CloneRecord) -> bool {
-        c.lifecycle == CloneLifecycle::Active && self.seats.get(&c.seat).is_some_and(|s| self.seat_active(s))
+        c.lifecycle == CloneLifecycle::Active
+            && self.seats.get(&c.seat).is_some_and(|s| self.seat_active(s))
     }
 
     /// Native session record of the clone's occupant, when the clone is active and occupied.
@@ -86,9 +91,18 @@ impl Graph {
 
     fn rev_of(&self, object: &AnyId) -> Option<u64> {
         match object.kind() {
-            IdKind::Teamspace => TeamspaceId::parse(object.as_str()).ok().and_then(|i| self.teamspaces.get(&i)).map(|r| r.rev),
-            IdKind::Seat => SeatId::parse(object.as_str()).ok().and_then(|i| self.seats.get(&i)).map(|r| r.rev),
-            IdKind::Clone => CloneId::parse(object.as_str()).ok().and_then(|i| self.clones.get(&i)).map(|r| r.rev),
+            IdKind::Teamspace => TeamspaceId::parse(object.as_str())
+                .ok()
+                .and_then(|i| self.teamspaces.get(&i))
+                .map(|r| r.rev),
+            IdKind::Seat => SeatId::parse(object.as_str())
+                .ok()
+                .and_then(|i| self.seats.get(&i))
+                .map(|r| r.rev),
+            IdKind::Clone => CloneId::parse(object.as_str())
+                .ok()
+                .and_then(|i| self.clones.get(&i))
+                .map(|r| r.rev),
             _ => None,
         }
     }
@@ -110,8 +124,15 @@ impl Graph {
                 .and_then(|s| s.activation.last_op.clone())
                 .unwrap_or(nil),
             IdKind::Teamspace => {
-                let Ok(t) = TeamspaceId::parse(object.as_str()) else { return nil };
-                self.seats.values().filter(|s| s.teamspace == t).filter_map(|s| s.activation.last_op.clone()).max().unwrap_or(nil)
+                let Ok(t) = TeamspaceId::parse(object.as_str()) else {
+                    return nil;
+                };
+                self.seats
+                    .values()
+                    .filter(|s| s.teamspace == t)
+                    .filter_map(|s| s.activation.last_op.clone())
+                    .max()
+                    .unwrap_or(nil)
             }
             _ => nil,
         }
@@ -121,13 +142,25 @@ impl Graph {
     fn channel(&self, object: &AnyId) -> Option<(ChannelScope, &Channel, String, bool)> {
         match object.kind() {
             IdKind::Teamspace => {
-                let t = self.teamspaces.get(&TeamspaceId::parse(object.as_str()).ok()?)?;
-                Some((ChannelScope::Teamspace, &t.channel, t.name.clone(), t.lifecycle == Lifecycle::Active))
+                let t = self
+                    .teamspaces
+                    .get(&TeamspaceId::parse(object.as_str()).ok()?)?;
+                Some((
+                    ChannelScope::Teamspace,
+                    &t.channel,
+                    t.name.clone(),
+                    t.lifecycle == Lifecycle::Active,
+                ))
             }
             IdKind::Seat => {
                 let s = self.seats.get(&SeatId::parse(object.as_str()).ok()?)?;
                 let ts = self.teamspaces.get(&s.teamspace)?;
-                Some((ChannelScope::Seat, &s.channel, format!("{}/{}", ts.name, s.name), self.seat_active(s)))
+                Some((
+                    ChannelScope::Seat,
+                    &s.channel,
+                    format!("{}/{}", ts.name, s.name),
+                    self.seat_active(s),
+                ))
             }
             _ => None,
         }
@@ -137,7 +170,10 @@ impl Graph {
     /// clone's seat's for clones.
     fn notify_channel_owner(&self, object: &AnyId) -> Option<AnyId> {
         match object.kind() {
-            IdKind::Clone => self.clones.get(&CloneId::parse(object.as_str()).ok()?).map(|c| c.seat.to_any()),
+            IdKind::Clone => self
+                .clones
+                .get(&CloneId::parse(object.as_str()).ok()?)
+                .map(|c| c.seat.to_any()),
             _ => Some(object.clone()),
         }
     }
@@ -170,11 +206,26 @@ impl GraphCache {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub(crate) enum Payload {
     None,
-    Invite { thread: String, constraint: InviteConstraint },
-    Release { thread: String, constraint: InviteConstraint },
+    Invite {
+        thread: String,
+        constraint: InviteConstraint,
+    },
+    Release {
+        thread: String,
+        constraint: InviteConstraint,
+    },
     /// `leaving`: an ordinary participation being left; polled until threads reports the member gone.
-    Poll { thread: String, constraint: InviteConstraint, leaving: bool },
-    Notify { purpose: String, severity: Severity, body: String, key: String },
+    Poll {
+        thread: String,
+        constraint: InviteConstraint,
+        leaving: bool,
+    },
+    Notify {
+        purpose: String,
+        severity: Severity,
+        body: String,
+        key: String,
+    },
 }
 
 struct Want {
@@ -232,26 +283,55 @@ fn constraint_name(c: InviteConstraint) -> &'static str {
 
 fn want(g: &Graph, kind: EffectKind, object: AnyId, identity_rev: u64, payload: Payload) -> Want {
     let fencing_rev = g.rev_of(&object).unwrap_or(identity_rev);
-    Want { op: g.op_for(&object), kind, object, identity_rev, fencing_rev, payload, after: Vec::new() }
+    Want {
+        op: g.op_for(&object),
+        kind,
+        object,
+        identity_rev,
+        fencing_rev,
+        payload,
+        after: Vec::new(),
+    }
 }
 
 /// Channel creation and topic maintenance for every active seat and teamspace.
 fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
-    let objects: Vec<AnyId> =
-        g.teamspaces.keys().map(|t| t.to_any()).chain(g.seats.keys().map(|s| s.to_any())).collect();
+    let objects: Vec<AnyId> = g
+        .teamspaces
+        .keys()
+        .map(|t| t.to_any())
+        .chain(g.seats.keys().map(|s| s.to_any()))
+        .collect();
     for object in objects {
-        let Some((_, channel, topic, active)) = g.channel(&object) else { continue };
+        let Some((_, channel, topic, active)) = g.channel(&object) else {
+            continue;
+        };
         if !active {
             continue;
         }
         let rev = g.rev_of(&object).unwrap_or(0);
         if channel.thread_id.is_none() {
-            out.push(want(g, EffectKind::EnsureThread, object, rev, Payload::None));
+            out.push(want(
+                g,
+                EffectKind::EnsureThread,
+                object,
+                rev,
+                Payload::None,
+            ));
             continue;
         }
-        let last = journal.meta_get(&format!("{TOPIC_PREFIX}{object}")).ok().flatten();
+        let last = journal
+            .meta_get(&format!("{TOPIC_PREFIX}{object}"))
+            .ok()
+            .flatten();
         if last.as_deref() != Some(topic.as_str()) {
-            out.push(want(g, EffectKind::SetTopic, object, topic_generation(&topic), Payload::None));
+            out.push(want(
+                g,
+                EffectKind::SetTopic,
+                object,
+                topic_generation(&topic),
+                Payload::None,
+            ));
         }
     }
 }
@@ -271,7 +351,10 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
             for owner in [seat.id.to_any(), seat.teamspace.to_any()] {
                 if let Some((_, channel, _, _)) = g.channel(&owner) {
                     let ensure = channel.thread_id.is_none().then(|| owner.clone());
-                    let thread = channel.thread_id.clone().unwrap_or_else(|| derived_thread(&owner));
+                    let thread = channel
+                        .thread_id
+                        .clone()
+                        .unwrap_or_else(|| derived_thread(&owner));
                     desired.push((thread, InviteConstraint::Required, ensure));
                 }
             }
@@ -282,18 +365,36 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
             }
         }
         for (thread, constraint, ensure) in desired {
-            let held = c.invitations.iter().find(|i| i.thread == thread && i.constraint == constraint);
-            let same_occupant = |i: &Invitation| i.link.as_ref().and_then(|l| l.occupant.as_ref()) == occupant.as_ref();
+            let held = c
+                .invitations
+                .iter()
+                .find(|i| i.thread == thread && i.constraint == constraint);
+            let same_occupant = |i: &Invitation| {
+                i.link.as_ref().and_then(|l| l.occupant.as_ref()) == occupant.as_ref()
+            };
             let satisfied = match (held, constraint) {
                 // A Required episode is settled for the occupant it was issued for, whatever became of it.
                 (Some(i), InviteConstraint::Required) => same_occupant(i),
                 (Some(i), InviteConstraint::Ordinary) => {
-                    same_occupant(i) && matches!(i.state, InvitationState::Pending | InvitationState::Accepted)
+                    same_occupant(i)
+                        && matches!(
+                            i.state,
+                            InvitationState::Pending | InvitationState::Accepted
+                        )
                 }
                 (None, _) => false,
             };
             if !satisfied {
-                let mut w = want(g, EffectKind::Invite, object.clone(), c.rev, Payload::Invite { thread: thread.clone(), constraint });
+                let mut w = want(
+                    g,
+                    EffectKind::Invite,
+                    object.clone(),
+                    c.rev,
+                    Payload::Invite {
+                        thread: thread.clone(),
+                        constraint,
+                    },
+                );
                 w.after.extend(ensure.map(After::Ensure));
                 w.after.push(After::Release(object.clone(), thread));
                 out.push(w);
@@ -306,11 +407,23 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
             // Occupancy-keyed cleanup: the requirement belongs to an occupant that is gone (or to a retired or
             // deactivated clone); release it.
             if i.constraint == InviteConstraint::Required
-                && matches!(i.state, InvitationState::Pending | InvitationState::Accepted)
+                && matches!(
+                    i.state,
+                    InvitationState::Pending | InvitationState::Accepted
+                )
                 && !current
             {
-                let payload = Payload::Release { thread: i.thread.clone(), constraint: i.constraint };
-                out.push(want(g, EffectKind::ReleaseRequirement, object.clone(), c.rev, payload));
+                let payload = Payload::Release {
+                    thread: i.thread.clone(),
+                    constraint: i.constraint,
+                };
+                out.push(want(
+                    g,
+                    EffectKind::ReleaseRequirement,
+                    object.clone(),
+                    c.rev,
+                    payload,
+                ));
                 continue;
             }
             if !current {
@@ -320,8 +433,18 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 && i.state == InvitationState::Accepted
                 && !seat.is_some_and(|s| s.participation.seat_wide.contains(&i.thread));
             if i.state == InvitationState::Pending || leaving {
-                let payload = Payload::Poll { thread: i.thread.clone(), constraint: i.constraint, leaving };
-                out.push(want(g, EffectKind::Custom(POLL_KIND.into()), object.clone(), c.rev, payload));
+                let payload = Payload::Poll {
+                    thread: i.thread.clone(),
+                    constraint: i.constraint,
+                    leaving,
+                };
+                out.push(want(
+                    g,
+                    EffectKind::Custom(POLL_KIND.into()),
+                    object.clone(),
+                    c.rev,
+                    payload,
+                ));
             }
         }
     }
@@ -383,7 +506,11 @@ pub struct ThreadsSource {
 
 impl ThreadsSource {
     pub(crate) fn new(instance: &Path, cache: Arc<GraphCache>) -> Self {
-        Self { instance: instance.to_path_buf(), plans: PlanStore::new(instance.join(".graph-local").join("plans")), cache }
+        Self {
+            instance: instance.to_path_buf(),
+            plans: PlanStore::new(instance.join(".graph-local").join("plans")),
+            cache,
+        }
     }
 
     /// `.graph-local/worktree_dirty` entries (spec §3.5) -> one warning per (op, file) to the channel of the
@@ -395,22 +522,33 @@ impl ThreadsSource {
         if entries.is_empty() {
             return Vec::new();
         }
-        let Ok(seats) = layout::all_seats(tree) else { return Vec::new() };
+        let Ok(seats) = layout::all_seats(tree) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for entry in entries {
             let owner = seats
                 .iter()
                 .filter(|(loc, _)| {
                     let f = loc.folder.as_str();
-                    !f.is_empty() && entry.path.strip_prefix(f).is_some_and(|rest| rest.starts_with('/'))
+                    !f.is_empty()
+                        && entry
+                            .path
+                            .strip_prefix(f)
+                            .is_some_and(|rest| rest.starts_with('/'))
                 })
                 .max_by_key(|(loc, _)| loc.folder.as_str().len());
             let Some((_, rec)) = owner else { continue };
-            let Some(seat) = g.seats.get(&rec.id) else { continue };
+            let Some(seat) = g.seats.get(&rec.id) else {
+                continue;
+            };
             if !g.seat_active(seat) {
                 continue;
             }
-            let op = entry.op.clone().unwrap_or_else(|| OpId::from_ulid(ulid::Ulid::nil()));
+            let op = entry
+                .op
+                .clone()
+                .unwrap_or_else(|| OpId::from_ulid(ulid::Ulid::nil()));
             let path = &entry.path;
             let payload = Payload::Notify {
                 purpose: "worktree_dirty".into(),
@@ -428,7 +566,13 @@ impl ThreadsSource {
                 identity_rev: 0,
                 fencing_rev: seat.rev,
                 payload,
-                after: seat.channel.thread_id.is_none().then(|| After::Ensure(seat.id.to_any())).into_iter().collect(),
+                after: seat
+                    .channel
+                    .thread_id
+                    .is_none()
+                    .then(|| After::Ensure(seat.id.to_any()))
+                    .into_iter()
+                    .collect(),
             });
         }
         out
@@ -437,39 +581,70 @@ impl ThreadsSource {
     /// `threads.notify_rename` and `participation.leave_instruction` plan effects of recently committed ops.
     fn intent_wants(&self, g: &Graph, journal: &Journal, now: Timestamp) -> Vec<Want> {
         let mut out = Vec::new();
-        let rows = journal.list(&[OpState::Committed], INTENT_SCAN).unwrap_or_default();
+        let rows = journal
+            .list(&[OpState::Committed], INTENT_SCAN)
+            .unwrap_or_default();
         for row in rows {
-            if !matches!(row.request.kind, RequestKind::TeamspaceRename | RequestKind::SeatRename | RequestKind::ParticipationLeave)
-                || row.updated_at < now - INTENT_WINDOW
+            if !matches!(
+                row.request.kind,
+                RequestKind::TeamspaceRename
+                    | RequestKind::SeatRename
+                    | RequestKind::ParticipationLeave
+            ) || row.updated_at < now - INTENT_WINDOW
             {
                 continue;
             }
-            let Some(plan_id) = row.request.confirmed.as_ref().map(|c| c.plan.clone())
-            else {
+            let Some(plan_id) = row.request.confirmed.as_ref().map(|c| c.plan.clone()) else {
                 continue;
             };
-            let Some(stored) = self.plans.get(&plan_id).ok().flatten() else { continue };
-            let moved = stored.plan.effects.iter().find(|e| e.kind == "teamspace.rename").map(|e| {
-                let p = |k: &str| e.detail.get(k).and_then(|v| v.as_str()).unwrap_or("?").to_owned();
-                (p("path_from"), p("path_to"))
-            });
+            let Some(stored) = self.plans.get(&plan_id).ok().flatten() else {
+                continue;
+            };
+            let moved = stored
+                .plan
+                .effects
+                .iter()
+                .find(|e| e.kind == "teamspace.rename")
+                .map(|e| {
+                    let p = |k: &str| {
+                        e.detail
+                            .get(k)
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?")
+                            .to_owned()
+                    };
+                    (p("path_from"), p("path_to"))
+                });
             for e in &stored.plan.effects {
-                let text = |k: &str| e.detail.get(k).and_then(|v| v.as_str()).unwrap_or("?").to_owned();
+                let text = |k: &str| {
+                    e.detail
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?")
+                        .to_owned()
+                };
                 let (purpose, body) = match e.kind.as_str() {
                     "threads.notify_rename" => {
                         if e.detail.get("seat").is_some() {
-                            let mut body = format!("Seat {:?} was renamed to {:?}.", text("from"), text("to"));
+                            let mut body =
+                                format!("Seat {:?} was renamed to {:?}.", text("from"), text("to"));
                             let (from, to) = (text("path_from"), text("path_to"));
                             if from != to {
                                 body.push_str(&format!(" Its folder moved from {from} to {to}."));
                             }
                             ("rename", body)
                         } else {
-                            let mut body = format!("Teamspace {:?} was renamed to {:?}.", text("from"), text("to"));
+                            let mut body = format!(
+                                "Teamspace {:?} was renamed to {:?}.",
+                                text("from"),
+                                text("to")
+                            );
                             if let Some((from, to)) = &moved
                                 && from != to
                             {
-                                body.push_str(&format!(" Its repository folder moved from {from} to {to}."));
+                                body.push_str(&format!(
+                                    " Its repository folder moved from {from} to {to}."
+                                ));
                             }
                             ("rename", body)
                         }
@@ -478,7 +653,8 @@ impl ThreadsSource {
                         let seat = text("seat");
                         let rev = e.detail.get("rev").and_then(|v| v.as_u64()).unwrap_or(0);
                         let thread = text("thread");
-                        let instruction = serde_json::json!({ "op": row.op, "seat": seat, "rev": rev });
+                        let instruction =
+                            serde_json::json!({ "op": row.op, "seat": seat, "rev": rev });
                         (
                             "leave_instruction",
                             format!(
@@ -492,7 +668,12 @@ impl ThreadsSource {
                     _ => continue,
                 };
                 let object = e.object.clone();
-                let Some(seat) = SeatId::parse(object.as_str()).ok().and_then(|i| g.seats.get(&i)) else { continue };
+                let Some(seat) = SeatId::parse(object.as_str())
+                    .ok()
+                    .and_then(|i| g.seats.get(&i))
+                else {
+                    continue;
+                };
                 if !g.seat_active(seat) {
                     continue;
                 }
@@ -509,7 +690,13 @@ impl ThreadsSource {
                     identity_rev: 0,
                     fencing_rev: seat.rev,
                     payload,
-                    after: seat.channel.thread_id.is_none().then(|| After::Ensure(seat.id.to_any())).into_iter().collect(),
+                    after: seat
+                        .channel
+                        .thread_id
+                        .is_none()
+                        .then(|| After::Ensure(seat.id.to_any()))
+                        .into_iter()
+                        .collect(),
                 });
             }
         }
@@ -520,9 +707,17 @@ impl ThreadsSource {
     /// notice, with the new folder path, to each affected active seat channel. The old name comes from the
     /// committed `name_history` entry this op wrote; an op that recorded nothing (same name, retired object)
     /// notifies nobody.
-    fn observed_rename_wants(&self, g: &Graph, tree: &dyn TreeRead, journal: &Journal, now: Timestamp) -> Vec<Want> {
+    fn observed_rename_wants(
+        &self,
+        g: &Graph,
+        tree: &dyn TreeRead,
+        journal: &Journal,
+        now: Timestamp,
+    ) -> Vec<Want> {
         let mut out = Vec::new();
-        let rows = journal.list(&[OpState::Committed], INTENT_SCAN).unwrap_or_default();
+        let rows = journal
+            .list(&[OpState::Committed], INTENT_SCAN)
+            .unwrap_or_default();
         for row in rows {
             let args = &row.request.args;
             if row.request.kind != RequestKind::Observed
@@ -531,27 +726,60 @@ impl ThreadsSource {
             {
                 continue;
             }
-            let Some(object) = args.get("object").and_then(|v| serde_json::from_value::<AnyId>(v.clone()).ok()) else { continue };
-            let Some(new) = args.get("new").and_then(|v| v.as_str()) else { continue };
-            let Some(observed_at) = args.get("observed_at").and_then(|v| serde_json::from_value::<Timestamp>(v.clone()).ok())
+            let Some(object) = args
+                .get("object")
+                .and_then(|v| serde_json::from_value::<AnyId>(v.clone()).ok())
+            else {
+                continue;
+            };
+            let Some(new) = args.get("new").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(observed_at) = args
+                .get("observed_at")
+                .and_then(|v| serde_json::from_value::<Timestamp>(v.clone()).ok())
             else {
                 continue;
             };
             let history = |h: &[crate::model::common::NameChange]| {
                 h.iter()
                     .rev()
-                    .find(|c| c.source == NameSource::Observed && c.new == new && c.observed_at == observed_at)
+                    .find(|c| {
+                        c.source == NameSource::Observed
+                            && c.new == new
+                            && c.observed_at == observed_at
+                    })
                     .map(|c| c.old.clone())
             };
-            let path_of = |id: &AnyId| layout::locate(tree, id).ok().flatten().map(|l| l.folder.as_str().to_owned());
+            let path_of = |id: &AnyId| {
+                layout::locate(tree, id)
+                    .ok()
+                    .flatten()
+                    .map(|l| l.folder.as_str().to_owned())
+            };
             let mut notes: Vec<(&SeatRecord, String)> = Vec::new();
             match object.kind() {
                 IdKind::Teamspace => {
-                    let Some(ts) = TeamspaceId::parse(object.as_str()).ok().and_then(|i| g.teamspaces.get(&i)) else { continue };
-                    let Some(old) = history(&ts.name_history) else { continue };
-                    let Some(ts_path) = path_of(&object) else { continue };
-                    for seat in g.seats.values().filter(|s| s.teamspace == ts.id && g.seat_active(s)) {
-                        let Some(seat_path) = path_of(&seat.id.to_any()) else { continue };
+                    let Some(ts) = TeamspaceId::parse(object.as_str())
+                        .ok()
+                        .and_then(|i| g.teamspaces.get(&i))
+                    else {
+                        continue;
+                    };
+                    let Some(old) = history(&ts.name_history) else {
+                        continue;
+                    };
+                    let Some(ts_path) = path_of(&object) else {
+                        continue;
+                    };
+                    for seat in g
+                        .seats
+                        .values()
+                        .filter(|s| s.teamspace == ts.id && g.seat_active(s))
+                    {
+                        let Some(seat_path) = path_of(&seat.id.to_any()) else {
+                            continue;
+                        };
                         notes.push((
                             seat,
                             format!(
@@ -561,19 +789,39 @@ impl ThreadsSource {
                     }
                 }
                 IdKind::Seat => {
-                    let Some(seat) = SeatId::parse(object.as_str()).ok().and_then(|i| g.seats.get(&i)) else { continue };
-                    let Some(old) = history(&seat.name_history) else { continue };
+                    let Some(seat) = SeatId::parse(object.as_str())
+                        .ok()
+                        .and_then(|i| g.seats.get(&i))
+                    else {
+                        continue;
+                    };
+                    let Some(old) = history(&seat.name_history) else {
+                        continue;
+                    };
                     if !g.seat_active(seat) {
                         continue;
                     }
-                    let Some(path) = path_of(&object) else { continue };
+                    let Some(path) = path_of(&object) else {
+                        continue;
+                    };
                     notes.push((seat, format!("Seat {old:?} was renamed to {new:?} in Herdr. Its folder is now {path}.")));
                 }
                 IdKind::Clone => {
-                    let Some(clone) = CloneId::parse(object.as_str()).ok().and_then(|i| g.clones.get(&i)) else { continue };
-                    let Some(old) = history(&clone.name_history) else { continue };
-                    let Some(seat) = g.seats.get(&clone.seat).filter(|s| g.seat_active(s)) else { continue };
-                    let Some(path) = path_of(&object) else { continue };
+                    let Some(clone) = CloneId::parse(object.as_str())
+                        .ok()
+                        .and_then(|i| g.clones.get(&i))
+                    else {
+                        continue;
+                    };
+                    let Some(old) = history(&clone.name_history) else {
+                        continue;
+                    };
+                    let Some(seat) = g.seats.get(&clone.seat).filter(|s| g.seat_active(s)) else {
+                        continue;
+                    };
+                    let Some(path) = path_of(&object) else {
+                        continue;
+                    };
                     notes.push((
                         seat,
                         format!("Clone {old:?} of this seat was renamed to {new:?} in Herdr. Its folder is now {path}."),
@@ -581,7 +829,11 @@ impl ThreadsSource {
                 }
                 _ => continue,
             }
-            out.extend(notes.into_iter().map(|(seat, body)| rename_want(seat, &row.op, body)));
+            out.extend(
+                notes
+                    .into_iter()
+                    .map(|(seat, body)| rename_want(seat, &row.op, body)),
+            );
         }
         out
     }
@@ -601,7 +853,13 @@ fn rename_want(seat: &SeatRecord, op: &OpId, body: String) -> Want {
             body,
             key: format!("notify:rename:{op}:{}", seat.id),
         },
-        after: seat.channel.thread_id.is_none().then(|| After::Ensure(seat.id.to_any())).into_iter().collect(),
+        after: seat
+            .channel
+            .thread_id
+            .is_none()
+            .then(|| After::Ensure(seat.id.to_any()))
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -619,7 +877,9 @@ fn open_rows(journal: &Journal, object: &AnyId, kind: &EffectKind) -> Vec<Effect
         .effects_for_object(object)
         .unwrap_or_default()
         .into_iter()
-        .filter(|r| &r.kind == kind && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown))
+        .filter(|r| {
+            &r.kind == kind && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
+        })
         .collect()
 }
 
@@ -628,7 +888,10 @@ impl EffectSource for ThreadsSource {
         let g = match self.cache.get(cx.tree, cx.head) {
             Ok(g) => g,
             Err(e) => {
-                eprintln!("herdr-graph: threads: cannot read the graph at {}: {e}", cx.head.0);
+                eprintln!(
+                    "herdr-graph: threads: cannot read the graph at {}: {e}",
+                    cx.head.0
+                );
                 return Vec::new();
             }
         };
@@ -645,13 +908,22 @@ impl EffectSource for ThreadsSource {
         for w in &wants {
             let open = open_rows(cx.journal, &w.object, &w.kind)
                 .into_iter()
-                .find(|r| matches!(w.payload, Payload::None) || payload_of(cx.journal, &r.id).as_ref() == Some(&w.payload));
+                .find(|r| {
+                    matches!(w.payload, Payload::None)
+                        || payload_of(cx.journal, &r.id).as_ref() == Some(&w.payload)
+                });
             let id = EffectRecord::identity(&w.op, &w.object, &w.kind, w.identity_rev());
             if w.kind == EffectKind::EnsureThread {
-                ensure_ids.insert(w.object.clone(), open.as_ref().map_or(id.clone(), |r| r.id.clone()));
+                ensure_ids.insert(
+                    w.object.clone(),
+                    open.as_ref().map_or(id.clone(), |r| r.id.clone()),
+                );
             }
             if let Payload::Release { thread, .. } = &w.payload {
-                release_ids.insert((w.object.clone(), thread.clone()), open.as_ref().map_or(id.clone(), |r| r.id.clone()));
+                release_ids.insert(
+                    (w.object.clone(), thread.clone()),
+                    open.as_ref().map_or(id.clone(), |r| r.id.clone()),
+                );
             }
             ids.push(open.is_none().then_some(id));
         }
@@ -712,7 +984,9 @@ fn port_outcome(e: ThreadsError) -> ExecOutcome {
         // Backoff, never takeover: the reconciler schedules the retry.
         ThreadsError::ServiceBusy => ExecOutcome::Transient("threads service busy".into()),
         ThreadsError::Disconnected(m) => ExecOutcome::Transient(m),
-        ThreadsError::Unsupported => ExecOutcome::Failed("operation unsupported by this threads service".into()),
+        ThreadsError::Unsupported => {
+            ExecOutcome::Failed("operation unsupported by this threads service".into())
+        }
         ThreadsError::Rejected(m) => ExecOutcome::Failed(m),
     }
 }
@@ -726,7 +1000,10 @@ fn admit_bookkeeping(cx: &ExecCx<'_>, args: serde_json::Value) -> Result<(), Exe
         supersedes: None,
         confirmed: None,
     };
-    cx.writer.admit(request).map(|_| ()).map_err(|e| ExecOutcome::Transient(format!("bookkeeping write: {e}")))
+    cx.writer
+        .admit(request)
+        .map(|_| ())
+        .map_err(|e| ExecOutcome::Transient(format!("bookkeeping write: {e}")))
 }
 
 /// One invitation write-back. `expect_occupant`: only apply while the stored invitation still belongs to the
@@ -751,11 +1028,18 @@ impl ThreadsExecutor {
         journal: Arc<Journal>,
         cache: Arc<GraphCache>,
     ) -> Self {
-        Self { threads, mapping, journal, cache }
+        Self {
+            threads,
+            mapping,
+            journal,
+            cache,
+        }
     }
 
     fn graph(&self, cx: &ExecCx<'_>) -> Result<Arc<Graph>, ExecOutcome> {
-        self.cache.get(cx.tree, cx.head).map_err(|e| ExecOutcome::Transient(format!("cannot read the graph: {e}")))
+        self.cache
+            .get(cx.tree, cx.head)
+            .map_err(|e| ExecOutcome::Transient(format!("cannot read the graph: {e}")))
     }
 
     fn payload(&self, e: &EffectRecord) -> Option<Payload> {
@@ -777,7 +1061,9 @@ impl ThreadsExecutor {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let Some((scope, channel, topic, active)) = g.channel(&e.object) else { return ExecOutcome::Obsolete };
+        let Some((scope, channel, topic, active)) = g.channel(&e.object) else {
+            return ExecOutcome::Obsolete;
+        };
         if !active {
             return ExecOutcome::Obsolete;
         }
@@ -787,10 +1073,15 @@ impl ThreadsExecutor {
         let key = OpKey(format!("ensure:{}", e.object));
         match self.threads.ensure_thread(scope, &topic, &key).await {
             Ok(thread) => {
-                if let Err(o) = admit_bookkeeping(cx, serde_json::json!({ "sub": "channel", "object": e.object, "thread_id": thread.0 })) {
+                if let Err(o) = admit_bookkeeping(
+                    cx,
+                    serde_json::json!({ "sub": "channel", "object": e.object, "thread_id": thread.0 }),
+                ) {
                     return o;
                 }
-                let _ = self.journal.meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
+                let _ = self
+                    .journal
+                    .meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
                 ExecOutcome::Done
             }
             Err(err) => port_outcome(err),
@@ -802,48 +1093,89 @@ impl ThreadsExecutor {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let Some((_, channel, topic, active)) = g.channel(&e.object) else { return ExecOutcome::Obsolete };
+        let Some((_, channel, topic, active)) = g.channel(&e.object) else {
+            return ExecOutcome::Obsolete;
+        };
         if !active {
             return ExecOutcome::Obsolete;
         }
         let Some(thread) = channel.thread_id.clone() else {
             return ExecOutcome::Deferred("channel not created yet".into());
         };
-        let key = OpKey(format!("topic:{}:{:016x}", e.object, topic_generation(&topic)));
-        match self.threads.set_topic(&ThreadRef(thread), &topic, &key).await {
+        let key = OpKey(format!(
+            "topic:{}:{:016x}",
+            e.object,
+            topic_generation(&topic)
+        ));
+        match self
+            .threads
+            .set_topic(&ThreadRef(thread), &topic, &key)
+            .await
+        {
             Ok(()) => {
-                let _ = self.journal.meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
+                let _ = self
+                    .journal
+                    .meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
                 ExecOutcome::Done
             }
             Err(err) => port_outcome(err),
         }
     }
 
-    async fn invite(&self, cx: &ExecCx<'_>, e: &EffectRecord, thread: &str, constraint: InviteConstraint) -> ExecOutcome {
+    async fn invite(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        thread: &str,
+        constraint: InviteConstraint,
+    ) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let Some(clone) = CloneId::parse(e.object.as_str()).ok().and_then(|i| g.clones.get(&i)) else {
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
             return ExecOutcome::Obsolete;
         };
-        let Some(occupant) = g.occupant_of(clone) else { return ExecOutcome::Obsolete };
+        let Some(occupant) = g.occupant_of(clone) else {
+            return ExecOutcome::Obsolete;
+        };
         let Some(pane) = clone.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) else {
             return ExecOutcome::Deferred("clone has no pane binding yet".into());
         };
         let seat = match self.mapping.seat_for(&pane).await {
             Ok(Some(s)) => s,
-            Ok(None) => return ExecOutcome::Deferred(format!("pane {pane} is not a threads seat yet")),
+            Ok(None) => {
+                return ExecOutcome::Deferred(format!("pane {pane} is not a threads seat yet"));
+            }
             Err(err) => return port_outcome(err),
         };
         let thread_ref = ThreadRef(thread.to_owned());
-        let key = OpKey(format!("invite:{thread}:{}:{}:{}", seat.0, constraint_name(constraint), short(&e.id)));
-        if let Err(err) = self.threads.invite(&thread_ref, &seat, constraint, &key).await {
+        let key = OpKey(format!(
+            "invite:{thread}:{}:{}:{}",
+            seat.0,
+            constraint_name(constraint),
+            short(&e.id)
+        ));
+        if let Err(err) = self
+            .threads
+            .invite(&thread_ref, &seat, constraint, &key)
+            .await
+        {
             return port_outcome(err);
         }
         // What threads reports now; a failed read only delays the ids, never invents a state.
-        let detail = self.threads.membership_detail(&thread_ref, &seat).await.ok().flatten();
-        let state = detail.as_ref().map_or(InvitationState::Pending, |d| d.state);
+        let detail = self
+            .threads
+            .membership_detail(&thread_ref, &seat)
+            .await
+            .ok()
+            .flatten();
+        let state = detail
+            .as_ref()
+            .map_or(InvitationState::Pending, |d| d.state);
         let link = ThreadsLink {
             seat: seat.0.clone(),
             occupant: Some(occupant),
@@ -851,33 +1183,73 @@ impl ThreadsExecutor {
             requirement: detail.as_ref().and_then(|d| d.requirement.clone()),
             revision: detail.as_ref().and_then(|d| d.revision),
         };
-        match self.record_invitation(cx, InvWrite { clone: &clone.id, thread, constraint, state, link: &link, expect_occupant: None }) {
+        match self.record_invitation(
+            cx,
+            InvWrite {
+                clone: &clone.id,
+                thread,
+                constraint,
+                state,
+                link: &link,
+                expect_occupant: None,
+            },
+        ) {
             Ok(()) => ExecOutcome::Done,
             Err(o) => o,
         }
     }
 
-    async fn release(&self, cx: &ExecCx<'_>, e: &EffectRecord, thread: &str, constraint: InviteConstraint) -> ExecOutcome {
+    async fn release(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        thread: &str,
+        constraint: InviteConstraint,
+    ) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let Some(clone) = CloneId::parse(e.object.as_str()).ok().and_then(|i| g.clones.get(&i)) else {
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
             return ExecOutcome::Obsolete;
         };
-        let Some(inv) = clone.invitations.iter().find(|i| i.thread == thread && i.constraint == constraint) else {
+        let Some(inv) = clone
+            .invitations
+            .iter()
+            .find(|i| i.thread == thread && i.constraint == constraint)
+        else {
             return ExecOutcome::Obsolete;
         };
-        let Some(link) = inv.link.clone() else { return ExecOutcome::Obsolete };
+        let Some(link) = inv.link.clone() else {
+            return ExecOutcome::Obsolete;
+        };
         let key = OpKey(format!(
             "release:{thread}:{}:{}",
             link.seat,
             link.requirement.as_deref().unwrap_or("-")
         ));
-        match self.threads.release_requirement(&ThreadRef(thread.to_owned()), &ThreadsSeatRef(link.seat.clone()), &key).await {
+        match self
+            .threads
+            .release_requirement(
+                &ThreadRef(thread.to_owned()),
+                &ThreadsSeatRef(link.seat.clone()),
+                &key,
+            )
+            .await
+        {
             Ok(()) => match self.record_invitation(
                 cx,
-                InvWrite { clone: &clone.id, thread, constraint, state: InvitationState::Released, link: &link, expect_occupant: link.occupant.as_deref() },
+                InvWrite {
+                    clone: &clone.id,
+                    thread,
+                    constraint,
+                    state: InvitationState::Released,
+                    link: &link,
+                    expect_occupant: link.occupant.as_deref(),
+                },
             ) {
                 Ok(()) => ExecOutcome::Done,
                 Err(o) => o,
@@ -886,19 +1258,36 @@ impl ThreadsExecutor {
         }
     }
 
-    async fn notify(&self, cx: &ExecCx<'_>, e: &EffectRecord, purpose: &str, severity: Severity, body: &str, key: &str) -> ExecOutcome {
+    async fn notify(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        purpose: &str,
+        severity: Severity,
+        body: &str,
+        key: &str,
+    ) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let thread = g
-            .notify_channel_owner(&e.object)
-            .and_then(|owner| g.channel(&owner).and_then(|(_, c, _, _)| c.thread_id.clone()));
-        let Some(thread) = thread else { return ExecOutcome::Deferred("channel not created yet".into()) };
-        match self.threads.notify(&ThreadRef(thread), severity, body, &OpKey(key.to_owned())).await {
+        let thread = g.notify_channel_owner(&e.object).and_then(|owner| {
+            g.channel(&owner)
+                .and_then(|(_, c, _, _)| c.thread_id.clone())
+        });
+        let Some(thread) = thread else {
+            return ExecOutcome::Deferred("channel not created yet".into());
+        };
+        match self
+            .threads
+            .notify(&ThreadRef(thread), severity, body, &OpKey(key.to_owned()))
+            .await
+        {
             Ok(()) => {
                 if purpose == "reload_required" {
-                    let _ = self.journal.meta_set(&format!("{RELOAD_PREFIX}{}", e.object), "1");
+                    let _ = self
+                        .journal
+                        .meta_set(&format!("{RELOAD_PREFIX}{}", e.object), "1");
                 }
                 ExecOutcome::Done
             }
@@ -907,24 +1296,49 @@ impl ThreadsExecutor {
     }
 
     /// Membership polling: record what threads reports, and only that.
-    async fn poll(&self, cx: &ExecCx<'_>, e: &EffectRecord, thread: &str, constraint: InviteConstraint, leaving: bool) -> ExecOutcome {
+    async fn poll(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        thread: &str,
+        constraint: InviteConstraint,
+        leaving: bool,
+    ) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
             Err(o) => return o,
         };
-        let Some(clone) = CloneId::parse(e.object.as_str()).ok().and_then(|i| g.clones.get(&i)) else {
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
             return ExecOutcome::Obsolete;
         };
-        let Some(inv) = clone.invitations.iter().find(|i| i.thread == thread && i.constraint == constraint) else {
+        let Some(inv) = clone
+            .invitations
+            .iter()
+            .find(|i| i.thread == thread && i.constraint == constraint)
+        else {
             return ExecOutcome::Obsolete;
         };
-        let Some(link) = inv.link.clone() else { return ExecOutcome::Obsolete };
-        let detail = match self.threads.membership_detail(&ThreadRef(thread.to_owned()), &ThreadsSeatRef(link.seat.clone())).await {
+        let Some(link) = inv.link.clone() else {
+            return ExecOutcome::Obsolete;
+        };
+        let detail = match self
+            .threads
+            .membership_detail(
+                &ThreadRef(thread.to_owned()),
+                &ThreadsSeatRef(link.seat.clone()),
+            )
+            .await
+        {
             Ok(d) => d,
             Err(err) => return port_outcome(err),
         };
         // No membership yet: the invitation is still pending on the threads side.
-        let state = detail.as_ref().map_or(InvitationState::Pending, |d| d.state);
+        let state = detail
+            .as_ref()
+            .map_or(InvitationState::Pending, |d| d.state);
         let mut fresh = link.clone();
         if let Some(d) = &detail {
             fresh.invitation = d.invitation.clone().or(fresh.invitation);
@@ -934,7 +1348,14 @@ impl ThreadsExecutor {
         if (state != inv.state || fresh != link)
             && let Err(o) = self.record_invitation(
                 cx,
-                InvWrite { clone: &clone.id, thread, constraint, state, link: &fresh, expect_occupant: link.occupant.as_deref() },
+                InvWrite {
+                    clone: &clone.id,
+                    thread,
+                    constraint,
+                    state,
+                    link: &fresh,
+                    expect_occupant: link.occupant.as_deref(),
+                },
             )
         {
             return o;
@@ -944,7 +1365,11 @@ impl ThreadsExecutor {
             InvitationState::Accepted => !leaving,
             InvitationState::Released | InvitationState::Retired => true,
         };
-        if settled { ExecOutcome::Done } else { ExecOutcome::Transient(format!("{thread}: still {state:?}").to_lowercase()) }
+        if settled {
+            ExecOutcome::Done
+        } else {
+            ExecOutcome::Transient(format!("{thread}: still {state:?}").to_lowercase())
+        }
     }
 }
 
@@ -967,10 +1392,19 @@ impl EffectExecutor for ThreadsExecutor {
         let payload = self.payload(e).unwrap_or(Payload::None);
         match (&e.kind, &payload) {
             (_, Payload::Notify { purpose, .. }) => {
-                let alive = g.notify_channel_owner(&e.object).and_then(|o| g.channel(&o)).is_some_and(|c| c.3);
+                let alive = g
+                    .notify_channel_owner(&e.object)
+                    .and_then(|o| g.channel(&o))
+                    .is_some_and(|c| c.3);
                 if purpose == "reload_required" {
-                    let seat = SeatId::parse(e.object.as_str()).ok().and_then(|i| g.seats.get(&i)).is_some_and(|s| s.reload_required);
-                    let clone = CloneId::parse(e.object.as_str()).ok().and_then(|i| g.clones.get(&i)).is_some_and(|c| c.reload_required);
+                    let seat = SeatId::parse(e.object.as_str())
+                        .ok()
+                        .and_then(|i| g.seats.get(&i))
+                        .is_some_and(|s| s.reload_required);
+                    let clone = CloneId::parse(e.object.as_str())
+                        .ok()
+                        .and_then(|i| g.clones.get(&i))
+                        .is_some_and(|c| c.reload_required);
                     alive && (seat || clone)
                 } else {
                     alive
@@ -978,7 +1412,9 @@ impl EffectExecutor for ThreadsExecutor {
             }
             _ => {
                 let wants = system_wants(&g, &self.journal);
-                wants.iter().any(|w| w.kind == e.kind && w.object == e.object && w.payload == payload)
+                wants
+                    .iter()
+                    .any(|w| w.kind == e.kind && w.object == e.object && w.payload == payload)
             }
         }
     }
@@ -987,17 +1423,32 @@ impl EffectExecutor for ThreadsExecutor {
         match (&e.kind, self.payload(e)) {
             (EffectKind::EnsureThread, _) => self.ensure(cx, e).await,
             (EffectKind::SetTopic, _) => self.set_topic(cx, e).await,
-            (EffectKind::Invite, Some(Payload::Invite { thread, constraint })) => self.invite(cx, e, &thread, constraint).await,
+            (EffectKind::Invite, Some(Payload::Invite { thread, constraint })) => {
+                self.invite(cx, e, &thread, constraint).await
+            }
             (EffectKind::ReleaseRequirement, Some(Payload::Release { thread, constraint })) => {
                 self.release(cx, e, &thread, constraint).await
             }
-            (EffectKind::Notify, Some(Payload::Notify { purpose, severity, body, key })) => {
-                self.notify(cx, e, &purpose, severity, &body, &key).await
+            (
+                EffectKind::Notify,
+                Some(Payload::Notify {
+                    purpose,
+                    severity,
+                    body,
+                    key,
+                }),
+            ) => self.notify(cx, e, &purpose, severity, &body, &key).await,
+            (
+                EffectKind::Custom(_),
+                Some(Payload::Poll {
+                    thread,
+                    constraint,
+                    leaving,
+                }),
+            ) => self.poll(cx, e, &thread, constraint, leaving).await,
+            (kind, _) => {
+                ExecOutcome::Failed(format!("{} effect {} has no payload", kind.as_str(), e.id))
             }
-            (EffectKind::Custom(_), Some(Payload::Poll { thread, constraint, leaving })) => {
-                self.poll(cx, e, &thread, constraint, leaving).await
-            }
-            (kind, _) => ExecOutcome::Failed(format!("{} effect {} has no payload", kind.as_str(), e.id)),
         }
     }
 }

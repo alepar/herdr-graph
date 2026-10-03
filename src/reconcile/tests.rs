@@ -1,12 +1,14 @@
 //! Reconciler tests against FakeHerdr, a real writer/journal/git store and the plan engine.
 use super::bookkeeping::{admit_binding, admit_runtime};
 use super::*;
+use crate::daemon::registry::CallerInfo;
 use crate::herdr::fake::{FakeCall, FakeHerdr, Fault};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{Availability, Binding, Lifecycle, Occupant};
 use crate::model::effect::{ContainerKind, EndState};
 use crate::model::harness::{Harness, StartOutcome};
 use crate::model::native_session::NativeSession;
+use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
 use crate::model::{AnyId, HerdrPaneId, NsId, SeatId};
 use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
@@ -14,13 +16,11 @@ use crate::plan::core_kinds::register_core_kinds;
 use crate::plan::kind::KindRegistry;
 use crate::plan::store::PlanStore;
 use crate::plan::types::StoredPlan;
-use crate::daemon::registry::CallerInfo;
-use crate::model::operation::OpState;
 use crate::ports::clock::ManualClock;
 use crate::ports::herdr::{AgentInfo, AgentStatus, KeyInput, ProcessInfo};
+use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::store::layout;
-use crate::store::GitStore;
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, WriterConfig, WriterCore};
 use chrono::TimeZone;
 use serde_json::json;
@@ -39,7 +39,10 @@ impl RecordingNotifier {
 }
 impl RequesterNotifier for RecordingNotifier {
     fn notify(&self, op: &OpId, severity: Severity, text: &str) {
-        self.0.lock().unwrap().push((op.clone(), severity, text.to_owned()));
+        self.0
+            .lock()
+            .unwrap()
+            .push((op.clone(), severity, text.to_owned()));
     }
 }
 
@@ -52,7 +55,10 @@ impl Mutation for TestSetModel {
         let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
         rec.overrides.model = cx.request.args["model"].as_str().map(str::to_owned);
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "set model".into(), action: None })
+        Ok(Applied {
+            summary: "set model".into(),
+            action: None,
+        })
     }
 }
 
@@ -75,10 +81,17 @@ impl Mutation for TestSetOccupant {
             ended: None,
             end_reason: None,
         };
-        rec.occupant = Some(Occupant { native_session: ns.id.clone(), harness, since: cx.now });
+        rec.occupant = Some(Occupant {
+            native_session: ns.id.clone(),
+            harness,
+            since: cx.now,
+        });
         rec.sessions.push(ns);
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "set occupant".into(), action: None })
+        Ok(Applied {
+            summary: "set occupant".into(),
+            action: None,
+        })
     }
 }
 
@@ -91,7 +104,10 @@ impl Mutation for TestSetThread {
         let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
         rec.channel.thread_id = cx.request.args["thread"].as_str().map(str::to_owned);
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "set thread".into(), action: None })
+        Ok(Applied {
+            summary: "set thread".into(),
+            action: None,
+        })
     }
 }
 
@@ -104,11 +120,18 @@ impl Mutation for TestEndOccupant {
         let loc = cx.tree.locate(&clone.to_any())?.unwrap();
         let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
         rec.occupant = None;
-        for ns in rec.sessions.iter_mut().filter(|n| n.native_session_id == native) {
+        for ns in rec
+            .sessions
+            .iter_mut()
+            .filter(|n| n.native_session_id == native)
+        {
             ns.ended = Some(cx.now);
         }
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "end occupant".into(), action: None })
+        Ok(Applied {
+            summary: "end occupant".into(),
+            action: None,
+        })
     }
 }
 
@@ -150,14 +173,45 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
-    let w = WriterCore::new(store.clone(), journal.clone(), Arc::new(reg), clock.clone(), WriterConfig::default());
-    let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root.clone() };
+    let w = WriterCore::new(
+        store.clone(),
+        journal.clone(),
+        Arc::new(reg),
+        clock.clone(),
+        WriterConfig::default(),
+    );
+    let deps = PlanDeps {
+        kinds,
+        plans,
+        store: store.clone(),
+        writer: w.clone(),
+        clock: clock.clone(),
+        instance: root.clone(),
+    };
     let herdr = FakeHerdr::new();
     let notes = Arc::new(RecordingNotifier::default());
     let mut cfg = ReconcilerConfig::new(root);
     tune(&mut cfg);
-    let rec = Reconciler::new(store.clone(), journal.clone(), w.clone(), herdr.clone(), clock.clone(), notes.clone(), cfg);
-    Fx { _tmp: tmp, deps, w, store, journal, herdr, clock, notes, rec }
+    let rec = Reconciler::new(
+        store.clone(),
+        journal.clone(),
+        w.clone(),
+        herdr.clone(),
+        clock.clone(),
+        notes.clone(),
+        cfg,
+    );
+    Fx {
+        _tmp: tmp,
+        deps,
+        w,
+        store,
+        journal,
+        herdr,
+        clock,
+        notes,
+        rec,
+    }
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -165,7 +219,8 @@ fn words(s: &str) -> Vec<String> {
 }
 
 fn plan(fx: &Fx, change: &str) -> StoredPlan {
-    let v = create_plan(&fx.deps, &CallerInfo::default(), words(change)).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+    let v = create_plan(&fx.deps, &CallerInfo::default(), words(change))
+        .unwrap_or_else(|e| panic!("{change}: {}", e.message));
     let id: crate::model::PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
     fx.deps.plans.get(&id).unwrap().unwrap()
 }
@@ -173,25 +228,48 @@ fn plan(fx: &Fx, change: &str) -> StoredPlan {
 /// Plan and apply one change; it must commit.
 fn commit(fx: &Fx, change: &str) {
     let sp = plan(fx, change);
-    let op = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-        .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
     fx.w.drain().unwrap();
     let row = fx.w.journal().get(&op).unwrap().unwrap();
-    assert_eq!(row.state, OpState::Committed, "{change}: {:?}", row.rejection);
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "{change}: {:?}",
+        row.rejection
+    );
 }
 
 fn view(fx: &Fx) -> crate::store::tree::CommitView<'_> {
-    crate::store::tree::CommitView { store: &*fx.store, at: fx.store.head().unwrap() }
+    crate::store::tree::CommitView {
+        store: &*fx.store,
+        at: fx.store.head().unwrap(),
+    }
 }
 
 fn seat(fx: &Fx, name: &str) -> SeatRecord {
-    let mut found: Vec<_> = layout::all_seats(&view(fx)).unwrap().into_iter().filter(|(_, s)| s.name == name).collect();
+    let mut found: Vec<_> = layout::all_seats(&view(fx))
+        .unwrap()
+        .into_iter()
+        .filter(|(_, s)| s.name == name)
+        .collect();
     assert_eq!(found.len(), 1, "seat {name}");
     found.remove(0).1
 }
 
 fn clones_of(fx: &Fx, seat: &SeatId) -> Vec<CloneRecord> {
-    layout::all_clones(&view(fx)).unwrap().into_iter().map(|(_, c)| c).filter(|c| &c.seat == seat).collect()
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, c)| c)
+        .filter(|c| &c.seat == seat)
+        .collect()
 }
 
 fn only_clone(fx: &Fx, seat_name: &str) -> CloneRecord {
@@ -211,7 +289,10 @@ async fn step(fx: &Fx) -> StepReport {
 /// A teamspace `alpha` and an active seat `foreman` of the given harness.
 fn activate(fx: &Fx, harness: &str) {
     commit(fx, "teamspace create alpha");
-    commit(fx, &format!("seat create foreman --teamspace alpha --active --harness {harness}"));
+    commit(
+        fx,
+        &format!("seat create foreman --teamspace alpha --active --harness {harness}"),
+    );
 }
 
 fn calls(fx: &Fx) -> Vec<FakeCall> {
@@ -232,39 +313,61 @@ fn rows(fx: &Fx, kind: EffectKind) -> Vec<EffectRecord> {
         EffectStatus::NeedsRevision,
         EffectStatus::BlockedNeedsHuman,
     ];
-    fx.journal.effects_with_status(&all).unwrap().into_iter().filter(|r| r.kind == kind).collect()
+    fx.journal
+        .effects_with_status(&all)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.kind == kind)
+        .collect()
 }
 
 fn pane_of(fx: &Fx, c: &CloneRecord) -> HerdrPaneId {
-    let fresh = clones_of(fx, &c.seat).into_iter().find(|x| x.id == c.id).unwrap();
-    fresh.runtime.bound.expect("clone is bound").pane_id.expect("bound to a pane")
+    let fresh = clones_of(fx, &c.seat)
+        .into_iter()
+        .find(|x| x.id == c.id)
+        .unwrap();
+    fresh
+        .runtime
+        .bound
+        .expect("clone is bound")
+        .pane_id
+        .expect("bound to a pane")
 }
 
 fn agent(status: AgentStatus) -> Option<AgentInfo> {
-    Some(AgentInfo { kind: "claude".into(), status, session: None })
+    Some(AgentInfo {
+        kind: "claude".into(),
+        status,
+        session: None,
+    })
 }
 
 fn admit_bookkeeping(fx: &Fx, args: serde_json::Value) {
     use crate::ports::writer::Writer;
-    fx.w
-        .admit(crate::model::change::ChangeRequest {
-            kind: crate::model::change::RequestKind::Bookkeeping,
-            args,
-            relied_on: vec![],
-            requester: Default::default(),
-            supersedes: None,
-            confirmed: None,
-        })
-        .unwrap();
+    fx.w.admit(crate::model::change::ChangeRequest {
+        kind: crate::model::change::RequestKind::Bookkeeping,
+        args,
+        relied_on: vec![],
+        requester: Default::default(),
+        supersedes: None,
+        confirmed: None,
+    })
+    .unwrap();
     fx.w.drain().unwrap();
 }
 
 fn set_occupant(fx: &Fx, c: &CloneRecord, native: &str) {
-    admit_bookkeeping(fx, json!({"sub": "test_set_occupant", "clone": c.id, "native": native, "harness": "claude"}));
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_set_occupant", "clone": c.id, "native": native, "harness": "claude"}),
+    );
 }
 
 fn set_model(fx: &Fx, s: &SeatRecord, model: &str) {
-    admit_bookkeeping(fx, json!({"sub": "test_set_model", "seat": s.id, "model": model}));
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_set_model", "seat": s.id, "model": model}),
+    );
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -274,7 +377,13 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     let fx = fx();
     activate(&fx, "claude");
     let report = step(&fx).await;
-    assert!(report.executed.iter().all(|(_, s)| *s == EffectStatus::Done), "{report:?}");
+    assert!(
+        report
+            .executed
+            .iter()
+            .all(|(_, s)| *s == EffectStatus::Done),
+        "{report:?}"
+    );
 
     let c = only_clone(&fx, "foreman");
     let s = seat(&fx, "foreman");
@@ -294,22 +403,47 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
         .collect();
     assert_eq!(
         shape,
-        ["create_workspace", "stamp_workspace", "rename_workspace", "create_tab", "stamp_pane", "rename_tab", "start_agent"]
+        [
+            "create_workspace",
+            "stamp_workspace",
+            "rename_workspace",
+            "create_tab",
+            "stamp_pane",
+            "rename_tab",
+            "start_agent"
+        ]
     );
-    let FakeCall::CreateWorkspace(ws) = &log[0] else { unreachable!() };
+    let FakeCall::CreateWorkspace(ws) = &log[0] else {
+        unreachable!()
+    };
     assert!(ws.label.starts_with("alpha ·"), "nonce label: {}", ws.label);
-    let FakeCall::CreateTab(tab) = &log[3] else { unreachable!() };
-    assert!(tab.label.starts_with("foreman ·"), "nonce label: {}", tab.label);
+    let FakeCall::CreateTab(tab) = &log[3] else {
+        unreachable!()
+    };
+    assert!(
+        tab.label.starts_with("foreman ·"),
+        "nonce label: {}",
+        tab.label
+    );
     let env: std::collections::BTreeMap<_, _> = tab.env.iter().cloned().collect();
     assert_eq!(env["HERDR_GRAPH"], "1");
     assert_eq!(env["HERDR_GRAPH_SEAT"], s.id.to_string());
     assert_eq!(env["HERDR_GRAPH_CLONE"], c.id.to_string());
     assert!(env.contains_key("HERDR_GRAPH_INSTANCE"));
-    let FakeCall::ReportPaneMetadata(_, key, value) = &log[4] else { unreachable!() };
-    assert_eq!((key.as_str(), value.as_str()), ("hg", format!("hg={}", c.id).as_str()));
-    let FakeCall::RenameTab(_, plain) = &log[5] else { unreachable!() };
+    let FakeCall::ReportPaneMetadata(_, key, value) = &log[4] else {
+        unreachable!()
+    };
+    assert_eq!(
+        (key.as_str(), value.as_str()),
+        ("hg", format!("hg={}", c.id).as_str())
+    );
+    let FakeCall::RenameTab(_, plain) = &log[5] else {
+        unreachable!()
+    };
     assert_eq!(plain, "foreman");
-    let FakeCall::StartAgent(start) = &log[6] else { unreachable!() };
+    let FakeCall::StartAgent(start) = &log[6] else {
+        unreachable!()
+    };
     assert_eq!(start.kind, "claude");
     assert!(start.args.is_empty());
 
@@ -324,8 +458,15 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     // Level-triggered: a second step on the settled state does nothing.
     let before = calls(&fx).len();
     let again = step(&fx).await;
-    assert_eq!(calls(&fx).len(), before, "no further herdr calls: {again:?}");
-    assert!(again.planned.is_empty() && again.executed.is_empty(), "{again:?}");
+    assert_eq!(
+        calls(&fx).len(),
+        before,
+        "no further herdr calls: {again:?}"
+    );
+    assert!(
+        again.planned.is_empty() && again.executed.is_empty(),
+        "{again:?}"
+    );
 }
 
 #[tokio::test]
@@ -334,10 +475,18 @@ async fn shell_harness_starts_no_agent() {
     activate(&fx, "shell");
     step(&fx).await;
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0
+    );
     assert!(rows(&fx, EffectKind::StartAgent).is_empty());
     let c = only_clone(&fx, "foreman");
-    assert!(fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().is_none());
+    assert!(
+        fx.journal
+            .meta_get(&planner::launched_key(&c.id))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -349,19 +498,43 @@ async fn retire_after_queued_create_is_obsolete() {
     let queued = rows(&fx, EffectKind::CreateTab);
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].status, EffectStatus::Pending);
-    assert!(first.executed.contains(&(queued[0].id.clone(), EffectStatus::Pending)), "{first:?}");
+    assert!(
+        first
+            .executed
+            .contains(&(queued[0].id.clone(), EffectStatus::Pending)),
+        "{first:?}"
+    );
 
     commit(&fx, "seat retire foreman");
     let second = step(&fx).await;
     assert!(second.obsolete.contains(&queued[0].id), "{second:?}");
-    assert_eq!(fx.journal.get_effect(&queued[0].id).unwrap().unwrap().status, EffectStatus::Obsolete);
+    assert_eq!(
+        fx.journal
+            .get_effect(&queued[0].id)
+            .unwrap()
+            .unwrap()
+            .status,
+        EffectStatus::Obsolete
+    );
     // The failed attempt is the only create_tab call, and no tab exists for the seat.
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
     let snap = fx.herdr.snapshot().await.unwrap();
-    assert!(snap.workspaces.iter().flat_map(|w| &w.tabs).all(|t| !t.label.starts_with("foreman")));
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .all(|t| !t.label.starts_with("foreman"))
+    );
     // Its dependents were dropped with it.
-    assert!(rows(&fx, EffectKind::StartAgent).iter().all(|r| r.status == EffectStatus::Obsolete));
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+    assert!(
+        rows(&fx, EffectKind::StartAgent)
+            .iter()
+            .all(|r| r.status == EffectStatus::Obsolete)
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0
+    );
 }
 
 #[tokio::test]
@@ -383,8 +556,14 @@ async fn transient_failure_retried_with_backoff() {
     fx.clock.advance(chrono::Duration::seconds(5));
     step(&fx).await;
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 2);
-    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+    assert_eq!(
+        fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1
+    );
 }
 
 #[tokio::test]
@@ -397,15 +576,30 @@ async fn lost_response_create_adopted_by_nonce() {
     assert_eq!(ef.status, EffectStatus::Unknown);
 
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1, "adopted, not duplicated");
-    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))),
+        1,
+        "adopted, not duplicated"
+    );
+    assert_eq!(
+        fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
     // Adoption stamped the token, dropped the nonce and bound the clone.
     let snap = fx.herdr.snapshot().await.unwrap();
-    let tabs: Vec<_> = snap.workspaces.iter().flat_map(|w| &w.tabs).filter(|t| t.label.starts_with("foreman")).collect();
+    let tabs: Vec<_> = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .filter(|t| t.label.starts_with("foreman"))
+        .collect();
     assert_eq!(tabs.len(), 1);
     assert_eq!(tabs[0].label, "foreman");
     assert!(tabs[0].panes[0].metadata.contains_key("hg"));
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1
+    );
     assert!(only_clone(&fx, "foreman").runtime.bound.is_some());
 }
 
@@ -418,28 +612,63 @@ async fn unknown_start_outcome_is_inspected_not_duplicated() {
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(ef.status, EffectStatus::Unknown);
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
-    assert_eq!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
-    assert!(fx.journal.meta_get(&planner::launched_key(&only_clone(&fx, "foreman").id)).unwrap().is_some());
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1
+    );
+    assert_eq!(
+        fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
+    assert!(
+        fx.journal
+            .meta_get(&planner::launched_key(&only_clone(&fx, "foreman").id))
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
 async fn unknown_object_gets_no_create() {
     let fx = fx();
     activate(&fx, "claude");
-    commit(&fx, "seat create other --teamspace alpha --active --harness shell");
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
     let c = only_clone(&fx, "foreman");
-    let b = Binding { pane_id: Some(HerdrPaneId("p9".into())), ..Default::default() };
+    let b = Binding {
+        pane_id: Some(HerdrPaneId("p9".into())),
+        ..Default::default()
+    };
     admit_binding(&*fx.w, &c.id.to_any(), &b, Availability::Unknown).unwrap();
     fx.w.drain().unwrap();
     step(&fx).await;
     // Nothing is created for the unknown clone ...
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SplitPane(_) | FakeCall::StartAgent(_))), 0);
-    let tabs: Vec<_> = calls(&fx).into_iter().filter_map(|c| if let FakeCall::CreateTab(t) = c { Some(t.label) } else { None }).collect();
+    assert_eq!(
+        count_calls(&fx, |c| matches!(
+            c,
+            FakeCall::SplitPane(_) | FakeCall::StartAgent(_)
+        )),
+        0
+    );
+    let tabs: Vec<_> = calls(&fx)
+        .into_iter()
+        .filter_map(|c| {
+            if let FakeCall::CreateTab(t) = c {
+                Some(t.label)
+            } else {
+                None
+            }
+        })
+        .collect();
     assert_eq!(tabs.len(), 1, "{tabs:?}");
     assert!(tabs[0].starts_with("other ·"), "{tabs:?}");
     // ... while never-bound objects still are.
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateWorkspace(_))), 1);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CreateWorkspace(_))),
+        1
+    );
 }
 
 #[tokio::test]
@@ -447,7 +676,10 @@ async fn unknown_only_clone_creates_nothing_at_all() {
     let fx = fx();
     activate(&fx, "claude");
     let c = only_clone(&fx, "foreman");
-    let b = Binding { pane_id: Some(HerdrPaneId("p9".into())), ..Default::default() };
+    let b = Binding {
+        pane_id: Some(HerdrPaneId("p9".into())),
+        ..Default::default()
+    };
     admit_binding(&*fx.w, &c.id.to_any(), &b, Availability::Unknown).unwrap();
     fx.w.drain().unwrap();
     let report = step(&fx).await;
@@ -459,16 +691,31 @@ async fn unknown_only_clone_creates_nothing_at_all() {
 async fn moved_out_seat_gets_no_create_tab() {
     let fx = fx();
     activate(&fx, "claude");
-    commit(&fx, "seat create other --teamspace alpha --active --harness shell");
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
     let s = seat(&fx, "foreman");
     admit_runtime(&*fx.w, &s.id.to_any(), Availability::Absent, Some(true)).unwrap();
     fx.w.drain().unwrap();
     assert!(seat(&fx, "foreman").moved_out);
     step(&fx).await;
-    let tabs: Vec<_> = calls(&fx).into_iter().filter_map(|c| if let FakeCall::CreateTab(t) = c { Some(t.label) } else { None }).collect();
+    let tabs: Vec<_> = calls(&fx)
+        .into_iter()
+        .filter_map(|c| {
+            if let FakeCall::CreateTab(t) = c {
+                Some(t.label)
+            } else {
+                None
+            }
+        })
+        .collect();
     assert_eq!(tabs.len(), 1, "{tabs:?}");
     assert!(tabs[0].starts_with("other ·"), "{tabs:?}");
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0
+    );
 }
 
 #[tokio::test]
@@ -478,13 +725,27 @@ async fn start_agent_needs_shell_foreground() {
     fx.herdr.fail_next("agent.start", Fault::Unavailable);
     step(&fx).await;
     let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
-    fx.herdr.set_process(&pane, ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["vim".into()], is_shell: false });
+    fx.herdr.set_process(
+        &pane,
+        ProcessInfo {
+            foreground_pid: Some(7),
+            foreground_argv: vec!["vim".into()],
+            is_shell: false,
+        },
+    );
     fx.clock.advance(chrono::Duration::seconds(5));
     step(&fx).await;
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
-    assert_eq!(ef.last_error.as_deref(), Some("pane foreground is not the shell"));
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1, "the refused start never reached herdr");
+    assert_eq!(
+        ef.last_error.as_deref(),
+        Some("pane foreground is not the shell")
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1,
+        "the refused start never reached herdr"
+    );
     let msgs = fx.notes.messages();
     assert_eq!(msgs.len(), 1);
     assert!(msgs[0].contains("not the shell"), "{msgs:?}");
@@ -494,14 +755,20 @@ async fn start_agent_needs_shell_foreground() {
 async fn blocked_needs_human_outcome() {
     let fx = fx();
     activate(&fx, "claude");
-    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    fx.herdr.fail_next(
+        "agent.start",
+        Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
+    );
     step(&fx).await;
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(ef.status, EffectStatus::BlockedNeedsHuman);
     assert_eq!(fx.notes.messages().len(), 1);
     // Not retried: the blocked agent is the occupant now.
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1
+    );
 }
 
 /// Launch a claude seat, then give its clone an occupant with native session `abc`.
@@ -510,7 +777,11 @@ async fn occupied(fx: &Fx) -> (SeatRecord, CloneRecord, HerdrPaneId) {
     step(fx).await;
     let c = only_clone(fx, "foreman");
     set_occupant(fx, &c, "abc");
-    (seat(fx, "foreman"), only_clone(fx, "foreman"), pane_of(fx, &c))
+    (
+        seat(fx, "foreman"),
+        only_clone(fx, "foreman"),
+        pane_of(fx, &c),
+    )
 }
 
 #[tokio::test]
@@ -520,21 +791,44 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
     set_model(&fx, &s, "opus-x");
     fx.herdr.clear_calls();
     let report = step(&fx).await;
-    assert!(report.executed.iter().any(|(_, st)| *st == EffectStatus::Done), "{report:?}");
+    assert!(
+        report
+            .executed
+            .iter()
+            .any(|(_, st)| *st == EffectStatus::Done),
+        "{report:?}"
+    );
 
     let log = calls(&fx);
     let ctrl_c = FakeCall::SendKeys(pane.clone(), vec![KeyInput::Key("ctrl+c".into())]);
     assert_eq!(log.iter().filter(|c| **c == ctrl_c).count(), 2, "{log:?}");
-    let starts: Vec<_> = log.iter().filter_map(|c| if let FakeCall::StartAgent(s) = c { Some(s) } else { None }).collect();
+    let starts: Vec<_> = log
+        .iter()
+        .filter_map(|c| {
+            if let FakeCall::StartAgent(s) = c {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect();
     assert_eq!(starts.len(), 1);
     assert_eq!(starts[0].pane, pane);
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
     // Exit keys come before the restart.
-    let first_start = log.iter().position(|c| matches!(c, FakeCall::StartAgent(_))).unwrap();
+    let first_start = log
+        .iter()
+        .position(|c| matches!(c, FakeCall::StartAgent(_)))
+        .unwrap();
     assert!(log[..first_start].iter().filter(|c| **c == ctrl_c).count() == 2);
 
-    let launched: serde_json::Value =
-        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    let launched: serde_json::Value = serde_json::from_str(
+        &fx.journal
+            .meta_get(&planner::launched_key(&c.id))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(launched["model"], "opus-x");
 
     // Level-triggered and idempotent: nothing more to do.
@@ -548,7 +842,9 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
 async fn adopted_occupant_without_launch_record_not_replaced() {
     let fx = fx();
     let (s, c, _) = occupied(&fx).await;
-    fx.journal.meta_delete(&planner::launched_key(&c.id)).unwrap();
+    fx.journal
+        .meta_delete(&planner::launched_key(&c.id))
+        .unwrap();
     set_model(&fx, &s, "opus-x");
     fx.herdr.clear_calls();
     step(&fx).await;
@@ -571,7 +867,11 @@ async fn replacement_busy_occupant_needs_revision() {
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::Pending, "the wait is not over yet");
     assert_eq!(report.deferred, vec![ef.id.clone()]);
-    assert!(calls(&fx).is_empty(), "a working agent is never interrupted: {:?}", calls(&fx));
+    assert!(
+        calls(&fx).is_empty(),
+        "a working agent is never interrupted: {:?}",
+        calls(&fx)
+    );
     assert!(fx.notes.messages().is_empty());
 
     fx.clock.advance(ms(100));
@@ -579,27 +879,67 @@ async fn replacement_busy_occupant_needs_revision() {
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
     assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))), 0, "{:?}", calls(&fx));
-    assert!(fx.notes.messages().iter().any(|m| m.contains("occupant busy")));
+    assert_eq!(
+        count_calls(&fx, |c| matches!(
+            c,
+            FakeCall::SendKeys(..) | FakeCall::StartAgent(_)
+        )),
+        0,
+        "{:?}",
+        calls(&fx)
+    );
+    assert!(
+        fx.notes
+            .messages()
+            .iter()
+            .any(|m| m.contains("occupant busy"))
+    );
 }
 
 #[tokio::test]
 async fn replacement_exit_timeout_starts_no_agent() {
     let fx = fx();
     let (s, _, pane) = occupied(&fx).await;
-    fx.herdr.set_process(&pane, ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["claude".into()], is_shell: false });
+    fx.herdr.set_process(
+        &pane,
+        ProcessInfo {
+            foreground_pid: Some(7),
+            foreground_argv: vec!["claude".into()],
+            is_shell: false,
+        },
+    );
     set_model(&fx, &s, "opus-x");
     fx.herdr.clear_calls();
     step(&fx).await;
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 2, "the two ctrl+c presses: {:?}", calls(&fx));
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))),
+        2,
+        "the two ctrl+c presses: {:?}",
+        calls(&fx)
+    );
 
     fx.clock.advance(ms(20));
     step(&fx).await;
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 3, "the /exit fallback: {:?}", calls(&fx));
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))),
+        3,
+        "the /exit fallback: {:?}",
+        calls(&fx)
+    );
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))), 3, "the fallback is sent once");
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..))),
+        3,
+        "the fallback is sent once"
+    );
 
     fx.clock.advance(ms(80));
     step(&fx).await;
@@ -607,11 +947,35 @@ async fn replacement_exit_timeout_starts_no_agent() {
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
     assert_eq!(ef.last_error.as_deref(), Some("occupant did not exit"));
     let log = calls(&fx);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0, "{log:?}");
-    let sent: Vec<_> = log.iter().filter_map(|c| if let FakeCall::SendKeys(_, k) = c { Some(k.clone()) } else { None }).collect();
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0,
+        "{log:?}"
+    );
+    let sent: Vec<_> = log
+        .iter()
+        .filter_map(|c| {
+            if let FakeCall::SendKeys(_, k) = c {
+                Some(k.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
     assert_eq!(sent.len(), 3, "{sent:?}");
-    assert_eq!(sent[2], vec![KeyInput::Text("/exit".into()), KeyInput::Key("enter".into())]);
-    assert!(fx.notes.messages().iter().any(|m| m.contains("occupant did not exit")));
+    assert_eq!(
+        sent[2],
+        vec![
+            KeyInput::Text("/exit".into()),
+            KeyInput::Key("enter".into())
+        ]
+    );
+    assert!(
+        fx.notes
+            .messages()
+            .iter()
+            .any(|m| m.contains("occupant did not exit"))
+    );
 }
 
 #[tokio::test]
@@ -619,21 +983,39 @@ async fn replacement_wait_does_not_block_other_effects() {
     // Default timeouts: a working occupant would hold the old inline wait for 10 minutes.
     let fx = fx_with(|_| {});
     let (s, _, pane) = occupied(&fx).await;
-    commit(&fx, "seat create bench --teamspace alpha --active --harness shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
     step(&fx).await;
     fx.herdr.set_agent(&pane, agent(AgentStatus::Working));
     set_model(&fx, &s, "opus-x");
     commit(&fx, "seat rename bench zwei");
     fx.herdr.clear_calls();
 
-    let report = tokio::time::timeout(Duration::from_secs(2), step(&fx)).await.expect("the step must not wait for the occupant");
-    assert!(count_calls(&fx, |c| matches!(c, FakeCall::RenameTab(..))) >= 1, "{:?}", calls(&fx));
-    let rename = rows(&fx, EffectKind::RenameTab).into_iter().last().expect("rename row");
+    let report = tokio::time::timeout(Duration::from_secs(2), step(&fx))
+        .await
+        .expect("the step must not wait for the occupant");
+    assert!(
+        count_calls(&fx, |c| matches!(c, FakeCall::RenameTab(..))) >= 1,
+        "{:?}",
+        calls(&fx)
+    );
+    let rename = rows(&fx, EffectKind::RenameTab)
+        .into_iter()
+        .last()
+        .expect("rename row");
     assert_eq!(rename.status, EffectStatus::Done);
     let repl = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(repl.status, EffectStatus::Pending);
     assert!(report.deferred.contains(&repl.id), "{report:?}");
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SendKeys(..) | FakeCall::StartAgent(_))), 0);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(
+            c,
+            FakeCall::SendKeys(..) | FakeCall::StartAgent(_)
+        )),
+        0
+    );
 }
 
 #[tokio::test]
@@ -645,26 +1027,49 @@ async fn replacement_state_survives_restart() {
     step(&fx).await;
     fx.clock.advance(ms(50));
     step(&fx).await;
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
 
     // A restarted daemon: fresh reconciler over the same journal, store and clock.
     let mut cfg = ReconcilerConfig::new(fx.deps.instance.clone());
     cfg.idle_timeout = Duration::from_millis(100);
-    let rec2 = Reconciler::new(fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(), fx.notes.clone(), cfg);
+    let rec2 = Reconciler::new(
+        fx.store.clone(),
+        fx.journal.clone(),
+        fx.w.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        fx.notes.clone(),
+        cfg,
+    );
     fx.clock.advance(ms(50));
     rec2.step_fresh().await;
     fx.w.drain().unwrap();
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
-    assert_eq!(ef.status, EffectStatus::NeedsRevision, "the timer counts from the persisted start, not the restart");
+    assert_eq!(
+        ef.status,
+        EffectStatus::NeedsRevision,
+        "the timer counts from the persisted start, not the restart"
+    );
     assert_eq!(ef.last_error.as_deref(), Some("occupant busy"));
 }
 
 fn non_shell() -> ProcessInfo {
-    ProcessInfo { foreground_pid: Some(7), foreground_argv: vec!["claude".into()], is_shell: false }
+    ProcessInfo {
+        foreground_pid: Some(7),
+        foreground_argv: vec!["claude".into()],
+        is_shell: false,
+    }
 }
 
 fn shell() -> ProcessInfo {
-    ProcessInfo { foreground_pid: None, foreground_argv: vec!["zsh".into()], is_shell: true }
+    ProcessInfo {
+        foreground_pid: None,
+        foreground_argv: vec!["zsh".into()],
+        is_shell: true,
+    }
 }
 
 fn send_keys_count(fx: &Fx) -> usize {
@@ -672,7 +1077,16 @@ fn send_keys_count(fx: &Fx) -> usize {
 }
 
 fn start_calls(fx: &Fx) -> Vec<crate::ports::herdr::StartAgent> {
-    calls(fx).into_iter().filter_map(|c| if let FakeCall::StartAgent(s) = c { Some(s) } else { None }).collect()
+    calls(fx)
+        .into_iter()
+        .filter_map(|c| {
+            if let FakeCall::StartAgent(s) = c {
+                Some(s)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 #[tokio::test]
@@ -684,13 +1098,19 @@ async fn replacement_late_step_sends_fallback_before_timing_out() {
     fx.herdr.clear_calls();
     step(&fx).await;
     assert_eq!(send_keys_count(&fx), 2);
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
 
     // One late step, past both the follow-up and the timeout: the fallback still goes out first.
     fx.clock.advance(ms(150));
     step(&fx).await;
     assert_eq!(send_keys_count(&fx), 3);
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
     assert!(fx.notes.messages().is_empty());
 
     fx.clock.advance(ms(20));
@@ -710,11 +1130,17 @@ async fn replacement_resumes_after_occupant_cleared() {
     fx.herdr.clear_calls();
     step(&fx).await;
     assert_eq!(send_keys_count(&fx), 2);
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
 
     // The agent exits and the observer records the occupancy end; only then does the shell show.
     fx.herdr.set_agent(&pane, None);
-    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}),
+    );
     fx.herdr.set_process(&pane, shell());
     step(&fx).await;
 
@@ -723,10 +1149,18 @@ async fn replacement_resumes_after_occupant_cleared() {
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{starts:?}");
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
-    let launched: serde_json::Value =
-        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    let launched: serde_json::Value = serde_json::from_str(
+        &fx.journal
+            .meta_get(&planner::launched_key(&c.id))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(launched["model"], "opus-x");
-    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None);
+    assert_eq!(
+        fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
@@ -737,22 +1171,41 @@ async fn replacement_unknown_start_is_not_exited_again() {
     set_model(&fx, &s, "opus-x");
     step(&fx).await;
     fx.herdr.set_agent(&pane, None);
-    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}),
+    );
     fx.herdr.set_process(&pane, shell());
     // The start goes through but its response is lost: the new agent is on the pane.
     fx.herdr.fail_next("agent.start", Fault::LostResponse);
     fx.herdr.clear_calls();
     step(&fx).await;
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Unknown);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Unknown
+    );
     assert_eq!(start_calls(&fx).len(), 1);
 
     fx.herdr.clear_calls();
     step(&fx).await;
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Done);
-    assert_eq!(send_keys_count(&fx), 0, "the new agent must not be sent the exit keys: {:?}", calls(&fx));
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Done
+    );
+    assert_eq!(
+        send_keys_count(&fx),
+        0,
+        "the new agent must not be sent the exit keys: {:?}",
+        calls(&fx)
+    );
     assert!(start_calls(&fx).is_empty());
-    let launched: serde_json::Value =
-        serde_json::from_str(&fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().unwrap()).unwrap();
+    let launched: serde_json::Value = serde_json::from_str(
+        &fx.journal
+            .meta_get(&planner::launched_key(&c.id))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(launched["model"], "opus-x");
 }
 
@@ -764,7 +1217,13 @@ async fn terminal_effect_clears_its_meta() {
     set_model(&fx, &s, "opus-x");
     step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
-    assert!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap().is_some(), "waiting state is kept");
+    assert!(
+        fx.journal
+            .meta_get(&format!("replace:{}", ef.id))
+            .unwrap()
+            .is_some(),
+        "waiting state is kept"
+    );
     assert!(ef.sched.wake_at.is_some());
     let mut with_retry = ef.clone();
     with_retry.sched.retry_at = Some(fx.clock.now());
@@ -774,8 +1233,16 @@ async fn terminal_effect_clears_its_meta() {
     step(&fx).await;
     let ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
-    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None, "replace state leaked");
-    assert_eq!(ef.sched, Default::default(), "scheduling state leaked onto the ended row");
+    assert_eq!(
+        fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(),
+        None,
+        "replace state leaked"
+    );
+    assert_eq!(
+        ef.sched,
+        Default::default(),
+        "scheduling state leaked onto the ended row"
+    );
 }
 
 #[tokio::test]
@@ -795,9 +1262,15 @@ async fn next_wake_reports_earliest_deferred_or_retry() {
     commit(&fx, "seat rename foreman zwei");
     fx.herdr.fail_next("tab.rename", Fault::Unavailable);
     step(&fx).await;
-    let rename = rows(&fx, EffectKind::RenameTab).into_iter().find(|r| r.status == EffectStatus::Pending).expect("pending rename row");
+    let rename = rows(&fx, EffectKind::RenameTab)
+        .into_iter()
+        .find(|r| r.status == EffectStatus::Pending)
+        .expect("pending rename row");
     let retry = rename.sched.retry_at.expect("retry_at");
-    assert!(retry < t0() + ms(5000), "backoff {retry} must be shorter than the recheck for this test");
+    assert!(
+        retry < t0() + ms(5000),
+        "backoff {retry} must be shorter than the recheck for this test"
+    );
     assert_eq!(fx.rec.next_wake(), Some(retry));
 }
 
@@ -808,7 +1281,13 @@ async fn close_effects_predict_induced_closures() {
     step(&fx).await;
     // Herdr's own default tab goes, so the seat tab is the workspace's last.
     let snap = fx.herdr.snapshot().await.unwrap();
-    let default_tab = snap.workspaces[0].tabs.iter().find(|t| t.label == "1").unwrap().id.clone();
+    let default_tab = snap.workspaces[0]
+        .tabs
+        .iter()
+        .find(|t| t.label == "1")
+        .unwrap()
+        .id
+        .clone();
     fx.herdr.user_close_tab(&default_tab);
 
     let c = only_clone(&fx, "foreman");
@@ -820,11 +1299,25 @@ async fn close_effects_predict_induced_closures() {
     let ef = rows(&fx, EffectKind::ClosePane).remove(0);
     assert_eq!(ef.status, EffectStatus::Done);
     let ts = s.teamspace.to_any();
-    let p = |object: AnyId, container, induced| PredictedEnd { object, container, end: EndState::Closed, induced };
+    let p = |object: AnyId, container, induced| PredictedEnd {
+        object,
+        container,
+        end: EndState::Closed,
+        induced,
+    };
     assert_eq!(ef.predicted.len(), 3, "{:?}", ef.predicted);
-    assert!(ef.predicted.contains(&p(c.id.to_any(), ContainerKind::Pane, false)));
-    assert!(ef.predicted.contains(&p(s.id.to_any(), ContainerKind::Tab, true)));
-    assert!(ef.predicted.contains(&p(ts, ContainerKind::Workspace, true)));
+    assert!(
+        ef.predicted
+            .contains(&p(c.id.to_any(), ContainerKind::Pane, false))
+    );
+    assert!(
+        ef.predicted
+            .contains(&p(s.id.to_any(), ContainerKind::Tab, true))
+    );
+    assert!(
+        ef.predicted
+            .contains(&p(ts, ContainerKind::Workspace, true))
+    );
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(_))), 1);
     // The reconciler never creates anything for the retired clone again.
     fx.herdr.clear_calls();
@@ -843,8 +1336,16 @@ async fn deactivated_seat_closes_its_tab() {
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CloseTab(_))), 1);
     let ef = rows(&fx, EffectKind::CloseTab).remove(0);
     assert_eq!(ef.status, EffectStatus::Done);
-    assert!(ef.predicted.iter().any(|p| p.container == ContainerKind::Tab && !p.induced));
-    assert!(ef.predicted.iter().any(|p| p.container == ContainerKind::Pane && p.induced));
+    assert!(
+        ef.predicted
+            .iter()
+            .any(|p| p.container == ContainerKind::Tab && !p.induced)
+    );
+    assert!(
+        ef.predicted
+            .iter()
+            .any(|p| p.container == ContainerKind::Pane && p.induced)
+    );
 }
 
 #[tokio::test]
@@ -859,7 +1360,12 @@ async fn reactivated_seat_starts_agent_again() {
     step(&fx).await;
     step(&fx).await;
     assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 1);
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 1, "{:?}", calls(&fx));
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1,
+        "{:?}",
+        calls(&fx)
+    );
 }
 
 #[tokio::test]
@@ -873,14 +1379,30 @@ async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
     let authority = OpId::new();
     let ef = fx.rec.request_relaunch(&c.id, &authority).unwrap();
     let row = fx.journal.get_effect(&ef).unwrap().unwrap();
-    assert_eq!((row.kind.clone(), row.op.clone(), row.status), (EffectKind::RelaunchOccupant, authority, EffectStatus::Pending));
+    assert_eq!(
+        (row.kind.clone(), row.op.clone(), row.status),
+        (
+            EffectKind::RelaunchOccupant,
+            authority,
+            EffectStatus::Pending
+        )
+    );
     // Enqueueing twice is the same effect.
     assert_eq!(fx.rec.request_relaunch(&c.id, &row.op).unwrap(), ef);
 
     fx.herdr.clear_calls();
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")), 1);
-    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().status, EffectStatus::Done);
+    assert_eq!(
+        count_calls(
+            &fx,
+            |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")
+        ),
+        1
+    );
+    assert_eq!(
+        fx.journal.get_effect(&ef).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
 }
 
 #[tokio::test]
@@ -891,8 +1413,16 @@ async fn relaunch_refused_for_dormant_seat() {
     let c = only_clone(&fx, "foreman");
     commit(&fx, "seat deactivate foreman");
     let err = fx.rec.request_relaunch(&c.id, &OpId::new()).unwrap_err();
-    assert!(err.to_string().contains("not an active clone of an active seat"), "{err}");
-    assert!(fx.rec.request_relaunch(&CloneId::new(), &OpId::new()).is_err());
+    assert!(
+        err.to_string()
+            .contains("not an active clone of an active seat"),
+        "{err}"
+    );
+    assert!(
+        fx.rec
+            .request_relaunch(&CloneId::new(), &OpId::new())
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -909,7 +1439,11 @@ async fn relaunch_waits_grace_after_incarnation_change() {
         .iter()
         .flat_map(|w| &w.tabs)
         .flat_map(|t| &t.panes)
-        .find(|p| p.metadata.get("hg").is_some_and(|v| v == &format!("hg={}", c.id)))
+        .find(|p| {
+            p.metadata
+                .get("hg")
+                .is_some_and(|v| v == &format!("hg={}", c.id))
+        })
         .unwrap()
         .id
         .clone();
@@ -919,20 +1453,50 @@ async fn relaunch_waits_grace_after_incarnation_change() {
 
     let early = step(&fx).await;
     assert!(early.deferred.contains(&ef), "{early:?}");
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0);
-    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().attempts, 0, "waiting is not an attempt");
-    let changed = fx.journal.meta_get("incarnation:changed_at").unwrap().expect("incarnation:changed_at");
-    let at = chrono::DateTime::parse_from_rfc3339(&changed).unwrap().to_utc();
-    assert_eq!(fx.rec.next_wake(), Some(at + chrono::Duration::seconds(90)), "wakes at the end of the grace");
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0
+    );
+    assert_eq!(
+        fx.journal.get_effect(&ef).unwrap().unwrap().attempts,
+        0,
+        "waiting is not an attempt"
+    );
+    let changed = fx
+        .journal
+        .meta_get("incarnation:changed_at")
+        .unwrap()
+        .expect("incarnation:changed_at");
+    let at = chrono::DateTime::parse_from_rfc3339(&changed)
+        .unwrap()
+        .to_utc();
+    assert_eq!(
+        fx.rec.next_wake(),
+        Some(at + chrono::Duration::seconds(90)),
+        "wakes at the end of the grace"
+    );
 
     fx.clock.advance(chrono::Duration::seconds(60));
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))), 0, "still inside the 90 s grace");
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        0,
+        "still inside the 90 s grace"
+    );
 
     fx.clock.advance(chrono::Duration::seconds(31));
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(s) if s.pane == new_pane)), 1);
-    assert_eq!(fx.journal.get_effect(&ef).unwrap().unwrap().status, EffectStatus::Done);
+    assert_eq!(
+        count_calls(
+            &fx,
+            |c| matches!(c, FakeCall::StartAgent(s) if s.pane == new_pane)
+        ),
+        1
+    );
+    assert_eq!(
+        fx.journal.get_effect(&ef).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
 }
 
 #[tokio::test]
@@ -981,15 +1545,25 @@ async fn bookkeeping_binding_mutation_updates_runtime() {
     let after = only_clone(&fx, "foreman");
     assert_eq!(after.runtime.bound.as_ref(), Some(&binding));
     assert_eq!(after.runtime.availability, Availability::Present);
-    assert_eq!(after.runtime.observed_at, Some(t0() + chrono::Duration::seconds(3)));
+    assert_eq!(
+        after.runtime.observed_at,
+        Some(t0() + chrono::Duration::seconds(3))
+    );
     assert_eq!(after.rev, c.rev + 1);
 
     let s = seat(&fx, "foreman");
     admit_runtime(&*fx.w, &s.id.to_any(), Availability::Absent, Some(true)).unwrap();
     fx.w.drain().unwrap();
     let s2 = seat(&fx, "foreman");
-    assert_eq!((s2.runtime.availability, s2.moved_out), (Availability::Absent, true));
-    assert_eq!(s2.lifecycle, Lifecycle::Active, "bookkeeping never changes lifecycle");
+    assert_eq!(
+        (s2.runtime.availability, s2.moved_out),
+        (Availability::Absent, true)
+    );
+    assert_eq!(
+        s2.lifecycle,
+        Lifecycle::Active,
+        "bookkeeping never changes lifecycle"
+    );
 
     // Unknown objects are rejected by the writer, not invented.
     let ghost = CloneId::new();
@@ -997,7 +1571,10 @@ async fn bookkeeping_binding_mutation_updates_runtime() {
     fx.w.drain().unwrap();
     let rejected = fx.journal.list(&[OpState::Rejected], 10).unwrap();
     assert_eq!(rejected.len(), 1);
-    assert_eq!(rejected[0].rejection.as_ref().unwrap().reason, "object_missing");
+    assert_eq!(
+        rejected[0].rejection.as_ref().unwrap().reason,
+        "object_missing"
+    );
 }
 
 #[tokio::test]
@@ -1006,8 +1583,16 @@ async fn predictions_listed_until_consumed() {
     activate(&fx, "shell");
     step(&fx).await;
     let preds = predictions(&fx.journal);
-    assert!(preds.iter().any(|(_, p)| p.container == ContainerKind::Workspace && p.end == EndState::Present));
-    assert!(preds.iter().any(|(_, p)| matches!(&p.end, EndState::Renamed { name } if name == "foreman")));
+    assert!(
+        preds
+            .iter()
+            .any(|(_, p)| p.container == ContainerKind::Workspace && p.end == EndState::Present)
+    );
+    assert!(
+        preds
+            .iter()
+            .any(|(_, p)| matches!(&p.end, EndState::Renamed { name } if name == "foreman"))
+    );
     let (ef, _) = preds[0].clone();
     consume_prediction(&fx.journal, &ef);
     assert!(predictions(&fx.journal).iter().all(|(id, _)| id != &ef));
@@ -1057,11 +1642,17 @@ async fn custom_family_registers_source_and_executor() {
     let fx = fx();
     commit(&fx, "teamspace create alpha");
     let exec = Arc::new(CustomExec(Mutex::new(0)));
-    fx.rec.register_source(Arc::new(CustomSource(SeatId::new().to_any())));
+    fx.rec
+        .register_source(Arc::new(CustomSource(SeatId::new().to_any())));
     fx.rec.register_executor(exec.clone());
     let report = step(&fx).await;
     assert_eq!(*exec.0.lock().unwrap(), 1);
-    assert!(report.executed.iter().any(|(_, s)| *s == EffectStatus::Done));
+    assert!(
+        report
+            .executed
+            .iter()
+            .any(|(_, s)| *s == EffectStatus::Done)
+    );
     step(&fx).await;
     assert_eq!(*exec.0.lock().unwrap(), 1, "a done effect is not re-run");
 }
@@ -1090,9 +1681,16 @@ async fn replacement_exit_followup_wakes_at_three_seconds() {
 
     fx.clock.set(t1 + chrono::Duration::seconds(3));
     step(&fx).await;
-    assert_eq!(send_keys_count(&fx), 3, "the /exit fallback goes out at the follow-up deadline");
+    assert_eq!(
+        send_keys_count(&fx),
+        3,
+        "the /exit fallback goes out at the follow-up deadline"
+    );
     assert_eq!(fx.rec.next_wake(), Some(t1 + chrono::Duration::seconds(5)));
-    assert_eq!(rows(&fx, EffectKind::ReplaceSession).remove(0).status, EffectStatus::Pending);
+    assert_eq!(
+        rows(&fx, EffectKind::ReplaceSession).remove(0).status,
+        EffectStatus::Pending
+    );
 }
 
 struct WaitSource(AnyId);
@@ -1133,7 +1731,11 @@ impl EffectExecutor for WaitExec {
     }
     async fn execute(&self, _cx: &ExecCx<'_>, _e: &EffectRecord) -> ExecOutcome {
         *self.calls.lock().unwrap() += 1;
-        if self.ready.load(std::sync::atomic::Ordering::SeqCst) { ExecOutcome::Done } else { ExecOutcome::Deferred("not yet".into()) }
+        if self.ready.load(std::sync::atomic::Ordering::SeqCst) {
+            ExecOutcome::Done
+        } else {
+            ExecOutcome::Deferred("not yet".into())
+        }
     }
 }
 
@@ -1141,8 +1743,12 @@ impl EffectExecutor for WaitExec {
 async fn open_ended_deferral_backs_off_to_the_cap() {
     let fx = fx();
     commit(&fx, "teamspace create alpha");
-    let exec = Arc::new(WaitExec { calls: Mutex::new(0), ready: std::sync::atomic::AtomicBool::new(false) });
-    fx.rec.register_source(Arc::new(WaitSource(SeatId::new().to_any())));
+    let exec = Arc::new(WaitExec {
+        calls: Mutex::new(0),
+        ready: std::sync::atomic::AtomicBool::new(false),
+    });
+    fx.rec
+        .register_source(Arc::new(WaitSource(SeatId::new().to_any())));
     fx.rec.register_executor(exec.clone());
     let mut gaps = vec![];
     for _ in 0..8 {
@@ -1205,17 +1811,30 @@ impl EffectExecutor for OnceExec {
 async fn deferred_row_defers_once_per_step() {
     let fx = fx();
     commit(&fx, "teamspace create alpha");
-    let exec = Arc::new(WaitExec { calls: Mutex::new(0), ready: std::sync::atomic::AtomicBool::new(false) });
-    fx.rec.register_source(Arc::new(WaitSource(SeatId::new().to_any())));
+    let exec = Arc::new(WaitExec {
+        calls: Mutex::new(0),
+        ready: std::sync::atomic::AtomicBool::new(false),
+    });
+    fx.rec
+        .register_source(Arc::new(WaitSource(SeatId::new().to_any())));
     fx.rec.register_executor(exec.clone());
-    fx.rec.register_source(Arc::new(OnceSource(SeatId::new().to_any())));
+    fx.rec
+        .register_source(Arc::new(OnceSource(SeatId::new().to_any())));
     fx.rec.register_executor(Arc::new(OnceExec));
     let report = step(&fx).await;
     assert!(
-        report.executed.iter().any(|(id, st)| *st == EffectStatus::Done && rows(&fx, EffectKind::Custom("demo.once".into()))[0].id == *id),
+        report
+            .executed
+            .iter()
+            .any(|(id, st)| *st == EffectStatus::Done
+                && rows(&fx, EffectKind::Custom("demo.once".into()))[0].id == *id),
         "the second row must finish so that run_pending makes another pass: {report:?}"
     );
-    assert_eq!(*exec.calls.lock().unwrap(), 1, "a deferred row is not executed again in the same step");
+    assert_eq!(
+        *exec.calls.lock().unwrap(),
+        1,
+        "a deferred row is not executed again in the same step"
+    );
     let row = rows(&fx, EffectKind::Custom("demo.wait".into())).remove(0);
     assert_eq!(row.sched.defer_n, 1);
     assert!(report.deferred.contains(&row.id), "{report:?}");
@@ -1246,13 +1865,32 @@ async fn legacy_meta_scheduling_is_folded_into_the_row() {
     fx.journal.upsert_effect(&row).unwrap();
     let retry = t0() + ms(7000);
     let wake = t0() + ms(9000);
-    fx.journal.meta_set(&format!("deps:{}", row.id), &serde_json::to_string(&vec![dep.clone()]).unwrap()).unwrap();
-    fx.journal.meta_set(&format!("retry_at:{}", row.id), &retry.to_rfc3339()).unwrap();
-    fx.journal.meta_set(&format!("wake_at:{}", row.id), &wake.to_rfc3339()).unwrap();
-    fx.journal.meta_set(&format!("defer_n:{}", row.id), "3").unwrap();
+    fx.journal
+        .meta_set(
+            &format!("deps:{}", row.id),
+            &serde_json::to_string(&vec![dep.clone()]).unwrap(),
+        )
+        .unwrap();
+    fx.journal
+        .meta_set(&format!("retry_at:{}", row.id), &retry.to_rfc3339())
+        .unwrap();
+    fx.journal
+        .meta_set(&format!("wake_at:{}", row.id), &wake.to_rfc3339())
+        .unwrap();
+    fx.journal
+        .meta_set(&format!("defer_n:{}", row.id), "3")
+        .unwrap();
 
     let cfg = ReconcilerConfig::new(fx.deps.instance.clone());
-    let _rec = Reconciler::new(fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(), fx.notes.clone(), cfg);
+    let _rec = Reconciler::new(
+        fx.store.clone(),
+        fx.journal.clone(),
+        fx.w.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        fx.notes.clone(),
+        cfg,
+    );
 
     let got = fx.journal.get_effect(&row.id).unwrap().unwrap();
     assert_eq!(got.sched.deps, vec![dep]);
@@ -1260,14 +1898,22 @@ async fn legacy_meta_scheduling_is_folded_into_the_row() {
     assert_eq!(got.sched.wake_at, Some(wake));
     assert_eq!(got.sched.defer_n, 3);
     for key in ["deps", "retry_at", "wake_at", "defer_n"] {
-        assert_eq!(fx.journal.meta_get(&format!("{key}:{}", row.id)).unwrap(), None, "{key} meta left behind");
+        assert_eq!(
+            fx.journal.meta_get(&format!("{key}:{}", row.id)).unwrap(),
+            None,
+            "{key} meta left behind"
+        );
     }
 }
 
 /// The agent a start left on `c`'s pane, if any.
 async fn agent_on_pane(fx: &Fx, pane: &HerdrPaneId) -> bool {
     let snap = fx.herdr.snapshot().await.unwrap();
-    snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).any(|p| p.id == *pane && p.agent.is_some())
+    snap.workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .any(|p| p.id == *pane && p.agent.is_some())
 }
 
 #[tokio::test]
@@ -1280,9 +1926,15 @@ async fn dispatched_row_is_recovered_as_unknown() {
     let pane = pane_of(&fx, &c);
     let mut row = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(row.status, EffectStatus::Pending);
-    assert!(row.sched.retry_at.is_some(), "the failed start backs off: {row:?}");
+    assert!(
+        row.sched.retry_at.is_some(),
+        "the failed start backs off: {row:?}"
+    );
     // The row as a crash right after the Herdr call would have left it.
-    row.sched.dispatched = Some(Dispatch { attempt: 2, at: fx.clock.now() });
+    row.sched.dispatched = Some(Dispatch {
+        attempt: 2,
+        at: fx.clock.now(),
+    });
     row.sched.retry_at = None;
     fx.journal.upsert_effect(&row).unwrap();
     fx.herdr.set_agent(&pane, agent(AgentStatus::Idle));
@@ -1292,9 +1944,23 @@ async fn dispatched_row_is_recovered_as_unknown() {
     let done = fx.journal.get_effect(&row.id).unwrap().unwrap();
     assert_eq!(done.status, EffectStatus::Done, "{done:?}");
     assert_eq!(done.sched.dispatched, None);
-    assert!(start_calls(&fx).is_empty(), "the lost start was adopted, not repeated: {:?}", calls(&fx));
-    assert!(fx.journal.meta_get(&planner::launched_key(&c.id)).unwrap().is_some(), "the launch is recorded");
-    assert!(fx.notes.messages().is_empty(), "no needs-revision for an adopted start: {:?}", fx.notes.messages());
+    assert!(
+        start_calls(&fx).is_empty(),
+        "the lost start was adopted, not repeated: {:?}",
+        calls(&fx)
+    );
+    assert!(
+        fx.journal
+            .meta_get(&planner::launched_key(&c.id))
+            .unwrap()
+            .is_some(),
+        "the launch is recorded"
+    );
+    assert!(
+        fx.notes.messages().is_empty(),
+        "no needs-revision for an adopted start: {:?}",
+        fx.notes.messages()
+    );
 }
 
 #[tokio::test]
@@ -1303,18 +1969,36 @@ async fn cancelled_start_agent_is_recovered_as_unknown() {
     activate(&fx, "claude");
     fx.herdr.fail_next("agent.start", Fault::Hang);
     // The daemon's first-pass timeout cancels the step the same way.
-    assert!(tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh()).await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh())
+            .await
+            .is_err()
+    );
     fx.w.drain().unwrap();
     let row = rows(&fx, EffectKind::StartAgent).remove(0);
-    assert!(matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown), "{row:?}");
-    assert!(row.sched.dispatched.is_some(), "the cancelled call left its write-ahead marker: {row:?}");
+    assert!(
+        matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown),
+        "{row:?}"
+    );
+    assert!(
+        row.sched.dispatched.is_some(),
+        "the cancelled call left its write-ahead marker: {row:?}"
+    );
     let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
-    assert!(agent_on_pane(&fx, &pane).await, "the hung call did reach Herdr");
+    assert!(
+        agent_on_pane(&fx, &pane).await,
+        "the hung call did reach Herdr"
+    );
 
     step(&fx).await;
     let done = fx.journal.get_effect(&row.id).unwrap().unwrap();
     assert_eq!(done.status, EffectStatus::Done, "{done:?}");
-    assert_eq!(start_calls(&fx).len(), 1, "exactly one start in total: {:?}", calls(&fx));
+    assert_eq!(
+        start_calls(&fx).len(),
+        1,
+        "exactly one start in total: {:?}",
+        calls(&fx)
+    );
 }
 
 #[tokio::test]
@@ -1328,22 +2012,46 @@ async fn cancelled_replacement_start_is_recovered() {
     assert_eq!(ef.status, EffectStatus::Pending);
     // The old occupant exits and the shell shows; the next step starts the new agent, but is cancelled in the call.
     fx.herdr.set_agent(&pane, None);
-    admit_bookkeeping(&fx, json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_end_occupant", "clone": c.id, "native": "abc"}),
+    );
     fx.herdr.set_process(&pane, shell());
     fx.herdr.clear_calls();
     fx.herdr.fail_next("agent.start", Fault::Hang);
-    assert!(tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh()).await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), fx.rec.step_fresh())
+            .await
+            .is_err()
+    );
     fx.w.drain().unwrap();
     assert_eq!(start_calls(&fx).len(), 1);
-    let phase: super::session::ReplacePhase =
-        serde_json::from_str(&fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap().expect("phase saved")).unwrap();
-    assert!(matches!(phase, super::session::ReplacePhase::Starting { .. }), "{phase:?}");
+    let phase: super::session::ReplacePhase = serde_json::from_str(
+        &fx.journal
+            .meta_get(&format!("replace:{}", ef.id))
+            .unwrap()
+            .expect("phase saved"),
+    )
+    .unwrap();
+    assert!(
+        matches!(phase, super::session::ReplacePhase::Starting { .. }),
+        "{phase:?}"
+    );
 
     step(&fx).await;
     let done = fx.journal.get_effect(&ef.id).unwrap().unwrap();
     assert_eq!(done.status, EffectStatus::Done, "{done:?}");
-    assert_eq!(start_calls(&fx).len(), 1, "no second start: {:?}", calls(&fx));
-    assert_eq!(fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(), None, "the phase is cleared");
+    assert_eq!(
+        start_calls(&fx).len(),
+        1,
+        "no second start: {:?}",
+        calls(&fx)
+    );
+    assert_eq!(
+        fx.journal.meta_get(&format!("replace:{}", ef.id)).unwrap(),
+        None,
+        "the phase is cleared"
+    );
 }
 
 #[tokio::test]
@@ -1355,7 +2063,9 @@ async fn replacement_without_starting_phase_does_not_adopt_old_agent() {
     step(&fx).await;
     let mut ef = rows(&fx, EffectKind::ReplaceSession).remove(0);
     // An Unknown row with no phase saved: no start was ever dispatched, so the agent is still the old occupant.
-    fx.journal.meta_delete(&format!("replace:{}", ef.id)).unwrap();
+    fx.journal
+        .meta_delete(&format!("replace:{}", ef.id))
+        .unwrap();
     ef.status = EffectStatus::Unknown;
     ef.sched = Default::default();
     fx.journal.upsert_effect(&ef).unwrap();
@@ -1364,8 +2074,16 @@ async fn replacement_without_starting_phase_does_not_adopt_old_agent() {
     fx.herdr.clear_calls();
 
     step(&fx).await;
-    assert_eq!(send_keys_count(&fx), 2, "the exit sequence goes to the old agent: {:?}", calls(&fx));
-    assert_ne!(fx.journal.get_effect(&ef.id).unwrap().unwrap().status, EffectStatus::Done);
+    assert_eq!(
+        send_keys_count(&fx),
+        2,
+        "the exit sequence goes to the old agent: {:?}",
+        calls(&fx)
+    );
+    assert_ne!(
+        fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
+        EffectStatus::Done
+    );
     assert!(start_calls(&fx).is_empty());
 }
 
@@ -1383,7 +2101,12 @@ async fn multiple_clones_split_into_one_tab() {
     let panes: Vec<_> = cs.iter().map(|c| pane_of(&fx, c)).collect();
     assert_ne!(panes[0], panes[1]);
     let snap = fx.herdr.snapshot().await.unwrap();
-    let tab = snap.workspaces.iter().flat_map(|w| &w.tabs).find(|t| t.label == "foreman").unwrap();
+    let tab = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|t| t.label == "foreman")
+        .unwrap();
     assert_eq!(tab.panes.len(), 2);
 }
 
@@ -1397,7 +2120,10 @@ async fn adopted_pane_of_retired_clone_is_not_closed() {
     let pa = pane_of(&fx, &a);
     commit(&fx, "clone add foreman --name second");
     let s = seat(&fx, "foreman");
-    let b = clones_of(&fx, &s.id).into_iter().find(|c| c.id != a.id).unwrap();
+    let b = clones_of(&fx, &s.id)
+        .into_iter()
+        .find(|c| c.id != a.id)
+        .unwrap();
     commit(&fx, &format!("clone retire {}", a.id));
 
     let snap = fx.herdr.snapshot().await.unwrap();
@@ -1413,7 +2139,12 @@ async fn adopted_pane_of_retired_clone_is_not_closed() {
     set_live_ref(
         &fx.journal,
         &a.id.to_any(),
-        &LiveRef { workspace: Some(ws.id.clone()), tab: Some(tab.id.clone()), pane: Some(pa.clone()), incarnation: snap.incarnation.clone() },
+        &LiveRef {
+            workspace: Some(ws.id.clone()),
+            tab: Some(tab.id.clone()),
+            pane: Some(pa.clone()),
+            incarnation: snap.incarnation.clone(),
+        },
     );
     let binding = Binding {
         token: None,
@@ -1429,10 +2160,29 @@ async fn adopted_pane_of_retired_clone_is_not_closed() {
     fx.herdr.clear_calls();
     step(&fx).await;
     step(&fx).await;
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(_))), 0, "{:?}", calls(&fx));
-    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::SplitPane(_) | FakeCall::CreateTab(_))), 0, "{:?}", calls(&fx));
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(_))),
+        0,
+        "{:?}",
+        calls(&fx)
+    );
+    assert_eq!(
+        count_calls(&fx, |c| matches!(
+            c,
+            FakeCall::SplitPane(_) | FakeCall::CreateTab(_)
+        )),
+        0,
+        "{:?}",
+        calls(&fx)
+    );
     let snap = fx.herdr.snapshot().await.unwrap();
-    let live = snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes).find(|p| p.id == pa).expect("PA survives");
+    let live = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .find(|p| p.id == pa)
+        .expect("PA survives");
     assert_eq!(live.metadata.get("hg"), Some(&format!("hg={}", b.id)));
     assert_eq!(live_ref(&fx.journal, &a.id.to_any()), None);
 }
@@ -1440,7 +2190,12 @@ async fn adopted_pane_of_retired_clone_is_not_closed() {
 // ---- durable attention notices (hg-zmi.63) ----------------------------------------------------------
 
 fn notices_in(fx: &Fx, state: &str) -> usize {
-    fx.journal.notice_counts().unwrap().get(state).copied().unwrap_or(0) as usize
+    fx.journal
+        .notice_counts()
+        .unwrap()
+        .get(state)
+        .copied()
+        .unwrap_or(0) as usize
 }
 
 #[tokio::test]
@@ -1454,7 +2209,11 @@ async fn needs_revision_notice_survives_threads_down() {
         fx.w.clone(),
         fx.herdr.clone(),
         fx.clock.clone(),
-        Arc::new(ThreadsNotifier { threads: threads.clone(), journal: fx.journal.clone(), store: fx.store.clone() }),
+        Arc::new(ThreadsNotifier {
+            threads: threads.clone(),
+            journal: fx.journal.clone(),
+            store: fx.store.clone(),
+        }),
         ReconcilerConfig::new(fx.deps.instance.clone()),
     );
     let step2 = || async {
@@ -1464,12 +2223,20 @@ async fn needs_revision_notice_survives_threads_down() {
     };
     activate(&fx, "claude");
     let foreman = seat(&fx, "foreman");
-    admit_bookkeeping(&fx, json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}),
+    );
     fx.herdr.fail_next("agent.start", Fault::Unavailable);
     step2().await;
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
-    let requester = crate::model::change::Requester { seat: Some(foreman.id.clone()), ..Default::default() };
-    fx.journal.set_requester(&ef.op, &requester, fx.clock.now()).unwrap();
+    let requester = crate::model::change::Requester {
+        seat: Some(foreman.id.clone()),
+        ..Default::default()
+    };
+    fx.journal
+        .set_requester(&ef.op, &requester, fx.clock.now())
+        .unwrap();
 
     threads.disconnect();
     let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
@@ -1478,12 +2245,25 @@ async fn needs_revision_notice_survives_threads_down() {
     step2().await;
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(ef.status, EffectStatus::NeedsRevision);
-    let due = fx.journal.due_notices(fx.clock.now() + chrono::Duration::hours(1)).unwrap();
+    let due = fx
+        .journal
+        .due_notices(fx.clock.now() + chrono::Duration::hours(1))
+        .unwrap();
     assert_eq!(due.len(), 1, "{due:?}");
     assert_eq!(due[0].effect, ef.id);
-    assert!(due[0].attempts >= 1 && due[0].last_error.is_some(), "{:?}", due[0]);
-    assert!(threads.notifications().is_empty(), "nothing reached threads while it was down");
-    assert!(rec.next_wake().is_some(), "the loop wakes for the notice retry");
+    assert!(
+        due[0].attempts >= 1 && due[0].last_error.is_some(),
+        "{:?}",
+        due[0]
+    );
+    assert!(
+        threads.notifications().is_empty(),
+        "nothing reached threads while it was down"
+    );
+    assert!(
+        rec.next_wake().is_some(),
+        "the loop wakes for the notice retry"
+    );
 
     threads.reconnect();
     fx.clock.advance(chrono::Duration::minutes(10));
@@ -1491,7 +2271,11 @@ async fn needs_revision_notice_survives_threads_down() {
     let sent = threads.notifications();
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].thread, ThreadRef("t-foreman".into()));
-    assert!(sent[0].body.contains("needs revision") && sent[0].body.contains("not the shell"), "{}", sent[0].body);
+    assert!(
+        sent[0].body.contains("needs revision") && sent[0].body.contains("not the shell"),
+        "{}",
+        sent[0].body
+    );
     assert_eq!(notices_in(&fx, "delivered"), 1);
     assert_eq!(notices_in(&fx, "pending"), 0);
 
@@ -1506,21 +2290,39 @@ async fn seatless_attention_notice_waits_for_affected_seat_channel() {
     let threads = Arc::new(crate::threads::fake::FakeThreads::new());
     threads.add_thread("t-foreman", "foreman");
     let rec = Reconciler::new(
-        fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(),
-        Arc::new(ThreadsNotifier { threads: threads.clone(), journal: fx.journal.clone(), store: fx.store.clone() }),
+        fx.store.clone(),
+        fx.journal.clone(),
+        fx.w.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        Arc::new(ThreadsNotifier {
+            threads: threads.clone(),
+            journal: fx.journal.clone(),
+            store: fx.store.clone(),
+        }),
         ReconcilerConfig::new(fx.deps.instance.clone()),
     );
     activate(&fx, "claude");
     let foreman = seat(&fx, "foreman");
-    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    fx.herdr.fail_next(
+        "agent.start",
+        Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
+    );
     rec.step_fresh().await;
     fx.w.drain().unwrap();
-    assert_eq!(notices_in(&fx, "pending"), 1, "no channel yet: do not drop the notice");
+    assert_eq!(
+        notices_in(&fx, "pending"),
+        1,
+        "no channel yet: do not drop the notice"
+    );
     assert_eq!(notices_in(&fx, "logged"), 0);
     assert!(threads.notifications().is_empty());
     assert!(rec.next_wake().is_some());
 
-    admit_bookkeeping(&fx, json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}),
+    );
     fx.clock.advance(chrono::Duration::minutes(10));
     rec.deliver_notices().await;
     assert_eq!(notices_in(&fx, "pending"), 0);
@@ -1536,14 +2338,30 @@ async fn seatless_attention_notice_waits_for_affected_seat_channel() {
 async fn blocked_needs_human_is_noticed() {
     let fx = fx();
     activate(&fx, "claude");
-    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    fx.herdr.fail_next(
+        "agent.start",
+        Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
+    );
     step(&fx).await;
     let ef = rows(&fx, EffectKind::StartAgent).remove(0);
     assert_eq!(ef.status, EffectStatus::BlockedNeedsHuman);
-    let key = notice_key(&ef.op, &format!("agent on {} is waiting for a human (trust or auth dialog)", ef.object));
-    let n = fx.journal.get_notice(&key.0).unwrap().expect("a notice was journaled with the status");
+    let key = notice_key(
+        &ef.op,
+        &format!(
+            "agent on {} is waiting for a human (trust or auth dialog)",
+            ef.object
+        ),
+    );
+    let n = fx
+        .journal
+        .get_notice(&key.0)
+        .unwrap()
+        .expect("a notice was journaled with the status");
     assert_eq!(n.effect, ef.id);
-    assert_eq!(n.state, "delivered", "the sweep at the end of the step delivered it");
+    assert_eq!(
+        n.state, "delivered",
+        "the sweep at the end of the step delivered it"
+    );
     assert_eq!(fx.notes.messages(), vec![n.text.clone()]);
     step(&fx).await;
     assert_eq!(fx.notes.messages().len(), 1, "not delivered again");
@@ -1591,11 +2409,15 @@ impl EffectExecutor for FailExec {
 async fn failed_effect_is_noticed_and_counted() {
     let fx = fx();
     commit(&fx, "teamspace create alpha");
-    fx.rec.register_source(Arc::new(FailSource(SeatId::new().to_any())));
+    fx.rec
+        .register_source(Arc::new(FailSource(SeatId::new().to_any())));
     fx.rec.register_executor(Arc::new(FailExec));
     step(&fx).await;
     let ef = rows(&fx, EffectKind::Custom("demo.fail".into())).remove(0);
-    assert_eq!((ef.status, ef.last_error.as_deref()), (EffectStatus::Failed, Some("boom")));
+    assert_eq!(
+        (ef.status, ef.last_error.as_deref()),
+        (EffectStatus::Failed, Some("boom"))
+    );
     let msgs = fx.notes.messages();
     assert_eq!(msgs.len(), 1, "{msgs:?}");
     assert!(msgs[0].contains("failed: boom"), "{msgs:?}");

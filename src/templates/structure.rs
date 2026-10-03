@@ -50,7 +50,9 @@ pub(crate) fn read_seat_rec(
     tree: &dyn TreeRead,
     id: &SeatId,
 ) -> Result<Option<(ObjectLocation, SeatRecord)>, StoreError> {
-    let Some(loc) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+    let Some(loc) = layout::locate(tree, &id.to_any())? else {
+        return Ok(None);
+    };
     Ok(read_toml::<SeatRecord>(tree, &loc.record_path)?.map(|r| (loc, r)))
 }
 
@@ -58,7 +60,9 @@ pub(crate) fn read_template(
     tree: &dyn TreeRead,
     id: &TemplateId,
 ) -> Result<Option<(ObjectLocation, TemplateRecord)>, StoreError> {
-    let Some(loc) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+    let Some(loc) = layout::locate(tree, &id.to_any())? else {
+        return Ok(None);
+    };
     Ok(read_toml::<TemplateRecord>(tree, &loc.record_path)?.map(|r| (loc, r)))
 }
 
@@ -77,15 +81,26 @@ pub fn member_seat_record(
         name: member.name.clone(),
         name_history: vec![],
         teamspace: ts.clone(),
-        lifecycle: if member.startup == Startup::Active { Lifecycle::Active } else { Lifecycle::Dormant },
+        lifecycle: if member.startup == Startup::Active {
+            Lifecycle::Active
+        } else {
+            Lifecycle::Dormant
+        },
         retired: None,
         role: None,
-        template_ref: Some(TemplateRef { template: tpl.clone(), member: member.id.clone() }),
+        template_ref: Some(TemplateRef {
+            template: tpl.clone(),
+            member: member.id.clone(),
+        }),
         applications: vec![app.clone()],
         overrides: Default::default(),
         participation: Default::default(),
         activation: Default::default(),
-        runtime: Runtime { availability: Availability::Absent, bound: None, observed_at: None },
+        runtime: Runtime {
+            availability: Availability::Absent,
+            bound: None,
+            observed_at: None,
+        },
         channel: Default::default(),
         reload_required: false,
         moved_out: false,
@@ -93,10 +108,16 @@ pub fn member_seat_record(
 }
 
 /// Structure of `app` against the template currently committed in `tree`.
-pub fn effective_structure(tree: &dyn TreeRead, app: &ApplicationRecord) -> Result<EffectiveStructure, StoreError> {
+pub fn effective_structure(
+    tree: &dyn TreeRead,
+    app: &ApplicationRecord,
+) -> Result<EffectiveStructure, StoreError> {
     let (_, tpl) = read_template(tree, &app.template)?.ok_or_else(|| StoreError::Corrupt {
         path: layout::application_record(&app.id).as_str().into(),
-        reason: format!("application {} names missing template {}", app.id, app.template),
+        reason: format!(
+            "application {} names missing template {}",
+            app.id, app.template
+        ),
     })?;
     effective_structure_with(tree, &tpl, app)
 }
@@ -117,7 +138,9 @@ pub fn effective_structure_with(
         }
         match app.member_map.get(&m.id) {
             Some(seat_id) => {
-                let Some((_, seat)) = read_seat_rec(tree, seat_id)? else { continue };
+                let Some((_, seat)) = read_seat_rec(tree, seat_id)? else {
+                    continue;
+                };
                 if seat.lifecycle == Lifecycle::Retired {
                     continue;
                 }
@@ -132,7 +155,8 @@ pub fn effective_structure_with(
                 });
             }
             None => {
-                let stand_in = member_seat_record(SeatId::new(), &tpl.id, m, &app.teamspace, &app.id);
+                let stand_in =
+                    member_seat_record(SeatId::new(), &tpl.id, m, &app.teamspace, &app.id);
                 let config = resolve(&graph.defaults, Some(tpl), Some(m), &stand_in);
                 seats.push(DesiredSeat {
                     member: Some(m.id.clone()),
@@ -146,13 +170,22 @@ pub fn effective_structure_with(
         }
     }
     for id in &app.additions {
-        let Some((_, seat)) = read_seat_rec(tree, id)? else { continue };
+        let Some((_, seat)) = read_seat_rec(tree, id)? else {
+            continue;
+        };
         if seat.lifecycle == Lifecycle::Retired {
             continue;
         }
-        let member = seat.template_ref.as_ref().and_then(|r| tpl.members.iter().find(|m| m.id == r.member));
+        let member = seat
+            .template_ref
+            .as_ref()
+            .and_then(|r| tpl.members.iter().find(|m| m.id == r.member));
         let config = resolve(&graph.defaults, Some(tpl), member, &seat);
-        let startup = if seat.lifecycle == Lifecycle::Active { Startup::Active } else { Startup::Deferred };
+        let startup = if seat.lifecycle == Lifecycle::Active {
+            Startup::Active
+        } else {
+            Startup::Deferred
+        };
         seats.push(DesiredSeat {
             member: None,
             seat: Some(seat.id.clone()),
@@ -162,5 +195,10 @@ pub fn effective_structure_with(
             source: SeatSource::Addition,
         });
     }
-    Ok(EffectiveStructure { application: app.id.clone(), template: tpl.id.clone(), seats, excluded })
+    Ok(EffectiveStructure {
+        application: app.id.clone(),
+        template: tpl.id.clone(),
+        seats,
+        excluded,
+    })
 }

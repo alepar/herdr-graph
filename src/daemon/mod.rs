@@ -32,11 +32,16 @@ pub struct DaemonCtx {
 /// then flip shutdown, await loops (5 s timeout each), remove the socket file, drop the lock.
 pub fn run_foreground(instance: &Path, herdr_socket: Option<&Path>) -> anyhow::Result<()> {
     use anyhow::Context;
-    let herdr_socket = herdr_socket.ok_or_else(|| anyhow::anyhow!("daemon unavailable: not inside Herdr"))?;
+    let herdr_socket =
+        herdr_socket.ok_or_else(|| anyhow::anyhow!("daemon unavailable: not inside Herdr"))?;
     if let Err(e) = std::os::unix::net::UnixStream::connect(herdr_socket) {
-        anyhow::bail!("daemon unavailable: Herdr socket {} not reachable: {e}", herdr_socket.display());
+        anyhow::bail!(
+            "daemon unavailable: Herdr socket {} not reachable: {e}",
+            herdr_socket.display()
+        );
     }
-    crate::store::GitStore::open(instance).with_context(|| format!("instance {}", instance.display()))?;
+    crate::store::GitStore::open(instance)
+        .with_context(|| format!("instance {}", instance.display()))?;
 
     let paths = InstancePaths::new(instance);
     std::fs::create_dir_all(&paths.local)?;
@@ -68,13 +73,24 @@ pub fn run_foreground(instance: &Path, herdr_socket: Option<&Path>) -> anyhow::R
         Err(e) => return Err(e).context("removing stale socket"),
     }
 
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let claude_root = crate::model::harness::claude_config_root(
-        std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).as_deref(),
+        std::env::var_os("CLAUDE_CONFIG_DIR")
+            .map(PathBuf::from)
+            .as_deref(),
         &home,
     );
-    let ctx = DaemonCtx { paths: paths.clone(), herdr_socket: herdr_socket.to_path_buf(), started_at, claude_root };
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let ctx = DaemonCtx {
+        paths: paths.clone(),
+        herdr_socket: herdr_socket.to_path_buf(),
+        started_at,
+        claude_root,
+    };
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
     let result = rt.block_on(run_async(ctx));
     let _ = std::fs::remove_file(&paths.socket);
     rt.shutdown_timeout(Duration::from_secs(1));

@@ -24,15 +24,23 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
 /// Daemon down: read the binding index straight from the committed graph.
 fn direct(target: &str) -> anyhow::Result<WhoReply> {
     let env = Env::from_process();
-    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr).ok_or(ClientError::NoInstance)?;
+    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
+        .ok_or(ClientError::NoInstance)?;
     let store = crate::store::GitStore::open(&root)?;
     let head = store.head()?;
-    let view = crate::store::tree::CommitView { store: &store, at: head };
+    let view = crate::store::tree::CommitView {
+        store: &store,
+        at: head,
+    };
     Ok(who(&view, target)?)
 }
 
 fn run_who(target: &str) -> anyhow::Result<ExitCode> {
-    let reply: WhoReply = match call_daemon("who", serde_json::json!({ "target": target }), CallMode::NoEnsure) {
+    let reply: WhoReply = match call_daemon(
+        "who",
+        serde_json::json!({ "target": target }),
+        CallMode::NoEnsure,
+    ) {
         Ok(v) => serde_json::from_value(v)?,
         Err(ClientError::NoInstance) => {
             eprintln!("{}", ClientError::NoInstance);

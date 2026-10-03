@@ -88,10 +88,19 @@ impl Fact {
             && self.ts.lifecycle != Lifecycle::Retired
     }
     fn bound_pane(&self) -> Option<&str> {
-        self.clone.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).map(|p| p.0.as_str())
+        self.clone
+            .runtime
+            .bound
+            .as_ref()
+            .and_then(|b| b.pane_id.as_ref())
+            .map(|p| p.0.as_str())
     }
     fn candidate(&self, reason: impl Into<String>) -> Candidate {
-        Candidate { clone: self.clone.id.clone(), seat: self.seat.id.clone(), reason: reason.into() }
+        Candidate {
+            clone: self.clone.id.clone(),
+            seat: self.seat.id.clone(),
+            reason: reason.into(),
+        }
     }
 }
 
@@ -100,7 +109,11 @@ fn facts(tree: &dyn TreeRead) -> Result<Vec<Fact>, StoreError> {
     for (ts_loc, ts) in layout::list_teamspaces(tree)? {
         for (seat_loc, seat) in layout::list_seats(tree, &ts_loc.folder)? {
             for (_, clone) in layout::list_clones(tree, &seat_loc.folder)? {
-                out.push(Fact { clone, seat: seat.clone(), ts: ts.clone() });
+                out.push(Fact {
+                    clone,
+                    seat: seat.clone(),
+                    ts: ts.clone(),
+                });
             }
         }
     }
@@ -117,7 +130,10 @@ fn session_id(pane: Option<&PaneInfo>) -> Option<&str> {
 /// The ns id of the clone's session with this native id (current occupant first).
 fn ns_for_native(f: &Fact, native: &str) -> Option<NsId> {
     if let Some(occ) = &f.clone.occupant
-        && f.clone.sessions.iter().any(|s| s.id == occ.native_session && s.native_session_id == native)
+        && f.clone
+            .sessions
+            .iter()
+            .any(|s| s.id == occ.native_session && s.native_session_id == native)
     {
         return Some(occ.native_session.clone());
     }
@@ -138,28 +154,48 @@ fn bound(f: &Fact, via: &str) -> Resolution {
 /// Resolve the caller: pane binding, then `HERDR_GRAPH_CLONE`, then the pane's agent session id; else
 /// unbound with candidates (clones in the caller's seat or teamspace whose binding is unknown or flagged
 /// `reload_required`, i.e. moved panes). An unreadable tree resolves to unbound with no candidates.
-pub fn resolve_caller(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&PaneInfo>) -> Resolution {
-    try_resolve(tree, caller, snapshot_pane).unwrap_or(Resolution::Unbound { candidates: vec![], proposal: None })
+pub fn resolve_caller(
+    tree: &dyn TreeRead,
+    caller: &CallerInfo,
+    snapshot_pane: Option<&PaneInfo>,
+) -> Resolution {
+    try_resolve(tree, caller, snapshot_pane).unwrap_or(Resolution::Unbound {
+        candidates: vec![],
+        proposal: None,
+    })
 }
 
-fn try_resolve(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&PaneInfo>) -> Result<Resolution, StoreError> {
+fn try_resolve(
+    tree: &dyn TreeRead,
+    caller: &CallerInfo,
+    snapshot_pane: Option<&PaneInfo>,
+) -> Result<Resolution, StoreError> {
     let all = facts(tree)?;
 
     if let Some(pane) = caller.pane_id.as_deref() {
-        let here: Vec<&Fact> = all.iter().filter(|f| f.live() && f.bound_pane() == Some(pane)).collect();
+        let here: Vec<&Fact> = all
+            .iter()
+            .filter(|f| f.live() && f.bound_pane() == Some(pane))
+            .collect();
         match here.as_slice() {
             [] => {}
             [one] => return Ok(bound(one, "binding")),
             many => {
                 return Ok(Resolution::Ambiguous {
-                    candidates: many.iter().map(|f| f.candidate(format!("bound to pane {pane}"))).collect(),
+                    candidates: many
+                        .iter()
+                        .map(|f| f.candidate(format!("bound to pane {pane}")))
+                        .collect(),
                     proposal: None,
                 });
             }
         }
     }
 
-    let env_clone = caller.graph_clone.as_deref().and_then(|s| s.parse::<CloneId>().ok());
+    let env_clone = caller
+        .graph_clone
+        .as_deref()
+        .and_then(|s| s.parse::<CloneId>().ok());
     if let Some(id) = &env_clone
         && let Some(f) = all.iter().find(|f| &f.clone.id == id && f.live())
     {
@@ -167,8 +203,11 @@ fn try_resolve(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&
     }
 
     if let Some(sid) = session_id(snapshot_pane) {
-        let by_session: Vec<(&Fact, NsId)> =
-            all.iter().filter(|f| f.live()).filter_map(|f| ns_for_native(f, sid).map(|ns| (f, ns))).collect();
+        let by_session: Vec<(&Fact, NsId)> = all
+            .iter()
+            .filter(|f| f.live())
+            .filter_map(|f| ns_for_native(f, sid).map(|ns| (f, ns)))
+            .collect();
         match by_session.as_slice() {
             [] => {}
             [(f, ns)] => {
@@ -180,7 +219,10 @@ fn try_resolve(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&
             }
             many => {
                 return Ok(Resolution::Ambiguous {
-                    candidates: many.iter().map(|(f, _)| f.candidate(format!("session {sid}"))).collect(),
+                    candidates: many
+                        .iter()
+                        .map(|(f, _)| f.candidate(format!("session {sid}")))
+                        .collect(),
                     proposal: None,
                 });
             }
@@ -189,7 +231,11 @@ fn try_resolve(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&
 
     // Unbound: candidates are the moved or unconfirmed clones of the seat (or teamspace) the env names.
     let mut seats: Vec<SeatId> = Vec::new();
-    if let Some(s) = caller.graph_seat.as_deref().and_then(|s| s.parse::<SeatId>().ok()) {
+    if let Some(s) = caller
+        .graph_seat
+        .as_deref()
+        .and_then(|s| s.parse::<SeatId>().ok())
+    {
         seats.push(s);
     }
     if let Some(id) = &env_clone
@@ -212,12 +258,17 @@ fn try_resolve(tree: &dyn TreeRead, caller: &CallerInfo, snapshot_pane: Option<&
             let unknown = f.clone.runtime.availability == Availability::Unknown;
             match (f.clone.reload_required, unknown) {
                 (true, _) => Some(f.candidate("reload_required: its pane moved or restarted")),
-                (false, true) => Some(f.candidate("availability unknown: not confirmed in any pane")),
+                (false, true) => {
+                    Some(f.candidate("availability unknown: not confirmed in any pane"))
+                }
                 _ => None,
             }
         })
         .collect();
-    Ok(Resolution::Unbound { candidates, proposal: None })
+    Ok(Resolution::Unbound {
+        candidates,
+        proposal: None,
+    })
 }
 
 /// The unique teamspace whose `project_repo` contains the caller's cwd.
@@ -237,10 +288,24 @@ fn teamspace_by_cwd(all: &[Fact], caller: &CallerInfo) -> Option<TeamspaceId> {
 }
 
 fn pane_name(caller: &CallerInfo, pane: Option<&PaneInfo>) -> String {
-    let label = pane.and_then(|p| p.label.as_deref()).map(|l| parse_nonce_label(l).map_or(l, |(n, _)| n));
-    let from_cwd = caller.cwd.as_ref().and_then(|c| c.file_name()).and_then(|n| n.to_str());
-    let name = label.or(from_cwd).map(str::trim).filter(|n| !n.is_empty()).unwrap_or("seat");
-    if name.starts_with('-') { format!("seat{name}") } else { name.to_owned() }
+    let label = pane
+        .and_then(|p| p.label.as_deref())
+        .map(|l| parse_nonce_label(l).map_or(l, |(n, _)| n));
+    let from_cwd = caller
+        .cwd
+        .as_ref()
+        .and_then(|c| c.file_name())
+        .and_then(|n| n.to_str());
+    let name = label
+        .or(from_cwd)
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("seat");
+    if name.starts_with('-') {
+        format!("seat{name}")
+    } else {
+        name.to_owned()
+    }
 }
 
 /// The plan words that would fix `res`, for `plan.create`:
@@ -255,7 +320,8 @@ pub fn proposal_words(
 ) -> Option<Vec<String>> {
     let all = facts(tree).ok()?;
     let w = |parts: &[&str]| parts.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    let rebind = |clone: &CloneId, pane: &str| w(&["clone", "rebind", clone.as_str(), "--pane", pane]);
+    let rebind =
+        |clone: &CloneId, pane: &str| w(&["clone", "rebind", clone.as_str(), "--pane", pane]);
     match res {
         Resolution::Ambiguous { .. } => None,
         Resolution::Bound { via, clone, .. } if via != "binding" => {
@@ -266,16 +332,32 @@ pub fn proposal_words(
         Resolution::Bound { .. } => None,
         Resolution::Unbound { candidates, .. } => {
             if let [one] = candidates.as_slice() {
-                return caller.pane_id.as_deref().map(|pane| rebind(&one.clone, pane));
+                return caller
+                    .pane_id
+                    .as_deref()
+                    .map(|pane| rebind(&one.clone, pane));
             }
             if !candidates.is_empty() {
                 return None; // several moved clones: the user chooses
             }
-            let env_seat = caller.graph_seat.as_deref().and_then(|s| s.parse::<SeatId>().ok());
-            let env_clone = caller.graph_clone.as_deref().and_then(|s| s.parse::<CloneId>().ok());
-            let seat_of = |id: &SeatId| all.iter().find(|f| &f.seat.id == id).map(|f| (f.seat.clone(), f.ts.clone()));
+            let env_seat = caller
+                .graph_seat
+                .as_deref()
+                .and_then(|s| s.parse::<SeatId>().ok());
+            let env_clone = caller
+                .graph_clone
+                .as_deref()
+                .and_then(|s| s.parse::<CloneId>().ok());
+            let seat_of = |id: &SeatId| {
+                all.iter()
+                    .find(|f| &f.seat.id == id)
+                    .map(|f| (f.seat.clone(), f.ts.clone()))
+            };
             let named_seat = env_seat.clone().or_else(|| {
-                env_clone.as_ref().and_then(|c| all.iter().find(|f| &f.clone.id == c)).map(|f| f.seat.id.clone())
+                env_clone
+                    .as_ref()
+                    .and_then(|c| all.iter().find(|f| &f.clone.id == c))
+                    .map(|f| f.seat.id.clone())
             });
             if let Some((seat, _)) = named_seat.as_ref().and_then(seat_of) {
                 if seat.lifecycle == Lifecycle::Retired {
@@ -295,7 +377,13 @@ pub fn proposal_words(
                 .map(|(_, ts)| ts.id)
                 .or_else(|| teamspace_by_cwd(&all, caller))?;
             let name = pane_name(caller, snapshot_pane);
-            Some(vec!["seat".into(), "create".into(), name, "--teamspace".into(), ts.to_string()])
+            Some(vec![
+                "seat".into(),
+                "create".into(),
+                name,
+                "--teamspace".into(),
+                ts.to_string(),
+            ])
         }
     }
 }

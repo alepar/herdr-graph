@@ -25,7 +25,9 @@ pub enum Commands {
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
-        Commands::Seat { hook_prompt: true, .. } => {
+        Commands::Seat {
+            hook_prompt: true, ..
+        } => {
             hook_prompt();
             Ok(ExitCode::SUCCESS)
         }
@@ -53,7 +55,10 @@ fn hook_prompt() {
             let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)?;
             let store = crate::store::GitStore::open(&root).ok()?;
             let head = store.head().ok()?;
-            let view = crate::store::tree::CommitView { store: &store, at: head };
+            let view = crate::store::tree::CommitView {
+                store: &store,
+                at: head,
+            };
             Some(wants_seat_prompt(None, Some(&view), env.pane_id.as_deref()))
         })()
         .unwrap_or(false)

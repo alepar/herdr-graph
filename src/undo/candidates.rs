@@ -35,8 +35,13 @@ pub fn is_undoable(kind: ActionKind) -> bool {
 }
 
 /// The action record `act`, or None when it does not exist at this revision.
-pub fn read_action(tree: &dyn TreeRead, act: &ActionId) -> Result<Option<ActionRecord>, StoreError> {
-    let Some(loc) = layout::locate(tree, &act.to_any())? else { return Ok(None) };
+pub fn read_action(
+    tree: &dyn TreeRead,
+    act: &ActionId,
+) -> Result<Option<ActionRecord>, StoreError> {
+    let Some(loc) = layout::locate(tree, &act.to_any())? else {
+        return Ok(None);
+    };
     read_toml(tree, &loc.record_path)
 }
 
@@ -66,7 +71,9 @@ impl Names {
     }
 
     fn of_str(&self, s: Option<&str>) -> String {
-        s.and_then(|s| AnyId::parse(s).ok()).map(|i| self.of(&i)).unwrap_or_default()
+        s.and_then(|s| AnyId::parse(s).ok())
+            .map(|i| self.of(&i))
+            .unwrap_or_default()
     }
 }
 
@@ -85,7 +92,11 @@ fn counts(a: &ActionRecord) -> String {
             c => parts.push(format!("{c} {word}s")),
         }
     }
-    if parts.is_empty() { "nothing".into() } else { parts.join(", ") }
+    if parts.is_empty() {
+        "nothing".into()
+    } else {
+        parts.join(", ")
+    }
 }
 
 fn first_named(a: &ActionRecord, names: &Names) -> String {
@@ -106,11 +117,22 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
         ),
         ActionKind::Retire => format!("retired {} ({})", counts(a), first_named(a, names)),
         ActionKind::ApplicationRetire => {
-            format!("retired application {}; withdrew {}", names.of_str(comp_str(a, "application")), counts(a))
+            format!(
+                "retired application {}; withdrew {}",
+                names.of_str(comp_str(a, "application")),
+                counts(a)
+            )
         }
         ActionKind::Hydrate => {
-            let created = a.compensation.get("created").and_then(|v| v.as_array()).map_or(0, |v| v.len());
-            format!("applied template as {} ({created} objects created)", names.of_str(comp_str(a, "application")))
+            let created = a
+                .compensation
+                .get("created")
+                .and_then(|v| v.as_array())
+                .map_or(0, |v| v.len());
+            format!(
+                "applied template as {} ({created} objects created)",
+                names.of_str(comp_str(a, "application"))
+            )
         }
         ActionKind::TemplateEdit => {
             let fields: Vec<&str> = a
@@ -119,7 +141,11 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
                 .and_then(|v| v.as_array())
                 .map(|v| v.iter().filter_map(|x| x.as_str()).collect())
                 .unwrap_or_default();
-            format!("edited template {} ({})", names.of_str(comp_str(a, "template")), fields.join(", "))
+            format!(
+                "edited template {} ({})",
+                names.of_str(comp_str(a, "template")),
+                fields.join(", ")
+            )
         }
         ActionKind::Resurrect => "resurrection".into(),
         ActionKind::Undo => "undo".into(),
@@ -128,8 +154,11 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
 
 /// Up to `limit` undoable actions, newest first; already-undone ones are listed and marked.
 pub fn list_candidates(tree: &dyn TreeRead, limit: usize) -> Result<Vec<Candidate>, StoreError> {
-    let mut acts: Vec<ActionRecord> =
-        layout::list_actions(tree)?.into_iter().map(|(_, a)| a).filter(|a| is_undoable(a.kind)).collect();
+    let mut acts: Vec<ActionRecord> = layout::list_actions(tree)?
+        .into_iter()
+        .map(|(_, a)| a)
+        .filter(|a| is_undoable(a.kind))
+        .collect();
     acts.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| b.id.cmp(&a.id)));
     acts.truncate(limit);
     let names = Names::build(tree)?;

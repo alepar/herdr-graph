@@ -28,20 +28,32 @@ pub fn adoption(
     caller_pane: &str,
     restored_clones: &[CloneId],
 ) -> Result<Option<Adoption>, StoreError> {
-    let Some(clone) = restored_clones.first().cloned() else { return Ok(None) };
+    let Some(clone) = restored_clones.first().cloned() else {
+        return Ok(None);
+    };
     let mut displaced = None;
     let mut displaced_binding = None;
     for (_, c) in layout::all_clones(tree)? {
         if c.lifecycle != CloneLifecycle::Active || restored_clones.contains(&c.id) {
             continue;
         }
-        if c.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).is_some_and(|p| p.0 == caller_pane) {
+        if c.runtime
+            .bound
+            .as_ref()
+            .and_then(|b| b.pane_id.as_ref())
+            .is_some_and(|p| p.0 == caller_pane)
+        {
             displaced = Some((c.id.clone(), c.occupant.clone()));
             displaced_binding = c.runtime.bound.clone();
             break;
         }
     }
-    Ok(Some(Adoption { clone, pane: caller_pane.to_owned(), displaced, displaced_binding }))
+    Ok(Some(Adoption {
+        clone,
+        pane: caller_pane.to_owned(),
+        displaced,
+        displaced_binding,
+    }))
 }
 
 impl Adoption {
@@ -49,8 +61,14 @@ impl Adoption {
     /// the new clone's token on its next step), or just the pane when nothing held it.
     pub fn binding(&self) -> Binding {
         match &self.displaced_binding {
-            Some(b) => Binding { token: None, ..b.clone() },
-            None => Binding { pane_id: Some(HerdrPaneId(self.pane.clone())), ..Binding::default() },
+            Some(b) => Binding {
+                token: None,
+                ..b.clone()
+            },
+            None => Binding {
+                pane_id: Some(HerdrPaneId(self.pane.clone())),
+                ..Binding::default()
+            },
         }
     }
 
@@ -60,9 +78,13 @@ impl Adoption {
     /// until the observer has looked.
     pub fn committed_runtime(&self, observed: Option<&Binding>) -> (Availability, Binding) {
         match observed {
-            Some(b) if b.pane_id.as_ref().is_some_and(|p| p.0 == self.pane) => {
-                (Availability::Present, Binding { token: None, ..b.clone() })
-            }
+            Some(b) if b.pane_id.as_ref().is_some_and(|p| p.0 == self.pane) => (
+                Availability::Present,
+                Binding {
+                    token: None,
+                    ..b.clone()
+                },
+            ),
             _ => (Availability::Unknown, self.binding()),
         }
     }

@@ -5,9 +5,9 @@ pub mod init;
 pub mod layout;
 pub mod record;
 pub mod slug;
-pub mod tree;
 #[cfg(test)]
 mod tests;
+pub mod tree;
 
 pub use git::GitStore;
 pub use record::Record;

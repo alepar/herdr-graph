@@ -31,20 +31,36 @@ pub struct Row {
 impl Row {
     /// `id  name  lifecycle  path`.
     pub fn render(&self) -> String {
-        format!("{}  {}  {}  {}", self.id, self.name, self.lifecycle, self.path.display())
+        format!(
+            "{}  {}  {}  {}",
+            self.id,
+            self.name,
+            self.lifecycle,
+            self.path.display()
+        )
     }
 }
 
 pub const KINDS: &[&str] = &["teamspaces", "seats", "clones", "applications", "templates"];
 
 fn lc<T: Serialize>(v: &T) -> String {
-    serde_json::to_value(v).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| "-".into())
+    serde_json::to_value(v)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "-".into())
 }
 
 /// The path of the object's folder for folder objects, of its record file otherwise.
 fn object_path(root: &Path, loc: &ObjectLocation) -> PathBuf {
-    let folder_object = matches!(loc.id.kind(), IdKind::Teamspace | IdKind::Seat | IdKind::Clone | IdKind::Template);
-    root.join(if folder_object { loc.folder.as_str() } else { loc.record_path.as_str() })
+    let folder_object = matches!(
+        loc.id.kind(),
+        IdKind::Teamspace | IdKind::Seat | IdKind::Clone | IdKind::Template
+    );
+    root.join(if folder_object {
+        loc.folder.as_str()
+    } else {
+        loc.record_path.as_str()
+    })
 }
 
 /// Rows of the listed kinds (`None` = teamspaces and seats), each kind in tree order.
@@ -53,7 +69,10 @@ pub fn list(tree: &dyn TreeRead, root: &Path, kind: Option<&str>) -> Result<Vec<
         None => vec!["teamspaces", "seats"],
         Some(k) if KINDS.contains(&k) => vec![k],
         Some(k) => {
-            return Err(ShowError::Invalid(format!("unknown kind {k:?}; expected one of {}", KINDS.join(", "))));
+            return Err(ShowError::Invalid(format!(
+                "unknown kind {k:?}; expected one of {}",
+                KINDS.join(", ")
+            )));
         }
     };
     let mut rows = Vec::new();
@@ -90,14 +109,21 @@ pub fn list(tree: &dyn TreeRead, root: &Path, kind: Option<&str>) -> Result<Vec<
 }
 
 fn row(root: &Path, loc: &ObjectLocation, name: &str, lifecycle: String) -> Row {
-    Row { id: loc.id.to_string(), name: name.to_owned(), lifecycle, path: object_path(root, loc) }
+    Row {
+        id: loc.id.to_string(),
+        name: name.to_owned(),
+        lifecycle,
+        path: object_path(root, loc),
+    }
 }
 
 /// Resolve an id, or a unique live name, to its current location.
 fn locate_target(tree: &dyn TreeRead, target: &str) -> Result<ObjectLocation, ShowError> {
     let id = match AnyId::parse(target) {
         Ok(id) => id,
-        Err(_) => grammar::resolve_object(tree, target).map_err(|e| ShowError::Invalid(e.to_string()))?,
+        Err(_) => {
+            grammar::resolve_object(tree, target).map_err(|e| ShowError::Invalid(e.to_string()))?
+        }
     };
     layout::locate(tree, &id)?.ok_or_else(|| ShowError::Invalid(format!("no object {id}")))
 }
@@ -116,11 +142,12 @@ pub fn show(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<String, Sh
         return Ok(text);
     }
     let loc = locate_target(tree, target)?;
-    let bytes = tree
-        .read_file(&loc.record_path)?
-        .ok_or_else(|| ShowError::Invalid(format!("record {} is missing", loc.record_path.as_str())))?;
-    let text = String::from_utf8(bytes)
-        .map_err(|e| ShowError::Invalid(format!("{} is not UTF-8: {e}", loc.record_path.as_str())))?;
+    let bytes = tree.read_file(&loc.record_path)?.ok_or_else(|| {
+        ShowError::Invalid(format!("record {} is missing", loc.record_path.as_str()))
+    })?;
+    let text = String::from_utf8(bytes).map_err(|e| {
+        ShowError::Invalid(format!("{} is not UTF-8: {e}", loc.record_path.as_str()))
+    })?;
     if loc.id.kind() == IdKind::Template
         && let Some(rec) = read_toml::<TemplateRecord>(tree, &loc.record_path)?
     {
@@ -135,7 +162,9 @@ fn show_path(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<Option<St
         Ok(r) => r.to_string_lossy().into_owned(),
         Err(_) => target.to_owned(),
     };
-    let Ok(p) = RepoPath::new(&rel) else { return Ok(None) };
+    let Ok(p) = RepoPath::new(&rel) else {
+        return Ok(None);
+    };
     if let Some(bytes) = tree.read_file(&p)? {
         return Ok(Some(String::from_utf8_lossy(&bytes).into_owned()));
     }

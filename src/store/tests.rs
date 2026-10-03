@@ -6,10 +6,10 @@ use crate::model::clone::CloneRecord;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{
-    ActionId, AnyId, AppId, CloneId, CloneLifecycle, CommitId, Lifecycle, OpId, RequestId, SeatId, TeamspaceId,
-    TemplateId, TranscriptId, SCHEMA_VERSION,
+    ActionId, AnyId, AppId, CloneId, CloneLifecycle, CommitId, Lifecycle, OpId, RequestId,
+    SCHEMA_VERSION, SeatId, TeamspaceId, TemplateId, TranscriptId,
 };
-use crate::ports::store::{read_record, RepoPath, Store, StoreError};
+use crate::ports::store::{RepoPath, Store, StoreError, read_record};
 use chrono::TimeZone;
 use std::collections::BTreeSet;
 
@@ -105,7 +105,10 @@ fn commit_edits(store: &GitStore, edits: &EditSet, msg: &str) -> CommitId {
 fn commit_teamspace(store: &GitStore, slug: &str, name: &str) -> TeamspaceRecord {
     let ts = teamspace(name);
     let mut e = EditSet::default();
-    e.put(layout::teamspace_record(&layout::teamspace_dir(slug)), toml_bytes(&ts));
+    e.put(
+        layout::teamspace_record(&layout::teamspace_dir(slug)),
+        toml_bytes(&ts),
+    );
     commit_edits(store, &e, "add teamspace");
     ts
 }
@@ -143,7 +146,10 @@ mod slug {
 
     #[test]
     fn unique_slug_no_collision() {
-        assert_eq!(unique_slug("Foreman", "01ABCD", &BTreeSet::new()), "foreman");
+        assert_eq!(
+            unique_slug("Foreman", "01ABCD", &BTreeSet::new()),
+            "foreman"
+        );
     }
 
     #[test]
@@ -174,19 +180,49 @@ mod layout_paths {
         assert_eq!(layout::graph_toml().as_str(), "graph.toml");
         assert_eq!(layout::teamspaces_root().as_str(), "teamspaces");
         assert_eq!(tsd.as_str(), "teamspaces/alpha");
-        assert_eq!(layout::teamspace_record(&tsd).as_str(), "teamspaces/alpha/teamspace.toml");
+        assert_eq!(
+            layout::teamspace_record(&tsd).as_str(),
+            "teamspaces/alpha/teamspace.toml"
+        );
         assert_eq!(sd.as_str(), "teamspaces/alpha/seats/foreman");
-        assert_eq!(layout::seat_record(&sd).as_str(), "teamspaces/alpha/seats/foreman/seat.toml");
+        assert_eq!(
+            layout::seat_record(&sd).as_str(),
+            "teamspaces/alpha/seats/foreman/seat.toml"
+        );
         assert_eq!(cd.as_str(), "teamspaces/alpha/seats/foreman/clones/main");
-        assert_eq!(layout::clone_record(&cd).as_str(), "teamspaces/alpha/seats/foreman/clones/main/clone.toml");
+        assert_eq!(
+            layout::clone_record(&cd).as_str(),
+            "teamspaces/alpha/seats/foreman/clones/main/clone.toml"
+        );
         assert_eq!(tpl.as_str(), "templates/pair");
-        assert_eq!(layout::template_record(&tpl).as_str(), "templates/pair/template.toml");
-        assert_eq!(layout::member_agents_md(&tpl, "lead").as_str(), "templates/pair/members/lead/AGENTS.md");
-        assert_eq!(layout::application_record(&app).as_str(), format!("applications/{app}.toml"));
-        assert_eq!(layout::transcript_record(&st, &tr).as_str(), format!("transcripts/{st}/{tr}.toml"));
-        assert_eq!(layout::request_record(&rq).as_str(), format!("requests/{rq}.toml"));
-        assert_eq!(layout::action_record(at, &act).as_str(), format!("actions/2026-03/{act}.toml"));
-        assert_eq!(layout::operation_record(at, &op).as_str(), format!("operations/2026-03/{op}.toml"));
+        assert_eq!(
+            layout::template_record(&tpl).as_str(),
+            "templates/pair/template.toml"
+        );
+        assert_eq!(
+            layout::member_agents_md(&tpl, "lead").as_str(),
+            "templates/pair/members/lead/AGENTS.md"
+        );
+        assert_eq!(
+            layout::application_record(&app).as_str(),
+            format!("applications/{app}.toml")
+        );
+        assert_eq!(
+            layout::transcript_record(&st, &tr).as_str(),
+            format!("transcripts/{st}/{tr}.toml")
+        );
+        assert_eq!(
+            layout::request_record(&rq).as_str(),
+            format!("requests/{rq}.toml")
+        );
+        assert_eq!(
+            layout::action_record(at, &act).as_str(),
+            format!("actions/2026-03/{act}.toml")
+        );
+        assert_eq!(
+            layout::operation_record(at, &op).as_str(),
+            format!("operations/2026-03/{op}.toml")
+        );
     }
 
     #[test]
@@ -200,7 +236,10 @@ mod layout_paths {
         );
         assert_eq!(
             layout::archived_seat_dir(&tsd, "foreman", &st).as_str(),
-            format!("teamspaces/alpha/archive/seats/foreman-{}", st.suffix6().to_lowercase())
+            format!(
+                "teamspaces/alpha/archive/seats/foreman-{}",
+                st.suffix6().to_lowercase()
+            )
         );
     }
 
@@ -208,12 +247,30 @@ mod layout_paths {
     fn action_and_operation_paths_use_year_month() {
         let act = ActionId::new();
         let op = OpId::new();
-        let dec = chrono::Utc.with_ymd_and_hms(2025, 12, 31, 23, 59, 59).unwrap();
+        let dec = chrono::Utc
+            .with_ymd_and_hms(2025, 12, 31, 23, 59, 59)
+            .unwrap();
         let jan = chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        assert!(layout::action_record(dec, &act).as_str().starts_with("actions/2025-12/"));
-        assert!(layout::action_record(jan, &act).as_str().starts_with("actions/2026-01/"));
-        assert!(layout::operation_record(dec, &op).as_str().starts_with("operations/2025-12/"));
-        assert!(layout::operation_record(jan, &op).as_str().starts_with("operations/2026-01/"));
+        assert!(
+            layout::action_record(dec, &act)
+                .as_str()
+                .starts_with("actions/2025-12/")
+        );
+        assert!(
+            layout::action_record(jan, &act)
+                .as_str()
+                .starts_with("actions/2026-01/")
+        );
+        assert!(
+            layout::operation_record(dec, &op)
+                .as_str()
+                .starts_with("operations/2025-12/")
+        );
+        assert!(
+            layout::operation_record(jan, &op)
+                .as_str()
+                .starts_with("operations/2026-01/")
+        );
     }
 }
 
@@ -254,8 +311,12 @@ mod tree {
         let f = rp("teamspaces/t/seats/foreman/AGENTS.md");
         ov.delete_file(&f);
         assert_eq!(ov.read_file(&f).unwrap(), None);
-        let names: Vec<_> =
-            ov.list_dir(&rp("teamspaces/t/seats/foreman")).unwrap().into_iter().map(|e| e.name).collect();
+        let names: Vec<_> = ov
+            .list_dir(&rp("teamspaces/t/seats/foreman"))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
         assert!(!names.contains(&"AGENTS.md".to_string()), "{names:?}");
         assert!(names.contains(&"seat.toml".to_string()));
     }
@@ -270,8 +331,15 @@ mod tree {
         let entries = ov.list_dir(&sd).unwrap();
         let find = |n: &str| entries.iter().find(|e| e.name == n).map(|e| e.kind);
         assert_eq!(find("new"), Some(crate::ports::store::EntryKind::Dir));
-        assert_eq!(find("notes"), None, "dir whose files are all deleted disappears: {entries:?}");
-        assert_eq!(find("AGENTS.md"), Some(crate::ports::store::EntryKind::File));
+        assert_eq!(
+            find("notes"),
+            None,
+            "dir whose files are all deleted disappears: {entries:?}"
+        );
+        assert_eq!(
+            find("AGENTS.md"),
+            Some(crate::ports::store::EntryKind::File)
+        );
     }
 
     #[test]
@@ -282,14 +350,30 @@ mod tree {
         let to = rp("teamspaces/t/seats/lead");
         let moved = ov.move_dir(&from, &to).unwrap();
         assert_eq!(moved.len(), 3);
-        assert_eq!(ov.read_file(&rp("teamspaces/t/seats/lead/notes/a.md")).unwrap().unwrap(), b"note");
-        assert_eq!(ov.read_file(&rp("teamspaces/t/seats/lead/AGENTS.md")).unwrap().unwrap(), b"hello");
+        assert_eq!(
+            ov.read_file(&rp("teamspaces/t/seats/lead/notes/a.md"))
+                .unwrap()
+                .unwrap(),
+            b"note"
+        );
+        assert_eq!(
+            ov.read_file(&rp("teamspaces/t/seats/lead/AGENTS.md"))
+                .unwrap()
+                .unwrap(),
+            b"hello"
+        );
         assert!(ov.files_under(&from).unwrap().is_empty());
         assert_eq!(ov.files_under(&to).unwrap().len(), 3);
         // Applying the edits to the repo leaves no old directory behind.
         let c = commit_edits(&store, ov.edits(), "move");
         assert!(store.list_dir(&c, &from).unwrap().is_empty());
-        assert_eq!(store.read_file(&c, &rp("teamspaces/t/seats/lead/notes/a.md")).unwrap().unwrap(), b"note");
+        assert_eq!(
+            store
+                .read_file(&c, &rp("teamspaces/t/seats/lead/notes/a.md"))
+                .unwrap()
+                .unwrap(),
+            b"note"
+        );
     }
 
     #[test]
@@ -312,21 +396,34 @@ mod tree {
         let (_t, store, st) = with_seat(3);
         let mut ov = Overlay::new(&store, store.head().unwrap());
         let mut rec = st.clone();
-        let err = ov.put_record(rp("teamspaces/t/seats/other/seat.toml"), &mut rec).unwrap_err();
+        let err = ov
+            .put_record(rp("teamspaces/t/seats/other/seat.toml"), &mut rec)
+            .unwrap_err();
         match err {
-            StoreError::Corrupt { reason, .. } => assert!(reason.contains(&st.id.to_string()), "{reason}"),
+            StoreError::Corrupt { reason, .. } => {
+                assert!(reason.contains(&st.id.to_string()), "{reason}")
+            }
             other => panic!("expected Corrupt, got {other:?}"),
         }
-        assert!(ov.read_file(&rp("teamspaces/t/seats/other/seat.toml")).unwrap().is_none());
+        assert!(
+            ov.read_file(&rp("teamspaces/t/seats/other/seat.toml"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn overlay_put_record_after_move_dir_is_allowed() {
         let (_t, store, st) = with_seat(3);
         let mut ov = Overlay::new(&store, store.head().unwrap());
-        ov.move_dir(&rp("teamspaces/t/seats/foreman"), &rp("teamspaces/t/seats/moved")).unwrap();
+        ov.move_dir(
+            &rp("teamspaces/t/seats/foreman"),
+            &rp("teamspaces/t/seats/moved"),
+        )
+        .unwrap();
         let mut rec = st.clone();
-        ov.put_record(rp("teamspaces/t/seats/moved/seat.toml"), &mut rec).unwrap();
+        ov.put_record(rp("teamspaces/t/seats/moved/seat.toml"), &mut rec)
+            .unwrap();
         assert_eq!(rec.rev, 4);
     }
 
@@ -337,7 +434,8 @@ mod tree {
         let ts = teamspace("Fresh");
         let mut rec = seat("New", &ts.id);
         rec.rev = 99;
-        ov.put_record(rp("teamspaces/t/seats/new/seat.toml"), &mut rec).unwrap();
+        ov.put_record(rp("teamspaces/t/seats/new/seat.toml"), &mut rec)
+            .unwrap();
         assert_eq!(rec.rev, 1);
     }
 }
@@ -350,9 +448,15 @@ mod git {
     fn open_rejects_non_instance() {
         let tmp = tempfile::tempdir().unwrap();
         git2::Repository::init(tmp.path()).unwrap();
-        assert!(matches!(GitStore::open(tmp.path()), Err(StoreError::NoInstance(_))));
+        assert!(matches!(
+            GitStore::open(tmp.path()),
+            Err(StoreError::NoInstance(_))
+        ));
         let plain = tempfile::tempdir().unwrap();
-        assert!(matches!(GitStore::open(plain.path()), Err(StoreError::NoInstance(_))));
+        assert!(matches!(
+            GitStore::open(plain.path()),
+            Err(StoreError::NoInstance(_))
+        ));
     }
 
     #[test]
@@ -389,9 +493,15 @@ mod git {
     fn read_unknown_commit_is_error() {
         let (_t, store) = new_instance();
         let bad = CommitId("0".repeat(40));
-        assert!(matches!(store.read_file(&bad, &rp("graph.toml")), Err(StoreError::UnknownCommit(_))));
+        assert!(matches!(
+            store.read_file(&bad, &rp("graph.toml")),
+            Err(StoreError::UnknownCommit(_))
+        ));
         let junk = CommitId("zz".into());
-        assert!(matches!(store.list_dir(&junk, &rp("")), Err(StoreError::UnknownCommit(_))));
+        assert!(matches!(
+            store.list_dir(&junk, &rp("")),
+            Err(StoreError::UnknownCommit(_))
+        ));
     }
 
     #[test]
@@ -413,18 +523,38 @@ mod git {
         assert_eq!(slug, "lead");
         let new_dir = layout::seat_dir(&tsd, &slug);
         ov.move_dir(&sd, &new_dir).unwrap();
-        ov.put_record(layout::seat_record(&new_dir), &mut st).unwrap();
+        ov.put_record(layout::seat_record(&new_dir), &mut st)
+            .unwrap();
         let c2 = commit_edits(&store, &ov.into_edits(), "rename");
 
         let id = st.id.to_any();
         let new_loc = store.locate(&c2, &id).unwrap().unwrap();
-        assert_eq!(new_loc.record_path.as_str(), "teamspaces/t/seats/lead/seat.toml");
+        assert_eq!(
+            new_loc.record_path.as_str(),
+            "teamspaces/t/seats/lead/seat.toml"
+        );
         assert_eq!(new_loc.folder.as_str(), "teamspaces/t/seats/lead");
         let old_loc = store.locate(&c1, &id).unwrap().unwrap();
-        assert_eq!(old_loc.record_path.as_str(), "teamspaces/t/seats/foreman/seat.toml");
-        assert_eq!(store.read_file(&c2, &rp("teamspaces/t/seats/lead/AGENTS.md")).unwrap().unwrap(), b"rules");
-        assert_eq!(store.read_file(&c2, &rp("teamspaces/t/seats/foreman/AGENTS.md")).unwrap(), None);
-        let moved: SeatRecord = read_record(&store, &c2, &new_loc.record_path).unwrap().unwrap();
+        assert_eq!(
+            old_loc.record_path.as_str(),
+            "teamspaces/t/seats/foreman/seat.toml"
+        );
+        assert_eq!(
+            store
+                .read_file(&c2, &rp("teamspaces/t/seats/lead/AGENTS.md"))
+                .unwrap()
+                .unwrap(),
+            b"rules"
+        );
+        assert_eq!(
+            store
+                .read_file(&c2, &rp("teamspaces/t/seats/foreman/AGENTS.md"))
+                .unwrap(),
+            None
+        );
+        let moved: SeatRecord = read_record(&store, &c2, &new_loc.record_path)
+            .unwrap()
+            .unwrap();
         assert_eq!((moved.name.as_str(), moved.rev), ("Lead", 2));
     }
 
@@ -436,8 +566,14 @@ mod git {
         let mut a = seat("A", &ts.id);
         let mut b = seat("B", &ts.id);
         let mut e = EditSet::default();
-        e.put(layout::seat_record(&layout::seat_dir(&tsd, "a")), toml_bytes(&a));
-        e.put(layout::seat_record(&layout::seat_dir(&tsd, "b")), toml_bytes(&b));
+        e.put(
+            layout::seat_record(&layout::seat_dir(&tsd, "a")),
+            toml_bytes(&a),
+        );
+        e.put(
+            layout::seat_record(&layout::seat_dir(&tsd, "b")),
+            toml_bytes(&b),
+        );
         let c1 = commit_edits(&store, &e, "seats");
 
         let mut ov = Overlay::new(&store, c1);
@@ -456,7 +592,10 @@ mod git {
         assert_eq!(slugs[1], format!("lead-{}", b.id.suffix6().to_lowercase()));
         let c2 = commit_edits(&store, &ov.into_edits(), "renames");
         let loc = store.locate(&c2, &b.id.to_any()).unwrap().unwrap();
-        assert_eq!(loc.folder.as_str(), format!("teamspaces/t/seats/{}", slugs[1]));
+        assert_eq!(
+            loc.folder.as_str(),
+            format!("teamspaces/t/seats/{}", slugs[1])
+        );
     }
 
     #[test]
@@ -469,7 +608,10 @@ mod git {
         let cl = clone_rec("main", &st.id);
         let mut e = EditSet::default();
         e.put(layout::seat_record(&sd), toml_bytes(&st));
-        e.put(layout::clone_record(&layout::clone_dir(&sd, "main")), toml_bytes(&cl));
+        e.put(
+            layout::clone_record(&layout::clone_dir(&sd, "main")),
+            toml_bytes(&cl),
+        );
         let c1 = commit_edits(&store, &e, "seat");
 
         // Archive the seat inside its teamspace.
@@ -498,7 +640,12 @@ mod git {
         assert_eq!(all.len(), 1);
         assert!(all[0].0.record_path.as_str().starts_with(ats.as_str()));
         assert_eq!(layout::all_clones(&view).unwrap().len(), 1);
-        assert!(layout::list_teamspaces(&view).unwrap().iter().all(|(l, _)| l.folder == ats));
+        assert!(
+            layout::list_teamspaces(&view)
+                .unwrap()
+                .iter()
+                .all(|(l, _)| l.folder == ats)
+        );
     }
 
     #[test]
@@ -538,7 +685,10 @@ mod git {
             exclusions: vec![],
             reused: vec![],
             contributions: Default::default(),
-            created_by: CreatedBy { op: OpId::new(), action: ActionId::new() },
+            created_by: CreatedBy {
+                op: OpId::new(),
+                action: ActionId::new(),
+            },
         };
         let rq = ProcessingRequest {
             schema: 1,
@@ -594,7 +744,10 @@ mod git {
         let c = commit_edits(&store, &e, "records");
 
         let want = |id: AnyId, path: &RepoPath| {
-            let loc = store.locate(&c, &id).unwrap().unwrap_or_else(|| panic!("{id} not located"));
+            let loc = store
+                .locate(&c, &id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{id} not located"));
             assert_eq!(&loc.record_path, path);
             assert_eq!(loc.id, id);
         };
@@ -603,10 +756,23 @@ mod git {
         want(rq.id.to_any(), &rq_path);
         want(tr.id.to_any(), &tr_path);
         want(act.id.to_any(), &act_path);
-        assert_eq!(store.locate(&c, &act.id.to_any()).unwrap().unwrap().folder.as_str(), "actions/2026-03");
+        assert_eq!(
+            store
+                .locate(&c, &act.id.to_any())
+                .unwrap()
+                .unwrap()
+                .folder
+                .as_str(),
+            "actions/2026-03"
+        );
         // Absent objects, and kinds that are not standalone objects.
         assert_eq!(store.locate(&c, &OpId::new().to_any()).unwrap(), None);
-        assert_eq!(store.locate(&c, &crate::model::MemberId::new().to_any()).unwrap(), None);
+        assert_eq!(
+            store
+                .locate(&c, &crate::model::MemberId::new().to_any())
+                .unwrap(),
+            None
+        );
         assert_eq!(store.locate(&c, &NsId::new().to_any()).unwrap(), None);
         // Enumerators agree.
         let view = store.at(&c);
@@ -633,12 +799,21 @@ mod git {
         e.delete(rp("never/existed.txt"));
         let c2 = commit_edits(&store, &e, "edit");
 
-        assert_eq!(store.read_file(&c2, &rp("a/two.txt")).unwrap().unwrap(), b"22");
+        assert_eq!(
+            store.read_file(&c2, &rp("a/two.txt")).unwrap().unwrap(),
+            b"22"
+        );
         assert_eq!(store.read_file(&c2, &rp("c.txt")).unwrap().unwrap(), b"3");
         assert_eq!(store.read_file(&c2, &rp("a/b/one.txt")).unwrap(), None);
-        assert!(store.list_dir(&c2, &rp("a/b")).unwrap().is_empty(), "empty dir is pruned");
+        assert!(
+            store.list_dir(&c2, &rp("a/b")).unwrap().is_empty(),
+            "empty dir is pruned"
+        );
         // Old commit unchanged; untouched files carried over.
-        assert_eq!(store.read_file(&c1, &rp("a/b/one.txt")).unwrap().unwrap(), b"1");
+        assert_eq!(
+            store.read_file(&c1, &rp("a/b/one.txt")).unwrap().unwrap(),
+            b"1"
+        );
         assert!(store.read_file(&c2, &rp(".gitignore")).unwrap().is_some());
         // build_tree alone moves no ref.
         assert_eq!(store.head().unwrap(), c2);
@@ -655,7 +830,10 @@ mod git {
         let ts = commit_teamspace(&store, "t", "T");
         let _ = ts;
         let mut e = EditSet::default();
-        e.put(rp("teamspaces/t/seats/bad/seat.toml"), b"this is = not [valid".to_vec());
+        e.put(
+            rp("teamspaces/t/seats/bad/seat.toml"),
+            b"this is = not [valid".to_vec(),
+        );
         let c = commit_edits(&store, &e, "bad");
         let view = store.at(&c);
         let err = layout::all_seats(&view).unwrap_err();
@@ -670,7 +848,10 @@ mod git {
         let (_t, store) = new_instance();
         commit_teamspace(&store, "t", "T");
         let mut e = EditSet::default();
-        e.put(rp("teamspaces/t/seats/empty/notes.md"), b"no seat.toml here".to_vec());
+        e.put(
+            rp("teamspaces/t/seats/empty/notes.md"),
+            b"no seat.toml here".to_vec(),
+        );
         let c = commit_edits(&store, &e, "dir without record");
         assert!(layout::all_seats(&store.at(&c)).unwrap().is_empty());
         assert_eq!(layout::list_teamspaces(&store.at(&c)).unwrap().len(), 1);
@@ -679,7 +860,7 @@ mod git {
 
 mod init {
     use super::*;
-    use crate::store::init::{init_instance, write_user_config, UserConfigOutcome};
+    use crate::store::init::{UserConfigOutcome, init_instance, write_user_config};
 
     #[test]
     fn init_creates_valid_instance() {
@@ -692,18 +873,32 @@ mod init {
         assert_eq!(g.schema_version, 1);
         assert!(!g.instance_id.is_empty());
         let ignore = store.read_file(&c, &rp(".gitignore")).unwrap().unwrap();
-        assert!(String::from_utf8(ignore).unwrap().contains("/.graph-local/"));
-        for keep in ["teamspaces/.gitkeep", "templates/.gitkeep", "rules/.gitkeep"] {
+        assert!(
+            String::from_utf8(ignore)
+                .unwrap()
+                .contains("/.graph-local/")
+        );
+        for keep in [
+            "teamspaces/.gitkeep",
+            "templates/.gitkeep",
+            "rules/.gitkeep",
+        ] {
             assert!(store.read_file(&c, &rp(keep)).unwrap().is_some(), "{keep}");
         }
         assert!(dir.join(".graph-local").is_dir());
         store
             .with_repo(|r| {
-                assert_eq!(r.find_reference("HEAD")?.symbolic_target(), Some("refs/heads/main"));
+                assert_eq!(
+                    r.find_reference("HEAD")?.symbolic_target(),
+                    Some("refs/heads/main")
+                );
                 let mut so = git2::StatusOptions::new();
                 so.include_ignored(false).include_untracked(true);
                 let st = r.statuses(Some(&mut so))?;
-                let dirty: Vec<_> = st.iter().map(|e| (e.path().map(str::to_owned), e.status())).collect();
+                let dirty: Vec<_> = st
+                    .iter()
+                    .map(|e| (e.path().map(str::to_owned), e.status()))
+                    .collect();
                 assert!(dirty.is_empty(), "working tree must be clean: {dirty:?}");
                 Ok(())
             })
@@ -727,11 +922,24 @@ mod init {
         let a = home.path().join("inst-a");
         let b = home.path().join("inst-b");
         let cfg = home.path().join(".config/herdr-graph/config.toml");
-        assert_eq!(write_user_config(home.path(), &a).unwrap(), UserConfigOutcome::Written(cfg.clone()));
+        assert_eq!(
+            write_user_config(home.path(), &a).unwrap(),
+            UserConfigOutcome::Written(cfg.clone())
+        );
         let text = std::fs::read_to_string(&cfg).unwrap();
         assert!(text.contains(a.to_str().unwrap()));
-        assert_eq!(write_user_config(home.path(), &a).unwrap(), UserConfigOutcome::AlreadyPointsHere(cfg.clone()));
-        assert_eq!(write_user_config(home.path(), &b).unwrap(), UserConfigOutcome::LeftExisting(cfg.clone()));
-        assert_eq!(std::fs::read_to_string(&cfg).unwrap(), text, "existing config is never overwritten");
+        assert_eq!(
+            write_user_config(home.path(), &a).unwrap(),
+            UserConfigOutcome::AlreadyPointsHere(cfg.clone())
+        );
+        assert_eq!(
+            write_user_config(home.path(), &b).unwrap(),
+            UserConfigOutcome::LeftExisting(cfg.clone())
+        );
+        assert_eq!(
+            std::fs::read_to_string(&cfg).unwrap(),
+            text,
+            "existing config is never overwritten"
+        );
     }
 }

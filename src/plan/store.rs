@@ -18,7 +18,11 @@ impl PlanStore {
 
     /// The instance root this store belongs to (`<instance>/.graph-local/plans`).
     pub fn instance(&self) -> PathBuf {
-        self.dir.parent().and_then(Path::parent).map(Path::to_path_buf).unwrap_or_else(|| self.dir.clone())
+        self.dir
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.dir.clone())
     }
 
     fn path(&self, id: &PlanId) -> PathBuf {
@@ -55,7 +59,9 @@ impl PlanStore {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let Ok(stored) = serde_json::from_slice::<StoredPlan>(&std::fs::read(&path)?) else { continue };
+            let Ok(stored) = serde_json::from_slice::<StoredPlan>(&std::fs::read(&path)?) else {
+                continue;
+            };
             if stored.created_at < cutoff {
                 std::fs::remove_file(&path)?;
                 removed += 1;

@@ -1,5 +1,5 @@
 //! `seats/<slug>/seat.toml` (spec §2.4).
-use crate::model::common::{is_false, Channel, Lifecycle, NameChange, Retirement, Role, Runtime};
+use crate::model::common::{Channel, Lifecycle, NameChange, Retirement, Role, Runtime, is_false};
 use crate::model::harness::Harness;
 use crate::model::ids::{AppId, MemberId, OpId, SeatId, TeamspaceId, TemplateId};
 use serde::{Deserialize, Serialize};

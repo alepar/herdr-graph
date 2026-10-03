@@ -50,7 +50,11 @@ fn notice_body(row: &OpRow) -> String {
         .as_ref()
         .map(|r| (r.reason.clone(), r.explanation.clone()))
         .unwrap_or_else(|| ("unknown".into(), String::new()));
-    let what = if row.state == OpState::Failed { "failed" } else { "was rejected" };
+    let what = if row.state == OpState::Failed {
+        "failed"
+    } else {
+        "was rejected"
+    };
     format!(
         "op {op} ({kind}) {what}: {reason} — {explanation}. Submit a replacement with --supersedes {op}, or run herdr-graph cancel {op}.",
         op = row.op,
@@ -63,7 +67,10 @@ impl ReminderScheduler {
     fn thread_of(&self, row: &OpRow) -> Option<ThreadRef> {
         let seat = row.request.requester.seat.as_ref()?;
         let head = self.store.head().ok()?;
-        let view = CommitView { store: &*self.store, at: head };
+        let view = CommitView {
+            store: &*self.store,
+            at: head,
+        };
         let loc = layout::locate(&view, &seat.to_any()).ok()??;
         let rec: SeatRecord = read_toml(&view, &loc.record_path).ok()??;
         if rec.lifecycle == Lifecycle::Retired {
@@ -73,25 +80,51 @@ impl ReminderScheduler {
     }
 
     fn sent_count(&self, op: &OpId) -> u32 {
-        self.journal.meta_get(&reminder_count_key(op)).ok().flatten().and_then(|s| s.parse().ok()).unwrap_or(0)
+        self.journal
+            .meta_get(&reminder_count_key(op))
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0)
     }
 
     /// Pure decision pass: which ops owe a notice right now. After downtime only the latest due notice is sent.
     fn due(&self, now: Timestamp) -> Vec<Due> {
-        let Ok(rows) = self.journal.list(&[OpState::Rejected, OpState::Failed], usize::MAX >> 1) else { return vec![] };
+        let Ok(rows) = self
+            .journal
+            .list(&[OpState::Rejected, OpState::Failed], usize::MAX >> 1)
+        else {
+            return vec![];
+        };
         let mut out = Vec::new();
         for row in rows {
-            if self.journal.meta_get(&reminders_stopped_key(&row.op)).ok().flatten().is_some() {
+            if self
+                .journal
+                .meta_get(&reminders_stopped_key(&row.op))
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 continue;
             }
             let sent = self.sent_count(&row.op);
             let elapsed = now - row.updated_at;
-            let due_count = SCHEDULE_HOURS.iter().filter(|h| elapsed >= Span::hours(**h)).count() as u32;
+            let due_count = SCHEDULE_HOURS
+                .iter()
+                .filter(|h| elapsed >= Span::hours(**h))
+                .count() as u32;
             if due_count <= sent {
                 continue;
             }
-            let Some(thread) = self.thread_of(&row) else { continue };
-            out.push(Due { op: row.op.clone(), index: due_count - 1, thread, body: notice_body(&row) });
+            let Some(thread) = self.thread_of(&row) else {
+                continue;
+            };
+            out.push(Due {
+                op: row.op.clone(),
+                index: due_count - 1,
+                thread,
+                body: notice_body(&row),
+            });
         }
         out
     }
@@ -102,14 +135,25 @@ impl ReminderScheduler {
         let mut sent = Vec::new();
         for due in self.due(self.clock.now()) {
             let key = OpKey(format!("rem:{}:{}", due.op, due.index));
-            if let Err(e) = self.threads.notify(&due.thread, Severity::Warn, &due.body, &key).await {
+            if let Err(e) = self
+                .threads
+                .notify(&due.thread, Severity::Warn, &due.body, &key)
+                .await
+            {
                 eprintln!("herdr-graph: reminder for {} not delivered: {e}", due.op);
                 continue;
             }
-            if let Err(e) = self.journal.meta_set(&reminder_count_key(&due.op), &(due.index + 1).to_string()) {
+            if let Err(e) = self
+                .journal
+                .meta_set(&reminder_count_key(&due.op), &(due.index + 1).to_string())
+            {
                 eprintln!("herdr-graph: could not record reminder for {}: {e}", due.op);
             }
-            sent.push(ReminderSent { op: due.op, index: due.index, thread: due.thread });
+            sent.push(ReminderSent {
+                op: due.op,
+                index: due.index,
+                thread: due.thread,
+            });
         }
         sent
     }
@@ -153,32 +197,72 @@ pub(crate) mod stub {
 
     #[async_trait::async_trait]
     impl ThreadsPort for RecordingThreads {
-        async fn ensure_thread(&self, _: ChannelScope, _: &str, _: &OpKey) -> Result<ThreadRef, ThreadsError> {
+        async fn ensure_thread(
+            &self,
+            _: ChannelScope,
+            _: &str,
+            _: &OpKey,
+        ) -> Result<ThreadRef, ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn invite(&self, _: &ThreadRef, _: &ThreadsSeatRef, _: InviteConstraint, _: &OpKey) -> Result<(), ThreadsError> {
+        async fn invite(
+            &self,
+            _: &ThreadRef,
+            _: &ThreadsSeatRef,
+            _: InviteConstraint,
+            _: &OpKey,
+        ) -> Result<(), ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn membership(&self, _: &ThreadRef, _: &ThreadsSeatRef) -> Result<Option<InvitationState>, ThreadsError> {
+        async fn membership(
+            &self,
+            _: &ThreadRef,
+            _: &ThreadsSeatRef,
+        ) -> Result<Option<InvitationState>, ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn notify(&self, thread: &ThreadRef, severity: Severity, body: &str, op_key: &OpKey) -> Result<(), ThreadsError> {
+        async fn notify(
+            &self,
+            thread: &ThreadRef,
+            severity: Severity,
+            body: &str,
+            op_key: &OpKey,
+        ) -> Result<(), ThreadsError> {
             if *self.fail.lock().unwrap() {
                 return Err(ThreadsError::ServiceBusy);
             }
-            self.notes.lock().unwrap().push((thread.clone(), severity, body.to_owned(), op_key.clone()));
+            self.notes.lock().unwrap().push((
+                thread.clone(),
+                severity,
+                body.to_owned(),
+                op_key.clone(),
+            ));
             Ok(())
         }
         async fn set_topic(&self, _: &ThreadRef, _: &str, _: &OpKey) -> Result<(), ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn release_requirement(&self, _: &ThreadRef, _: &ThreadsSeatRef, _: &OpKey) -> Result<(), ThreadsError> {
+        async fn release_requirement(
+            &self,
+            _: &ThreadRef,
+            _: &ThreadsSeatRef,
+            _: &OpKey,
+        ) -> Result<(), ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn send_request(&self, _: &ThreadRef, _: &[ThreadsSeatRef], _: &str, _: &OpKey) -> Result<MessageRef, ThreadsError> {
+        async fn send_request(
+            &self,
+            _: &ThreadRef,
+            _: &[ThreadsSeatRef],
+            _: &str,
+            _: &OpKey,
+        ) -> Result<MessageRef, ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
-        async fn receipt_state(&self, _: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
+        async fn receipt_state(
+            &self,
+            _: &[MessageRef],
+        ) -> Result<Vec<MessageReceipts>, ThreadsError> {
             Err(ThreadsError::Unsupported)
         }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
@@ -203,7 +287,10 @@ mod tests {
     }
 
     /// Seats `one` (with a channel) and `two`; an op rejected for `requester(one)` at t0.
-    fn rig_with(requester: impl Fn(&crate::model::seat::SeatRecord) -> Requester, channel: bool) -> Rig {
+    fn rig_with(
+        requester: impl Fn(&crate::model::seat::SeatRecord) -> Requester,
+        channel: bool,
+    ) -> Rig {
         let fx = fx();
         commit(&fx, "teamspace create alpha");
         commit(&fx, "seat create one --teamspace alpha --active");
@@ -221,7 +308,12 @@ mod tests {
             threads: threads.clone(),
             clock: fx.clock.clone(),
         };
-        Rig { fx, threads, sched, op: row.op }
+        Rig {
+            fx,
+            threads,
+            sched,
+            op: row.op,
+        }
     }
 
     fn rig() -> Rig {
@@ -246,19 +338,39 @@ mod tests {
             advance(&r, chrono::Duration::minutes(30));
             elapsed += 30;
         }
-        assert_eq!(got, vec![(0, 0), (60, 1), (360, 2), (1440, 3)], "initial, +1h, +6h, +24h, nothing after");
+        assert_eq!(
+            got,
+            vec![(0, 0), (60, 1), (360, 2), (1440, 3)],
+            "initial, +1h, +6h, +24h, nothing after"
+        );
         let sent = r.threads.sent();
         assert_eq!(sent.len(), 4);
         for (i, (thread, sev, body, key)) in sent.iter().enumerate() {
             assert_eq!(thread, &ThreadRef("th_one".into()));
             assert_eq!(*sev, Severity::Warn);
             assert_eq!(key, &OpKey(format!("rem:{}:{i}", r.op)));
-            assert!(body.contains(r.op.as_str()) && body.contains("seat_retire"), "{body}");
-            assert!(body.contains("unknown_plan"), "reason is in the body: {body}");
+            assert!(
+                body.contains(r.op.as_str()) && body.contains("seat_retire"),
+                "{body}"
+            );
+            assert!(
+                body.contains("unknown_plan"),
+                "reason is in the body: {body}"
+            );
             assert!(body.contains(&format!("--supersedes {}", r.op)), "{body}");
-            assert!(body.contains(&format!("herdr-graph cancel {}", r.op)), "{body}");
+            assert!(
+                body.contains(&format!("herdr-graph cancel {}", r.op)),
+                "{body}"
+            );
         }
-        assert_eq!(r.fx.w.journal().meta_get(&reminder_count_key(&r.op)).unwrap().as_deref(), Some("4"));
+        assert_eq!(
+            r.fx.w
+                .journal()
+                .meta_get(&reminder_count_key(&r.op))
+                .unwrap()
+                .as_deref(),
+            Some("4")
+        );
     }
 
     #[tokio::test]
@@ -279,10 +391,22 @@ mod tests {
         let r = rig();
         advance(&r, chrono::Duration::hours(7));
         let s = r.sched.tick().await;
-        assert_eq!(s.iter().map(|s| s.index).collect::<Vec<_>>(), vec![2], "one catch-up notice, for the +6h slot");
+        assert_eq!(
+            s.iter().map(|s| s.index).collect::<Vec<_>>(),
+            vec![2],
+            "one catch-up notice, for the +6h slot"
+        );
         assert!(r.sched.tick().await.is_empty());
         advance(&r, chrono::Duration::hours(18));
-        assert_eq!(r.sched.tick().await.iter().map(|s| s.index).collect::<Vec<_>>(), vec![3]);
+        assert_eq!(
+            r.sched
+                .tick()
+                .await
+                .iter()
+                .map(|s| s.index)
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
     }
 
     #[tokio::test]
@@ -290,7 +414,14 @@ mod tests {
         let r = rig();
         *r.threads.fail.lock().unwrap() = true;
         assert!(r.sched.tick().await.is_empty());
-        assert_eq!(r.fx.w.journal().meta_get(&reminder_count_key(&r.op)).unwrap(), None, "nothing recorded");
+        assert_eq!(
+            r.fx.w
+                .journal()
+                .meta_get(&reminder_count_key(&r.op))
+                .unwrap(),
+            None,
+            "nothing recorded"
+        );
         *r.threads.fail.lock().unwrap() = false;
         assert_eq!(r.sched.tick().await.len(), 1);
     }
@@ -300,9 +431,19 @@ mod tests {
         let r = rig();
         assert_eq!(r.sched.tick().await.len(), 1);
         let one = seat(&r.fx, "one");
-        let caller = crate::daemon::registry::CallerInfo { graph_seat: Some(one.id.to_string()), ..Default::default() };
-        let sp = plan_as(&r.fx, &caller, &format!("seat rename two zwei --supersedes {}", r.op));
-        assert_eq!(apply_plan(&r.fx, &sp).state, crate::model::operation::OpState::Committed);
+        let caller = crate::daemon::registry::CallerInfo {
+            graph_seat: Some(one.id.to_string()),
+            ..Default::default()
+        };
+        let sp = plan_as(
+            &r.fx,
+            &caller,
+            &format!("seat rename two zwei --supersedes {}", r.op),
+        );
+        assert_eq!(
+            apply_plan(&r.fx, &sp).state,
+            crate::model::operation::OpState::Committed
+        );
         advance(&r, chrono::Duration::hours(2));
         assert!(r.sched.tick().await.is_empty());
         advance(&r, chrono::Duration::hours(30));
@@ -328,7 +469,13 @@ mod tests {
         let r = rig_with(requester_of, false);
         assert!(r.sched.tick().await.is_empty());
         // a requester that is not a seat at all (a human at a terminal)
-        let human = rig_with(|_| Requester { human: true, ..Default::default() }, true);
+        let human = rig_with(
+            |_| Requester {
+                human: true,
+                ..Default::default()
+            },
+            true,
+        );
         advance(&human, chrono::Duration::hours(2));
         assert!(human.sched.tick().await.is_empty());
         assert!(human.threads.sent().is_empty());
@@ -346,10 +493,20 @@ mod tests {
         advance(&r, chrono::Duration::hours(2));
         // reassign to `two`, which has a channel of its own
         set_channel(&r.fx, &seat(&r.fx, "two").id, "th_two");
-        reassign(r.fx.w.journal(), &*r.fx.store, &r.op, &seat(&r.fx, "two").id, r.fx.clock_now()).unwrap();
+        reassign(
+            r.fx.w.journal(),
+            &*r.fx.store,
+            &r.op,
+            &seat(&r.fx, "two").id,
+            r.fx.clock_now(),
+        )
+        .unwrap();
         let s = r.sched.tick().await;
         assert_eq!(s.len(), 1, "the new requester gets its initial notice");
-        assert_eq!((s[0].index, s[0].thread.clone()), (0, ThreadRef("th_two".into())));
+        assert_eq!(
+            (s[0].index, s[0].thread.clone()),
+            (0, ThreadRef("th_two".into()))
+        );
         // retire `two`: nobody to remind
         commit(&r.fx, "seat retire two");
         advance(&r, chrono::Duration::hours(2));
@@ -376,6 +533,10 @@ mod tests {
         }
         assert_eq!(threads.sent().len(), 1, "the loop ticked");
         tx.send(true).unwrap();
-        tokio::time::timeout(Duration::from_secs(5), handle).await.expect("loop stops").unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("loop stops")
+            .unwrap()
+            .unwrap();
     }
 }

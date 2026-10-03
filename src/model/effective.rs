@@ -73,7 +73,10 @@ pub fn resolve(
 
 /// Convenience: read graph.toml, the seat's template/member (if `template_ref`) from `tree`, then resolve.
 /// A template that no longer exists is treated as absent.
-pub fn resolve_in(tree: &dyn TreeRead, seat: &SeatRecord) -> Result<EffectiveSeatConfig, StoreError> {
+pub fn resolve_in(
+    tree: &dyn TreeRead,
+    seat: &SeatRecord,
+) -> Result<EffectiveSeatConfig, StoreError> {
     let graph = layout::read_graph(tree)?;
     let mut template = None;
     let mut member = None;
@@ -81,10 +84,17 @@ pub fn resolve_in(tree: &dyn TreeRead, seat: &SeatRecord) -> Result<EffectiveSea
         && let Some(loc) = layout::locate(tree, &r.template.to_any())?
     {
         let rec: Option<TemplateRecord> = read_toml(tree, &loc.record_path)?;
-        member = rec.as_ref().and_then(|t| t.members.iter().find(|m| m.id == r.member).cloned());
+        member = rec
+            .as_ref()
+            .and_then(|t| t.members.iter().find(|m| m.id == r.member).cloned());
         template = rec;
     }
-    Ok(resolve(&graph.defaults, template.as_ref(), member.as_ref(), seat))
+    Ok(resolve(
+        &graph.defaults,
+        template.as_ref(),
+        member.as_ref(),
+        seat,
+    ))
 }
 
 fn run_shape(c: &EffectiveSeatConfig) -> serde_json::Value {

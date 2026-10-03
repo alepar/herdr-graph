@@ -86,14 +86,21 @@ pub enum JournalError {
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("invalid transition for {op}: {from:?} → {to}")]
-    Transition { op: String, from: OpState, to: &'static str },
+    Transition {
+        op: String,
+        from: OpState,
+        to: &'static str,
+    },
 }
 
 type Result<T> = std::result::Result<T, JournalError>;
 
 /// serde snake_case name of a unit-variant enum.
 fn name_of<T: Serialize>(x: &T) -> Result<String> {
-    Ok(serde_json::to_value(x)?.as_str().unwrap_or_default().to_owned())
+    Ok(serde_json::to_value(x)?
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 fn ts(t: Timestamp) -> String {
@@ -105,10 +112,15 @@ fn conv_err(col: usize, e: impl std::error::Error + Send + Sync + 'static) -> ru
 }
 
 fn parse_ts(col: usize, s: &str) -> rusqlite::Result<Timestamp> {
-    chrono::DateTime::parse_from_rfc3339(s).map(|t| t.to_utc()).map_err(|e| conv_err(col, e))
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|t| t.to_utc())
+        .map_err(|e| conv_err(col, e))
 }
 
-fn parse_id<T: std::str::FromStr<Err = crate::model::IdError>>(col: usize, s: &str) -> rusqlite::Result<T> {
+fn parse_id<T: std::str::FromStr<Err = crate::model::IdError>>(
+    col: usize,
+    s: &str,
+) -> rusqlite::Result<T> {
     s.parse().map_err(|e| conv_err(col, e))
 }
 
@@ -138,7 +150,10 @@ fn op_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OpRow> {
 
 /// SQL list of quoted state names (they are fixed identifiers, never user input).
 fn quoted_names<T: Serialize>(items: &[T]) -> Result<String> {
-    let names: Result<Vec<String>> = items.iter().map(|s| name_of(s).map(|n| format!("'{n}'"))).collect();
+    let names: Result<Vec<String>> = items
+        .iter()
+        .map(|s| name_of(s).map(|n| format!("'{n}'")))
+        .collect();
     Ok(names?.join(","))
 }
 
@@ -158,7 +173,10 @@ impl Journal {
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.pragma_update(None, "user_version", 1)?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn: Mutex::new(conn), path: path.to_path_buf() })
+        Ok(Self {
+            conn: Mutex::new(conn),
+            path: path.to_path_buf(),
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -197,7 +215,11 @@ impl Journal {
 
     fn get_on(conn: &Connection, op: &OpId) -> Result<Option<OpRow>> {
         Ok(conn
-            .query_row(&format!("SELECT {OP_COLS} FROM ops WHERE op_id=?1"), [op.as_str()], op_row)
+            .query_row(
+                &format!("SELECT {OP_COLS} FROM ops WHERE op_id=?1"),
+                [op.as_str()],
+                op_row,
+            )
             .optional()?)
     }
 
@@ -232,7 +254,11 @@ impl Journal {
     /// The error for a transition that changed zero rows: reports the state the op is really in.
     fn bad_transition(conn: &Connection, op: &OpId, to: &'static str) -> JournalError {
         match Self::get_on(conn, op) {
-            Ok(Some(row)) => JournalError::Transition { op: op.to_string(), from: row.state, to },
+            Ok(Some(row)) => JournalError::Transition {
+                op: op.to_string(),
+                from: row.state,
+                to,
+            },
             Ok(None) => JournalError::Sql(rusqlite::Error::QueryReturnedNoRows),
             Err(e) => e,
         }
@@ -248,7 +274,11 @@ impl Journal {
         if n == 0 {
             return Ok(None);
         }
-        Ok(Some(conn.query_row("SELECT attempts FROM ops WHERE op_id=?1", [op.as_str()], |r| r.get(0))?))
+        Ok(Some(conn.query_row(
+            "SELECT attempts FROM ops WHERE op_id=?1",
+            [op.as_str()],
+            |r| r.get(0),
+        )?))
     }
 
     /// From applying|admitted (the latter is recovery finding a trailer for a requeued op).
@@ -298,7 +328,9 @@ impl Journal {
                 params![old.as_str(), op.as_str(), ts(now)],
             )?;
             if n == 0 {
-                eprintln!("herdr-graph: could not mark {old} superseded by {op}: target is not in a supersedable state");
+                eprintln!(
+                    "herdr-graph: could not mark {old} superseded by {op}: target is not in a supersedable state"
+                );
             }
         }
         tx.commit()?;
@@ -326,7 +358,11 @@ impl Journal {
     }
 
     pub fn finish_failed(&self, op: &OpId, reason: &str, now: Timestamp) -> Result<()> {
-        let r = Rejection { reason: reason.to_owned(), explanation: String::new(), current_revs: vec![] };
+        let r = Rejection {
+            reason: reason.to_owned(),
+            explanation: String::new(),
+            current_revs: vec![],
+        };
         let json = serde_json::to_string(&r)?;
         let conn = self.conn();
         let n = conn.execute(
@@ -386,7 +422,8 @@ impl Journal {
 
     pub fn set_requester(&self, op: &OpId, requester: &Requester, now: Timestamp) -> Result<()> {
         let conn = self.conn();
-        let row = Self::get_on(&conn, op)?.ok_or(JournalError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
+        let row = Self::get_on(&conn, op)?
+            .ok_or(JournalError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
         let mut req = row.request;
         req.requester = requester.clone();
         conn.execute(
@@ -408,7 +445,9 @@ impl Journal {
     ) -> Result<ReassignOutcome> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let Some(row) = Self::get_on(&tx, op)? else { return Ok(ReassignOutcome::Unknown) };
+        let Some(row) = Self::get_on(&tx, op)? else {
+            return Ok(ReassignOutcome::Unknown);
+        };
         if matches!(row.state, OpState::Cancelled | OpState::Superseded) {
             return Ok(ReassignOutcome::NotReassignable(row.state));
         }
@@ -418,7 +457,10 @@ impl Journal {
             "UPDATE ops SET request_json=?2, updated_at=?3 WHERE op_id=?1",
             params![op.as_str(), serde_json::to_string(&req)?, ts(now)],
         )?;
-        if matches!(row.state, OpState::Admitted | OpState::Applying | OpState::Committed) {
+        if matches!(
+            row.state,
+            OpState::Admitted | OpState::Applying | OpState::Committed
+        ) {
             Self::admit_on(&tx, &OpId::new(), follow_up, now)?;
         }
         tx.commit()?;
@@ -427,11 +469,18 @@ impl Journal {
 
     /// Newest first; empty `states` = all.
     pub fn list(&self, states: &[OpState], limit: usize) -> Result<Vec<OpRow>> {
-        let filter =
-            if states.is_empty() { String::new() } else { format!("WHERE state IN ({})", quoted_names(states)?) };
+        let filter = if states.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE state IN ({})", quoted_names(states)?)
+        };
         let conn = self.conn();
-        let mut stmt = conn.prepare(&format!("SELECT {OP_COLS} FROM ops {filter} ORDER BY seq DESC LIMIT ?1"))?;
-        let rows = stmt.query_map([limit as i64], op_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {OP_COLS} FROM ops {filter} ORDER BY seq DESC LIMIT ?1"
+        ))?;
+        let rows = stmt
+            .query_map([limit as i64], op_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
@@ -439,7 +488,9 @@ impl Journal {
         let conn = self.conn();
         let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM ops GROUP BY state")?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+            })?
             .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
         Ok(rows)
     }
@@ -453,7 +504,10 @@ impl Journal {
     }
 
     pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
-        Ok(self.conn().query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?)
+        Ok(self
+            .conn()
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
+            .optional()?)
     }
 
     pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
@@ -468,7 +522,9 @@ impl Journal {
     pub fn meta_swap(&self, key: &str, value: &str) -> Result<Option<String>> {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let old = tx.query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0)).optional()?;
+        let old = tx
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |r| r.get(0))
+            .optional()?;
         tx.execute(
             "INSERT INTO meta(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             params![key, value],
@@ -478,7 +534,8 @@ impl Journal {
     }
 
     pub fn meta_delete(&self, key: &str) -> Result<()> {
-        self.conn().execute("DELETE FROM meta WHERE key=?1", [key])?;
+        self.conn()
+            .execute("DELETE FROM meta WHERE key=?1", [key])?;
         Ok(())
     }
 
@@ -510,7 +567,11 @@ impl Journal {
 
     fn get_effect_on(conn: &Connection, id: &EffectId) -> Result<Option<EffectRecord>> {
         let json: Option<String> = conn
-            .query_row("SELECT record_json FROM effects WHERE effect_id=?1", [id.as_str()], |r| r.get(0))
+            .query_row(
+                "SELECT record_json FROM effects WHERE effect_id=?1",
+                [id.as_str()],
+                |r| r.get(0),
+            )
             .optional()?;
         Ok(json.map(|j| serde_json::from_str(&j)).transpose()?)
     }
@@ -519,11 +580,18 @@ impl Journal {
         Self::get_effect_on(&self.conn(), id)
     }
 
-    fn effects_where(&self, clause: &str, args: &[&dyn rusqlite::ToSql]) -> Result<Vec<EffectRecord>> {
+    fn effects_where(
+        &self,
+        clause: &str,
+        args: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<EffectRecord>> {
         let conn = self.conn();
-        let mut stmt =
-            conn.prepare(&format!("SELECT record_json FROM effects WHERE {clause} ORDER BY updated_at, effect_id"))?;
-        let jsons = stmt.query_map(args, |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT record_json FROM effects WHERE {clause} ORDER BY updated_at, effect_id"
+        ))?;
+        let jsons = stmt
+            .query_map(args, |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         jsons.iter().map(|j| Ok(serde_json::from_str(j)?)).collect()
     }
 
@@ -592,11 +660,15 @@ impl Journal {
             state: r.get(5)?,
             attempts: r.get(6)?,
             last_error: r.get(7)?,
-            next_at: r.get::<_, Option<String>>(8)?.map(|s| parse_ts(8, &s)).transpose()?,
+            next_at: r
+                .get::<_, Option<String>>(8)?
+                .map(|s| parse_ts(8, &s))
+                .transpose()?,
         })
     }
 
-    const NOTICE_COLS: &'static str = "key, effect_id, op_id, severity, text, state, attempts, last_error, next_at";
+    const NOTICE_COLS: &'static str =
+        "key, effect_id, op_id, severity, text, state, attempts, last_error, next_at";
 
     /// Pending notices due at `now` (next_at null or <= now), oldest first.
     pub fn due_notices(&self, now: Timestamp) -> Result<Vec<Notice>> {
@@ -606,7 +678,9 @@ impl Journal {
              ORDER BY created_at, key",
             Self::NOTICE_COLS
         ))?;
-        Ok(stmt.query_map([ts(now)], Self::notice_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        Ok(stmt
+            .query_map([ts(now)], Self::notice_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Earliest `next_at` among pending notices that have one.
@@ -622,7 +696,11 @@ impl Journal {
     pub fn get_notice(&self, key: &str) -> Result<Option<Notice>> {
         Ok(self
             .conn()
-            .query_row(&format!("SELECT {} FROM notices WHERE key=?1", Self::NOTICE_COLS), [key], Self::notice_row)
+            .query_row(
+                &format!("SELECT {} FROM notices WHERE key=?1", Self::NOTICE_COLS),
+                [key],
+                Self::notice_row,
+            )
             .optional()?)
     }
 
@@ -636,7 +714,13 @@ impl Journal {
     }
 
     /// A failed delivery: attempts += 1, remember the error, try again at `next_at`.
-    pub fn notice_retry(&self, key: &str, error: &str, next_at: Timestamp, now: Timestamp) -> Result<()> {
+    pub fn notice_retry(
+        &self,
+        key: &str,
+        error: &str,
+        next_at: Timestamp,
+        now: Timestamp,
+    ) -> Result<()> {
         self.conn().execute(
             "UPDATE notices SET attempts=attempts+1, last_error=?2, next_at=?3, updated_at=?4 WHERE key=?1",
             params![key, error, ts(next_at), ts(now)],
@@ -648,7 +732,9 @@ impl Journal {
         let conn = self.conn();
         let mut stmt = conn.prepare("SELECT state, COUNT(*) FROM notices GROUP BY state")?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+            })?
             .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
         Ok(rows)
     }

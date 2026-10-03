@@ -87,12 +87,24 @@ pub trait RequesterNotifier: Send + Sync {
     fn notify(&self, op: &OpId, severity: Severity, text: &str);
     /// Durable delivery of one journaled notice. Ok(true) delivered, Ok(false) destination unavailable (retry later),
     /// Err(why) retry later. Default: the synchronous `notify`, counted as delivered.
-    async fn deliver(&self, op: &OpId, severity: Severity, text: &str, _key: &OpKey) -> Result<bool, String> {
+    async fn deliver(
+        &self,
+        op: &OpId,
+        severity: Severity,
+        text: &str,
+        _key: &OpKey,
+    ) -> Result<bool, String> {
         self.notify(op, severity, text);
         Ok(true)
     }
     /// The affected effect supplies a fallback destination for seatless requesters.
-    async fn deliver_effect(&self, effect: &EffectRecord, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
+    async fn deliver_effect(
+        &self,
+        effect: &EffectRecord,
+        severity: Severity,
+        text: &str,
+        key: &OpKey,
+    ) -> Result<bool, String> {
         self.deliver(&effect.op, severity, text, key).await
     }
 }
@@ -100,7 +112,10 @@ pub trait RequesterNotifier: Send + Sync {
 /// The idempotency key of an op's notice with this text.
 fn notice_key(op: &OpId, text: &str) -> OpKey {
     let digest = Sha256::digest(text.as_bytes());
-    OpKey(format!("{op}:notify:{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]))
+    OpKey(format!(
+        "{op}:notify:{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    ))
 }
 
 /// Default notifier: requester channel, falling back to the affected seat's channel.
@@ -114,31 +129,54 @@ pub struct ThreadsNotifier {
 impl ThreadsNotifier {
     fn thread_for(&self, op: &OpId, affected: Option<&crate::model::AnyId>) -> Option<ThreadRef> {
         let head = self.store.head().ok()?;
-        let tree = CommitView { store: &*self.store, at: head };
+        let tree = CommitView {
+            store: &*self.store,
+            at: head,
+        };
         let channel = |object: &crate::model::AnyId| -> Option<ThreadRef> {
             let loc = crate::store::layout::locate(&tree, object).ok().flatten()?;
             match object.kind() {
                 crate::model::IdKind::Seat => {
-                    let rec: crate::model::seat::SeatRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
+                    let rec: crate::model::seat::SeatRecord =
+                        crate::store::record::read_toml(&tree, &loc.record_path)
+                            .ok()
+                            .flatten()?;
                     rec.channel.thread_id.map(ThreadRef)
                 }
                 crate::model::IdKind::Clone => {
-                    let rec: crate::model::clone::CloneRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
-                    let seat_loc = crate::store::layout::locate(&tree, &rec.seat.to_any()).ok().flatten()?;
-                    let seat: crate::model::seat::SeatRecord = crate::store::record::read_toml(&tree, &seat_loc.record_path).ok().flatten()?;
+                    let rec: crate::model::clone::CloneRecord =
+                        crate::store::record::read_toml(&tree, &loc.record_path)
+                            .ok()
+                            .flatten()?;
+                    let seat_loc = crate::store::layout::locate(&tree, &rec.seat.to_any())
+                        .ok()
+                        .flatten()?;
+                    let seat: crate::model::seat::SeatRecord =
+                        crate::store::record::read_toml(&tree, &seat_loc.record_path)
+                            .ok()
+                            .flatten()?;
                     seat.channel.thread_id.map(ThreadRef)
                 }
                 crate::model::IdKind::Teamspace => {
-                    let rec: crate::model::teamspace::TeamspaceRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
+                    let rec: crate::model::teamspace::TeamspaceRecord =
+                        crate::store::record::read_toml(&tree, &loc.record_path)
+                            .ok()
+                            .flatten()?;
                     rec.channel.thread_id.map(ThreadRef)
                 }
                 _ => None,
             }
         };
-        let requester = self.journal.get(op).ok().flatten().and_then(|r| r.request.requester.seat);
-        requester.and_then(|seat| channel(&seat.to_any())).or_else(|| affected.and_then(channel))
+        let requester = self
+            .journal
+            .get(op)
+            .ok()
+            .flatten()
+            .and_then(|r| r.request.requester.seat);
+        requester
+            .and_then(|seat| channel(&seat.to_any()))
+            .or_else(|| affected.and_then(channel))
     }
-
 }
 
 #[async_trait::async_trait]
@@ -147,19 +185,38 @@ impl RequesterNotifier for ThreadsNotifier {
         eprintln!("herdr-graph: reconcile: {text}");
     }
 
-    async fn deliver(&self, op: &OpId, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
+    async fn deliver(
+        &self,
+        op: &OpId,
+        severity: Severity,
+        text: &str,
+        key: &OpKey,
+    ) -> Result<bool, String> {
         let Some(thread) = self.thread_for(op, None) else {
             eprintln!("herdr-graph: reconcile: {text}");
             return Err("notice destination channel is unavailable".into());
         };
-        self.threads.notify(&thread, severity, text, key).await.map_err(|e| e.to_string())?;
+        self.threads
+            .notify(&thread, severity, text, key)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(true)
     }
 
-    async fn deliver_effect(&self, effect: &EffectRecord, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
-        let thread = self.thread_for(&effect.op, Some(&effect.object))
+    async fn deliver_effect(
+        &self,
+        effect: &EffectRecord,
+        severity: Severity,
+        text: &str,
+        key: &OpKey,
+    ) -> Result<bool, String> {
+        let thread = self
+            .thread_for(&effect.op, Some(&effect.object))
             .ok_or_else(|| "notice destination channel is unavailable".to_owned())?;
-        self.threads.notify(&thread, severity, text, key).await.map_err(|e| e.to_string())?;
+        self.threads
+            .notify(&thread, severity, text, key)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(true)
     }
 }
@@ -167,10 +224,20 @@ impl RequesterNotifier for ThreadsNotifier {
 /// Predicted end states of effects the observer has not yet consumed (spec §3.3, §4.4).
 pub fn predictions(journal: &Journal) -> Vec<(EffectId, PredictedEnd)> {
     let rows = journal
-        .effects_with_status(&[EffectStatus::Pending, EffectStatus::Done, EffectStatus::Unknown])
+        .effects_with_status(&[
+            EffectStatus::Pending,
+            EffectStatus::Done,
+            EffectStatus::Unknown,
+        ])
         .unwrap_or_default();
     rows.into_iter()
-        .filter(|r| journal.meta_get(&format!("pred_used:{}", r.id)).ok().flatten().is_none())
+        .filter(|r| {
+            journal
+                .meta_get(&format!("pred_used:{}", r.id))
+                .ok()
+                .flatten()
+                .is_none()
+        })
         .flat_map(|r| r.predicted.into_iter().map(move |p| (r.id.clone(), p)))
         .collect()
 }
@@ -186,7 +253,10 @@ const MAX_PASSES: usize = 32;
 fn merges_into_open(kind: &EffectKind) -> bool {
     !matches!(
         kind,
-        EffectKind::Invite | EffectKind::ReleaseRequirement | EffectKind::Notify | EffectKind::Custom(_)
+        EffectKind::Invite
+            | EffectKind::ReleaseRequirement
+            | EffectKind::Notify
+            | EffectKind::Custom(_)
     )
 }
 
@@ -215,8 +285,15 @@ impl Reconciler {
         cfg: ReconcilerConfig,
     ) -> Arc<Self> {
         let cache = Arc::new(DesiredCache::default());
-        let builtin = HerdrSource { instance: cfg.instance.clone(), cache: cache.clone() };
-        let exec = HerdrExecutor { journal: journal.clone(), cfg: cfg.clone(), cache: cache.clone() };
+        let builtin = HerdrSource {
+            instance: cfg.instance.clone(),
+            cache: cache.clone(),
+        };
+        let exec = HerdrExecutor {
+            journal: journal.clone(),
+            cfg: cfg.clone(),
+            cache: cache.clone(),
+        };
         Self::fold_legacy_meta(&journal);
         Arc::new(Self {
             store,
@@ -242,13 +319,24 @@ impl Reconciler {
         });
         let time = |key: &str| {
             let raw = journal.meta_get(key).ok().flatten()?;
-            chrono::DateTime::parse_from_rfc3339(&raw).ok().map(|t| t.to_utc())
+            chrono::DateTime::parse_from_rfc3339(&raw)
+                .ok()
+                .map(|t| t.to_utc())
         };
         for mut row in rows {
-            let keys = ["deps", "retry_at", "wake_at", "defer_n"].map(|k| format!("{k}:{}", row.id));
-            let deps = journal.meta_get(&keys[0]).ok().flatten().and_then(|raw| serde_json::from_str::<Vec<EffectId>>(&raw).ok());
+            let keys =
+                ["deps", "retry_at", "wake_at", "defer_n"].map(|k| format!("{k}:{}", row.id));
+            let deps = journal
+                .meta_get(&keys[0])
+                .ok()
+                .flatten()
+                .and_then(|raw| serde_json::from_str::<Vec<EffectId>>(&raw).ok());
             let (retry_at, wake_at) = (time(&keys[1]), time(&keys[2]));
-            let defer_n = journal.meta_get(&keys[3]).ok().flatten().and_then(|s| s.parse::<u32>().ok());
+            let defer_n = journal
+                .meta_get(&keys[3])
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<u32>().ok());
             if deps.is_some() || retry_at.is_some() || wake_at.is_some() || defer_n.is_some() {
                 if let Some(d) = deps {
                     row.sched.deps = d;
@@ -257,7 +345,10 @@ impl Reconciler {
                 row.sched.wake_at = wake_at.or(row.sched.wake_at);
                 row.sched.defer_n = defer_n.unwrap_or(row.sched.defer_n);
                 if let Err(e) = journal.upsert_effect(&row) {
-                    eprintln!("herdr-graph: reconcile: cannot fold scheduling meta of effect {}: {e}", row.id);
+                    eprintln!(
+                        "herdr-graph: reconcile: cannot fold scheduling meta of effect {}: {e}",
+                        row.id
+                    );
                     continue;
                 }
             }
@@ -281,15 +372,26 @@ impl Reconciler {
 
     /// Another component's effect family (threads, delivery): its diff runs with every step.
     pub fn register_source(&self, s: Arc<dyn EffectSource>) {
-        self.sources.write().unwrap_or_else(|e| e.into_inner()).push(s);
+        self.sources
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(s);
     }
 
     pub fn register_executor(&self, e: Arc<dyn EffectExecutor>) {
-        self.executors.write().unwrap_or_else(|x| x.into_inner()).push(e);
+        self.executors
+            .write()
+            .unwrap_or_else(|x| x.into_inner())
+            .push(e);
     }
 
     fn executor_for(&self, kind: &EffectKind) -> Option<Arc<dyn EffectExecutor>> {
-        self.executors.read().unwrap_or_else(|e| e.into_inner()).iter().find(|e| e.handles(kind)).cloned()
+        self.executors
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|e| e.handles(kind))
+            .cloned()
     }
 
     /// Own snapshot at the current head (tests, and the loop on op-committed triggers).
@@ -318,10 +420,23 @@ impl Reconciler {
         self.note_incarnation(snap, now);
 
         let planned = {
-            let tree = CommitView { store: &*self.store, at: head.clone() };
-            let cx = DiffCx { tree: &tree, head, snapshot: snap, journal: &self.journal, now };
+            let tree = CommitView {
+                store: &*self.store,
+                at: head.clone(),
+            };
+            let cx = DiffCx {
+                tree: &tree,
+                head,
+                snapshot: snap,
+                journal: &self.journal,
+                now,
+            };
             let mut planned = self.builtin.effects(&cx);
-            let sources: Vec<_> = self.sources.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let sources: Vec<_> = self
+                .sources
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
             for s in sources {
                 planned.extend(s.effects(&cx));
             }
@@ -348,30 +463,53 @@ impl Reconciler {
             let effect = match self.journal.get_effect(&n.effect) {
                 Ok(effect) => effect,
                 Err(e) => {
-                    eprintln!("herdr-graph: reconcile: cannot read notice effect {}: {e}", n.effect);
+                    eprintln!(
+                        "herdr-graph: reconcile: cannot read notice effect {}: {e}",
+                        n.effect
+                    );
                     continue;
                 }
             };
             let done = |state: &str| {
                 if let Err(e) = self.journal.notice_done(&n.key, state, now) {
-                    eprintln!("herdr-graph: reconcile: cannot update notice {}: {e}", n.key);
+                    eprintln!(
+                        "herdr-graph: reconcile: cannot update notice {}: {e}",
+                        n.key
+                    );
                 }
             };
-            let Some(effect) = effect.filter(|r| matches!(r.status,
-                EffectStatus::NeedsRevision | EffectStatus::BlockedNeedsHuman | EffectStatus::Failed)) else {
+            let Some(effect) = effect.filter(|r| {
+                matches!(
+                    r.status,
+                    EffectStatus::NeedsRevision
+                        | EffectStatus::BlockedNeedsHuman
+                        | EffectStatus::Failed
+                )
+            }) else {
                 done("void");
                 continue;
             };
-            let delivered = self.notifier.deliver_effect(&effect, n.severity, &n.text, &OpKey(n.key.clone())).await;
+            let delivered = self
+                .notifier
+                .deliver_effect(&effect, n.severity, &n.text, &OpKey(n.key.clone()))
+                .await;
             match delivered {
                 Ok(true) => done("delivered"),
                 other => {
-                    let why = other.err().unwrap_or_else(|| "notice destination channel is unavailable".into());
+                    let why = other
+                        .err()
+                        .unwrap_or_else(|| "notice destination channel is unavailable".into());
                     let wait = backoff::next(n.attempts.saturating_add(1));
                     let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
-                    eprintln!("herdr-graph: reconcile: notice {} not delivered (will retry): {why}", n.key);
+                    eprintln!(
+                        "herdr-graph: reconcile: notice {} not delivered (will retry): {why}",
+                        n.key
+                    );
                     if let Err(e) = self.journal.notice_retry(&n.key, &why, at, now) {
-                        eprintln!("herdr-graph: reconcile: cannot update notice {}: {e}", n.key);
+                        eprintln!(
+                            "herdr-graph: reconcile: cannot update notice {}: {e}",
+                            n.key
+                        );
                     }
                 }
             }
@@ -383,7 +521,9 @@ impl Reconciler {
         let cur = serde_json::to_string(&snap.incarnation).unwrap_or_default();
         let last = self.journal.meta_get("incarnation:last").ok().flatten();
         if last.as_deref().is_some_and(|l| l != cur) {
-            let _ = self.journal.meta_set("incarnation:changed_at", &now.to_rfc3339());
+            let _ = self
+                .journal
+                .meta_set("incarnation:changed_at", &now.to_rfc3339());
         }
         if last.as_deref() != Some(cur.as_str()) {
             let _ = self.journal.meta_set("incarnation:last", &cur);
@@ -405,9 +545,14 @@ impl Reconciler {
             // in the payload, so several open rows of one kind on one object are distinct work.
             let open = merges_into_open(&p.record.kind)
                 .then(|| {
-                    self.journal.effects_for_object(&p.record.object).unwrap_or_default().into_iter().find(|r| {
-                        r.kind == p.record.kind && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
-                    })
+                    self.journal
+                        .effects_for_object(&p.record.object)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|r| {
+                            r.kind == p.record.kind
+                                && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
+                        })
                 })
                 .flatten();
             match open {
@@ -421,18 +566,31 @@ impl Reconciler {
             }
         }
         for p in fresh {
-            let deps: Vec<&EffectId> = p.deps.iter().map(|d| canonical.get(d).unwrap_or(d)).collect();
+            let deps: Vec<&EffectId> = p
+                .deps
+                .iter()
+                .map(|d| canonical.get(d).unwrap_or(d))
+                .collect();
             let mut record = p.record.clone();
             record.sched.deps = deps.into_iter().cloned().collect();
             if let Err(e) = self.journal.upsert_effect(&record) {
-                eprintln!("herdr-graph: reconcile: cannot journal planned effect {}: {e}", record.id);
+                eprintln!(
+                    "herdr-graph: reconcile: cannot journal planned effect {}: {e}",
+                    record.id
+                );
                 continue;
             }
             report.planned.push(p.record.id.clone());
         }
     }
 
-    fn mark(&self, row: &mut EffectRecord, status: EffectStatus, error: Option<String>, now: Timestamp) {
+    fn mark(
+        &self,
+        row: &mut EffectRecord,
+        status: EffectStatus,
+        error: Option<String>,
+        now: Timestamp,
+    ) {
         row.status = status;
         row.last_error = error;
         row.updated_at = now;
@@ -446,7 +604,10 @@ impl Reconciler {
             row.sched.defer_n = 0;
         }
         if let Err(e) = self.journal.upsert_effect(row) {
-            eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+            eprintln!(
+                "herdr-graph: reconcile: cannot journal effect {}: {e}",
+                row.id
+            );
         }
         if !open {
             session::clear_state(&self.journal, &row.id);
@@ -486,7 +647,10 @@ impl Reconciler {
             next_at: None,
         };
         if let Err(e) = self.journal.upsert_effect_with_notice(row, &notice) {
-            eprintln!("herdr-graph: reconcile: cannot journal effect {} with its notice: {e}", row.id);
+            eprintln!(
+                "herdr-graph: reconcile: cannot journal effect {} with its notice: {e}",
+                row.id
+            );
         }
         if !open {
             session::clear_state(&self.journal, &row.id);
@@ -499,7 +663,10 @@ impl Reconciler {
     /// blocked on something else (a dependency), which a wake would not help.
     pub fn next_wake(&self) -> Option<Timestamp> {
         let now = self.clock.now();
-        let rows = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_default();
+        let rows = self
+            .journal
+            .effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
+            .unwrap_or_default();
         let notice_at = self.journal.next_notice_at().ok().flatten();
         rows.iter()
             .flat_map(|r| [r.sched.retry_at, r.sched.wake_at])
@@ -515,7 +682,10 @@ impl Reconciler {
         row.sched.dispatched = None;
         row.last_error = Some(why);
         if let Err(e) = self.journal.upsert_effect(row) {
-            eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+            eprintln!(
+                "herdr-graph: reconcile: cannot journal effect {}: {e}",
+                row.id
+            );
         }
     }
 
@@ -524,14 +694,19 @@ impl Reconciler {
         let mut ran: BTreeSet<EffectId> = BTreeSet::new();
         let mut waiting: BTreeSet<EffectId> = BTreeSet::new();
         for _ in 0..MAX_PASSES {
-            let rows = self.journal.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown]).unwrap_or_default();
+            let rows = self
+                .journal
+                .effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
+                .unwrap_or_default();
             let mut progressed = false;
             for stale in rows {
                 if ran.contains(&stale.id) {
                     continue;
                 }
                 // Re-read: a cascade earlier in this pass may have finished it.
-                let Ok(Some(mut row)) = self.journal.get_effect(&stale.id) else { continue };
+                let Ok(Some(mut row)) = self.journal.get_effect(&stale.id) else {
+                    continue;
+                };
                 if !matches!(row.status, EffectStatus::Pending | EffectStatus::Unknown) {
                     continue;
                 }
@@ -543,11 +718,16 @@ impl Reconciler {
                     row.last_error = Some("dispatch outcome lost (crash, timeout or cancellation); inspecting the snapshot".into());
                     row.sched.dispatched = None;
                     if let Err(e) = self.journal.upsert_effect(&row) {
-                        eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+                        eprintln!(
+                            "herdr-graph: reconcile: cannot journal effect {}: {e}",
+                            row.id
+                        );
                         continue;
                     }
                 }
-                let Some(exec) = self.executor_for(&row.kind) else { continue };
+                let Some(exec) = self.executor_for(&row.kind) else {
+                    continue;
+                };
                 let head = match self.store.head() {
                     Ok(h) => h,
                     Err(e) => {
@@ -555,12 +735,26 @@ impl Reconciler {
                         return;
                     }
                 };
-                let tree = CommitView { store: &*self.store, at: head.clone() };
+                let tree = CommitView {
+                    store: &*self.store,
+                    at: head.clone(),
+                };
                 let now = self.clock.now();
-                let cx = ExecCx { tree: &tree, head: &head, snapshot: &cur, herdr: &*self.herdr, writer: &*self.writer, now };
+                let cx = ExecCx {
+                    tree: &tree,
+                    head: &head,
+                    snapshot: &cur,
+                    herdr: &*self.herdr,
+                    writer: &*self.writer,
+                    now,
+                };
 
                 // Fence: the object moved since planning and the effect is no longer implied.
-                let rev_now = self.cache.get(&tree, &head, &self.cfg.instance).ok().and_then(|d| d.rev_of(&row.object));
+                let rev_now = self
+                    .cache
+                    .get(&tree, &head, &self.cfg.instance)
+                    .ok()
+                    .and_then(|d| d.rev_of(&row.object));
                 if let Some(rev) = rev_now
                     && rev != row.fencing_rev
                 {
@@ -572,7 +766,10 @@ impl Reconciler {
                     }
                     row.fencing_rev = rev;
                     if let Err(e) = self.journal.upsert_effect(&row) {
-                        eprintln!("herdr-graph: reconcile: cannot journal effect {}: {e}", row.id);
+                        eprintln!(
+                            "herdr-graph: reconcile: cannot journal effect {}: {e}",
+                            row.id
+                        );
                     }
                 }
 
@@ -589,7 +786,12 @@ impl Reconciler {
                     }
                 }
                 if dep_obsolete {
-                    self.mark(&mut row, EffectStatus::Obsolete, Some("dependency obsolete".into()), now);
+                    self.mark(
+                        &mut row,
+                        EffectStatus::Obsolete,
+                        Some("dependency obsolete".into()),
+                        now,
+                    );
                     report.obsolete.push(row.id.clone());
                     progressed = true;
                     continue;
@@ -601,9 +803,15 @@ impl Reconciler {
 
                 // Write-ahead marker: a non-idempotent call is never made without it on the row.
                 if row.kind.is_non_idempotent() {
-                    row.sched.dispatched = Some(Dispatch { attempt: row.attempts + 1, at: now });
+                    row.sched.dispatched = Some(Dispatch {
+                        attempt: row.attempts + 1,
+                        at: now,
+                    });
                     if let Err(e) = self.journal.upsert_effect(&row) {
-                        eprintln!("herdr-graph: reconcile: cannot journal the dispatch of effect {}: {e}", row.id);
+                        eprintln!(
+                            "herdr-graph: reconcile: cannot journal the dispatch of effect {}: {e}",
+                            row.id
+                        );
                         continue;
                     }
                 }
@@ -616,7 +824,10 @@ impl Reconciler {
                 ran.insert(row.id.clone());
                 let now = self.clock.now();
                 row.attempts += 1;
-                if !matches!(outcome, ExecOutcome::Deferred(_) | ExecOutcome::DeferredUntil(..)) {
+                if !matches!(
+                    outcome,
+                    ExecOutcome::Deferred(_) | ExecOutcome::DeferredUntil(..)
+                ) {
                     row.sched.defer_n = 0;
                     row.sched.wake_at = None;
                 }
@@ -630,26 +841,61 @@ impl Reconciler {
                         let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
                         row.sched.retry_at = Some(at);
                         self.mark(&mut row, EffectStatus::Pending, Some(msg), now);
-                        report.executed.push((row.id.clone(), EffectStatus::Pending));
+                        report
+                            .executed
+                            .push((row.id.clone(), EffectStatus::Pending));
                         continue;
                     }
                     ExecOutcome::Unknown => EffectStatus::Unknown,
                     ExecOutcome::NeedsRevision(reason) => {
-                        let text = format!("{} for {} needs revision: {reason}", row.kind.as_str(), row.object);
-                        self.mark_attention(&mut row, EffectStatus::NeedsRevision, Some(reason), Severity::Warn, text, now);
-                        report.executed.push((row.id.clone(), EffectStatus::NeedsRevision));
+                        let text = format!(
+                            "{} for {} needs revision: {reason}",
+                            row.kind.as_str(),
+                            row.object
+                        );
+                        self.mark_attention(
+                            &mut row,
+                            EffectStatus::NeedsRevision,
+                            Some(reason),
+                            Severity::Warn,
+                            text,
+                            now,
+                        );
+                        report
+                            .executed
+                            .push((row.id.clone(), EffectStatus::NeedsRevision));
                         continue;
                     }
                     ExecOutcome::BlockedNeedsHuman => {
-                        let text = format!("agent on {} is waiting for a human (trust or auth dialog)", row.object);
-                        self.mark_attention(&mut row, EffectStatus::BlockedNeedsHuman, None, Severity::Warn, text, now);
-                        report.executed.push((row.id.clone(), EffectStatus::BlockedNeedsHuman));
+                        let text = format!(
+                            "agent on {} is waiting for a human (trust or auth dialog)",
+                            row.object
+                        );
+                        self.mark_attention(
+                            &mut row,
+                            EffectStatus::BlockedNeedsHuman,
+                            None,
+                            Severity::Warn,
+                            text,
+                            now,
+                        );
+                        report
+                            .executed
+                            .push((row.id.clone(), EffectStatus::BlockedNeedsHuman));
                         continue;
                     }
                     ExecOutcome::Failed(msg) => {
                         eprintln!("herdr-graph: reconcile: effect {} failed: {msg}", row.id);
-                        let text = format!("{} for {} failed: {msg}", row.kind.as_str(), row.object);
-                        self.mark_attention(&mut row, EffectStatus::Failed, Some(msg), Severity::Warn, text, now);
+                        let text =
+                            format!("{} for {} failed: {msg}", row.kind.as_str(), row.object);
+                        self.mark_attention(
+                            &mut row,
+                            EffectStatus::Failed,
+                            Some(msg),
+                            Severity::Warn,
+                            text,
+                            now,
+                        );
                         report.executed.push((row.id.clone(), EffectStatus::Failed));
                         continue;
                     }
@@ -662,7 +908,11 @@ impl Reconciler {
                     ExecOutcome::Deferred(why) => {
                         row.attempts -= 1;
                         row.sched.defer_n = row.sched.defer_n.saturating_add(1);
-                        let wait = backoff::deferred(self.cfg.deferred_recheck, self.cfg.deferred_max, row.sched.defer_n);
+                        let wait = backoff::deferred(
+                            self.cfg.deferred_recheck,
+                            self.cfg.deferred_max,
+                            row.sched.defer_n,
+                        );
                         let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
                         self.defer(&mut row, at, why);
                         waiting.insert(row.id.clone());
@@ -675,7 +925,8 @@ impl Reconciler {
                         continue;
                     }
                 };
-                let error = (status == EffectStatus::Unknown).then(|| "outcome unknown; inspecting the snapshot".to_owned());
+                let error = (status == EffectStatus::Unknown)
+                    .then(|| "outcome unknown; inspecting the snapshot".to_owned());
                 self.mark(&mut row, status, error, now);
                 report.executed.push((row.id.clone(), status));
                 if status == EffectStatus::Done {
@@ -691,7 +942,8 @@ impl Reconciler {
             }
         }
         for id in waiting {
-            if matches!(self.journal.get_effect(&id), Ok(Some(r)) if matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)) {
+            if matches!(self.journal.get_effect(&id), Ok(Some(r)) if matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown))
+            {
                 report.deferred.push(id);
             }
         }
@@ -700,9 +952,15 @@ impl Reconciler {
     /// Hook for the summarizer (Task 13): enqueue a `RelaunchOccupant` for an active clone with no occupant.
     pub fn request_relaunch(&self, clone: &CloneId, authority: &OpId) -> anyhow::Result<EffectId> {
         let head = self.store.head()?;
-        let tree = CommitView { store: &*self.store, at: head };
+        let tree = CommitView {
+            store: &*self.store,
+            at: head,
+        };
         let d = self.cache.get(&tree, &tree.at, &self.cfg.instance)?;
-        let rec = d.clones.get(clone).ok_or_else(|| anyhow::anyhow!("unknown clone {clone}"))?;
+        let rec = d
+            .clones
+            .get(clone)
+            .ok_or_else(|| anyhow::anyhow!("unknown clone {clone}"))?;
         let Some(p) = d.pane(clone) else {
             anyhow::bail!("clone {clone} is not an active clone of an active seat");
         };

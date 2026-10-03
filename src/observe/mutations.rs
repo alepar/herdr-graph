@@ -7,13 +7,16 @@ use crate::model::action::ActionKind;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{
-    Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource, Occupant, RetireMechanism, Retirement,
+    Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource, Occupant,
+    RetireMechanism, Retirement,
 };
 use crate::model::native_session::{NativeSession, SessionEndReason};
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{ActionId, AnyId, CloneId, IdKind, NsId, SeatId, Timestamp};
-use crate::plan::core_kinds::{Acc, absent, basename, do_retire_seat, mm, read_seat, read_ts, seat_slug_for, write_action};
+use crate::plan::core_kinds::{
+    Acc, absent, basename, do_retire_seat, mm, read_seat, read_ts, seat_slug_for, write_action,
+};
 use crate::ports::store::RepoPath;
 use crate::store::slug::unique_slug;
 use crate::store::{Record, layout};
@@ -42,15 +45,29 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 // ---------------------------------------------------------------------------------------------
 
 fn observed(args: serde_json::Value) -> ChangeRequest {
-    ChangeRequest { kind: RequestKind::Observed, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
+    ChangeRequest {
+        kind: RequestKind::Observed,
+        args,
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    }
 }
 
 pub fn cascade_request(rule: CascadeRule, retire: &[AnyId], at: Timestamp) -> ChangeRequest {
     observed(json!({ "sub": "cascade", "rule": rule.as_str(), "retire": retire, "at": at }))
 }
 
-pub fn rename_request(object: &AnyId, new: &str, observed_at: Timestamp, event_at: Option<Timestamp>) -> ChangeRequest {
-    observed(json!({ "sub": "rename", "object": object, "new": new, "observed_at": observed_at, "event_at": event_at }))
+pub fn rename_request(
+    object: &AnyId,
+    new: &str,
+    observed_at: Timestamp,
+    event_at: Option<Timestamp>,
+) -> ChangeRequest {
+    observed(
+        json!({ "sub": "rename", "object": object, "new": new, "observed_at": observed_at, "event_at": event_at }),
+    )
 }
 
 /// End the clone's current occupancy and/or start a new one from `start`.
@@ -67,8 +84,14 @@ pub fn occupancy_request(
     }))
 }
 
-pub fn move_request(clone: Option<&CloneId>, binding: Option<&Binding>, seat_moved_out: Option<&SeatId>) -> ChangeRequest {
-    observed(json!({ "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out }))
+pub fn move_request(
+    clone: Option<&CloneId>,
+    binding: Option<&Binding>,
+    seat_moved_out: Option<&SeatId>,
+) -> ChangeRequest {
+    observed(
+        json!({ "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out }),
+    )
 }
 
 pub fn availability_request(object: &AnyId, availability: Availability) -> ChangeRequest {
@@ -97,7 +120,10 @@ fn edit<R: Record>(
     f: impl FnOnce(&mut R, &MutationCx<'_>) -> Result<(), MutationError>,
 ) -> Result<(), MutationError> {
     let loc = cx.tree.locate(object)?.ok_or_else(|| gone(object))?;
-    let mut rec: R = cx.tree.read_record(&loc.record_path)?.ok_or_else(|| gone(object))?;
+    let mut rec: R = cx
+        .tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| gone(object))?;
     f(&mut rec, cx)?;
     cx.tree.put_record(loc.record_path, &mut rec)?;
     Ok(())
@@ -105,7 +131,9 @@ fn edit<R: Record>(
 
 /// Close the clone's current occupancy; false when it had none.
 fn end_occupant(rec: &mut CloneRecord, reason: SessionEndReason, at: Timestamp) -> bool {
-    let Some(occ) = rec.occupant.take() else { return false };
+    let Some(occ) = rec.occupant.take() else {
+        return false;
+    };
     if let Some(ns) = rec.sessions.iter_mut().find(|s| s.id == occ.native_session)
         && ns.ended.is_none()
     {
@@ -176,15 +204,27 @@ impl CascadeMutation {
         for (_, seat) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
             Self::retire_seat(cx, &seat.id, act, mech, at, false, acc)?;
         }
-        let before = if ts.rec.lifecycle == Lifecycle::Active { "active" } else { "dormant" };
+        let before = if ts.rec.lifecycle == Lifecycle::Active {
+            "active"
+        } else {
+            "dormant"
+        };
         let mut rec = ts.rec.clone();
         rec.lifecycle = Lifecycle::Retired;
-        rec.retired = Some(Retirement { op: cx.op.clone(), action: Some(act.clone()), at, mechanism: mech });
+        rec.retired = Some(Retirement {
+            op: cx.op.clone(),
+            action: Some(act.clone()),
+            at,
+            mechanism: mech,
+        });
         rec.runtime = absent();
         cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
         acc.retired.insert(0, id.to_any());
         acc.changed(id.to_any(), before, "retired");
-        cx.tree.move_dir(&ts.loc.folder, &layout::archived_teamspace_dir(basename(&ts.loc.folder), id))?;
+        cx.tree.move_dir(
+            &ts.loc.folder,
+            &layout::archived_teamspace_dir(basename(&ts.loc.folder), id),
+        )?;
         Ok(())
     }
 
@@ -198,7 +238,10 @@ impl CascadeMutation {
     ) -> Result<(), MutationError> {
         let any = id.to_any();
         let loc = cx.tree.locate(&any)?.ok_or_else(|| gone(&any))?;
-        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.ok_or_else(|| gone(&any))?;
+        let mut rec: CloneRecord = cx
+            .tree
+            .read_record(&loc.record_path)?
+            .ok_or_else(|| gone(&any))?;
         if rec.lifecycle == CloneLifecycle::Retired {
             acc.already.push(any);
             return Ok(());
@@ -206,7 +249,12 @@ impl CascadeMutation {
         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
         rec.runtime = absent();
         rec.lifecycle = CloneLifecycle::Retired;
-        rec.retired = Some(Retirement { op: cx.op.clone(), action: Some(act.clone()), at, mechanism: mech });
+        rec.retired = Some(Retirement {
+            op: cx.op.clone(),
+            action: Some(act.clone()),
+            at,
+            mechanism: mech,
+        });
         cx.tree.put_record(loc.record_path, &mut rec)?;
         acc.retired.push(any.clone());
         acc.changed(any, "active", "retired");
@@ -222,7 +270,11 @@ impl Mutation for CascadeMutation {
             "pane" => (RetireMechanism::ObservedPaneClose, true),
             "tab" => (RetireMechanism::ObservedTabClose, true),
             "workspace" => (RetireMechanism::ObservedWorkspaceClose, false),
-            other => return Err(MutationError::Bug(format!("unknown cascade rule {other:?}"))),
+            other => {
+                return Err(MutationError::Bug(format!(
+                    "unknown cascade rule {other:?}"
+                )));
+            }
         };
         let act = ActionId::new();
         let mut acc = Acc::default();
@@ -231,7 +283,9 @@ impl Mutation for CascadeMutation {
         let mut clones = Vec::new();
         for id in &a.retire {
             match id.kind() {
-                IdKind::Teamspace => teamspaces.extend(crate::model::TeamspaceId::parse(id.as_str())),
+                IdKind::Teamspace => {
+                    teamspaces.extend(crate::model::TeamspaceId::parse(id.as_str()))
+                }
                 IdKind::Seat => seats.extend(SeatId::parse(id.as_str())),
                 IdKind::Clone => clones.extend(CloneId::parse(id.as_str())),
                 other => return Err(MutationError::Bug(format!("cannot retire a {other:?}"))),
@@ -256,7 +310,10 @@ impl Mutation for CascadeMutation {
         comp.insert("rule".into(), toml::Value::String(a.rule.clone()));
         write_action(cx, &act, ActionKind::ClosureCascade, acc, comp)?;
         Ok(Applied {
-            summary: format!("observed {} closure retired {n} object(s), {already} already retired", a.rule),
+            summary: format!(
+                "observed {} closure retired {n} object(s), {already} already retired",
+                a.rule
+            ),
             action: Some(act),
         })
     }
@@ -290,10 +347,14 @@ fn name_change(old: &str, a: &RenameArgs) -> NameChange {
 impl Mutation for RenameMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: RenameArgs = parse(cx)?;
-        let noop = |what: &str| Applied { summary: format!("rename {what}: nothing to record"), action: None };
+        let noop = |what: &str| Applied {
+            summary: format!("rename {what}: nothing to record"),
+            action: None,
+        };
         match a.object.kind() {
             IdKind::Teamspace => {
-                let id = crate::model::TeamspaceId::parse(a.object.as_str()).map_err(|e| MutationError::Bug(e.to_string()))?;
+                let id = crate::model::TeamspaceId::parse(a.object.as_str())
+                    .map_err(|e| MutationError::Bug(e.to_string()))?;
                 let ts = read_ts(&cx.tree, &id).map_err(mm)?;
                 if ts.rec.lifecycle == Lifecycle::Retired || ts.rec.name == a.new {
                     return Ok(noop(a.object.as_str()));
@@ -308,16 +369,21 @@ impl Mutation for RenameMutation {
                 if ts.loc.folder != to {
                     cx.tree.move_dir(&ts.loc.folder, &to)?;
                 }
-                Ok(Applied { summary: format!("observed rename of teamspace {} to {}", ts.rec.name, a.new), action: None })
+                Ok(Applied {
+                    summary: format!("observed rename of teamspace {} to {}", ts.rec.name, a.new),
+                    action: None,
+                })
             }
             IdKind::Seat => {
-                let id = SeatId::parse(a.object.as_str()).map_err(|e| MutationError::Bug(e.to_string()))?;
+                let id = SeatId::parse(a.object.as_str())
+                    .map_err(|e| MutationError::Bug(e.to_string()))?;
                 let f = read_seat(&cx.tree, &id).map_err(mm)?;
                 if f.rec.lifecycle == Lifecycle::Retired || f.rec.name == a.new {
                     return Ok(noop(a.object.as_str()));
                 }
                 let own = basename(&f.loc.folder).to_owned();
-                let slug = seat_slug_for(&cx.tree, &f.ts.loc.folder, &a.new, &id, Some(&own)).map_err(mm)?;
+                let slug = seat_slug_for(&cx.tree, &f.ts.loc.folder, &a.new, &id, Some(&own))
+                    .map_err(mm)?;
                 let to = layout::seat_dir(&f.ts.loc.folder, &slug);
                 let mut rec: SeatRecord = f.rec.clone();
                 rec.name_history.push(name_change(&f.rec.name, &a));
@@ -326,11 +392,17 @@ impl Mutation for RenameMutation {
                 if f.loc.folder != to {
                     cx.tree.move_dir(&f.loc.folder, &to)?;
                 }
-                Ok(Applied { summary: format!("observed rename of seat {} to {}", f.rec.name, a.new), action: None })
+                Ok(Applied {
+                    summary: format!("observed rename of seat {} to {}", f.rec.name, a.new),
+                    action: None,
+                })
             }
             IdKind::Clone => {
                 let loc = cx.tree.locate(&a.object)?.ok_or_else(|| gone(&a.object))?;
-                let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.ok_or_else(|| gone(&a.object))?;
+                let mut rec: CloneRecord = cx
+                    .tree
+                    .read_record(&loc.record_path)?
+                    .ok_or_else(|| gone(&a.object))?;
                 if rec.lifecycle == CloneLifecycle::Retired || rec.name == a.new {
                     return Ok(noop(a.object.as_str()));
                 }
@@ -343,12 +415,18 @@ impl Mutation for RenameMutation {
                     let seat_dir = RepoPath::new(seat_dir)?;
                     let mut taken = layout::taken_slugs(&cx.tree, &seat_dir.join("clones")?)?;
                     taken.remove(own);
-                    let to = layout::clone_dir(&seat_dir, &unique_slug(&a.new, rec.id.suffix6(), &taken));
+                    let to = layout::clone_dir(
+                        &seat_dir,
+                        &unique_slug(&a.new, rec.id.suffix6(), &taken),
+                    );
                     if loc.folder != to {
                         cx.tree.move_dir(&loc.folder, &to)?;
                     }
                 }
-                Ok(Applied { summary: format!("observed rename of clone {old} to {}", a.new), action: None })
+                Ok(Applied {
+                    summary: format!("observed rename of clone {old} to {}", a.new),
+                    action: None,
+                })
             }
             other => Err(MutationError::Bug(format!("cannot rename a {other:?}"))),
         }
@@ -389,7 +467,8 @@ fn is_duplicate_or_stale_report(rec: &CloneRecord, cap: &SessionCapture, at: Tim
         .is_some_and(|s| s.native_session_id == cap.native_session_id);
     let older_than_occupant = occupant.is_some_and(|o| at < o.since);
     let predates_recorded = rec.sessions.iter().any(|s| {
-        s.native_session_id == cap.native_session_id && (at < s.started || s.ended.is_some_and(|e| at < e))
+        s.native_session_id == cap.native_session_id
+            && (at < s.started || s.ended.is_some_and(|e| at < e))
     });
     is_occupant || older_than_occupant || predates_recorded
 }
@@ -433,14 +512,21 @@ impl Mutation for OccupancyMutation {
                         ended: None,
                         end_reason: None,
                     };
-                    rec.occupant = Some(Occupant { native_session: ns.id.clone(), harness: cap.harness, since: at });
+                    rec.occupant = Some(Occupant {
+                        native_session: ns.id.clone(),
+                        harness: cap.harness,
+                        since: at,
+                    });
                     rec.sessions.push(ns);
                     summary = format!("session started on {}", a.clone);
                 }
             }
             Ok(())
         })?;
-        Ok(Applied { summary, action: None })
+        Ok(Applied {
+            summary,
+            action: None,
+        })
     }
 }
 
@@ -492,7 +578,10 @@ impl Mutation for MoveMutation {
             })?;
             parts.push(format!("seat {s} moved out"));
         }
-        Ok(Applied { summary: parts.join(", "), action: None })
+        Ok(Applied {
+            summary: parts.join(", "),
+            action: None,
+        })
     }
 }
 
@@ -531,8 +620,15 @@ impl Mutation for AvailabilityMutation {
                 set(&mut r.runtime, cx);
                 Ok(())
             })?,
-            other => return Err(MutationError::Bug(format!("{other:?} objects have no runtime"))),
+            other => {
+                return Err(MutationError::Bug(format!(
+                    "{other:?} objects have no runtime"
+                )));
+            }
         }
-        Ok(Applied { summary: format!("{} is {:?}", a.object, a.availability), action: None })
+        Ok(Applied {
+            summary: format!("{} is {:?}", a.object, a.availability),
+            action: None,
+        })
     }
 }

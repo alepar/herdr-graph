@@ -12,7 +12,8 @@ use herdr_graph::ports::writer::Writer;
 use herdr_graph::store::init::init_instance;
 use herdr_graph::store::{GitStore, layout};
 use herdr_graph::writer::{
-    Applied, Mutation, MutationCx, MutationError, MutationRegistry, StepOutcome, WriterConfig, WriterCore,
+    Applied, Mutation, MutationCx, MutationError, MutationRegistry, StepOutcome, WriterConfig,
+    WriterCore,
 };
 use serde_json::json;
 use std::path::PathBuf;
@@ -29,7 +30,10 @@ impl Mutation for Pair {
         let n = cx.request.args["n"].as_i64().unwrap().to_string();
         cx.tree.put_file(rp("pair/a.txt"), n.clone().into_bytes());
         cx.tree.put_file(rp("pair/b.txt"), n.into_bytes());
-        Ok(Applied { summary: "pair".into(), action: None })
+        Ok(Applied {
+            summary: "pair".into(),
+            action: None,
+        })
     }
 }
 
@@ -49,7 +53,8 @@ impl Mutation for Seed {
             project_repo: None,
             channel: Default::default(),
         };
-        cx.tree.put_record(layout::teamspace_record(&dir), &mut ts)?;
+        cx.tree
+            .put_record(layout::teamspace_record(&dir), &mut ts)?;
         let mut seat = SeatRecord {
             schema: SCHEMA_VERSION,
             id: self.1.clone(),
@@ -70,8 +75,14 @@ impl Mutation for Seed {
             reload_required: false,
             moved_out: false,
         };
-        cx.tree.put_record(layout::seat_record(&layout::seat_dir(&dir, "one")), &mut seat)?;
-        Ok(Applied { summary: "seed".into(), action: None })
+        cx.tree.put_record(
+            layout::seat_record(&layout::seat_dir(&dir, "one")),
+            &mut seat,
+        )?;
+        Ok(Applied {
+            summary: "seed".into(),
+            action: None,
+        })
     }
 }
 
@@ -80,7 +91,10 @@ impl Mutation for Rename {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let id = AnyId::parse(cx.request.args["seat"].as_str().unwrap()).unwrap();
         let name = cx.request.args["name"].as_str().unwrap().to_owned();
-        let loc = cx.tree.locate(&id)?.ok_or_else(|| MutationError::Bug("no seat".into()))?;
+        let loc = cx
+            .tree
+            .locate(&id)?
+            .ok_or_else(|| MutationError::Bug("no seat".into()))?;
         let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
         rec.name_history.push(NameChange {
             old: rec.name.clone(),
@@ -91,7 +105,10 @@ impl Mutation for Rename {
         });
         rec.name = name;
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "rename".into(), action: None })
+        Ok(Applied {
+            summary: "rename".into(),
+            action: None,
+        })
     }
 }
 
@@ -109,12 +126,26 @@ fn fixture() -> Fx {
     let seat = SeatId::new();
     let mut reg = MutationRegistry::default();
     reg.register("bookkeeping.pair", Arc::new(Pair));
-    reg.register("bookkeeping.seed", Arc::new(Seed(TeamspaceId::new(), seat.clone())));
+    reg.register(
+        "bookkeeping.seed",
+        Arc::new(Seed(TeamspaceId::new(), seat.clone())),
+    );
     reg.register("seat_rename", Arc::new(Rename));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
-    let w = WriterCore::new(store, journal, Arc::new(reg), Arc::new(SystemClock), WriterConfig::default());
-    let fx = Fx { _tmp: tmp, root, seat, w };
+    let w = WriterCore::new(
+        store,
+        journal,
+        Arc::new(reg),
+        Arc::new(SystemClock),
+        WriterConfig::default(),
+    );
+    let fx = Fx {
+        _tmp: tmp,
+        root,
+        seat,
+        w,
+    };
     fx.w.admit(book("seed", json!({}))).unwrap();
     fx.w.drain().unwrap();
     fx
@@ -136,7 +167,10 @@ fn rename(seat: &SeatId, name: &str) -> ChangeRequest {
     ChangeRequest {
         kind: RequestKind::SeatRename,
         args: json!({ "seat": seat.as_str(), "name": name }),
-        relied_on: vec![ReliedOn { object: seat.to_any(), version: Version::Rev(1) }],
+        relied_on: vec![ReliedOn {
+            object: seat.to_any(),
+            version: Version::Rev(1),
+        }],
         requester: Requester::default(),
         supersedes: None,
         confirmed: None,
@@ -151,7 +185,11 @@ fn trailer_count(store: &GitStore, op: &OpId) -> usize {
             walk.push_head()?;
             let mut n = 0;
             for oid in walk {
-                let msg = r.find_commit(oid?)?.message().unwrap_or_default().to_owned();
+                let msg = r
+                    .find_commit(oid?)?
+                    .message()
+                    .unwrap_or_default()
+                    .to_owned();
                 n += msg.lines().filter(|l| *l == needle).count();
             }
             Ok(n)
@@ -193,7 +231,13 @@ fn reader_never_sees_partial_multi_file_change() {
         assert!(reads > 0);
     }
     let head = fx.w.store().head().unwrap();
-    assert_eq!(fx.w.store().read_file(&head, &rp("pair/a.txt")).unwrap().unwrap(), b"200");
+    assert_eq!(
+        fx.w.store()
+            .read_file(&head, &rp("pair/a.txt"))
+            .unwrap()
+            .unwrap(),
+        b"200"
+    );
 }
 
 #[test]
@@ -224,10 +268,16 @@ fn cancel_vs_commit_is_linearizable() {
             OpState::Committed => {
                 committed += 1;
                 assert!(
-                    matches!(cancel_result, CancelOutcome::NotCancellable(OpState::Applying | OpState::Committed)),
+                    matches!(
+                        cancel_result,
+                        CancelOutcome::NotCancellable(OpState::Applying | OpState::Committed)
+                    ),
                     "{cancel_result:?}"
                 );
-                assert!(matches!(step_result, StepOutcome::Committed(..)), "{step_result:?}");
+                assert!(
+                    matches!(step_result, StepOutcome::Committed(..)),
+                    "{step_result:?}"
+                );
                 assert_eq!(in_log, 1, "committed op appears exactly once");
             }
             other => panic!("unexpected state {other:?}"),
@@ -247,14 +297,39 @@ fn two_renames_same_rev() {
     let t2 = std::thread::spawn(move || w2.admit(r2).unwrap());
     let (a, b) = (t1.join().unwrap(), t2.join().unwrap());
     fx.w.drain().unwrap();
-    let states = [fx.w.status(&a).unwrap().unwrap(), fx.w.status(&b).unwrap().unwrap()];
-    assert_eq!(states.iter().filter(|s| **s == OpState::Committed).count(), 1, "{states:?}");
-    assert_eq!(states.iter().filter(|s| **s == OpState::Rejected).count(), 1, "{states:?}");
-    let loser = if states[0] == OpState::Rejected { &a } else { &b };
-    let rej = fx.w.journal().get(loser).unwrap().unwrap().rejection.unwrap();
+    let states = [
+        fx.w.status(&a).unwrap().unwrap(),
+        fx.w.status(&b).unwrap().unwrap(),
+    ];
+    assert_eq!(
+        states.iter().filter(|s| **s == OpState::Committed).count(),
+        1,
+        "{states:?}"
+    );
+    assert_eq!(
+        states.iter().filter(|s| **s == OpState::Rejected).count(),
+        1,
+        "{states:?}"
+    );
+    let loser = if states[0] == OpState::Rejected {
+        &a
+    } else {
+        &b
+    };
+    let rej =
+        fx.w.journal()
+            .get(loser)
+            .unwrap()
+            .unwrap()
+            .rejection
+            .unwrap();
     assert_eq!(rej.reason, "precondition_failed");
     assert!(rej.explanation.contains(fx.seat.as_str()));
-    let winner = if states[0] == OpState::Committed { &a } else { &b };
+    let winner = if states[0] == OpState::Committed {
+        &a
+    } else {
+        &b
+    };
     assert_eq!(trailer_count(fx.w.store(), winner), 1);
     assert_eq!(trailer_count(fx.w.store(), loser), 0);
 }

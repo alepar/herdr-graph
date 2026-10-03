@@ -33,8 +33,10 @@ pub fn init_instance(path: &Path) -> Result<CommitId, StoreError> {
         summarizer_seat: None,
         defaults: GraphDefaults::default(),
     };
-    let graph_toml = toml::to_string(&graph)
-        .map_err(|e| StoreError::Corrupt { path: "graph.toml".into(), reason: e.to_string() })?;
+    let graph_toml = toml::to_string(&graph).map_err(|e| StoreError::Corrupt {
+        path: "graph.toml".into(),
+        reason: e.to_string(),
+    })?;
     std::fs::write(path.join("graph.toml"), graph_toml)?;
     std::fs::write(path.join(".gitignore"), "/.graph-local/\n")?;
     let mut files = vec!["graph.toml", ".gitignore"];
@@ -42,7 +44,11 @@ pub fn init_instance(path: &Path) -> Result<CommitId, StoreError> {
         std::fs::create_dir_all(path.join(dir))?;
         std::fs::write(path.join(dir).join(".gitkeep"), "")?;
     }
-    files.extend(["teamspaces/.gitkeep", "templates/.gitkeep", "rules/.gitkeep"]);
+    files.extend([
+        "teamspaces/.gitkeep",
+        "templates/.gitkeep",
+        "rules/.gitkeep",
+    ]);
     std::fs::create_dir_all(path.join(".graph-local"))?;
 
     let mut index = repo.index().map_err(git_err)?;
@@ -50,10 +56,19 @@ pub fn init_instance(path: &Path) -> Result<CommitId, StoreError> {
         index.add_path(Path::new(f)).map_err(git_err)?;
     }
     index.write().map_err(git_err)?;
-    let tree = repo.find_tree(index.write_tree().map_err(git_err)?).map_err(git_err)?;
+    let tree = repo
+        .find_tree(index.write_tree().map_err(git_err)?)
+        .map_err(git_err)?;
     let sig = graph_signature().map_err(git_err)?;
     let oid = repo
-        .commit(Some("refs/heads/main"), &sig, &sig, "init: herdr-graph instance", &tree, &[])
+        .commit(
+            Some("refs/heads/main"),
+            &sig,
+            &sig,
+            "init: herdr-graph instance",
+            &tree,
+            &[],
+        )
         .map_err(git_err)?;
     Ok(CommitId(oid.to_string()))
 }
@@ -73,7 +88,11 @@ pub fn write_user_config(home: &Path, instance: &Path) -> std::io::Result<UserCo
         let points_here = std::fs::read_to_string(&cfg)
             .ok()
             .and_then(|t| t.parse::<toml::Table>().ok())
-            .and_then(|t| t.get("instance").and_then(|v| v.as_str()).map(PathBuf::from))
+            .and_then(|t| {
+                t.get("instance")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from)
+            })
             .is_some_and(|p| p == instance);
         return Ok(if points_here {
             UserConfigOutcome::AlreadyPointsHere(cfg)
@@ -83,7 +102,10 @@ pub fn write_user_config(home: &Path, instance: &Path) -> std::io::Result<UserCo
     }
     std::fs::create_dir_all(cfg.parent().expect("config path has a parent"))?;
     let mut table = toml::Table::new();
-    table.insert("instance".into(), toml::Value::String(instance.to_string_lossy().into_owned()));
+    table.insert(
+        "instance".into(),
+        toml::Value::String(instance.to_string_lossy().into_owned()),
+    );
     let text = toml::to_string(&table).map_err(|e| std::io::Error::other(e.to_string()))?;
     std::fs::write(&cfg, text)?;
     Ok(UserConfigOutcome::Written(cfg))

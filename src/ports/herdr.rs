@@ -148,7 +148,12 @@ pub trait HerdrApi: Send + Sync {
     async fn rename_pane(&self, id: &HerdrPaneId, label: &str) -> Result<(), HerdrError>;
     async fn close_pane(&self, id: &HerdrPaneId) -> Result<(), HerdrError>;
     /// Stamp graph token: `pane.report_metadata`.
-    async fn report_pane_metadata(&self, id: &HerdrPaneId, key: &str, value: &str) -> Result<(), HerdrError>;
+    async fn report_pane_metadata(
+        &self,
+        id: &HerdrPaneId,
+        key: &str,
+        value: &str,
+    ) -> Result<(), HerdrError>;
     /// Stamp graph token: `workspace.report_metadata`.
     async fn report_workspace_metadata(
         &self,

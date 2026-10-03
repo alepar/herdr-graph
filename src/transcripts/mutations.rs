@@ -7,10 +7,12 @@ use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::CloneRecord;
 use crate::model::request::{DeliveryAttempt, ProcessingRequest, RequestResult, RequestStatus};
 use crate::model::transcript::TranscriptRecord;
-use crate::model::{AnyId, ByteRange, CloneId, NsId, RequestId, SCHEMA_VERSION, SeatId, Timestamp, TranscriptId};
+use crate::model::{
+    AnyId, ByteRange, CloneId, NsId, RequestId, SCHEMA_VERSION, SeatId, Timestamp, TranscriptId,
+};
 use crate::ports::store::StoreError;
-use crate::store::tree::{Overlay, TreeRead};
 use crate::store::layout;
+use crate::store::tree::{Overlay, TreeRead};
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, Reject};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -44,12 +46,22 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 /// A bookkeeping request of sub-kind `sub` (`args["sub"]` selects the mutation).
 pub fn bookkeeping_request(sub: &str, mut args: serde_json::Value) -> ChangeRequest {
     args["sub"] = json!(sub);
-    ChangeRequest { kind: RequestKind::Bookkeeping, args, relied_on: vec![], requester: Requester::default(), supersedes: None, confirmed: None }
+    ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args,
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    }
 }
 
 /// Whether the request was merged into an older overlapping one (such rows are skipped by scans).
 pub fn is_merged(r: &ProcessingRequest) -> bool {
-    r.status == RequestStatus::Unresolved && r.unresolved.as_deref().is_some_and(|u| u.starts_with(MERGED_PREFIX))
+    r.status == RequestStatus::Unresolved
+        && r.unresolved
+            .as_deref()
+            .is_some_and(|u| u.starts_with(MERGED_PREFIX))
 }
 
 fn parse<T: DeserializeOwned>(cx: &MutationCx<'_>) -> Result<T, MutationError> {
@@ -57,24 +69,44 @@ fn parse<T: DeserializeOwned>(cx: &MutationCx<'_>) -> Result<T, MutationError> {
 }
 
 fn reject(reason: &str, explanation: String) -> MutationError {
-    MutationError::Reject(Reject { reason: reason.into(), explanation, current_revs: vec![] })
+    MutationError::Reject(Reject {
+        reason: reason.into(),
+        explanation,
+        current_revs: vec![],
+    })
 }
 
 fn noop(summary: impl Into<String>) -> Applied {
-    Applied { summary: summary.into(), action: None }
+    Applied {
+        summary: summary.into(),
+        action: None,
+    }
 }
 
-fn read_request(tree: &Overlay<'_>, rq: &RequestId) -> Result<(crate::ports::store::RepoPath, ProcessingRequest), MutationError> {
+fn read_request(
+    tree: &Overlay<'_>,
+    rq: &RequestId,
+) -> Result<(crate::ports::store::RepoPath, ProcessingRequest), MutationError> {
     let path = layout::request_record(rq);
     match tree.read_record::<ProcessingRequest>(&path)? {
         Some(r) => Ok((path, r)),
-        None => Err(reject("request_missing", format!("{rq} does not exist at the committed head"))),
+        None => Err(reject(
+            "request_missing",
+            format!("{rq} does not exist at the committed head"),
+        )),
     }
 }
 
 /// Every request of one transcript.
-fn requests_of(tree: &dyn TreeRead, tr: &TranscriptId) -> Result<Vec<ProcessingRequest>, StoreError> {
-    Ok(layout::list_requests(tree)?.into_iter().map(|(_, r)| r).filter(|r| &r.transcript == tr).collect())
+fn requests_of(
+    tree: &dyn TreeRead,
+    tr: &TranscriptId,
+) -> Result<Vec<ProcessingRequest>, StoreError> {
+    Ok(layout::list_requests(tree)?
+        .into_iter()
+        .map(|(_, r)| r)
+        .filter(|r| &r.transcript == tr)
+        .collect())
 }
 
 /// The newest transcript record of a native session and path.
@@ -90,8 +122,14 @@ fn find_transcript(
         .max_by(|a, b| a.id.cmp(&b.id)))
 }
 
-fn find_transcript_by_id(tree: &dyn TreeRead, id: &TranscriptId) -> Result<Option<TranscriptRecord>, StoreError> {
-    Ok(layout::list_transcripts(tree)?.into_iter().map(|(_, t)| t).find(|t| &t.id == id))
+fn find_transcript_by_id(
+    tree: &dyn TreeRead,
+    id: &TranscriptId,
+) -> Result<Option<TranscriptRecord>, StoreError> {
+    Ok(layout::list_transcripts(tree)?
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| &t.id == id))
 }
 
 struct TranscriptSpec<'a> {
@@ -105,7 +143,10 @@ struct TranscriptSpec<'a> {
 }
 
 /// Find the transcript record for (ns, path) or create it; links the native session to it.
-fn ensure_transcript(cx: &mut MutationCx<'_>, s: &TranscriptSpec<'_>) -> Result<TranscriptRecord, MutationError> {
+fn ensure_transcript(
+    cx: &mut MutationCx<'_>,
+    s: &TranscriptSpec<'_>,
+) -> Result<TranscriptRecord, MutationError> {
     let path = s.path.map(std::path::Path::to_path_buf).unwrap_or_default();
     if !s.force_new
         && let Some(mut found) = find_transcript(&cx.tree, s.ns, &path)?
@@ -130,17 +171,29 @@ fn ensure_transcript(cx: &mut MutationCx<'_>, s: &TranscriptSpec<'_>) -> Result<
         gaps: vec![],
         unresolved: s.unresolved.map(str::to_owned),
     };
-    cx.tree.put_record(layout::transcript_record(s.seat, &rec.id), &mut rec)?;
+    cx.tree
+        .put_record(layout::transcript_record(s.seat, &rec.id), &mut rec)?;
     link_session(cx, s.clone, s.ns, &rec.id)?;
     Ok(rec)
 }
 
 /// `clone.sessions[ns].transcript = tr` (the newest record of that session wins).
-fn link_session(cx: &mut MutationCx<'_>, clone: &CloneId, ns: &NsId, tr: &TranscriptId) -> Result<(), MutationError> {
+fn link_session(
+    cx: &mut MutationCx<'_>,
+    clone: &CloneId,
+    ns: &NsId,
+    tr: &TranscriptId,
+) -> Result<(), MutationError> {
     let any = clone.to_any();
-    let Some(loc) = cx.tree.locate(&any)? else { return Ok(()) };
-    let Some(mut rec) = cx.tree.read_record::<CloneRecord>(&loc.record_path)? else { return Ok(()) };
-    let Some(session) = rec.sessions.iter_mut().find(|s| &s.id == ns) else { return Ok(()) };
+    let Some(loc) = cx.tree.locate(&any)? else {
+        return Ok(());
+    };
+    let Some(mut rec) = cx.tree.read_record::<CloneRecord>(&loc.record_path)? else {
+        return Ok(());
+    };
+    let Some(session) = rec.sessions.iter_mut().find(|s| &s.id == ns) else {
+        return Ok(());
+    };
     if session.transcript.as_ref() == Some(tr) {
         return Ok(());
     }
@@ -168,7 +221,10 @@ struct TranscriptArgs {
 
 fn seat_of(cx: &MutationCx<'_>, clone: &CloneId) -> Result<SeatId, MutationError> {
     let any = clone.to_any();
-    let loc = cx.tree.locate(&any)?.ok_or_else(|| reject("object_missing", format!("{any} does not exist")))?;
+    let loc = cx
+        .tree
+        .locate(&any)?
+        .ok_or_else(|| reject("object_missing", format!("{any} does not exist")))?;
     let rec: CloneRecord = cx
         .tree
         .read_record(&loc.record_path)?
@@ -183,7 +239,10 @@ impl Mutation for TranscriptMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: TranscriptArgs = parse(cx)?;
         let seat = seat_of(cx, &a.clone)?;
-        let unresolved = a.unresolved.clone().or_else(|| a.path.is_none().then(|| TRANSCRIPT_UNRESOLVED.to_owned()));
+        let unresolved = a
+            .unresolved
+            .clone()
+            .or_else(|| a.path.is_none().then(|| TRANSCRIPT_UNRESOLVED.to_owned()));
         let tr = ensure_transcript(
             cx,
             &TranscriptSpec {
@@ -230,7 +289,10 @@ struct CreateArgs {
 /// The highest byte any coverage or live (non-unresolved) request of the transcript reaches.
 pub(crate) fn covered_end(tr: &TranscriptRecord, requests: &[ProcessingRequest]) -> u64 {
     let cov = tr.coverage.iter().map(|r| r.end);
-    let reqs = requests.iter().filter(|r| r.status != RequestStatus::Unresolved).map(|r| r.range.end);
+    let reqs = requests
+        .iter()
+        .filter(|r| r.status != RequestStatus::Unresolved)
+        .map(|r| r.range.end);
     cov.chain(reqs).max().unwrap_or(0)
 }
 
@@ -257,13 +319,20 @@ impl Mutation for RequestCreate {
                     ns: &a.ns,
                     path: a.path.as_deref(),
                     summaries: a.summaries,
-                    unresolved: a.unresolved.as_deref().or_else(|| a.path.is_none().then_some(TRANSCRIPT_UNRESOLVED)),
+                    unresolved: a
+                        .unresolved
+                        .as_deref()
+                        .or_else(|| a.path.is_none().then_some(TRANSCRIPT_UNRESOLVED)),
                     force_new: a.force_new,
                 },
             )?,
         };
         if tr.unresolved.is_some() && a.size.is_none() && a.path.is_none() {
-            return Ok(noop(format!("{} is unresolved ({}): nothing to request", tr.id, tr.unresolved.as_deref().unwrap_or("?"))));
+            return Ok(noop(format!(
+                "{} is unresolved ({}): nothing to request",
+                tr.id,
+                tr.unresolved.as_deref().unwrap_or("?")
+            )));
         }
         let existing = requests_of(&cx.tree, &tr.id)?;
         let start = covered_end(&tr, &existing);
@@ -275,30 +344,52 @@ impl Mutation for RequestCreate {
             (None, None) => (ByteRange { start, end: start }, Some(MISSING_INPUT)),
         };
         if let Some(reason) = unresolved {
-            let dup = existing.iter().any(|r| r.status == RequestStatus::Unresolved && r.unresolved.as_deref() == Some(reason));
+            let dup = existing.iter().any(|r| {
+                r.status == RequestStatus::Unresolved && r.unresolved.as_deref() == Some(reason)
+            });
             if dup {
                 return Ok(noop(format!("{}: {reason} already recorded", tr.id)));
             }
-            let rq = new_request(cx, &tr, range, RequestStatus::Unresolved, Some(reason.to_owned()))?;
+            let rq = new_request(
+                cx,
+                &tr,
+                range,
+                RequestStatus::Unresolved,
+                Some(reason.to_owned()),
+            )?;
             return Ok(noop(format!("request {rq} unresolved: {reason}")));
         }
         if range.is_empty() || range.start > range.end {
             return Ok(noop(format!("{}: nothing new beyond byte {start}", tr.id)));
         }
         // Dedup key (tr, range).
-        if let Some(dup) = existing.iter().find(|r| r.range == range && r.status != RequestStatus::Unresolved) {
-            return Ok(noop(format!("request {} already covers {}-{}", dup.id, range.start, range.end)));
+        if let Some(dup) = existing
+            .iter()
+            .find(|r| r.range == range && r.status != RequestStatus::Unresolved)
+        {
+            return Ok(noop(format!(
+                "request {} already covers {}-{}",
+                dup.id, range.start, range.end
+            )));
         }
         // Overlapping pending (undelivered) requests merge before delivery: the oldest keeps its id.
-        let mut group: Vec<&ProcessingRequest> =
-            existing.iter().filter(|r| r.status == RequestStatus::Pending && overlaps(&r.range, &range)).collect();
+        let mut group: Vec<&ProcessingRequest> = existing
+            .iter()
+            .filter(|r| r.status == RequestStatus::Pending && overlaps(&r.range, &range))
+            .collect();
         if group.is_empty() {
             let rq = new_request(cx, &tr, range, RequestStatus::Pending, None)?;
-            return Ok(noop(format!("request {rq} for {} bytes {}-{}", tr.id, range.start, range.end)));
+            return Ok(noop(format!(
+                "request {rq} for {} bytes {}-{}",
+                tr.id, range.start, range.end
+            )));
         }
         group.sort_by(|x, y| x.id.cmp(&y.id));
         let mut keeper = group[0].clone();
-        let (mut lo, mut hi) = (range.start.min(keeper.range.start), range.end.max(keeper.range.end));
+        let (mut lo, mut hi) = (
+            range.start.min(keeper.range.start),
+            range.end.max(keeper.range.end),
+        );
         for other in &group[1..] {
             lo = lo.min(other.range.start);
             hi = hi.max(other.range.end);
@@ -309,7 +400,8 @@ impl Mutation for RequestCreate {
         }
         keeper.range = ByteRange { start: lo, end: hi };
         let id = keeper.id.clone();
-        cx.tree.put_record(layout::request_record(&id), &mut keeper)?;
+        cx.tree
+            .put_record(layout::request_record(&id), &mut keeper)?;
         Ok(noop(format!("request {id} extended to bytes {lo}-{hi}")))
     }
 }
@@ -334,7 +426,8 @@ fn new_request(
         delivery: Default::default(),
         result: None,
     };
-    cx.tree.put_record(layout::request_record(&rq.id), &mut rq)?;
+    cx.tree
+        .put_record(layout::request_record(&rq.id), &mut rq)?;
     Ok(rq.id)
 }
 
@@ -366,10 +459,18 @@ impl Mutation for RequestDelivery {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: DeliveryArgs = parse(cx)?;
         let (path, mut rq) = read_request(&cx.tree, &a.rq)?;
-        if matches!(rq.status, RequestStatus::Completed | RequestStatus::Unresolved) {
-            return Ok(noop(format!("{} is {:?}: delivery facts ignored", a.rq, rq.status)));
+        if matches!(
+            rq.status,
+            RequestStatus::Completed | RequestStatus::Unresolved
+        ) {
+            return Ok(noop(format!(
+                "{} is {:?}: delivery facts ignored",
+                a.rq, rq.status
+            )));
         }
-        if a.expect_attempts.is_some_and(|n| n != rq.delivery.attempts.len()) {
+        if a.expect_attempts
+            .is_some_and(|n| n != rq.delivery.attempts.len())
+        {
             return Ok(noop(format!("{}: attempt already recorded", a.rq)));
         }
         let mut what = Vec::new();
@@ -431,7 +532,11 @@ impl Mutation for RequestAck {
             RequestStatus::Unresolved => {
                 return Err(reject(
                     "request_unresolved",
-                    format!("{} is unresolved ({}); it cannot be acknowledged", a.rq, rq.unresolved.as_deref().unwrap_or("?")),
+                    format!(
+                        "{} is unresolved ({}); it cannot be acknowledged",
+                        a.rq,
+                        rq.unresolved.as_deref().unwrap_or("?")
+                    ),
                 ));
             }
             _ => {}
@@ -469,7 +574,11 @@ impl Mutation for RequestComplete {
         if rq.status == RequestStatus::Unresolved {
             return Err(reject(
                 "request_unresolved",
-                format!("{} is unresolved ({}); it cannot be completed", a.rq, rq.unresolved.as_deref().unwrap_or("?")),
+                format!(
+                    "{} is unresolved ({}); it cannot be completed",
+                    a.rq,
+                    rq.unresolved.as_deref().unwrap_or("?")
+                ),
             ));
         }
         rq.status = RequestStatus::Completed;
@@ -494,7 +603,10 @@ impl Mutation for RequestComplete {
         tr.gaps = gaps(&requested, &tr.coverage);
         let tr_path = layout::transcript_record(&tr.seat, &tr.id);
         cx.tree.put_record(tr_path, &mut tr)?;
-        Ok(noop(format!("{} completed covering {}-{}", a.rq, a.covered.start, a.covered.end)))
+        Ok(noop(format!(
+            "{} completed covering {}-{}",
+            a.rq, a.covered.start, a.covered.end
+        )))
     }
 }
 

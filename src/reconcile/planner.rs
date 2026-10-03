@@ -4,8 +4,12 @@ use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
-use crate::model::common::{Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation};
-use crate::model::effect::{ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd};
+use crate::model::common::{
+    Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
+};
+use crate::model::effect::{
+    ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd,
+};
 use crate::model::launch::{nonce_label, parse_graph_token};
 use crate::model::{AnyId, CloneId, EffectId, SeatId, TeamspaceId};
 use crate::ports::herdr::{HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo};
@@ -75,14 +79,21 @@ pub fn token_of(md: &BTreeMap<String, String>) -> Option<AnyId> {
 
 impl<'a> LiveIndex<'a> {
     pub fn new(snap: &'a HerdrSnapshot, desired: &'a DesiredRuntime, journal: &'a Journal) -> Self {
-        Self { snap, desired, journal }
+        Self {
+            snap,
+            desired,
+            journal,
+        }
     }
 
     fn ws_by_id(&self, id: &HerdrWorkspaceId) -> Option<&'a WorkspaceInfo> {
         self.snap.workspaces.iter().find(|w| &w.id == id)
     }
     fn tab_by_id(&self, id: &HerdrTabId) -> Option<(&'a WorkspaceInfo, &'a TabInfo)> {
-        self.snap.workspaces.iter().find_map(|w| w.tabs.iter().find(|t| &t.id == id).map(|t| (w, t)))
+        self.snap
+            .workspaces
+            .iter()
+            .find_map(|w| w.tabs.iter().find(|t| &t.id == id).map(|t| (w, t)))
     }
     fn pane_by_id(&self, id: &HerdrPaneId) -> Option<LivePane<'a>> {
         self.snap.workspaces.iter().find_map(|w| {
@@ -99,10 +110,19 @@ impl<'a> LiveIndex<'a> {
 
     pub fn workspace(&self, ts: &TeamspaceId) -> Option<LiveWorkspace<'a>> {
         let any = ts.to_any();
-        if let Some(ws) = self.snap.workspaces.iter().find(|w| token_of(&w.metadata).as_ref() == Some(&any)) {
+        if let Some(ws) = self
+            .snap
+            .workspaces
+            .iter()
+            .find(|w| token_of(&w.metadata).as_ref() == Some(&any))
+        {
             return Some(LiveWorkspace { ws, stamped: true });
         }
-        let bound = self.desired.teamspaces.get(ts).and_then(|t| t.runtime.bound.as_ref());
+        let bound = self
+            .desired
+            .teamspaces
+            .get(ts)
+            .and_then(|t| t.runtime.bound.as_ref());
         if let Some(b) = bound
             && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.workspace_id
@@ -111,7 +131,10 @@ impl<'a> LiveIndex<'a> {
             return Some(LiveWorkspace { ws, stamped: false });
         }
         let live = live_ref(self.journal, &any).filter(|l| l.incarnation == self.snap.incarnation);
-        if let Some(ws) = live.and_then(|l| l.workspace).and_then(|id| self.ws_by_id(&id)) {
+        if let Some(ws) = live
+            .and_then(|l| l.workspace)
+            .and_then(|id| self.ws_by_id(&id))
+        {
             return Some(LiveWorkspace { ws, stamped: false });
         }
         // A rebound clone pane (see `pane`) places its teamspace's workspace.
@@ -120,15 +143,27 @@ impl<'a> LiveIndex<'a> {
             .iter()
             .filter(|p| p.ts == *ts)
             .find_map(|p| self.pane(&p.clone))
-            .map(|lp| LiveWorkspace { ws: lp.ws, stamped: false })
+            .map(|lp| LiveWorkspace {
+                ws: lp.ws,
+                stamped: false,
+            })
     }
 
     pub fn pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
         let any = clone.to_any();
         for w in &self.snap.workspaces {
             for t in &w.tabs {
-                if let Some(p) = t.panes.iter().find(|p| token_of(&p.metadata).as_ref() == Some(&any)) {
-                    return Some(LivePane { ws: w, tab: t, pane: p, stamped: true });
+                if let Some(p) = t
+                    .panes
+                    .iter()
+                    .find(|p| token_of(&p.metadata).as_ref() == Some(&any))
+                {
+                    return Some(LivePane {
+                        ws: w,
+                        tab: t,
+                        pane: p,
+                        stamped: true,
+                    });
                 }
             }
         }
@@ -139,7 +174,10 @@ impl<'a> LiveIndex<'a> {
             && let Some(id) = &b.pane_id
             && let Some(lp) = self.pane_by_id(id)
         {
-            return Some(LivePane { stamped: false, ..lp });
+            return Some(LivePane {
+                stamped: false,
+                ..lp
+            });
         }
         // `clone rebind` is an explicit user assertion that a pane is the clone's: a binding it wrote while the
         // clone was `unknown` keeps the old incarnation but is `present`, so honor it when that pane exists in
@@ -150,7 +188,10 @@ impl<'a> LiveIndex<'a> {
             && let Some(lp) = self.pane_by_id(id)
             && token_of(&lp.pane.metadata).is_none()
         {
-            return Some(LivePane { stamped: false, ..lp });
+            return Some(LivePane {
+                stamped: false,
+                ..lp
+            });
         }
         let live = live_ref(self.journal, &any)?;
         if live.incarnation != self.snap.incarnation {
@@ -162,7 +203,10 @@ impl<'a> LiveIndex<'a> {
         if self.pane_claimed_by(&lp.pane.id, clone).is_some() {
             return None;
         }
-        Some(LivePane { stamped: false, ..lp })
+        Some(LivePane {
+            stamped: false,
+            ..lp
+        })
     }
 
     /// An active desired clone other than `except` whose committed binding names this pane. Bindings only (no
@@ -171,7 +215,12 @@ impl<'a> LiveIndex<'a> {
         self.desired
             .panes
             .iter()
-            .find(|q| q.clone != *except && q.bound.as_ref().is_some_and(|b| b.pane_id.as_ref() == Some(pane)))
+            .find(|q| {
+                q.clone != *except
+                    && q.bound
+                        .as_ref()
+                        .is_some_and(|b| b.pane_id.as_ref() == Some(pane))
+            })
             .map(|q| q.clone.clone())
     }
 
@@ -199,7 +248,11 @@ impl<'a> LiveIndex<'a> {
     }
 
     pub fn tab_for_seat(&self, seat: &SeatId) -> Option<(&'a WorkspaceInfo, &'a TabInfo)> {
-        let bound = self.desired.seats.get(seat).and_then(|s| s.runtime.bound.as_ref());
+        let bound = self
+            .desired
+            .seats
+            .get(seat)
+            .and_then(|s| s.runtime.bound.as_ref());
         if let Some(b) = bound
             && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.tab_id
@@ -228,7 +281,11 @@ impl<'a> LiveIndex<'a> {
         };
         for w in &self.snap.workspaces {
             for t in &w.tabs {
-                if self.owned_by_other(&t.id, seat) || t.panes.iter().any(|p| clone_seat(p).is_some_and(|s| s != seat)) {
+                if self.owned_by_other(&t.id, seat)
+                    || t.panes
+                        .iter()
+                        .any(|p| clone_seat(p).is_some_and(|s| s != seat))
+                {
                     continue;
                 }
                 if t.panes.iter().any(|p| clone_seat(p) == Some(seat)) {
@@ -237,17 +294,28 @@ impl<'a> LiveIndex<'a> {
             }
         }
         // A rebound clone pane (see `pane`) places its seat's tab.
-        self.desired.panes_of(seat).find_map(|p| self.pane(&p.clone)).map(|lp| (lp.ws, lp.tab))
+        self.desired
+            .panes_of(seat)
+            .find_map(|p| self.pane(&p.clone))
+            .map(|lp| (lp.ws, lp.tab))
     }
 
     /// Active clones of `seat` that have no live pane and are not `unknown`, in clone-id order.
     pub fn missing_clones(&self, seat: &SeatId) -> Vec<&'a DesiredPane> {
-        self.desired.panes_of(seat).filter(|p| !p.is_unknown() && self.pane(&p.clone).is_none()).collect()
+        self.desired
+            .panes_of(seat)
+            .filter(|p| !p.is_unknown() && self.pane(&p.clone).is_none())
+            .collect()
     }
 }
 
 fn pred(object: AnyId, container: ContainerKind, end: EndState, induced: bool) -> PredictedEnd {
-    PredictedEnd { object, container, end, induced }
+    PredictedEnd {
+        object,
+        container,
+        end,
+        induced,
+    }
 }
 
 struct Out<'a> {
@@ -309,7 +377,11 @@ fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     p.harness != crate::model::harness::Harness::Shell
         && p.occupant.is_none()
         && !has_agent
-        && journal.meta_get(&launched_key(&p.clone)).ok().flatten().is_none()
+        && journal
+            .meta_get(&launched_key(&p.clone))
+            .ok()
+            .flatten()
+            .is_none()
         && !has_open(journal, &any, &EffectKind::RelaunchOccupant)
 }
 
@@ -321,7 +393,12 @@ pub fn plan_effects(
     now: Timestamp,
 ) -> Vec<PlannedEffect> {
     let idx = LiveIndex::new(snap, desired, journal);
-    let mut o = Out { desired, now, planned: Vec::new(), seen: BTreeSet::new() };
+    let mut o = Out {
+        desired,
+        now,
+        planned: Vec::new(),
+        seen: BTreeSet::new(),
+    };
 
     for ws in &desired.workspaces {
         let ts_any = ws.ts.to_any();
@@ -340,16 +417,35 @@ pub fn plan_effects(
                     EffectKind::CreateWorkspace,
                     ts_any.clone(),
                     ws.rev,
-                    vec![pred(ts_any.clone(), ContainerKind::Workspace, EndState::Present, false)],
+                    vec![pred(
+                        ts_any.clone(),
+                        ContainerKind::Workspace,
+                        EndState::Present,
+                        false,
+                    )],
                     Some(&ws.name),
                     vec![],
                 );
-                let s = o.mk(EffectKind::StampToken, ts_any.clone(), ws.rev, vec![], None, vec![c]);
+                let s = o.mk(
+                    EffectKind::StampToken,
+                    ts_any.clone(),
+                    ws.rev,
+                    vec![],
+                    None,
+                    vec![c],
+                );
                 let r = o.mk(
                     EffectKind::RenameWorkspace,
                     ts_any.clone(),
                     ws.rev,
-                    vec![pred(ts_any.clone(), ContainerKind::Workspace, EndState::Renamed { name: ws.name.clone() }, false)],
+                    vec![pred(
+                        ts_any.clone(),
+                        ContainerKind::Workspace,
+                        EndState::Renamed {
+                            name: ws.name.clone(),
+                        },
+                        false,
+                    )],
                     None,
                     vec![s],
                 );
@@ -357,14 +453,28 @@ pub fn plan_effects(
             }
             Some(l) => {
                 if !l.stamped {
-                    o.mk(EffectKind::StampToken, ts_any.clone(), ws.rev, vec![], None, vec![]);
+                    o.mk(
+                        EffectKind::StampToken,
+                        ts_any.clone(),
+                        ws.rev,
+                        vec![],
+                        None,
+                        vec![],
+                    );
                 }
                 if l.ws.label != ws.name {
                     o.mk(
                         EffectKind::RenameWorkspace,
                         ts_any.clone(),
                         ws.rev,
-                        vec![pred(ts_any.clone(), ContainerKind::Workspace, EndState::Renamed { name: ws.name.clone() }, false)],
+                        vec![pred(
+                            ts_any.clone(),
+                            ContainerKind::Workspace,
+                            EndState::Renamed {
+                                name: ws.name.clone(),
+                            },
+                            false,
+                        )],
                         None,
                         vec![],
                     );
@@ -374,7 +484,10 @@ pub fn plan_effects(
 
         for tab in desired.tabs.iter().filter(|t| t.ts == ws.ts) {
             let seat_any = tab.seat.to_any();
-            let panes: Vec<&DesiredPane> = desired.panes_of(&tab.seat).filter(|p| !p.is_unknown()).collect();
+            let panes: Vec<&DesiredPane> = desired
+                .panes_of(&tab.seat)
+                .filter(|p| !p.is_unknown())
+                .collect();
             let tab_pred = |end: EndState| pred(seat_any.clone(), ContainerKind::Tab, end, false);
             match idx.tab_for_seat(&tab.seat) {
                 None => {
@@ -388,33 +501,63 @@ pub fn plan_effects(
                         if let Some(lp) = idx.pane(&p.clone)
                             && !lp.stamped
                         {
-                            o.mk(EffectKind::StampToken, p.clone.to_any(), p.rev, vec![], None, vec![]);
+                            o.mk(
+                                EffectKind::StampToken,
+                                p.clone.to_any(),
+                                p.rev,
+                                vec![],
+                                None,
+                                vec![],
+                            );
                         }
                     }
                     let missing = idx.missing_clones(&tab.seat);
-                    let Some(first) = missing.first() else { continue };
+                    let Some(first) = missing.first() else {
+                        continue;
+                    };
                     let ct = o.mk(
                         EffectKind::CreateTab,
                         seat_any.clone(),
                         tab.rev,
                         vec![
                             tab_pred(EndState::Present),
-                            pred(first.clone.to_any(), ContainerKind::Pane, EndState::Present, false),
+                            pred(
+                                first.clone.to_any(),
+                                ContainerKind::Pane,
+                                EndState::Present,
+                                false,
+                            ),
                         ],
                         Some(&tab.name),
                         ws_dep.clone(),
                     );
-                    let st = o.mk(EffectKind::StampToken, first.clone.to_any(), first.rev, vec![], None, vec![ct]);
+                    let st = o.mk(
+                        EffectKind::StampToken,
+                        first.clone.to_any(),
+                        first.rev,
+                        vec![],
+                        None,
+                        vec![ct],
+                    );
                     let rt = o.mk(
                         EffectKind::RenameTab,
                         seat_any.clone(),
                         tab.rev,
-                        vec![tab_pred(EndState::Renamed { name: tab.name.clone() })],
+                        vec![tab_pred(EndState::Renamed {
+                            name: tab.name.clone(),
+                        })],
                         None,
                         vec![st.clone()],
                     );
                     if start_needed(journal, first, false) {
-                        o.mk(EffectKind::StartAgent, first.clone.to_any(), first.rev, vec![], None, vec![rt]);
+                        o.mk(
+                            EffectKind::StartAgent,
+                            first.clone.to_any(),
+                            first.rev,
+                            vec![],
+                            None,
+                            vec![rt],
+                        );
                     }
                     for p in &missing[1..] {
                         split_chain(&mut o, journal, p, vec![st.clone()]);
@@ -428,7 +571,9 @@ pub fn plan_effects(
                             EffectKind::RenameTab,
                             seat_any.clone(),
                             tab.rev,
-                            vec![tab_pred(EndState::Renamed { name: tab.name.clone() })],
+                            vec![tab_pred(EndState::Renamed {
+                                name: tab.name.clone(),
+                            })],
                             None,
                             vec![],
                         );
@@ -439,20 +584,45 @@ pub fn plan_effects(
                             Some(lp) => {
                                 let any = p.clone.to_any();
                                 if !lp.stamped {
-                                    o.mk(EffectKind::StampToken, any.clone(), p.rev, vec![], None, vec![]);
+                                    o.mk(
+                                        EffectKind::StampToken,
+                                        any.clone(),
+                                        p.rev,
+                                        vec![],
+                                        None,
+                                        vec![],
+                                    );
                                 }
                                 if start_needed(journal, p, lp.pane.agent.is_some()) {
-                                    o.mk(EffectKind::StartAgent, any.clone(), p.rev, vec![], None, vec![]);
+                                    o.mk(
+                                        EffectKind::StartAgent,
+                                        any.clone(),
+                                        p.rev,
+                                        vec![],
+                                        None,
+                                        vec![],
+                                    );
                                 }
                                 if p.occupant.is_some()
                                     && lp.pane.agent.is_some()
                                     && !has_open(journal, &any, &EffectKind::ReplaceSession)
-                                    && let Some(raw) = journal.meta_get(&launched_key(&p.clone)).ok().flatten()
-                                    && serde_json::from_str::<serde_json::Value>(&raw).ok().as_ref()
+                                    && let Some(raw) =
+                                        journal.meta_get(&launched_key(&p.clone)).ok().flatten()
+                                    && serde_json::from_str::<serde_json::Value>(&raw)
+                                        .ok()
+                                        .as_ref()
                                         != Some(&p.launch_shape())
                                 {
-                                    let seat_rev = desired.seats.get(&p.seat).map_or(p.rev, |s| s.rev);
-                                    o.mk(EffectKind::ReplaceSession, any, seat_rev, vec![], None, vec![]);
+                                    let seat_rev =
+                                        desired.seats.get(&p.seat).map_or(p.rev, |s| s.rev);
+                                    o.mk(
+                                        EffectKind::ReplaceSession,
+                                        any,
+                                        seat_rev,
+                                        vec![],
+                                        None,
+                                        vec![],
+                                    );
                                 }
                             }
                         }
@@ -472,16 +642,35 @@ fn split_chain(o: &mut Out<'_>, journal: &Journal, p: &DesiredPane, deps: Vec<Ef
         EffectKind::SplitPane,
         any.clone(),
         p.rev,
-        vec![pred(any.clone(), ContainerKind::Pane, EndState::Present, false)],
+        vec![pred(
+            any.clone(),
+            ContainerKind::Pane,
+            EndState::Present,
+            false,
+        )],
         None,
         deps,
     );
-    let st = o.mk(EffectKind::StampToken, any.clone(), p.rev, vec![], None, vec![sp]);
+    let st = o.mk(
+        EffectKind::StampToken,
+        any.clone(),
+        p.rev,
+        vec![],
+        None,
+        vec![sp],
+    );
     let rn = o.mk(
         EffectKind::RenamePane,
         any.clone(),
         p.rev,
-        vec![pred(any.clone(), ContainerKind::Pane, EndState::Renamed { name: p.name.clone() }, false)],
+        vec![pred(
+            any.clone(),
+            ContainerKind::Pane,
+            EndState::Renamed {
+                name: p.name.clone(),
+            },
+            false,
+        )],
         None,
         vec![st],
     );
@@ -494,9 +683,15 @@ fn split_chain(o: &mut Out<'_>, journal: &Journal, p: &DesiredPane, deps: Vec<Ef
 fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
     let d = o.desired;
     for ws in &idx.snap.workspaces {
-        let Some(ts_any) = token_of(&ws.metadata) else { continue };
-        let Ok(ts) = TeamspaceId::parse(ts_any.as_str()) else { continue };
-        let Some(ts_rec) = d.teamspaces.get(&ts) else { continue };
+        let Some(ts_any) = token_of(&ws.metadata) else {
+            continue;
+        };
+        let Ok(ts) = TeamspaceId::parse(ts_any.as_str()) else {
+            continue;
+        };
+        let Some(ts_rec) = d.teamspaces.get(&ts) else {
+            continue;
+        };
         // (clone named by the token, its seat, pane id): a pane another clone's committed binding claims
         // is adopted (undo from a bound pane), so the token's clone no longer owns it.
         let graph_panes = |t: &TabInfo| -> Vec<(CloneId, SeatId, HerdrPaneId)> {
@@ -509,17 +704,39 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
         };
         if d.workspace(&ts).is_none() {
             // Teamspace dormant or retired: the whole workspace goes; everything inside is induced.
-            let mut predicted = vec![pred(ts_any.clone(), ContainerKind::Workspace, EndState::Closed, false)];
+            let mut predicted = vec![pred(
+                ts_any.clone(),
+                ContainerKind::Workspace,
+                EndState::Closed,
+                false,
+            )];
             let mut seats_done = BTreeSet::new();
             for t in &ws.tabs {
                 for (c, s, _) in graph_panes(t) {
-                    predicted.push(pred(c.to_any(), ContainerKind::Pane, EndState::Closed, true));
+                    predicted.push(pred(
+                        c.to_any(),
+                        ContainerKind::Pane,
+                        EndState::Closed,
+                        true,
+                    ));
                     if seats_done.insert(s.clone()) {
-                        predicted.push(pred(s.to_any(), ContainerKind::Tab, EndState::Closed, true));
+                        predicted.push(pred(
+                            s.to_any(),
+                            ContainerKind::Tab,
+                            EndState::Closed,
+                            true,
+                        ));
                     }
                 }
             }
-            o.mk(EffectKind::CloseWorkspace, ts_any, ts_rec.rev, predicted, None, vec![]);
+            o.mk(
+                EffectKind::CloseWorkspace,
+                ts_any,
+                ts_rec.rev,
+                predicted,
+                None,
+                vec![],
+            );
             continue;
         }
 
@@ -533,20 +750,39 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
         let mut closing: Vec<Closing> = Vec::new();
         for t in &ws.tabs {
             let gp = graph_panes(t);
-            let Some((_, seat, _)) = gp.first().cloned() else { continue };
+            let Some((_, seat, _)) = gp.first().cloned() else {
+                continue;
+            };
             let claimed = |c: &CloneId, pid: &HerdrPaneId| idx.pane_claimed_by(pid, c).is_some();
             let any_claimed = gp.iter().any(|(c, _, pid)| claimed(c, pid));
             // A seat that is merely dormant keeps its active clones: the whole tab goes. A retired seat has only
             // retired clones, which close pane by pane (the last one takes the tab with it, induced).
-            let any_active = gp.iter().any(|(c, _, _)| d.clones.get(c).is_some_and(|r| r.lifecycle == CloneLifecycle::Active));
+            let any_active = gp.iter().any(|(c, _, _)| {
+                d.clones
+                    .get(c)
+                    .is_some_and(|r| r.lifecycle == CloneLifecycle::Active)
+            });
             if d.tab(&seat).is_none() && any_active && !any_claimed {
-                closing.push(Closing { tab: t.clone(), seat, whole_tab: true, clones: gp.into_iter().map(|g| g.0).collect() });
+                closing.push(Closing {
+                    tab: t.clone(),
+                    seat,
+                    whole_tab: true,
+                    clones: gp.into_iter().map(|g| g.0).collect(),
+                });
                 continue;
             }
-            let dead: Vec<CloneId> =
-                gp.iter().filter(|(c, _, pid)| d.pane(c).is_none() && !claimed(c, pid)).map(|(c, _, _)| c.clone()).collect();
+            let dead: Vec<CloneId> = gp
+                .iter()
+                .filter(|(c, _, pid)| d.pane(c).is_none() && !claimed(c, pid))
+                .map(|(c, _, _)| c.clone())
+                .collect();
             if !dead.is_empty() {
-                closing.push(Closing { tab: t.clone(), seat, whole_tab: false, clones: dead });
+                closing.push(Closing {
+                    tab: t.clone(),
+                    seat,
+                    whole_tab: false,
+                    clones: dead,
+                });
             }
         }
         let tabs_closing = closing
@@ -558,23 +794,66 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
             let seat_rev = d.seats.get(&c.seat).map_or(0, |s| s.rev);
             let tab_closes = c.whole_tab || c.clones.len() == c.tab.panes.len();
             if c.whole_tab {
-                let mut predicted = vec![pred(c.seat.to_any(), ContainerKind::Tab, EndState::Closed, false)];
-                predicted.extend(c.clones.iter().map(|cl| pred(cl.to_any(), ContainerKind::Pane, EndState::Closed, true)));
+                let mut predicted = vec![pred(
+                    c.seat.to_any(),
+                    ContainerKind::Tab,
+                    EndState::Closed,
+                    false,
+                )];
+                predicted.extend(
+                    c.clones
+                        .iter()
+                        .map(|cl| pred(cl.to_any(), ContainerKind::Pane, EndState::Closed, true)),
+                );
                 if ws_closes {
-                    predicted.push(pred(ts_any.clone(), ContainerKind::Workspace, EndState::Closed, true));
+                    predicted.push(pred(
+                        ts_any.clone(),
+                        ContainerKind::Workspace,
+                        EndState::Closed,
+                        true,
+                    ));
                 }
-                o.mk(EffectKind::CloseTab, c.seat.to_any(), seat_rev, predicted, None, vec![]);
+                o.mk(
+                    EffectKind::CloseTab,
+                    c.seat.to_any(),
+                    seat_rev,
+                    predicted,
+                    None,
+                    vec![],
+                );
             } else {
                 for cl in &c.clones {
                     let rev = d.clones.get(cl).map_or(0, |r| r.rev);
-                    let mut predicted = vec![pred(cl.to_any(), ContainerKind::Pane, EndState::Closed, false)];
+                    let mut predicted = vec![pred(
+                        cl.to_any(),
+                        ContainerKind::Pane,
+                        EndState::Closed,
+                        false,
+                    )];
                     if tab_closes {
-                        predicted.push(pred(c.seat.to_any(), ContainerKind::Tab, EndState::Closed, true));
+                        predicted.push(pred(
+                            c.seat.to_any(),
+                            ContainerKind::Tab,
+                            EndState::Closed,
+                            true,
+                        ));
                         if ws_closes {
-                            predicted.push(pred(ts_any.clone(), ContainerKind::Workspace, EndState::Closed, true));
+                            predicted.push(pred(
+                                ts_any.clone(),
+                                ContainerKind::Workspace,
+                                EndState::Closed,
+                                true,
+                            ));
                         }
                     }
-                    o.mk(EffectKind::ClosePane, cl.to_any(), rev, predicted, None, vec![]);
+                    o.mk(
+                        EffectKind::ClosePane,
+                        cl.to_any(),
+                        rev,
+                        predicted,
+                        None,
+                        vec![],
+                    );
                 }
             }
         }

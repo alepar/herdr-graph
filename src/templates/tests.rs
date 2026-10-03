@@ -25,7 +25,9 @@ use crate::store::init::init_instance;
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::{CommitView, TreeRead};
-use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore};
+use crate::writer::{
+    Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore,
+};
 use chrono::TimeZone;
 use serde_json::json;
 use std::sync::Arc;
@@ -44,24 +46,38 @@ struct Patch;
 impl Mutation for Patch {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a = &cx.request.args;
-        let seat = SeatId::parse(a["seat"].as_str().unwrap()).map_err(|e| MutationError::Bug(e.to_string()))?;
-        let (loc, mut rec) = read_seat_rec(&cx.tree, &seat)?.ok_or_else(|| MutationError::Bug("no seat".into()))?;
+        let seat = SeatId::parse(a["seat"].as_str().unwrap())
+            .map_err(|e| MutationError::Bug(e.to_string()))?;
+        let (loc, mut rec) =
+            read_seat_rec(&cx.tree, &seat)?.ok_or_else(|| MutationError::Bug("no seat".into()))?;
         if let Some(v) = a.get("seat_wide") {
             rec.participation.seat_wide = serde_json::from_value(v.clone()).unwrap();
         }
         if let Some(body) = a.get("section").and_then(|v| v.as_str()) {
-            rec.overrides.instructions_sections.push(InstructionSection { name: "deps".into(), body: body.into() });
+            rec.overrides
+                .instructions_sections
+                .push(InstructionSection {
+                    name: "deps".into(),
+                    body: body.into(),
+                });
         }
         cx.tree.put_record(loc.record_path.clone(), &mut rec)?;
         if a.get("occupy").is_some() {
             for (cloc, mut c) in layout::list_clones(&cx.tree, &loc.folder)? {
                 if c.lifecycle == CloneLifecycle::Active {
-                    c.occupant = Some(Occupant { native_session: NsId::new(), harness: Harness::Claude, since: cx.now });
+                    c.occupant = Some(Occupant {
+                        native_session: NsId::new(),
+                        harness: Harness::Claude,
+                        since: cx.now,
+                    });
                     cx.tree.put_record(cloc.record_path, &mut c)?;
                 }
             }
         }
-        Ok(Applied { summary: "patch".into(), action: None })
+        Ok(Applied {
+            summary: "patch".into(),
+            action: None,
+        })
     }
 }
 
@@ -91,9 +107,29 @@ fn fx() -> Fx {
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
-    let w = WriterCore::new(store.clone(), journal, Arc::new(reg), clock.clone(), WriterConfig::default());
-    let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock, instance: root };
-    Fx { _tmp: tmp, docs, deps, w, store, n: std::cell::Cell::new(0) }
+    let w = WriterCore::new(
+        store.clone(),
+        journal,
+        Arc::new(reg),
+        clock.clone(),
+        WriterConfig::default(),
+    );
+    let deps = PlanDeps {
+        kinds,
+        plans,
+        store: store.clone(),
+        writer: w.clone(),
+        clock,
+        instance: root,
+    };
+    Fx {
+        _tmp: tmp,
+        docs,
+        deps,
+        w,
+        store,
+        n: std::cell::Cell::new(0),
+    }
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -115,8 +151,14 @@ fn plan_err(fx: &Fx, change: &str) -> String {
 }
 
 fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
-    let op = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-        .unwrap_or_else(|e| panic!("admit: {}", e.message));
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit: {}", e.message));
     fx.w.drain().unwrap();
     fx.w.journal().get(&op).unwrap().unwrap()
 }
@@ -124,12 +166,20 @@ fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
 fn commit(fx: &Fx, change: &str) -> OpRow {
     let sp = plan(fx, change);
     let row = apply_plan(fx, &sp);
-    assert_eq!(row.state, OpState::Committed, "{change}: {:?}", row.rejection);
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "{change}: {:?}",
+        row.rejection
+    );
     row
 }
 
 fn view(fx: &Fx) -> CommitView<'_> {
-    CommitView { store: &*fx.store, at: fx.store.head().unwrap() }
+    CommitView {
+        store: &*fx.store,
+        at: fx.store.head().unwrap(),
+    }
 }
 
 fn kinds_of(sp: &StoredPlan) -> Vec<String> {
@@ -143,33 +193,52 @@ fn count(sp: &StoredPlan, kind: &str) -> usize {
 fn action_of(fx: &Fx, row: &OpRow) -> ActionRecord {
     let act = row.action.clone().expect("op carries an action");
     let v = view(fx);
-    let loc = layout::locate(&v, &act.to_any()).unwrap().expect("action record committed");
+    let loc = layout::locate(&v, &act.to_any())
+        .unwrap()
+        .expect("action record committed");
     read_toml(&v, &loc.record_path).unwrap().unwrap()
 }
 
 fn tpl(fx: &Fx, name: &str) -> TemplateRecord {
-    let mut found: Vec<_> = layout::list_templates(&view(fx)).unwrap().into_iter().filter(|(_, t)| t.name == name).collect();
+    let mut found: Vec<_> = layout::list_templates(&view(fx))
+        .unwrap()
+        .into_iter()
+        .filter(|(_, t)| t.name == name)
+        .collect();
     assert_eq!(found.len(), 1, "template {name}");
     found.remove(0).1
 }
 
 fn app(fx: &Fx, name: &str) -> ApplicationRecord {
-    let mut found: Vec<_> =
-        layout::list_applications(&view(fx)).unwrap().into_iter().filter(|(_, a)| a.name == name).collect();
+    let mut found: Vec<_> = layout::list_applications(&view(fx))
+        .unwrap()
+        .into_iter()
+        .filter(|(_, a)| a.name == name)
+        .collect();
     assert_eq!(found.len(), 1, "application {name}");
     found.remove(0).1
 }
 
 fn seat_by_id(fx: &Fx, id: &SeatId) -> SeatRecord {
-    read_seat_rec(&view(fx), id).unwrap().unwrap_or_else(|| panic!("no seat {id}")).1
+    read_seat_rec(&view(fx), id)
+        .unwrap()
+        .unwrap_or_else(|| panic!("no seat {id}"))
+        .1
 }
 
 fn member_seat(fx: &Fx, app_name: &str, mem: &MemberId) -> SeatId {
-    app(fx, app_name).member_map.get(mem).cloned().unwrap_or_else(|| panic!("{app_name} maps no {mem}"))
+    app(fx, app_name)
+        .member_map
+        .get(mem)
+        .cloned()
+        .unwrap_or_else(|| panic!("{app_name} maps no {mem}"))
 }
 
 fn seat_dir_of(fx: &Fx, id: &SeatId) -> crate::ports::store::RepoPath {
-    layout::locate(&view(fx), &id.to_any()).unwrap().unwrap().folder
+    layout::locate(&view(fx), &id.to_any())
+        .unwrap()
+        .unwrap()
+        .folder
 }
 
 fn patch(fx: &Fx, args: serde_json::Value) {
@@ -188,7 +257,10 @@ fn patch(fx: &Fx, args: serde_json::Value) {
     )
     .unwrap();
     fx.w.drain().unwrap();
-    assert_eq!(fx.w.journal().get(&op).unwrap().unwrap().state, OpState::Committed);
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
 }
 
 /// One member line of a template document.
@@ -201,7 +273,13 @@ struct M {
 }
 
 fn m(id: &MemberId, name: &'static str, startup: &'static str) -> M {
-    M { id: Some(id.clone()), name, startup, model: None, agents: None }
+    M {
+        id: Some(id.clone()),
+        name,
+        startup,
+        model: None,
+        agents: None,
+    }
 }
 
 fn doc_text(name: &str, members: &[M], threads: &[(&str, Option<&[&MemberId]>)]) -> String {
@@ -211,7 +289,10 @@ fn doc_text(name: &str, members: &[M], threads: &[(&str, Option<&[&MemberId]>)])
         if let Some(id) = &m.id {
             s.push_str(&format!("id = \"{id}\"\n"));
         }
-        s.push_str(&format!("name = \"{}\"\nstartup = \"{}\"\n", m.name, m.startup));
+        s.push_str(&format!(
+            "name = \"{}\"\nstartup = \"{}\"\n",
+            m.name, m.startup
+        ));
         if let Some(a) = m.agents {
             s.push_str(&format!("agents_md = \"{a}\"\n"));
         }
@@ -220,7 +301,9 @@ fn doc_text(name: &str, members: &[M], threads: &[(&str, Option<&[&MemberId]>)])
         }
     }
     for (thread, who) in threads {
-        s.push_str(&format!("\n[[relationships]]\nkind = \"thread_participation\"\nthread = \"{thread}\"\n"));
+        s.push_str(&format!(
+            "\n[[relationships]]\nkind = \"thread_participation\"\nthread = \"{thread}\"\n"
+        ));
         match who {
             None => s.push_str("members = \"all\"\n"),
             Some(ids) => {
@@ -244,7 +327,12 @@ fn create_template(fx: &Fx, name: &str, members: &[M], threads: &[(&str, Option<
     commit(fx, &format!("template create {name} --from {path}"));
 }
 
-fn edit_plan(fx: &Fx, name: &str, members: &[M], threads: &[(&str, Option<&[&MemberId]>)]) -> StoredPlan {
+fn edit_plan(
+    fx: &Fx,
+    name: &str,
+    members: &[M],
+    threads: &[(&str, Option<&[&MemberId]>)],
+) -> StoredPlan {
     let path = write_doc(fx, &doc_text(name, members, threads));
     plan(fx, &format!("template edit {name} --from {path}"))
 }
@@ -252,7 +340,12 @@ fn edit_plan(fx: &Fx, name: &str, members: &[M], threads: &[(&str, Option<&[&Mem
 fn edit(fx: &Fx, name: &str, members: &[M], threads: &[(&str, Option<&[&MemberId]>)]) -> OpRow {
     let sp = edit_plan(fx, name, members, threads);
     let row = apply_plan(fx, &sp);
-    assert_eq!(row.state, OpState::Committed, "edit {name}: {:?}", row.rejection);
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "edit {name}: {:?}",
+        row.rejection
+    );
     row
 }
 
@@ -261,7 +354,10 @@ fn alpha(fx: &Fx) {
 }
 
 fn apply_app(fx: &Fx, template: &str, name: &str) -> OpRow {
-    commit(fx, &format!("application apply {template} --teamspace alpha --name {name}"))
+    commit(
+        fx,
+        &format!("application apply {template} --teamspace alpha --name {name}"),
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -273,17 +369,50 @@ fn auth_billing_composition_withdrawal() {
     let fx = fx();
     alpha(&fx);
     let (e_auth, e_billing) = (MemberId::new(), MemberId::new());
-    create_template(&fx, "auth-tpl", &[m(&e_auth, "engineer", "deferred")], &[("auth-thread", None)]);
-    create_template(&fx, "billing-tpl", &[m(&e_billing, "engineer", "deferred")], &[("billing-thread", None)]);
+    create_template(
+        &fx,
+        "auth-tpl",
+        &[m(&e_auth, "engineer", "deferred")],
+        &[("auth-thread", None)],
+    );
+    create_template(
+        &fx,
+        "billing-tpl",
+        &[m(&e_billing, "engineer", "deferred")],
+        &[("billing-thread", None)],
+    );
     apply_app(&fx, "auth-tpl", "auth");
     let engineer = member_seat(&fx, "auth", &e_auth);
-    commit(&fx, &format!("application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"));
-    assert_eq!(app(&fx, "billing").member_map.get(&e_billing), Some(&engineer), "billing maps its engineer member to the shared seat");
-    assert_eq!(layout::all_seats(&view(&fx)).unwrap().len(), 1, "billing created no seat of its own");
+    commit(
+        &fx,
+        &format!(
+            "application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"
+        ),
+    );
+    assert_eq!(
+        app(&fx, "billing").member_map.get(&e_billing),
+        Some(&engineer),
+        "billing maps its engineer member to the shared seat"
+    );
+    assert_eq!(
+        layout::all_seats(&view(&fx)).unwrap().len(),
+        1,
+        "billing created no seat of its own"
+    );
     // Reuse is recorded in each participating application.
     let auth_id = app(&fx, "auth").id;
-    assert_eq!(app(&fx, "billing").reused.iter().map(|r| (r.seat.clone(), r.from.clone())).collect::<Vec<_>>(), vec![(engineer.clone(), Some(auth_id.clone()))]);
-    assert!(app(&fx, "auth").reused.iter().any(|r| r.seat == engineer), "the providing application records the reuse too");
+    assert_eq!(
+        app(&fx, "billing")
+            .reused
+            .iter()
+            .map(|r| (r.seat.clone(), r.from.clone()))
+            .collect::<Vec<_>>(),
+        vec![(engineer.clone(), Some(auth_id.clone()))]
+    );
+    assert!(
+        app(&fx, "auth").reused.iter().any(|r| r.seat == engineer),
+        "the providing application records the reuse too"
+    );
     assert_eq!(seat_by_id(&fx, &engineer).applications.len(), 2);
 
     // A later live-template edit gives Auth an Auth-only reviewer.
@@ -292,21 +421,43 @@ fn auth_billing_composition_withdrawal() {
     edit(
         &fx,
         "auth-tpl",
-        &[m(&e_auth, "engineer", "deferred"), m(&reviewer_mem, "reviewer", "deferred")],
+        &[
+            m(&e_auth, "engineer", "deferred"),
+            m(&reviewer_mem, "reviewer", "deferred"),
+        ],
         &[("auth-thread", None)],
     );
-    assert_eq!(layout::all_seats(&view(&fx)).unwrap().len(), before + 1, "only Auth gets the reviewer");
+    assert_eq!(
+        layout::all_seats(&view(&fx)).unwrap().len(),
+        before + 1,
+        "only Auth gets the reviewer"
+    );
     let reviewer = member_seat(&fx, "auth", &reviewer_mem);
-    assert!(!app(&fx, "billing").member_map.values().any(|s| s == &reviewer));
+    assert!(
+        !app(&fx, "billing")
+            .member_map
+            .values()
+            .any(|s| s == &reviewer)
+    );
 
     // Undo Auth: engineer preserved, reviewer retired, Auth's contribution withdrawn, Billing's kept.
     let sp = plan(&fx, "application retire auth");
     assert_eq!(count(&sp, "application.retire"), 1);
     assert_eq!(count(&sp, "seat.retire"), 1);
-    let retire = sp.plan.effects.iter().find(|e| e.kind == "seat.retire").unwrap();
+    let retire = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.retire")
+        .unwrap();
     assert_eq!(retire.object, reviewer.to_any());
     assert_eq!(retire.detail["mechanism"], json!("application_withdrawal"));
-    let keep = sp.plan.effects.iter().find(|e| e.kind == "seat.keep").expect("preview lists the kept seat");
+    let keep = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.keep")
+        .expect("preview lists the kept seat");
     assert_eq!(keep.object, engineer.to_any());
     assert_eq!(keep.detail["reason"], json!("reused by billing"));
     assert_eq!(count(&sp, "participation.withdraw"), 1);
@@ -315,17 +466,30 @@ fn auth_billing_composition_withdrawal() {
 
     let r = seat_by_id(&fx, &reviewer);
     assert_eq!(r.lifecycle, Lifecycle::Retired);
-    assert_eq!(r.retired.unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+    assert_eq!(
+        r.retired.unwrap().mechanism,
+        RetireMechanism::ApplicationWithdrawal
+    );
     let e = seat_by_id(&fx, &engineer);
     assert_ne!(e.lifecycle, Lifecycle::Retired, "shared engineer survives");
-    assert_eq!(e.applications, vec![app(&fx, "billing").id], "the engineer no longer belongs to Auth");
+    assert_eq!(
+        e.applications,
+        vec![app(&fx, "billing").id],
+        "the engineer no longer belongs to Auth"
+    );
     let auth = app(&fx, "auth");
     assert_eq!(auth.lifecycle, AppLifecycle::Retired);
-    assert!(auth.contributions.relationships.is_empty(), "Auth's live contribution is withdrawn");
+    assert!(
+        auth.contributions.relationships.is_empty(),
+        "Auth's live contribution is withdrawn"
+    );
     let billing = app(&fx, "billing");
     assert_eq!(billing.lifecycle, AppLifecycle::Active);
     assert_eq!(billing.contributions.relationships.len(), 1);
-    assert_eq!(billing.contributions.relationships[0].thread, "billing-thread");
+    assert_eq!(
+        billing.contributions.relationships[0].thread,
+        "billing-thread"
+    );
 
     let act = action_of(&fx, &row);
     assert_eq!(act.kind, ActionKind::ApplicationRetire);
@@ -343,7 +507,10 @@ fn reuse_pair(fx: &Fx) -> SeatId {
     create_template(fx, "b-tpl", &[m(&e_b, "engineer", "deferred")], &[]);
     apply_app(fx, "a-tpl", "a");
     let engineer = member_seat(fx, "a", &e_a);
-    commit(fx, &format!("application apply b-tpl --teamspace alpha --name b --reuse {e_b}={engineer}"));
+    commit(
+        fx,
+        &format!("application apply b-tpl --teamspace alpha --name b --reuse {e_b}={engineer}"),
+    );
     engineer
 }
 
@@ -362,12 +529,28 @@ fn reused_seat_survives_after_its_creator_retires_first() {
     // B retires: the engineer pre-existed b, so it is still kept.
     let sp = plan(&fx, "application retire b");
     assert_eq!(count(&sp, "seat.retire"), 0, "{:?}", kinds_of(&sp));
-    let keep = sp.plan.effects.iter().find(|e| e.kind == "seat.keep").expect("the kept seat is listed");
+    let keep = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.keep")
+        .expect("the kept seat is listed");
     assert_eq!(keep.object, engineer.to_any());
-    assert!(keep.detail["reason"].as_str().unwrap().contains("pre-existing"), "{}", keep.detail["reason"]);
+    assert!(
+        keep.detail["reason"]
+            .as_str()
+            .unwrap()
+            .contains("pre-existing"),
+        "{}",
+        keep.detail["reason"]
+    );
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired, "a reused seat is never withdrawn by its borrower");
+    assert_ne!(
+        seat_by_id(&fx, &engineer).lifecycle,
+        Lifecycle::Retired,
+        "a reused seat is never withdrawn by its borrower"
+    );
 }
 
 #[test]
@@ -385,14 +568,22 @@ fn creator_still_retires_its_lent_seat_once_the_borrower_is_gone() {
     // A created it and nobody else uses it any more: it is retired.
     let sp = plan(&fx, "application retire a");
     assert_eq!(count(&sp, "seat.retire"), 1, "{:?}", kinds_of(&sp));
-    let retire = sp.plan.effects.iter().find(|e| e.kind == "seat.retire").unwrap();
+    let retire = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.retire")
+        .unwrap();
     assert_eq!(retire.object, engineer.to_any());
     assert_eq!(retire.detail["mechanism"], json!("application_withdrawal"));
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     let seat = seat_by_id(&fx, &engineer);
     assert_eq!(seat.lifecycle, Lifecycle::Retired);
-    assert_eq!(seat.retired.unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+    assert_eq!(
+        seat.retired.unwrap().mechanism,
+        RetireMechanism::ApplicationWithdrawal
+    );
 }
 
 #[test]
@@ -407,7 +598,11 @@ fn withdraw_plan_keeps_borrowed_seat_when_provider_is_retired() {
     assert!(preview.retire.is_empty(), "{:?}", preview.retire);
     assert_eq!(preview.keep.len(), 1);
     assert_eq!(preview.keep[0].0, engineer);
-    assert!(preview.keep[0].1.contains("pre-existing"), "{}", preview.keep[0].1);
+    assert!(
+        preview.keep[0].1.contains("pre-existing"),
+        "{}",
+        preview.keep[0].1
+    );
 }
 
 #[test]
@@ -415,17 +610,31 @@ fn repeated_application_maps_distinct_seats() {
     let fx = fx();
     alpha(&fx);
     let (a, b) = (MemberId::new(), MemberId::new());
-    create_template(&fx, "pair", &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")], &[]);
+    create_template(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
     apply_app(&fx, "pair", "one");
     apply_app(&fx, "pair", "two");
     let (one, two) = (app(&fx, "one"), app(&fx, "two"));
     let one_seats: Vec<_> = one.member_map.values().cloned().collect();
     let two_seats: Vec<_> = two.member_map.values().cloned().collect();
     assert_eq!(one_seats.len(), 2);
-    assert!(one_seats.iter().all(|s| !two_seats.contains(s)), "disjoint seats: {one_seats:?} vs {two_seats:?}");
+    assert!(
+        one_seats.iter().all(|s| !two_seats.contains(s)),
+        "disjoint seats: {one_seats:?} vs {two_seats:?}"
+    );
     for mem in [&a, &b] {
-        let (s1, s2) = (seat_by_id(&fx, &one.member_map[mem]), seat_by_id(&fx, &two.member_map[mem]));
-        assert_eq!(s1.template_ref, s2.template_ref, "both are the same template member");
+        let (s1, s2) = (
+            seat_by_id(&fx, &one.member_map[mem]),
+            seat_by_id(&fx, &two.member_map[mem]),
+        );
+        assert_eq!(
+            s1.template_ref, s2.template_ref,
+            "both are the same template member"
+        );
         assert_eq!(s1.template_ref.as_ref().unwrap().member, *mem);
         assert_eq!(s1.applications, vec![one.id.clone()]);
         assert_eq!(s2.applications, vec![two.id.clone()]);
@@ -438,21 +647,47 @@ fn exclusion_scoped_per_application() {
     let fx = fx();
     alpha(&fx);
     let (a, b) = (MemberId::new(), MemberId::new());
-    create_template(&fx, "pair", &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")], &[]);
+    create_template(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
     apply_app(&fx, "pair", "one");
     apply_app(&fx, "pair", "two");
     let one_lead = member_seat(&fx, "one", &a);
     let two_lead = member_seat(&fx, "two", &a);
     commit(&fx, &format!("seat retire {one_lead}"));
-    assert_eq!(app(&fx, "one").exclusions, vec![a.clone()], "retiring a template-member seat records the exclusion");
-    assert!(app(&fx, "two").exclusions.is_empty(), "exclusion is scoped to the application");
+    assert_eq!(
+        app(&fx, "one").exclusions,
+        vec![a.clone()],
+        "retiring a template-member seat records the exclusion"
+    );
+    assert!(
+        app(&fx, "two").exclusions.is_empty(),
+        "exclusion is scoped to the application"
+    );
 
     // A later template edit does not recreate the excluded member for `one`; `two` still has its seat.
     let c = MemberId::new();
-    let members = [m(&a, "lead", "deferred"), m(&b, "dev", "deferred"), m(&c, "qa", "deferred")];
+    let members = [
+        m(&a, "lead", "deferred"),
+        m(&b, "dev", "deferred"),
+        m(&c, "qa", "deferred"),
+    ];
     let sp = edit_plan(&fx, "pair", &members, &[]);
-    assert_eq!(count(&sp, "seat.create"), 2, "qa for each application: {:?}", kinds_of(&sp));
-    assert!(sp.plan.effects.iter().all(|e| e.detail.get("member") != Some(&json!(a)) || e.kind != "seat.create"));
+    assert_eq!(
+        count(&sp, "seat.create"),
+        2,
+        "qa for each application: {:?}",
+        kinds_of(&sp)
+    );
+    assert!(
+        sp.plan
+            .effects
+            .iter()
+            .all(|e| e.detail.get("member") != Some(&json!(a)) || e.kind != "seat.create")
+    );
     assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
     let leads: Vec<_> = layout::all_seats(&view(&fx))
         .unwrap()
@@ -460,10 +695,16 @@ fn exclusion_scoped_per_application() {
         .map(|(_, s)| s)
         .filter(|s| s.template_ref.as_ref().is_some_and(|r| r.member == a))
         .collect();
-    assert_eq!(leads.len(), 2, "no new lead seat was created for the excluding application");
+    assert_eq!(
+        leads.len(),
+        2,
+        "no new lead seat was created for the excluding application"
+    );
     assert_eq!(seat_by_id(&fx, &one_lead).lifecycle, Lifecycle::Retired);
     assert_ne!(seat_by_id(&fx, &two_lead).lifecycle, Lifecycle::Retired);
-    assert!(app(&fx, "one").member_map.contains_key(&c) && app(&fx, "two").member_map.contains_key(&c));
+    assert!(
+        app(&fx, "one").member_map.contains_key(&c) && app(&fx, "two").member_map.contains_key(&c)
+    );
 }
 
 #[test]
@@ -471,18 +712,44 @@ fn member_removal_retires_exclusive_keeps_shared() {
     let fx = fx();
     alpha(&fx);
     let (e_auth, r_auth, e_billing) = (MemberId::new(), MemberId::new(), MemberId::new());
-    create_template(&fx, "auth-tpl", &[m(&e_auth, "engineer", "deferred"), m(&r_auth, "reviewer", "deferred")], &[]);
-    create_template(&fx, "billing-tpl", &[m(&e_billing, "engineer", "deferred")], &[]);
+    create_template(
+        &fx,
+        "auth-tpl",
+        &[
+            m(&e_auth, "engineer", "deferred"),
+            m(&r_auth, "reviewer", "deferred"),
+        ],
+        &[],
+    );
+    create_template(
+        &fx,
+        "billing-tpl",
+        &[m(&e_billing, "engineer", "deferred")],
+        &[],
+    );
     apply_app(&fx, "auth-tpl", "auth");
     let engineer = member_seat(&fx, "auth", &e_auth);
     let reviewer = member_seat(&fx, "auth", &r_auth);
-    commit(&fx, &format!("application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"));
+    commit(
+        &fx,
+        &format!(
+            "application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"
+        ),
+    );
 
     let sp = edit_plan(&fx, "auth-tpl", &[], &[]);
-    let unmaps: Vec<_> = sp.plan.effects.iter().filter(|e| e.kind == "application.unmap").collect();
+    let unmaps: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "application.unmap")
+        .collect();
     assert_eq!(unmaps.len(), 2);
     let outcome = |seat: &SeatId| {
-        unmaps.iter().find(|e| e.detail["seat"] == json!(seat)).map(|e| e.detail["outcome"].as_str().unwrap().to_owned())
+        unmaps
+            .iter()
+            .find(|e| e.detail["seat"] == json!(seat))
+            .map(|e| e.detail["outcome"].as_str().unwrap().to_owned())
     };
     assert_eq!(outcome(&engineer).as_deref(), Some("kept"));
     assert_eq!(outcome(&reviewer).as_deref(), Some("retired"));
@@ -490,13 +757,26 @@ fn member_removal_retires_exclusive_keeps_shared() {
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
 
-    assert_eq!(seat_by_id(&fx, &reviewer).retired.unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+    assert_eq!(
+        seat_by_id(&fx, &reviewer).retired.unwrap().mechanism,
+        RetireMechanism::ApplicationWithdrawal
+    );
     assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired);
     let auth = app(&fx, "auth");
     assert!(auth.member_map.is_empty(), "both members were unmapped");
-    assert!(auth.exclusions.is_empty(), "withdrawal records no exclusion");
-    assert_eq!(app(&fx, "billing").member_map.get(&e_billing), Some(&engineer), "billing keeps its mapping");
-    assert_eq!(seat_by_id(&fx, &engineer).applications, vec![app(&fx, "billing").id]);
+    assert!(
+        auth.exclusions.is_empty(),
+        "withdrawal records no exclusion"
+    );
+    assert_eq!(
+        app(&fx, "billing").member_map.get(&e_billing),
+        Some(&engineer),
+        "billing keeps its mapping"
+    );
+    assert_eq!(
+        seat_by_id(&fx, &engineer).applications,
+        vec![app(&fx, "billing").id]
+    );
     let act = action_of(&fx, &row);
     assert_eq!(act.kind, ActionKind::TemplateEdit);
     assert!(act.retired.contains(&reviewer.to_any()) && !act.retired.contains(&engineer.to_any()));
@@ -516,20 +796,39 @@ fn readd_same_member_keeps_seat_id() {
     edit(&fx, "pair", &[m(&e, "engineer", "deferred")], &[]);
     let gone = seat_by_id(&fx, &original);
     assert_eq!(gone.lifecycle, Lifecycle::Retired);
-    assert_eq!(gone.retired.as_ref().unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+    assert_eq!(
+        gone.retired.as_ref().unwrap().mechanism,
+        RetireMechanism::ApplicationWithdrawal
+    );
     assert!(!app(&fx, "one").member_map.contains_key(&r));
-    assert_ne!(seat_dir_of(&fx, &original), live_dir, "the retired seat folder is archived");
+    assert_ne!(
+        seat_dir_of(&fx, &original),
+        live_dir,
+        "the retired seat folder is archived"
+    );
 
     let sp = edit_plan(&fx, "pair", &both, &[]);
     assert_eq!(count(&sp, "seat.resurrect"), 1, "{:?}", kinds_of(&sp));
-    assert_eq!(count(&sp, "seat.create"), 0, "the withdrawn seat is reused, not duplicated");
+    assert_eq!(
+        count(&sp, "seat.create"),
+        0,
+        "the withdrawn seat is reused, not duplicated"
+    );
     assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
-    assert_eq!(member_seat(&fx, "one", &r), original, "re-adding the same member id remaps the same seat id");
+    assert_eq!(
+        member_seat(&fx, "one", &r),
+        original,
+        "re-adding the same member id remaps the same seat id"
+    );
     let back = seat_by_id(&fx, &original);
     assert_eq!(back.lifecycle, Lifecycle::Dormant);
     assert!(back.retired.is_none());
     assert_eq!(back.applications, vec![app(&fx, "one").id]);
-    assert_eq!(seat_dir_of(&fx, &original), live_dir, "the seat folder is back at its live path");
+    assert_eq!(
+        seat_dir_of(&fx, &original),
+        live_dir,
+        "the seat folder is back at its live path"
+    );
     assert_eq!(layout::all_seats(&view(&fx)).unwrap().len(), 2);
 }
 
@@ -547,15 +846,29 @@ fn readd_respects_local_exclusion() {
 
     edit(&fx, "pair", &[m(&e, "engineer", "deferred")], &[]);
     let sp = edit_plan(&fx, "pair", &both, &[]);
-    assert_eq!(count(&sp, "seat.resurrect") + count(&sp, "seat.create"), 0, "{:?}", kinds_of(&sp));
+    assert_eq!(
+        count(&sp, "seat.resurrect") + count(&sp, "seat.create"),
+        0,
+        "{:?}",
+        kinds_of(&sp)
+    );
     assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
     let one = app(&fx, "one");
-    assert!(one.exclusions.contains(&r), "the local exclusion survives the member leaving and returning");
+    assert!(
+        one.exclusions.contains(&r),
+        "the local exclusion survives the member leaving and returning"
+    );
     assert!(!one.member_map.contains_key(&r));
     let s = seat_by_id(&fx, &reviewer);
     assert_eq!(s.lifecycle, Lifecycle::Retired);
     let mech = s.retired.unwrap().mechanism;
-    assert!(matches!(mech, RetireMechanism::UserCli | RetireMechanism::AgentRequest), "a requested retirement is never undone by re-adding: {mech:?}");
+    assert!(
+        matches!(
+            mech,
+            RetireMechanism::UserCli | RetireMechanism::AgentRequest
+        ),
+        "a requested retirement is never undone by re-adding: {mech:?}"
+    );
     assert_eq!(layout::all_seats(&view(&fx)).unwrap().len(), 2);
 }
 
@@ -564,7 +877,10 @@ fn copy_preserves_member_ids() {
     let fx = fx();
     let (a, b) = (MemberId::new(), MemberId::new());
     let members = [
-        M { agents: Some("be careful"), ..m(&a, "lead", "active") },
+        M {
+            agents: Some("be careful"),
+            ..m(&a, "lead", "active")
+        },
         m(&b, "dev", "deferred"),
     ];
     create_template(&fx, "orig", &members, &[("t", Some(&[&a]))]);
@@ -572,8 +888,14 @@ fn copy_preserves_member_ids() {
     let (orig, copy) = (tpl(&fx, "orig"), tpl(&fx, "clone-tpl"));
     assert_ne!(orig.id, copy.id);
     assert_eq!(
-        copy.members.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
-        orig.members.iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+        copy.members
+            .iter()
+            .map(|m| m.id.clone())
+            .collect::<Vec<_>>(),
+        orig.members
+            .iter()
+            .map(|m| m.id.clone())
+            .collect::<Vec<_>>(),
         "member ids are preserved"
     );
     assert_eq!(copy.members, orig.members);
@@ -583,10 +905,20 @@ fn copy_preserves_member_ids() {
     assert_eq!(from.at, t0());
     assert!(orig.copied_from.is_none());
     let v = view(&fx);
-    let dir = layout::locate(&v, &copy.id.to_any()).unwrap().unwrap().folder;
-    let agents = v.read_file(&layout::member_agents_md(&dir, "lead")).unwrap().expect("AGENTS.md copied");
+    let dir = layout::locate(&v, &copy.id.to_any())
+        .unwrap()
+        .unwrap()
+        .folder;
+    let agents = v
+        .read_file(&layout::member_agents_md(&dir, "lead"))
+        .unwrap()
+        .expect("AGENTS.md copied");
     assert_eq!(String::from_utf8(agents).unwrap(), "be careful");
-    assert!(v.read_file(&layout::member_agents_md(&dir, "dev")).unwrap().is_none());
+    assert!(
+        v.read_file(&layout::member_agents_md(&dir, "dev"))
+            .unwrap()
+            .is_none()
+    );
     // Copies are independent: applying the copy maps the same member ids.
     alpha(&fx);
     apply_app(&fx, "clone-tpl", "from-copy");
@@ -598,44 +930,104 @@ fn template_edit_plan_lists_every_affected_application_and_session_replacement()
     let fx = fx();
     alpha(&fx);
     let a = MemberId::new();
-    let old = [M { model: Some("old-model"), ..m(&a, "lead", "active") }];
+    let old = [M {
+        model: Some("old-model"),
+        ..m(&a, "lead", "active")
+    }];
     create_template(&fx, "solo", &old, &[]);
     apply_app(&fx, "solo", "one");
     apply_app(&fx, "solo", "two");
     for name in ["one", "two"] {
-        patch(&fx, json!({ "seat": member_seat(&fx, name, &a), "occupy": true }));
+        patch(
+            &fx,
+            json!({ "seat": member_seat(&fx, name, &a), "occupy": true }),
+        );
     }
-    let new = [M { model: Some("new-model"), ..m(&a, "lead", "active") }];
+    let new = [M {
+        model: Some("new-model"),
+        ..m(&a, "lead", "active")
+    }];
     let sp = edit_plan(&fx, "solo", &new, &[]);
 
-    let updates: Vec<_> = sp.plan.effects.iter().filter(|e| e.kind == "application.update").map(|e| e.object.clone()).collect();
-    let expected: Vec<AnyId> = ["one", "two"].iter().map(|n| app(&fx, n).id.to_any()).collect();
+    let updates: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "application.update")
+        .map(|e| e.object.clone())
+        .collect();
+    let expected: Vec<AnyId> = ["one", "two"]
+        .iter()
+        .map(|n| app(&fx, n).id.to_any())
+        .collect();
     assert_eq!(updates.len(), 2);
-    assert!(expected.iter().all(|id| updates.contains(id)), "every application of the template is listed");
-    let edit_fx = sp.plan.effects.iter().find(|e| e.kind == "template.edit").unwrap();
-    assert_eq!(edit_fx.detail["changed_fields"], json!([format!("members.{a}.defaults.model")]));
+    assert!(
+        expected.iter().all(|id| updates.contains(id)),
+        "every application of the template is listed"
+    );
+    let edit_fx = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "template.edit")
+        .unwrap();
+    assert_eq!(
+        edit_fx.detail["changed_fields"],
+        json!([format!("members.{a}.defaults.model")])
+    );
 
-    let replaces: Vec<_> = sp.plan.effects.iter().filter(|e| e.kind == "session.replace").collect();
-    assert_eq!(replaces.len(), 2, "one per occupied clone: {:?}", kinds_of(&sp));
+    let replaces: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "session.replace")
+        .collect();
+    assert_eq!(
+        replaces.len(),
+        2,
+        "one per occupied clone: {:?}",
+        kinds_of(&sp)
+    );
     for e in &replaces {
         assert_eq!(e.detail["from"]["model"], json!("old-model"));
         assert_eq!(e.detail["to"]["model"], json!("new-model"));
     }
     let clones: Vec<_> = replaces.iter().map(|e| e.object.clone()).collect();
     assert_ne!(clones[0], clones[1]);
-    for ae in sp.plan.effects.iter().filter(|e| e.kind == "application.update") {
-        assert_eq!(ae.detail["replaced_seats"].as_array().unwrap().len(), 1, "each application names its replaced seat");
+    for ae in sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "application.update")
+    {
+        assert_eq!(
+            ae.detail["replaced_seats"].as_array().unwrap().len(),
+            1,
+            "each application names its replaced seat"
+        );
     }
 
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     let act = action_of(&fx, &row);
-    assert_eq!(act.compensation["changed_fields"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        act.compensation["changed_fields"].as_array().unwrap().len(),
+        1
+    );
     let before = act.compensation["before"].as_table().unwrap();
     let after = act.compensation["after"].as_table().unwrap();
-    assert_eq!(before["members"][0]["defaults"]["model"].as_str(), Some("old-model"));
-    assert_eq!(after["members"][0]["defaults"]["model"].as_str(), Some("new-model"));
-    assert_eq!(tpl(&fx, "solo").members[0].defaults.model.as_deref(), Some("new-model"));
+    assert_eq!(
+        before["members"][0]["defaults"]["model"].as_str(),
+        Some("old-model")
+    );
+    assert_eq!(
+        after["members"][0]["defaults"]["model"].as_str(),
+        Some("new-model")
+    );
+    assert_eq!(
+        tpl(&fx, "solo").members[0].defaults.model.as_deref(),
+        Some("new-model")
+    );
 }
 
 #[test]
@@ -643,42 +1035,99 @@ fn hydrate_creates_dormant_and_active_per_startup() {
     let fx = fx();
     alpha(&fx);
     let (a, b) = (MemberId::new(), MemberId::new());
-    let members = [M { agents: Some("lead notes"), ..m(&a, "lead", "active") }, m(&b, "dev", "deferred")];
+    let members = [
+        M {
+            agents: Some("lead notes"),
+            ..m(&a, "lead", "active")
+        },
+        m(&b, "dev", "deferred"),
+    ];
     create_template(&fx, "pair", &members, &[("pair-thread", None)]);
     let sp = plan(&fx, "application apply pair --teamspace alpha --name one");
     assert_eq!(count(&sp, "application.create"), 1);
     assert_eq!(count(&sp, "seat.create"), 2);
-    assert_eq!(count(&sp, "runtime.open_tab"), 1, "only the active member opens a tab");
+    assert_eq!(
+        count(&sp, "runtime.open_tab"),
+        1,
+        "only the active member opens a tab"
+    );
     assert_eq!(count(&sp, "participation.contribute"), 1);
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
 
     let one = app(&fx, "one");
-    let (lead, dev) = (seat_by_id(&fx, &one.member_map[&a]), seat_by_id(&fx, &one.member_map[&b]));
+    let (lead, dev) = (
+        seat_by_id(&fx, &one.member_map[&a]),
+        seat_by_id(&fx, &one.member_map[&b]),
+    );
     assert_eq!(lead.lifecycle, Lifecycle::Active);
     assert_eq!(dev.lifecycle, Lifecycle::Dormant);
     let lead_clones = layout::list_clones(&view(&fx), &seat_dir_of(&fx, &lead.id)).unwrap();
     assert_eq!(lead_clones.len(), 1);
     assert_eq!(lead_clones[0].1.lifecycle, CloneLifecycle::Active);
-    assert!(layout::list_clones(&view(&fx), &seat_dir_of(&fx, &dev.id)).unwrap().is_empty(), "dormant seats start with no clone");
-    assert_eq!(lead.template_ref.as_ref().unwrap().template, tpl(&fx, "pair").id);
+    assert!(
+        layout::list_clones(&view(&fx), &seat_dir_of(&fx, &dev.id))
+            .unwrap()
+            .is_empty(),
+        "dormant seats start with no clone"
+    );
+    assert_eq!(
+        lead.template_ref.as_ref().unwrap().template,
+        tpl(&fx, "pair").id
+    );
     assert_eq!(lead.applications, vec![one.id.clone()]);
     assert_eq!(one.contributions.relationships.len(), 1);
     assert_eq!(one.created_by.op, row.op);
     let v = view(&fx);
-    let md = v.read_file(&seat_dir_of(&fx, &lead.id).join("AGENTS.md").unwrap()).unwrap().expect("member AGENTS.md copied into the seat");
+    let md = v
+        .read_file(&seat_dir_of(&fx, &lead.id).join("AGENTS.md").unwrap())
+        .unwrap()
+        .expect("member AGENTS.md copied into the seat");
     assert_eq!(String::from_utf8(md).unwrap(), "lead notes");
-    assert!(v.read_file(&seat_dir_of(&fx, &dev.id).join("AGENTS.md").unwrap()).unwrap().is_none());
-    assert_eq!(crate::model::common::Lifecycle::Active, crate::store::record::read_toml::<crate::model::teamspace::TeamspaceRecord>(&v, &layout::locate(&v, &one.teamspace.to_any()).unwrap().unwrap().record_path).unwrap().unwrap().lifecycle, "an active member activates the teamspace");
+    assert!(
+        v.read_file(&seat_dir_of(&fx, &dev.id).join("AGENTS.md").unwrap())
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        crate::model::common::Lifecycle::Active,
+        crate::store::record::read_toml::<crate::model::teamspace::TeamspaceRecord>(
+            &v,
+            &layout::locate(&v, &one.teamspace.to_any())
+                .unwrap()
+                .unwrap()
+                .record_path
+        )
+        .unwrap()
+        .unwrap()
+        .lifecycle,
+        "an active member activates the teamspace"
+    );
 
     let act = action_of(&fx, &row);
     assert_eq!(act.kind, ActionKind::Hydrate);
-    let created: Vec<&str> = act.compensation["created"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
-    for id in [one.id.as_str(), lead.id.as_str(), dev.id.as_str(), lead_clones[0].1.id.as_str()] {
+    let created: Vec<&str> = act.compensation["created"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    for id in [
+        one.id.as_str(),
+        lead.id.as_str(),
+        dev.id.as_str(),
+        lead_clones[0].1.id.as_str(),
+    ] {
         assert!(created.contains(&id), "{id} listed as created: {created:?}");
     }
     assert!(act.compensation["reused"].as_array().unwrap().is_empty());
-    assert_eq!(act.compensation["relationships_added"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        act.compensation["relationships_added"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(act.affected.iter().any(|a| a.object == one.id.to_any()));
 }
 
@@ -689,7 +1138,12 @@ fn application_retire_includes_seats_created_by_later_edits() {
     let (a, b) = (MemberId::new(), MemberId::new());
     create_template(&fx, "grow", &[m(&a, "lead", "deferred")], &[]);
     apply_app(&fx, "grow", "one");
-    edit(&fx, "grow", &[m(&a, "lead", "deferred"), m(&b, "dev", "active")], &[]);
+    edit(
+        &fx,
+        "grow",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "active")],
+        &[],
+    );
     let later = member_seat(&fx, "one", &b);
 
     let one = app(&fx, "one");
@@ -700,15 +1154,25 @@ fn application_retire_includes_seats_created_by_later_edits() {
 
     let sp = plan(&fx, "application retire one");
     assert_eq!(count(&sp, "seat.retire"), 2);
-    assert_eq!(count(&sp, "clone.retire"), 1, "the later, active member has a clone");
+    assert_eq!(
+        count(&sp, "clone.retire"),
+        1,
+        "the later, active member has a clone"
+    );
     assert_eq!(count(&sp, "runtime.close_tab"), 1);
     assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
     for seat in one.member_map.values().chain([&later]) {
         let s = seat_by_id(&fx, seat);
         assert_eq!(s.lifecycle, Lifecycle::Retired);
-        assert_eq!(s.retired.unwrap().mechanism, RetireMechanism::ApplicationWithdrawal);
+        assert_eq!(
+            s.retired.unwrap().mechanism,
+            RetireMechanism::ApplicationWithdrawal
+        );
     }
-    assert!(plan_err(&fx, "application retire one").contains("no application named"), "a retired application no longer resolves by name");
+    assert!(
+        plan_err(&fx, "application retire one").contains("no application named"),
+        "a retired application no longer resolves by name"
+    );
     let by_id = plan_err(&fx, &format!("application retire {}", one.id));
     assert!(by_id.contains("already retired"), "{by_id}");
 }
@@ -723,20 +1187,45 @@ fn ambiguous_dependency_is_repair_required() {
     apply_app(&fx, "tpl-x", "app-x");
     apply_app(&fx, "tpl-y", "app-y");
     let sp = plan(&fx, "application retire app-x");
-    assert!(sp.plan.repair_required.is_none(), "unambiguous before the dependency exists");
+    assert!(
+        sp.plan.repair_required.is_none(),
+        "unambiguous before the dependency exists"
+    );
 
     let xseat = member_seat(&fx, "app-x", &x);
-    patch(&fx, json!({ "seat": xseat, "section": format!("coordinates with {}", app(&fx, "app-y").id) }));
+    patch(
+        &fx,
+        json!({ "seat": xseat, "section": format!("coordinates with {}", app(&fx, "app-y").id) }),
+    );
     let sp = plan(&fx, "application retire app-x");
-    let why = sp.plan.repair_required.clone().expect("a seat naming another application is ambiguous");
+    let why = sp
+        .plan
+        .repair_required
+        .clone()
+        .expect("a seat naming another application is ambiguous");
     assert!(why.contains("app-y") && why.contains("xseat"), "{why}");
-    let err = admit_apply(&fx.deps, &CallerInfo::default(), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap_err();
+    let err = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_err();
     assert!(err.message.contains("repair"), "{}", err.message);
-    assert_eq!(seat_by_id(&fx, &xseat).lifecycle, Lifecycle::Dormant, "nothing was retired");
+    assert_eq!(
+        seat_by_id(&fx, &xseat).lifecycle,
+        Lifecycle::Dormant,
+        "nothing was retired"
+    );
 
     // The same ambiguity blocks a template edit that would withdraw the seat.
     let sp = edit_plan(&fx, "tpl-x", &[], &[]);
-    assert!(sp.plan.repair_required.is_some(), "{:?}", sp.plan.repair_required);
+    assert!(
+        sp.plan.repair_required.is_some(),
+        "{:?}",
+        sp.plan.repair_required
+    );
     let preview = withdraw_plan(&view(&fx), &app(&fx, "app-x")).unwrap();
     assert_eq!(preview.retire, vec![xseat]);
     assert!(preview.repair_required.is_some());
@@ -748,15 +1237,35 @@ fn ambiguous_occupied_seat_wide_thread_is_repair_required() {
     alpha(&fx);
     let (x, y) = (MemberId::new(), MemberId::new());
     create_template(&fx, "tpl-x", &[m(&x, "xseat", "active")], &[]);
-    create_template(&fx, "tpl-y", &[m(&y, "yseat", "deferred")], &[("shared-thread", None)]);
+    create_template(
+        &fx,
+        "tpl-y",
+        &[m(&y, "yseat", "deferred")],
+        &[("shared-thread", None)],
+    );
     apply_app(&fx, "tpl-x", "app-x");
     apply_app(&fx, "tpl-y", "app-y");
     let xseat = member_seat(&fx, "app-x", &x);
-    patch(&fx, json!({ "seat": xseat, "seat_wide": ["shared-thread"] }));
-    assert!(plan(&fx, "application retire app-x").plan.repair_required.is_none(), "not ambiguous while nobody occupies the clone");
+    patch(
+        &fx,
+        json!({ "seat": xseat, "seat_wide": ["shared-thread"] }),
+    );
+    assert!(
+        plan(&fx, "application retire app-x")
+            .plan
+            .repair_required
+            .is_none(),
+        "not ambiguous while nobody occupies the clone"
+    );
     patch(&fx, json!({ "seat": xseat, "occupy": true }));
-    let why = plan(&fx, "application retire app-x").plan.repair_required.expect("occupied + seat-wide in another application's thread");
-    assert!(why.contains("shared-thread") && why.contains("app-y"), "{why}");
+    let why = plan(&fx, "application retire app-x")
+        .plan
+        .repair_required
+        .expect("occupied + seat-wide in another application's thread");
+    assert!(
+        why.contains("shared-thread") && why.contains("app-y"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -764,11 +1273,20 @@ fn effective_structure_reflects_exclusions_mapping_and_pending_members() {
     let fx = fx();
     alpha(&fx);
     let (a, b) = (MemberId::new(), MemberId::new());
-    create_template(&fx, "pair", &[m(&a, "lead", "deferred"), m(&b, "dev", "active")], &[]);
+    create_template(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "active")],
+        &[],
+    );
     apply_app(&fx, "pair", "one");
     let s = effective_structure(&view(&fx), &app(&fx, "one")).unwrap();
     assert_eq!(s.seats.len(), 2);
-    assert!(s.seats.iter().all(|d| d.source == SeatSource::Mapped && d.seat.is_some()));
+    assert!(
+        s.seats
+            .iter()
+            .all(|d| d.source == SeatSource::Mapped && d.seat.is_some())
+    );
     assert_eq!(s.to_create().count(), 0);
 
     commit(&fx, &format!("seat retire {}", member_seat(&fx, "one", &a)));
@@ -843,7 +1361,10 @@ members = {{ ids = ["{a}"] }}
     let doc = TemplateDocument::parse(&text).unwrap();
     assert_eq!(doc.members[0].agents_md.as_deref(), Some("hi"));
     assert_eq!(doc.relationships[0].members, MemberSelector::All);
-    assert_eq!(doc.relationships[1].members, MemberSelector::Ids(vec![a.clone()]));
+    assert_eq!(
+        doc.relationships[1].members,
+        MemberSelector::Ids(vec![a.clone()])
+    );
 
     let tid = TemplateId::new();
     let mut reserved = crate::plan::types::Reserved::default();
@@ -854,8 +1375,15 @@ members = {{ ids = ["{a}"] }}
     let back = TemplateDocument::from_record(&rec);
     let mut expected = doc.clone();
     expected.members[0].agents_md = None;
-    assert_eq!(back, expected, "record round-trip loses only agents_md (a file, not a record field)");
-    assert_eq!(TemplateDocument::parse(&toml::to_string(&doc).unwrap()).unwrap(), doc, "document TOML round-trip");
+    assert_eq!(
+        back, expected,
+        "record round-trip loses only agents_md (a file, not a record field)"
+    );
+    assert_eq!(
+        TemplateDocument::parse(&toml::to_string(&doc).unwrap()).unwrap(),
+        doc,
+        "document TOML round-trip"
+    );
     assert_eq!(doc.to_table()["name"].as_str(), Some("tpl"));
 
     // Members without ids get reserved ids in slot `member:<name>`, stable across recomputation.
@@ -881,7 +1409,10 @@ members = {{ ids = ["{a}"] }}
         agents_md: None,
     });
     new.relationships.pop();
-    let paths: Vec<String> = TemplateDocument::diff(&doc, &new).into_iter().map(|c| c.path).collect();
+    let paths: Vec<String> = TemplateDocument::diff(&doc, &new)
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
     assert_eq!(
         paths,
         vec![
@@ -894,8 +1425,15 @@ members = {{ ids = ["{a}"] }}
         ]
     );
     let ch = TemplateDocument::diff(&doc, &new);
-    assert_eq!((ch[0].before.clone(), ch[0].after.clone()), (Some(json!("m1")), Some(json!("m2"))));
-    assert_eq!((ch[3].before.clone(), ch[3].after.clone()), (Some(json!("dev")), None), "removed member");
+    assert_eq!(
+        (ch[0].before.clone(), ch[0].after.clone()),
+        (Some(json!("m1")), Some(json!("m2")))
+    );
+    assert_eq!(
+        (ch[3].before.clone(), ch[3].after.clone()),
+        (Some(json!("dev")), None),
+        "removed member"
+    );
     assert!(TemplateDocument::diff(&doc, &doc).is_empty());
 }
 
@@ -905,9 +1443,20 @@ fn document_validation_rejects_duplicate_names_and_ids() {
         .unwrap_err()
         .contains("duplicate member name"));
     let id = MemberId::new();
-    let dup = format!("name = \"t\"\n[[members]]\nid = \"{id}\"\nname = \"a\"\nstartup = \"active\"\n[[members]]\nid = \"{id}\"\nname = \"b\"\nstartup = \"active\"\n");
-    assert!(TemplateDocument::parse(&dup).unwrap_err().contains("duplicate member id"));
-    assert!(TemplateDocument::parse("name = \"t\"\n[[members]]\nname = \"a\"\nstartup = \"sometimes\"\n").is_err());
+    let dup = format!(
+        "name = \"t\"\n[[members]]\nid = \"{id}\"\nname = \"a\"\nstartup = \"active\"\n[[members]]\nid = \"{id}\"\nname = \"b\"\nstartup = \"active\"\n"
+    );
+    assert!(
+        TemplateDocument::parse(&dup)
+            .unwrap_err()
+            .contains("duplicate member id")
+    );
+    assert!(
+        TemplateDocument::parse(
+            "name = \"t\"\n[[members]]\nname = \"a\"\nstartup = \"sometimes\"\n"
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -922,7 +1471,10 @@ fn apply_words_parse_repeated_reuse_and_reject_malformed() {
     assert_eq!(kind.kind(), RequestKind::ApplicationApply);
     let args = kind.parse(&rest, &CallerInfo::default()).unwrap();
     assert_eq!(args["template"], json!("tpl"));
-    assert_eq!(args["reuse"], json!({ m1.to_string(): s1.to_string(), m2.to_string(): s2.to_string() }));
+    assert_eq!(
+        args["reuse"],
+        json!({ m1.to_string(): s1.to_string(), m2.to_string(): s2.to_string() })
+    );
     let bad = words("application apply tpl --teamspace alpha --name app --reuse nomember");
     let (kind, rest) = fx.deps.kinds.resolve(&bad).unwrap();
     assert!(kind.parse(&rest, &CallerInfo::default()).is_err());
@@ -940,7 +1492,9 @@ fn edit_rejects_unchanged_document_and_rename() {
     let renamed = write_doc(&fx, &doc_text("other", &members, &[]));
     assert!(plan_err(&fx, &format!("template edit solo --from {renamed}")).contains("rename"));
     let dup = write_doc(&fx, &doc_text("solo", &members, &[]));
-    assert!(plan_err(&fx, &format!("template create solo --from {dup}")).contains("already exists"));
+    assert!(
+        plan_err(&fx, &format!("template create solo --from {dup}")).contains("already exists")
+    );
 }
 
 #[test]
@@ -952,12 +1506,27 @@ fn edit_matches_idless_members_by_name_and_mints_ids_for_new_ones() {
     apply_app(&fx, "solo", "one");
     let kept = member_seat(&fx, "one", &a);
     let members = [
-        M { id: None, name: "lead", startup: "deferred", model: Some("x"), agents: None },
-        M { id: None, name: "dev", startup: "deferred", model: None, agents: None },
+        M {
+            id: None,
+            name: "lead",
+            startup: "deferred",
+            model: Some("x"),
+            agents: None,
+        },
+        M {
+            id: None,
+            name: "dev",
+            startup: "deferred",
+            model: None,
+            agents: None,
+        },
     ];
     edit(&fx, "solo", &members, &[]);
     let t = tpl(&fx, "solo");
-    assert_eq!(t.members[0].id, a, "an id-less member keeps the id of the same-named member");
+    assert_eq!(
+        t.members[0].id, a,
+        "an id-less member keeps the id of the same-named member"
+    );
     assert_ne!(t.members[1].id, a);
     assert_eq!(member_seat(&fx, "one", &a), kept);
     let dev = seat_by_id(&fx, &member_seat(&fx, "one", &t.members[1].id));
@@ -972,9 +1541,17 @@ fn stale_hydrate_plan_is_rejected_when_membership_changes() {
     let (a, b) = (MemberId::new(), MemberId::new());
     create_template(&fx, "grow", &[m(&a, "lead", "deferred")], &[]);
     let pending = plan(&fx, "application apply grow --teamspace alpha --name one");
-    edit(&fx, "grow", &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")], &[]);
+    edit(
+        &fx,
+        "grow",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
     let row = apply_plan(&fx, &pending);
     assert_eq!(row.state, OpState::Rejected);
     assert_eq!(row.rejection.unwrap().reason, "stale_plan");
-    assert!(layout::list_applications(&view(&fx)).unwrap().is_empty(), "nothing was hydrated");
+    assert!(
+        layout::list_applications(&view(&fx)).unwrap().is_empty(),
+        "nothing was hydrated"
+    );
 }

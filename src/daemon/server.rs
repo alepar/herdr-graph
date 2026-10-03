@@ -2,7 +2,8 @@
 use super::budget;
 use super::registry::{CallerInfo, CommandCtx, CommandError, Registry, Shutdown};
 use crate::ipc::{
-    DaemonPhase, IPC_VERSION, IpcErrorCode, IpcRequest, IpcResponse, IpcResult, read_frame_async, write_frame_async,
+    DaemonPhase, IPC_VERSION, IpcErrorCode, IpcRequest, IpcResponse, IpcResult, read_frame_async,
+    write_frame_async,
 };
 use crate::model::Timestamp;
 use std::path::PathBuf;
@@ -72,7 +73,12 @@ impl StartGate {
 pub use super::budget::START_HOLD;
 
 /// Unchanged signature for existing callers/tests: a gate that is ready from the start.
-pub async fn serve(listener: UnixListener, registry: Arc<Registry>, builtins: Builtins, shutdown: Shutdown) {
+pub async fn serve(
+    listener: UnixListener,
+    registry: Arc<Registry>,
+    builtins: Builtins,
+    shutdown: Shutdown,
+) {
     let gate = StartGate::starting();
     gate.ready(registry);
     serve_gated(listener, gate, builtins, shutdown, START_HOLD).await
@@ -127,7 +133,11 @@ async fn connection(
             _ = shutdown.wait() => return,
             r = dispatch(&gate, &builtins, req, hold, deadline) => r,
         };
-        let resp = IpcResponse { version: IPC_VERSION, request_id, result };
+        let resp = IpcResponse {
+            version: IPC_VERSION,
+            request_id,
+            result,
+        };
         if write_frame_async(&mut stream, &resp).await.is_err() {
             return;
         }
@@ -135,7 +145,10 @@ async fn connection(
 }
 
 fn err(code: IpcErrorCode, message: impl Into<String>) -> IpcResult {
-    IpcResult::Error { code, message: message.into() }
+    IpcResult::Error {
+        code,
+        message: message.into(),
+    }
 }
 
 async fn dispatch(
@@ -148,7 +161,10 @@ async fn dispatch(
     if req.version != IPC_VERSION {
         return err(
             IpcErrorCode::VersionMismatch,
-            format!("request version {} but daemon speaks {IPC_VERSION}", req.version),
+            format!(
+                "request version {} but daemon speaks {IPC_VERSION}",
+                req.version
+            ),
         );
     }
     let kind = req.command.kind.as_str();
@@ -183,7 +199,9 @@ async fn dispatch(
         }
         "shutdown" => {
             let _ = b.shutdown_tx.send(true);
-            return IpcResult::Ok { value: serde_json::json!({"ok": true}) };
+            return IpcResult::Ok {
+                value: serde_json::json!({"ok": true}),
+            };
         }
         _ => {}
     }
@@ -191,15 +209,35 @@ async fn dispatch(
     let registry = match gate.wait(hold).await {
         Some(GateState::Ready(reg)) => reg,
         Some(GateState::Failed(why)) => {
-            return err(IpcErrorCode::Unavailable, format!("daemon failed to start: {why}"));
+            return err(
+                IpcErrorCode::Unavailable,
+                format!("daemon failed to start: {why}"),
+            );
         }
-        _ => return err(IpcErrorCode::Unavailable, "daemon is still starting (first pass); retry shortly"),
+        _ => {
+            return err(
+                IpcErrorCode::Unavailable,
+                "daemon is still starting (first pass); retry shortly",
+            );
+        }
     };
-    dispatch_registered_within(&registry, req.request_id, kind, req.command.args, Some(deadline)).await
+    dispatch_registered_within(
+        &registry,
+        req.request_id,
+        kind,
+        req.command.args,
+        Some(deadline),
+    )
+    .await
 }
 
 /// Strip `_caller` into `CommandCtx` and run the registered handler: the exact path every IPC command takes.
-pub async fn dispatch_registered(registry: &Registry, request_id: String, kind: &str, args: serde_json::Value) -> IpcResult {
+pub async fn dispatch_registered(
+    registry: &Registry,
+    request_id: String,
+    kind: &str,
+    args: serde_json::Value,
+) -> IpcResult {
     dispatch_registered_within(registry, request_id, kind, args, None).await
 }
 
@@ -212,7 +250,10 @@ async fn dispatch_registered_within(
     deadline: Option<tokio::time::Instant>,
 ) -> IpcResult {
     let Some(handler) = registry.handler(kind) else {
-        return err(IpcErrorCode::UnknownCommand, format!("unknown command {kind:?}"));
+        return err(
+            IpcErrorCode::UnknownCommand,
+            format!("unknown command {kind:?}"),
+        );
     };
     let caller = match args.as_object_mut().and_then(|o| o.remove("_caller")) {
         None => CallerInfo::default(),
@@ -261,7 +302,11 @@ mod tests {
             shutdown_tx: tx.clone(),
         };
         tokio::spawn(serve(listener, Arc::new(reg), builtins, sd));
-        Harness { sock, tx, _dir: dir }
+        Harness {
+            sock,
+            tx,
+            _dir: dir,
+        }
     }
 
     async fn start_gated(gate: StartGate, hold: Duration) -> Harness {
@@ -276,11 +321,22 @@ mod tests {
             shutdown_tx: tx.clone(),
         };
         tokio::spawn(serve_gated(listener, gate, builtins, sd, hold));
-        Harness { sock, tx, _dir: dir }
+        Harness {
+            sock,
+            tx,
+            _dir: dir,
+        }
     }
 
     fn request(version: u32, id: &str, kind: &str, args: serde_json::Value) -> IpcRequest {
-        IpcRequest { version, request_id: id.into(), command: IpcCommand { kind: kind.into(), args } }
+        IpcRequest {
+            version,
+            request_id: id.into(),
+            command: IpcCommand {
+                kind: kind.into(),
+                args,
+            },
+        }
     }
 
     async fn roundtrip(s: &mut UnixStream, req: IpcRequest) -> IpcResponse {
@@ -290,9 +346,12 @@ mod tests {
 
     fn echo_registry() -> Registry {
         let mut reg = Registry::default();
-        reg.command("test.echo", |cx: CommandCtx, args: serde_json::Value| async move {
-            Ok(json!({"args": args, "caller": cx.caller, "request_id": cx.request_id}))
-        });
+        reg.command(
+            "test.echo",
+            |cx: CommandCtx, args: serde_json::Value| async move {
+                Ok(json!({"args": args, "caller": cx.caller, "request_id": cx.request_id}))
+            },
+        );
         reg
     }
 
@@ -300,9 +359,15 @@ mod tests {
     async fn serve_dispatches_registered_command() {
         let h = start(echo_registry()).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
-        let resp = roundtrip(&mut s, request(IPC_VERSION, "r1", "test.echo", json!({"x": 7}))).await;
+        let resp = roundtrip(
+            &mut s,
+            request(IPC_VERSION, "r1", "test.echo", json!({"x": 7})),
+        )
+        .await;
         assert_eq!(resp.request_id, "r1");
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(value["args"], json!({"x": 7}));
         assert_eq!(value["request_id"], "r1");
     }
@@ -312,7 +377,16 @@ mod tests {
         let h = start(echo_registry()).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         let resp = roundtrip(&mut s, request(IPC_VERSION, "r", "nope.nope", json!({}))).await;
-        assert!(matches!(resp.result, IpcResult::Error { code: IpcErrorCode::UnknownCommand, .. }), "{resp:?}");
+        assert!(
+            matches!(
+                resp.result,
+                IpcResult::Error {
+                    code: IpcErrorCode::UnknownCommand,
+                    ..
+                }
+            ),
+            "{resp:?}"
+        );
     }
 
     #[tokio::test]
@@ -320,23 +394,52 @@ mod tests {
         let h = start(echo_registry()).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         let resp = roundtrip(&mut s, request(IPC_VERSION + 1, "r", "hello", json!({}))).await;
-        assert!(matches!(resp.result, IpcResult::Error { code: IpcErrorCode::VersionMismatch, .. }), "{resp:?}");
+        assert!(
+            matches!(
+                resp.result,
+                IpcResult::Error {
+                    code: IpcErrorCode::VersionMismatch,
+                    ..
+                }
+            ),
+            "{resp:?}"
+        );
     }
 
     #[tokio::test]
     async fn caller_info_injected_and_stripped() {
         let h = start(echo_registry()).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
-        let args = json!({"keep": 1, "_caller": {"pane_id": "p9", "graph_seat": "st_a", "tty": true}});
+        let args =
+            json!({"keep": 1, "_caller": {"pane_id": "p9", "graph_seat": "st_a", "tty": true}});
         let resp = roundtrip(&mut s, request(IPC_VERSION, "r", "test.echo", args)).await;
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
-        assert_eq!(value["args"], json!({"keep": 1}), "_caller must be stripped from handler args");
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
+        assert_eq!(
+            value["args"],
+            json!({"keep": 1}),
+            "_caller must be stripped from handler args"
+        );
         assert_eq!(value["caller"]["pane_id"], "p9");
         assert_eq!(value["caller"]["graph_seat"], "st_a");
         assert_eq!(value["caller"]["tty"], true);
         // malformed _caller is a bad request, not a silent default
-        let resp = roundtrip(&mut s, request(IPC_VERSION, "r2", "test.echo", json!({"_caller": 5}))).await;
-        assert!(matches!(resp.result, IpcResult::Error { code: IpcErrorCode::BadRequest, .. }), "{resp:?}");
+        let resp = roundtrip(
+            &mut s,
+            request(IPC_VERSION, "r2", "test.echo", json!({"_caller": 5})),
+        )
+        .await;
+        assert!(
+            matches!(
+                resp.result,
+                IpcResult::Error {
+                    code: IpcErrorCode::BadRequest,
+                    ..
+                }
+            ),
+            "{resp:?}"
+        );
     }
 
     #[tokio::test]
@@ -345,13 +448,21 @@ mod tests {
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         for i in 0..3 {
             let id = format!("r{i}");
-            let resp = roundtrip(&mut s, request(IPC_VERSION, &id, "test.echo", json!({"i": i}))).await;
+            let resp = roundtrip(
+                &mut s,
+                request(IPC_VERSION, &id, "test.echo", json!({"i": i})),
+            )
+            .await;
             assert_eq!(resp.request_id, id);
-            let IpcResult::Ok { value } = resp.result else { panic!() };
+            let IpcResult::Ok { value } = resp.result else {
+                panic!()
+            };
             assert_eq!(value["args"]["i"], i);
         }
         let resp = roundtrip(&mut s, request(IPC_VERSION, "st", "status", json!({}))).await;
-        let IpcResult::Ok { value } = resp.result else { panic!() };
+        let IpcResult::Ok { value } = resp.result else {
+            panic!()
+        };
         assert_eq!(value["instance"], "/inst");
     }
 
@@ -381,16 +492,25 @@ mod tests {
         let h = start_gated(gate.clone(), Duration::from_secs(5)).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         let resp = roundtrip(&mut s, request(IPC_VERSION, "h1", "hello", json!({}))).await;
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(value["state"], "starting");
-        assert_eq!(value["herdr_socket"], "/herdr", "hello keeps its other fields while starting");
+        assert_eq!(
+            value["herdr_socket"], "/herdr",
+            "hello keeps its other fields while starting"
+        );
         let resp = roundtrip(&mut s, request(IPC_VERSION, "st", "status", json!({}))).await;
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(value["state"], "starting");
         assert_eq!(value["components"], json!({}));
         gate.ready(Arc::new(echo_registry()));
         let resp = roundtrip(&mut s, request(IPC_VERSION, "h2", "hello", json!({}))).await;
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(value["state"], "ready");
     }
 
@@ -405,9 +525,18 @@ mod tests {
             g2.ready(Arc::new(echo_registry()));
         });
         let began = std::time::Instant::now();
-        let resp = roundtrip(&mut s, request(IPC_VERSION, "e1", "test.echo", json!({"x": 1}))).await;
-        assert!(began.elapsed() >= Duration::from_millis(150), "request must wait for ready");
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let resp = roundtrip(
+            &mut s,
+            request(IPC_VERSION, "e1", "test.echo", json!({"x": 1})),
+        )
+        .await;
+        assert!(
+            began.elapsed() >= Duration::from_millis(150),
+            "request must wait for ready"
+        );
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(value["args"], json!({"x": 1}));
     }
 
@@ -416,18 +545,24 @@ mod tests {
         let h = start_gated(StartGate::starting(), Duration::from_millis(200)).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         let resp = roundtrip(&mut s, request(IPC_VERSION, "e1", "test.echo", json!({}))).await;
-        let IpcResult::Error { code, message } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Error { code, message } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(code, IpcErrorCode::Unavailable);
         assert!(message.contains("still starting"), "{message}");
     }
 
     fn deadline_registry() -> Registry {
         let mut reg = Registry::default();
-        reg.command("test.deadline", |_cx: CommandCtx, _args: serde_json::Value| async move {
-            let d = budget::request_deadline().ok_or_else(|| CommandError::internal("no request deadline"))?;
-            let left = d.saturating_duration_since(tokio::time::Instant::now());
-            Ok(json!({"left_ms": left.as_millis() as u64}))
-        });
+        reg.command(
+            "test.deadline",
+            |_cx: CommandCtx, _args: serde_json::Value| async move {
+                let d = budget::request_deadline()
+                    .ok_or_else(|| CommandError::internal("no request deadline"))?;
+                let left = d.saturating_duration_since(tokio::time::Instant::now());
+                Ok(json!({"left_ms": left.as_millis() as u64}))
+            },
+        );
         reg
     }
 
@@ -437,11 +572,21 @@ mod tests {
         let h = start_gated(StartGate::starting(), Duration::from_millis(300)).await;
         let mut s = UnixStream::connect(&h.sock).await.unwrap();
         let began = std::time::Instant::now();
-        let resp = roundtrip(&mut s, request(IPC_VERSION, "d0", "test.deadline", json!({}))).await;
-        let IpcResult::Error { code, message } = resp.result else { panic!("{resp:?}") };
+        let resp = roundtrip(
+            &mut s,
+            request(IPC_VERSION, "d0", "test.deadline", json!({})),
+        )
+        .await;
+        let IpcResult::Error { code, message } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(code, IpcErrorCode::Unavailable);
         assert!(message.contains("still starting"), "{message}");
-        assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
 
         // Gate ready after 200 ms: the handler's deadline counts from frame receipt, not from readiness.
         let gate = StartGate::starting();
@@ -451,11 +596,20 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(200)).await;
             gate.ready(Arc::new(deadline_registry()));
         });
-        let resp = roundtrip(&mut s, request(IPC_VERSION, "d1", "test.deadline", json!({}))).await;
-        let IpcResult::Ok { value } = resp.result else { panic!("{resp:?}") };
+        let resp = roundtrip(
+            &mut s,
+            request(IPC_VERSION, "d1", "test.deadline", json!({})),
+        )
+        .await;
+        let IpcResult::Ok { value } = resp.result else {
+            panic!("{resp:?}")
+        };
         let left = Duration::from_millis(value["left_ms"].as_u64().unwrap());
         assert!(left > Duration::ZERO, "deadline must be in the future");
-        assert!(left <= budget::SERVER_BUDGET - Duration::from_millis(150), "hold time must be charged: {left:?}");
+        assert!(
+            left <= budget::SERVER_BUDGET - Duration::from_millis(150),
+            "hold time must be charged: {left:?}"
+        );
     }
 
     #[tokio::test]
@@ -468,7 +622,9 @@ mod tests {
             gate.fail("boom");
         });
         let resp = roundtrip(&mut s, request(IPC_VERSION, "e1", "test.echo", json!({}))).await;
-        let IpcResult::Error { code, message } = resp.result else { panic!("{resp:?}") };
+        let IpcResult::Error { code, message } = resp.result else {
+            panic!("{resp:?}")
+        };
         assert_eq!(code, IpcErrorCode::Unavailable);
         assert!(message.contains("boom"), "{message}");
     }

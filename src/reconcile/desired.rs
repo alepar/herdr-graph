@@ -98,12 +98,18 @@ pub struct DesiredRuntime {
 }
 
 fn latest_ended(sessions: &[NativeSession], harness: Harness) -> Option<&NativeSession> {
-    sessions.iter().filter(|s| s.harness == harness && s.ended.is_some()).max_by_key(|s| s.ended)
+    sessions
+        .iter()
+        .filter(|s| s.harness == harness && s.ended.is_some())
+        .max_by_key(|s| s.ended)
 }
 
 impl DesiredRuntime {
     pub fn load(tree: &dyn TreeRead, instance: &Path) -> Result<Self, StoreError> {
-        let mut d = DesiredRuntime { instance: instance.to_path_buf(), ..Default::default() };
+        let mut d = DesiredRuntime {
+            instance: instance.to_path_buf(),
+            ..Default::default()
+        };
         for (_, t) in layout::list_teamspaces(tree)? {
             d.teamspaces.insert(t.id.clone(), t);
         }
@@ -113,11 +119,18 @@ impl DesiredRuntime {
         for (_, c) in layout::all_clones(tree)? {
             d.clones.insert(c.id.clone(), c);
         }
-        for ts in d.teamspaces.values().filter(|t| t.lifecycle == Lifecycle::Active) {
+        for ts in d
+            .teamspaces
+            .values()
+            .filter(|t| t.lifecycle == Lifecycle::Active)
+        {
             d.workspaces.push(DesiredWorkspace {
                 ts: ts.id.clone(),
                 name: ts.name.clone(),
-                cwd: ts.project_repo.clone().unwrap_or_else(|| instance.to_path_buf()),
+                cwd: ts
+                    .project_repo
+                    .clone()
+                    .unwrap_or_else(|| instance.to_path_buf()),
                 env: launch_env(instance, None, None),
                 bound: ts.runtime.bound.clone(),
                 availability: ts.runtime.availability,
@@ -126,13 +139,19 @@ impl DesiredRuntime {
         }
         let seats: Vec<SeatRecord> = d.seats.values().cloned().collect();
         for seat in seats {
-            let Some(ts) = d.teamspaces.get(&seat.teamspace).cloned() else { continue };
+            let Some(ts) = d.teamspaces.get(&seat.teamspace).cloned() else {
+                continue;
+            };
             if ts.lifecycle != Lifecycle::Active || seat.lifecycle != Lifecycle::Active {
                 continue;
             }
             let cfg: EffectiveSeatConfig = resolve_in(tree, &seat)?;
-            let (cwd, _) =
-                resolve_cwd(cfg.cwd.as_deref(), ts.project_repo.as_deref(), instance, &seat.id);
+            let (cwd, _) = resolve_cwd(
+                cfg.cwd.as_deref(),
+                ts.project_repo.as_deref(),
+                instance,
+                &seat.id,
+            );
             d.tabs.push(DesiredTab {
                 seat: seat.id.clone(),
                 ts: ts.id.clone(),
@@ -144,15 +163,24 @@ impl DesiredRuntime {
                 availability: seat.runtime.availability,
                 rev: seat.rev,
             });
-            let clones: Vec<CloneRecord> =
-                d.clones.values().filter(|c| c.seat == seat.id && c.lifecycle == CloneLifecycle::Active).cloned().collect();
+            let clones: Vec<CloneRecord> = d
+                .clones
+                .values()
+                .filter(|c| c.seat == seat.id && c.lifecycle == CloneLifecycle::Active)
+                .cloned()
+                .collect();
             for c in clones {
                 let resume = profile(cfg.harness)
                     .supports_resume()
-                    .then(|| latest_ended(&c.sessions, cfg.harness).map(|s| s.native_session_id.clone()))
+                    .then(|| {
+                        latest_ended(&c.sessions, cfg.harness).map(|s| s.native_session_id.clone())
+                    })
                     .flatten();
                 let occupant_native_id = c.occupant.as_ref().and_then(|o| {
-                    c.sessions.iter().find(|s| s.id == o.native_session).map(|s| s.native_session_id.clone())
+                    c.sessions
+                        .iter()
+                        .find(|s| s.id == o.native_session)
+                        .map(|s| s.native_session_id.clone())
                 });
                 d.panes.push(DesiredPane {
                     clone: c.id.clone(),
@@ -185,7 +213,10 @@ impl DesiredRuntime {
     pub fn pane(&self, clone: &CloneId) -> Option<&DesiredPane> {
         self.panes.iter().find(|p| &p.clone == clone)
     }
-    pub fn panes_of<'a>(&'a self, seat: &SeatId) -> impl Iterator<Item = &'a DesiredPane> + use<'a> {
+    pub fn panes_of<'a>(
+        &'a self,
+        seat: &SeatId,
+    ) -> impl Iterator<Item = &'a DesiredPane> + use<'a> {
         let seat = seat.clone();
         self.panes.iter().filter(move |p| p.seat == seat)
     }
@@ -209,11 +240,17 @@ impl DesiredRuntime {
     pub fn op_for(&self, object: &AnyId) -> OpId {
         let nil = OpId::from_ulid(ulid::Ulid::nil());
         if let Ok(s) = SeatId::parse(object.as_str()) {
-            return self.seats.get(&s).and_then(|r| r.activation.last_op.clone()).unwrap_or(nil);
+            return self
+                .seats
+                .get(&s)
+                .and_then(|r| r.activation.last_op.clone())
+                .unwrap_or(nil);
         }
         if let Ok(c) = CloneId::parse(object.as_str()) {
             let seat = self.clones.get(&c).and_then(|c| self.seats.get(&c.seat));
-            return seat.and_then(|r| r.activation.last_op.clone()).unwrap_or(nil);
+            return seat
+                .and_then(|r| r.activation.last_op.clone())
+                .unwrap_or(nil);
         }
         if let Ok(t) = TeamspaceId::parse(object.as_str()) {
             return self
@@ -231,9 +268,13 @@ impl DesiredRuntime {
 /// `reconcile::effect_op`: the attribution op of `object` at the revision `tree` shows.
 pub fn effect_op(tree: &dyn TreeRead, object: &AnyId) -> Result<OpId, StoreError> {
     let nil = OpId::from_ulid(ulid::Ulid::nil());
-    let Some(loc) = layout::locate(tree, object)? else { return Ok(nil) };
+    let Some(loc) = layout::locate(tree, object)? else {
+        return Ok(nil);
+    };
     let seat_op = |id: &SeatId| -> Result<Option<OpId>, StoreError> {
-        let Some(l) = layout::locate(tree, &id.to_any())? else { return Ok(None) };
+        let Some(l) = layout::locate(tree, &id.to_any())? else {
+            return Ok(None);
+        };
         let rec: Option<SeatRecord> = crate::store::record::read_toml(tree, &l.record_path)?;
         Ok(rec.and_then(|r| r.activation.last_op))
     };

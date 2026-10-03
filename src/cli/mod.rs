@@ -19,7 +19,11 @@ pub mod undo;
 pub mod who;
 
 #[derive(Parser, Debug)]
-#[command(name = "herdr-graph", version, about = "Git-backed organization graph for Herdr")]
+#[command(
+    name = "herdr-graph",
+    version,
+    about = "Git-backed organization graph for Herdr"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -114,8 +118,24 @@ mod tests {
             &["path", "st_x"],
             &["plan", "seat", "create", "foreman", "--json"],
             &["apply", "pl_x"],
-            &["apply", "pl_x", "--confirm", "abc", "--confirmed-by", "user-relay"],
-            &["content", "write", "--object", "st_x", "--rel", "notes/a.md", "--from", "/tmp/a"],
+            &[
+                "apply",
+                "pl_x",
+                "--confirm",
+                "abc",
+                "--confirmed-by",
+                "user-relay",
+            ],
+            &[
+                "content",
+                "write",
+                "--object",
+                "st_x",
+                "--rel",
+                "notes/a.md",
+                "--from",
+                "/tmp/a",
+            ],
             &["session-report", "--from-hook", "claude"],
             &["rebind", "cl_x", "--pane", "p1"],
             &["ops"],
@@ -129,11 +149,21 @@ mod tests {
             &["undo", "--json"],
             &["request", "list", "--pending"],
             &["request", "ack", "rq_x"],
-            &["request", "complete", "rq_x", "--output", "o.md", "--covered", "0-10"],
+            &[
+                "request",
+                "complete",
+                "rq_x",
+                "--output",
+                "o.md",
+                "--covered",
+                "0-10",
+            ],
             &["who", "p1"],
         ];
         for argv in cases {
-            let full: Vec<&str> = std::iter::once("herdr-graph").chain(argv.iter().copied()).collect();
+            let full: Vec<&str> = std::iter::once("herdr-graph")
+                .chain(argv.iter().copied())
+                .collect();
             Cli::try_parse_from(&full).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         }
     }

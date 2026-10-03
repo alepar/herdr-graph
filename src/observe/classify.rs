@@ -84,7 +84,10 @@ pub struct Classified {
 
 impl Classified {
     pub fn retired_now(&self) -> BTreeSet<AnyId> {
-        self.cascades.iter().flat_map(|c| c.retire.iter().cloned()).collect()
+        self.cascades
+            .iter()
+            .flat_map(|c| c.retire.iter().cloned())
+            .collect()
     }
 }
 
@@ -115,7 +118,9 @@ fn intent_explains(d: &DesiredRuntime, object: &AnyId, container: ContainerKind)
     match container {
         ContainerKind::Pane => CloneId::parse(object.as_str()).is_ok_and(|c| d.pane(&c).is_none()),
         ContainerKind::Tab => SeatId::parse(object.as_str()).is_ok_and(|s| d.tab(&s).is_none()),
-        ContainerKind::Workspace => TeamspaceId::parse(object.as_str()).is_ok_and(|t| d.workspace(&t).is_none()),
+        ContainerKind::Workspace => {
+            TeamspaceId::parse(object.as_str()).is_ok_and(|t| d.workspace(&t).is_none())
+        }
     }
 }
 
@@ -125,18 +130,30 @@ fn predicted(
     container: ContainerKind,
     want: impl Fn(&EndState) -> bool,
 ) -> Option<EffectId> {
-    preds.iter().find(|(_, p)| &p.object == object && p.container == container && want(&p.end)).map(|(e, _)| e.clone())
+    preds
+        .iter()
+        .find(|(_, p)| &p.object == object && p.container == container && want(&p.end))
+        .map(|(e, _)| e.clone())
 }
 
 fn is_retired(d: &DesiredRuntime, object: &AnyId) -> bool {
     if let Ok(c) = CloneId::parse(object.as_str()) {
-        return d.clones.get(&c).is_none_or(|r| r.lifecycle == CloneLifecycle::Retired);
+        return d
+            .clones
+            .get(&c)
+            .is_none_or(|r| r.lifecycle == CloneLifecycle::Retired);
     }
     if let Ok(s) = SeatId::parse(object.as_str()) {
-        return d.seats.get(&s).is_none_or(|r| r.lifecycle == Lifecycle::Retired);
+        return d
+            .seats
+            .get(&s)
+            .is_none_or(|r| r.lifecycle == Lifecycle::Retired);
     }
     if let Ok(t) = TeamspaceId::parse(object.as_str()) {
-        return d.teamspaces.get(&t).is_none_or(|r| r.lifecycle == Lifecycle::Retired);
+        return d
+            .teamspaces
+            .get(&t)
+            .is_none_or(|r| r.lifecycle == Lifecycle::Retired);
     }
     true
 }
@@ -150,21 +167,36 @@ fn rename_container(object: &AnyId) -> ContainerKind {
 }
 
 fn has_open_rename(journal: &Journal, object: &AnyId) -> bool {
-    journal.effects_for_object(object).unwrap_or_default().iter().any(|r| {
-        matches!(r.kind, EffectKind::RenameWorkspace | EffectKind::RenameTab | EffectKind::RenamePane)
-            && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
-    })
+    journal
+        .effects_for_object(object)
+        .unwrap_or_default()
+        .iter()
+        .any(|r| {
+            matches!(
+                r.kind,
+                EffectKind::RenameWorkspace | EffectKind::RenameTab | EffectKind::RenamePane
+            ) && matches!(r.status, EffectStatus::Pending | EffectStatus::Unknown)
+        })
 }
 
 /// Non-retired clones of `seat`.
-fn live_clones<'a>(d: &'a DesiredRuntime, seat: &'a SeatId) -> impl Iterator<Item = &'a CloneRecord> + use<'a> {
-    d.clones.values().filter(move |c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
+fn live_clones<'a>(
+    d: &'a DesiredRuntime,
+    seat: &'a SeatId,
+) -> impl Iterator<Item = &'a CloneRecord> + use<'a> {
+    d.clones
+        .values()
+        .filter(move |c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
 }
 
 fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool) -> Cascade {
     let mut retire = Vec::new();
     let mut ends = Vec::new();
-    if root && d.seats.get(seat).is_some_and(|s| s.lifecycle != Lifecycle::Retired) {
+    if root
+        && d.seats
+            .get(seat)
+            .is_some_and(|s| s.lifecycle != Lifecycle::Retired)
+    {
         retire.push(seat.to_any());
     }
     for c in live_clones(d, seat) {
@@ -222,7 +254,8 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         if let Ok(c) = CloneId::parse(obj.as_str())
             && let Some(rec) = d.clones.get(&c)
         {
-            out.gone_ends.extend(ended_of(rec, SessionEndReason::PaneClosed));
+            out.gone_ends
+                .extend(ended_of(rec, SessionEndReason::PaneClosed));
         }
     }
 
@@ -231,16 +264,27 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
     for ts in &ws_gone {
         let mut retire = Vec::new();
         let mut group_ends = Vec::new();
-        if d.teamspaces.get(ts).is_some_and(|t| t.lifecycle != Lifecycle::Retired) {
+        if d.teamspaces
+            .get(ts)
+            .is_some_and(|t| t.lifecycle != Lifecycle::Retired)
+        {
             retire.push(ts.to_any());
         }
-        for seat in d.seats.values().filter(|s| &s.teamspace == ts && s.lifecycle != Lifecycle::Retired) {
+        for seat in d
+            .seats
+            .values()
+            .filter(|s| &s.teamspace == ts && s.lifecycle != Lifecycle::Retired)
+        {
             let g = seat_group(d, &seat.id, CascadeRule::Workspace, true);
             retire.extend(g.retire);
             group_ends.extend(g.ends);
         }
         if !retire.is_empty() {
-            out.cascades.push(Cascade { rule: CascadeRule::Workspace, retire, ends: group_ends });
+            out.cascades.push(Cascade {
+                rule: CascadeRule::Workspace,
+                retire,
+                ends: group_ends,
+            });
         }
     }
     let mut absorbed_seats: BTreeSet<SeatId> = BTreeSet::new();
@@ -252,7 +296,9 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         // A pane that left the tab alive is a move, not a closure: the seat stays, flagged moved_out.
         let survivors = match cx.baseline {
             Some(mb) => live_clones(d, seat)
-                .filter(|c| mb.clone_pane.contains_key(&c.id) && cx.matches.clone_pane.contains_key(&c.id))
+                .filter(|c| {
+                    mb.clone_pane.contains_key(&c.id) && cx.matches.clone_pane.contains_key(&c.id)
+                })
                 .count(),
             None => 0,
         };
@@ -267,8 +313,12 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         }
     }
     for clone in &pane_gone {
-        let Some(rec) = d.clones.get(clone) else { continue };
-        if absorbed_seats.contains(&rec.seat) || seat_ts(&rec.seat).is_some_and(|t| ws_gone.contains(&t)) {
+        let Some(rec) = d.clones.get(clone) else {
+            continue;
+        };
+        if absorbed_seats.contains(&rec.seat)
+            || seat_ts(&rec.seat).is_some_and(|t| ws_gone.contains(&t))
+        {
             continue;
         }
         if rec.lifecycle == CloneLifecycle::Retired {
@@ -277,7 +327,9 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         out.cascades.push(Cascade {
             rule: CascadeRule::Pane,
             retire: vec![clone.to_any()],
-            ends: ended_of(rec, SessionEndReason::PaneClosed).into_iter().collect(),
+            ends: ended_of(rec, SessionEndReason::PaneClosed)
+                .into_iter()
+                .collect(),
         });
     }
     let retired_now = out.retired_now();
@@ -289,7 +341,12 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             continue;
         }
         let container = rename_container(&object);
-        if let Some(ef) = predicted(cx.preds, &object, container, |e| matches!(e, EndState::Renamed { name } if *name == new)) {
+        if let Some(ef) = predicted(
+            cx.preds,
+            &object,
+            container,
+            |e| matches!(e, EndState::Renamed { name } if *name == new),
+        ) {
             out.consumed.insert(ef);
             continue;
         }
@@ -304,13 +361,19 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             continue;
         }
         let known = cx.matches.tabs.contains_key(&to_tab);
-        out.moves.push(MoveFact { clone, to_tab, known });
+        out.moves.push(MoveFact {
+            clone,
+            to_tab,
+            known,
+        });
     }
 
     let mut occ_clones: BTreeSet<CloneId> = ends.keys().chain(starts.keys()).cloned().collect();
     occ_clones.retain(|c| !retired_now.contains(&c.to_any()));
     for clone in occ_clones {
-        let end = ends.get(&clone).and_then(|reason| d.clones.get(&clone).and_then(|c| ended_of(c, *reason)));
+        let end = ends
+            .get(&clone)
+            .and_then(|reason| d.clones.get(&clone).and_then(|c| ended_of(c, *reason)));
         let start = starts.remove(&clone);
         if end.is_some() || start.is_some() {
             out.occupancy.push(OccChange { clone, end, start });

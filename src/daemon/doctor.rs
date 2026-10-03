@@ -37,17 +37,29 @@ impl DoctorReport {
 }
 
 fn check(name: &str, ok: bool, detail: impl Into<String>) -> Check {
-    Check { name: name.into(), ok, warn: false, detail: detail.into() }
+    Check {
+        name: name.into(),
+        ok,
+        warn: false,
+        detail: detail.into(),
+    }
 }
 
 fn warn_check(name: &str, detail: impl Into<String>) -> Check {
-    Check { name: name.into(), ok: true, warn: true, detail: detail.into() }
+    Check {
+        name: name.into(),
+        ok: true,
+        warn: true,
+        detail: detail.into(),
+    }
 }
 
 /// Paths recorded in `.graph-local/worktree_dirty`: JSON lines `{"path":…,"op":…,"at":…}` (written by the writer).
 /// Unparsable lines are skipped; a missing file is "no entries".
 pub fn read_worktree_dirty(file: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(file) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
     text.lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["path"].as_str().map(str::to_owned))
@@ -58,7 +70,10 @@ pub fn read_worktree_dirty(file: &Path) -> Vec<String> {
 /// of the connection. A missing install (discovery `Ok(None)`) is a `[WARN]` unless the daemon reports it is
 /// connected: graph works without threads, degraded. A found dir is ok without a daemon and, with one, follows its
 /// `connected` (found but disconnected is `[FAIL]`). A discovery error (ambiguous install) is `[FAIL]`.
-fn threads_check(resolved: Result<Option<(PathBuf, Source)>, String>, component: Option<&Value>) -> Check {
+fn threads_check(
+    resolved: Result<Option<(PathBuf, Source)>, String>,
+    component: Option<&Value>,
+) -> Check {
     let not_found = matches!(resolved, Ok(None));
     let (found, mut detail) = match &resolved {
         Ok(Some((dir, source))) => (true, format!("state dir {} ({source})", dir.display())),
@@ -72,23 +87,42 @@ fn threads_check(resolved: Result<Option<(PathBuf, Source)>, String>, component:
         Err(why) => (false, format!("not found ({why})")),
     };
     let Some(c) = component else {
-        return if not_found { warn_check("threads", detail) } else { check("threads", found, detail) };
+        return if not_found {
+            warn_check("threads", detail)
+        } else {
+            check("threads", found, detail)
+        };
     };
     let connected = c["connected"].as_bool().unwrap_or(false);
     if connected {
-        detail.push_str(&format!("; daemon connected, capability {}", c["capability"]));
+        detail.push_str(&format!(
+            "; daemon connected, capability {}",
+            c["capability"]
+        ));
     } else {
-        let why = c["error"].as_str().or(c["note"].as_str()).unwrap_or("no reason reported");
+        let why = c["error"]
+            .as_str()
+            .or(c["note"].as_str())
+            .unwrap_or("no reason reported");
         detail.push_str(&format!("; daemon not connected: {why}"));
     }
-    if !connected && not_found { warn_check("threads", detail) } else { check("threads", connected, detail) }
+    if !connected && not_found {
+        warn_check("threads", detail)
+    } else {
+        check("threads", connected, detail)
+    }
 }
 
 const LIST_CAP: usize = 10;
 
 /// `a; b; c; +N more` for lists longer than [`LIST_CAP`].
 fn capped(items: &[String]) -> String {
-    let mut out = items.iter().take(LIST_CAP).cloned().collect::<Vec<_>>().join("; ");
+    let mut out = items
+        .iter()
+        .take(LIST_CAP)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("; ");
     if items.len() > LIST_CAP {
         out.push_str(&format!("; +{} more", items.len() - LIST_CAP));
     }
@@ -117,15 +151,28 @@ fn failed_ops_check(rows: &[OpRow]) -> Check {
     let items: Vec<String> = rows
         .iter()
         .map(|r| {
-            let kind = serde_json::to_value(r.request.kind).ok().and_then(|v| v.as_str().map(str::to_owned));
-            let reason = r.rejection.as_ref().map_or("no reason recorded", |x| x.reason.as_str());
-            format!("{} {}: {reason}", r.op, kind.unwrap_or_else(|| format!("{:?}", r.request.kind)))
+            let kind = serde_json::to_value(r.request.kind)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned));
+            let reason = r
+                .rejection
+                .as_ref()
+                .map_or("no reason recorded", |x| x.reason.as_str());
+            format!(
+                "{} {}: {reason}",
+                r.op,
+                kind.unwrap_or_else(|| format!("{:?}", r.request.kind))
+            )
         })
         .collect();
     check(
         "failed ops",
         false,
-        format!("{} failed: {} — herdr-graph cancel <op> to dismiss", rows.len(), capped(&items)),
+        format!(
+            "{} failed: {} — herdr-graph cancel <op> to dismiss",
+            rows.len(),
+            capped(&items)
+        ),
     )
 }
 
@@ -134,17 +181,21 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
     let mut clones = Vec::new();
     let read = (|| -> Result<(), crate::ports::store::StoreError> {
         for (_, t) in layout::list_teamspaces(tree)? {
-            if t.lifecycle != Lifecycle::Retired && t.runtime.availability == Availability::Unknown {
+            if t.lifecycle != Lifecycle::Retired && t.runtime.availability == Availability::Unknown
+            {
                 names.push(format!("teamspace {}", t.name));
             }
         }
         for (_, s) in layout::all_seats(tree)? {
-            if s.lifecycle != Lifecycle::Retired && s.runtime.availability == Availability::Unknown {
+            if s.lifecycle != Lifecycle::Retired && s.runtime.availability == Availability::Unknown
+            {
                 names.push(format!("seat {}", s.name));
             }
         }
         for (_, c) in layout::all_clones(tree)? {
-            if c.lifecycle != CloneLifecycle::Retired && c.runtime.availability == Availability::Unknown {
+            if c.lifecycle != CloneLifecycle::Retired
+                && c.runtime.availability == Availability::Unknown
+            {
                 names.push(format!("clone {}", c.name));
                 clones.push(c.name);
             }
@@ -152,29 +203,57 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
         Ok(())
     })();
     if let Err(e) = read {
-        return check("unknown objects", false, format!("cannot read the graph: {e}"));
+        return check(
+            "unknown objects",
+            false,
+            format!("cannot read the graph: {e}"),
+        );
     }
     if names.is_empty() {
         return check("unknown objects", true, "none");
     }
-    let hint = clones.first().map_or(String::new(), |c| format!(" — herdr-graph rebind {c} --pane <pane>"));
-    check("unknown objects", false, format!("{} with unknown availability: {}{hint}", names.len(), capped(&names)))
+    let hint = clones.first().map_or(String::new(), |c| {
+        format!(" — herdr-graph rebind {c} --pane <pane>")
+    });
+    check(
+        "unknown objects",
+        false,
+        format!(
+            "{} with unknown availability: {}{hint}",
+            names.len(),
+            capped(&names)
+        ),
+    )
 }
 
 fn undeliverable_check(tree: &dyn TreeRead) -> Check {
     let reqs = match layout::list_requests(tree) {
         Ok(r) => r,
-        Err(e) => return check("undeliverable requests", false, format!("cannot read the graph: {e}")),
+        Err(e) => {
+            return check(
+                "undeliverable requests",
+                false,
+                format!("cannot read the graph: {e}"),
+            );
+        }
     };
     let items: Vec<String> = reqs
         .iter()
         .filter(|(_, r)| matches!(r.status, RequestStatus::Pending | RequestStatus::Delivered))
-        .filter_map(|(_, r)| r.undeliverable.as_ref().map(|why| format!("{}: {why}", r.id)))
+        .filter_map(|(_, r)| {
+            r.undeliverable
+                .as_ref()
+                .map(|why| format!("{}: {why}", r.id))
+        })
         .collect();
     if items.is_empty() {
         check("undeliverable requests", true, "none")
     } else {
-        check("undeliverable requests", false, format!("{} stuck: {}", items.len(), capped(&items)))
+        check(
+            "undeliverable requests",
+            false,
+            format!("{} stuck: {}", items.len(), capped(&items)),
+        )
     }
 }
 
@@ -182,7 +261,11 @@ fn worktree_dirty_check(entries: &[String]) -> Check {
     if entries.is_empty() {
         check("worktree_dirty", true, "no entries")
     } else {
-        check("worktree_dirty", false, format!("{} entries: {}", entries.len(), entries.join(", ")))
+        check(
+            "worktree_dirty",
+            false,
+            format!("{} entries: {}", entries.len(), entries.join(", ")),
+        )
     }
 }
 
@@ -191,13 +274,24 @@ fn instance_checks(root: &Path, checks: &mut Vec<Check>) {
     let paths = InstancePaths::new(root);
     match crate::store::GitStore::open(root).and_then(|s| s.head().map(|h| (s, h))) {
         Ok((store, head)) => {
-            let view = CommitView { store: &store, at: head };
+            let view = CommitView {
+                store: &store,
+                at: head,
+            };
             checks.push(unknown_objects_check(&view));
             checks.push(undeliverable_check(&view));
         }
         Err(e) => {
-            checks.push(check("unknown objects", false, format!("cannot read the graph: {e}")));
-            checks.push(check("undeliverable requests", false, format!("cannot read the graph: {e}")));
+            checks.push(check(
+                "unknown objects",
+                false,
+                format!("cannot read the graph: {e}"),
+            ));
+            checks.push(check(
+                "undeliverable requests",
+                false,
+                format!("cannot read the graph: {e}"),
+            ));
         }
     }
     if !paths.journal.exists() {
@@ -207,26 +301,50 @@ fn instance_checks(root: &Path, checks: &mut Vec<Check>) {
     let journal = match Journal::open(&paths.journal) {
         Ok(j) => j,
         Err(e) => {
-            checks.push(check("failed ops", false, format!("cannot read the journal: {e}")));
+            checks.push(check(
+                "failed ops",
+                false,
+                format!("cannot read the journal: {e}"),
+            ));
             return;
         }
     };
     match journal.list(&[OpState::Failed], 50) {
         Ok(rows) => checks.push(failed_ops_check(&rows)),
-        Err(e) => checks.push(check("failed ops", false, format!("cannot read the journal: {e}"))),
+        Err(e) => checks.push(check(
+            "failed ops",
+            false,
+            format!("cannot read the journal: {e}"),
+        )),
     }
     use crate::model::effect::EffectStatus::{BlockedNeedsHuman, Failed, NeedsRevision};
-    let pending = journal.notice_counts().map(|c| c.get("pending").copied().unwrap_or(0));
-    match (journal.effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed]), pending) {
+    let pending = journal
+        .notice_counts()
+        .map(|c| c.get("pending").copied().unwrap_or(0));
+    match (
+        journal.effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed]),
+        pending,
+    ) {
         (Ok(rows), Ok(pending)) => checks.push(attention_effects_check(&rows, pending)),
-        (Err(e), _) => checks.push(check("attention effects", false, format!("cannot read the journal: {e}"))),
-        (_, Err(e)) => checks.push(check("attention effects", false, format!("cannot read the journal: {e}"))),
+        (Err(e), _) => checks.push(check(
+            "attention effects",
+            false,
+            format!("cannot read the journal: {e}"),
+        )),
+        (_, Err(e)) => checks.push(check(
+            "attention effects",
+            false,
+            format!("cannot read the journal: {e}"),
+        )),
     }
 }
 
 /// Effects in `NeedsRevision`, `BlockedNeedsHuman` or `Failed`, with their last error, and how many of their
 /// notices have not reached the requester yet.
-fn attention_effects_check(rows: &[crate::model::effect::EffectRecord], pending_notices: u64) -> Check {
+fn attention_effects_check(
+    rows: &[crate::model::effect::EffectRecord],
+    pending_notices: u64,
+) -> Check {
     if rows.is_empty() {
         return check("attention effects", true, "none");
     }
@@ -234,12 +352,23 @@ fn attention_effects_check(rows: &[crate::model::effect::EffectRecord], pending_
         .iter()
         .rev()
         .map(|r| {
-            let status = serde_json::to_value(r.status).ok().and_then(|v| v.as_str().map(str::to_owned));
+            let status = serde_json::to_value(r.status)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned));
             let err = r.last_error.as_deref().unwrap_or("no error recorded");
-            format!("{} {} {}: {err}", r.kind.as_str(), r.object, status.unwrap_or_else(|| format!("{:?}", r.status)))
+            format!(
+                "{} {} {}: {err}",
+                r.kind.as_str(),
+                r.object,
+                status.unwrap_or_else(|| format!("{:?}", r.status))
+            )
         })
         .collect();
-    let mut detail = format!("{} effect(s) need attention: {}", rows.len(), capped(&items));
+    let mut detail = format!(
+        "{} effect(s) need attention: {}",
+        rows.len(),
+        capped(&items)
+    );
     if pending_notices > 0 {
         detail.push_str(&format!("; {pending_notices} notice(s) not yet delivered"));
     }
@@ -248,15 +377,28 @@ fn attention_effects_check(rows: &[crate::model::effect::EffectRecord], pending_
 
 pub fn doctor(env: &Env) -> DoctorReport {
     let mut checks = Vec::new();
-    let Some((root, source)) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr) else {
-        checks.push(check("instance", false, "no instance configured — run herdr-graph init"));
+    let Some((root, source)) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr)
+    else {
+        checks.push(check(
+            "instance",
+            false,
+            "no instance configured — run herdr-graph init",
+        ));
         return DoctorReport { checks };
     };
     let src = match &source {
-        InstanceSource::EnvVar => format!("{} via HERDR_GRAPH_INSTANCE", crate::config::ENV_INSTANCE),
-        InstanceSource::PluginConfig(p) | InstanceSource::UserConfig(p) => format!("via {}", p.display()),
+        InstanceSource::EnvVar => {
+            format!("{} via HERDR_GRAPH_INSTANCE", crate::config::ENV_INSTANCE)
+        }
+        InstanceSource::PluginConfig(p) | InstanceSource::UserConfig(p) => {
+            format!("via {}", p.display())
+        }
     };
-    checks.push(check("instance", true, format!("{} ({src})", root.display())));
+    checks.push(check(
+        "instance",
+        true,
+        format!("{} ({src})", root.display()),
+    ));
 
     match crate::store::GitStore::open(&root) {
         Ok(_) => checks.push(check("instance repo", true, "opens, graph.toml on main")),
@@ -266,11 +408,24 @@ pub fn doctor(env: &Env) -> DoctorReport {
     let sock = socket_path(&root);
     let hello_reply = hello(&sock);
     match &hello_reply {
-        Some(h) => checks.push(check("daemon", true, format!("pid {} on {}", h["pid"], sock.display()))),
-        None => checks.push(check("daemon", false, format!("not reachable at {}", sock.display()))),
+        Some(h) => checks.push(check(
+            "daemon",
+            true,
+            format!("pid {} on {}", h["pid"], sock.display()),
+        )),
+        None => checks.push(check(
+            "daemon",
+            false,
+            format!("not reachable at {}", sock.display()),
+        )),
     }
 
-    match (&env.herdr_socket, hello_reply.as_ref().and_then(|h| h["herdr_socket"].as_str())) {
+    match (
+        &env.herdr_socket,
+        hello_reply
+            .as_ref()
+            .and_then(|h| h["herdr_socket"].as_str()),
+    ) {
         (Some(mine), Some(theirs)) if Path::new(theirs) == mine.as_path() => {
             checks.push(check("daemon herdr socket", true, theirs.to_string()));
         }
@@ -279,23 +434,48 @@ pub fn doctor(env: &Env) -> DoctorReport {
             false,
             format!("daemon uses {theirs}; this pane uses {}", mine.display()),
         )),
-        (None, Some(theirs)) => checks.push(check("daemon herdr socket", true, format!("{theirs} (HERDR_SOCKET_PATH unset here)"))),
+        (None, Some(theirs)) => checks.push(check(
+            "daemon herdr socket",
+            true,
+            format!("{theirs} (HERDR_SOCKET_PATH unset here)"),
+        )),
         (_, None) => checks.push(check("daemon herdr socket", false, "no daemon to compare")),
     }
 
     match &env.herdr_socket {
-        None => checks.push(check("herdr socket", false, "HERDR_SOCKET_PATH unset (not inside Herdr)")),
+        None => checks.push(check(
+            "herdr socket",
+            false,
+            "HERDR_SOCKET_PATH unset (not inside Herdr)",
+        )),
         Some(p) => match std::os::unix::net::UnixStream::connect(p) {
-            Ok(_) => checks.push(check("herdr socket", true, format!("{} reachable", p.display()))),
-            Err(e) => checks.push(check("herdr socket", false, format!("{}: {e}", p.display()))),
+            Ok(_) => checks.push(check(
+                "herdr socket",
+                true,
+                format!("{} reachable", p.display()),
+            )),
+            Err(e) => checks.push(check(
+                "herdr socket",
+                false,
+                format!("{}: {e}", p.display()),
+            )),
         },
     }
 
-    checks.push(worktree_dirty_check(&read_worktree_dirty(&InstancePaths::new(&root).worktree_dirty)));
+    checks.push(worktree_dirty_check(&read_worktree_dirty(
+        &InstancePaths::new(&root).worktree_dirty,
+    )));
     instance_checks(&root, &mut checks);
 
-    let status = Client::connect(&sock, Duration::from_secs(2)).ok().and_then(|mut c| c.call("status", serde_json::json!({})).ok());
-    let comp = |name: &str| status.as_ref().and_then(|s| s["components"].get(name)).cloned();
+    let status = Client::connect(&sock, Duration::from_secs(2))
+        .ok()
+        .and_then(|mut c| c.call("status", serde_json::json!({})).ok());
+    let comp = |name: &str| {
+        status
+            .as_ref()
+            .and_then(|s| s["components"].get(name))
+            .cloned()
+    };
     checks.push(writer_check(comp("writer").as_ref()));
     let inputs = DiscoveryInputs {
         env_state_dir: env.threads_state_dir.clone(),
@@ -304,7 +484,10 @@ pub fn doctor(env: &Env) -> DoctorReport {
         xdg_state_home: env.xdg_state_home.clone(),
         home: env.home.clone(),
     };
-    checks.push(threads_check(resolve_state_dir(&inputs), comp("threads").as_ref()));
+    checks.push(threads_check(
+        resolve_state_dir(&inputs),
+        comp("threads").as_ref(),
+    ));
     match comp("journal") {
         Some(j) => checks.push(check("journal", true, j.to_string())),
         None => checks.push(check("journal", true, "no counts reported")),
@@ -329,8 +512,8 @@ mod tests {
         assert!(read_worktree_dirty(&t.path().join("missing")).is_empty());
     }
 
-    use crate::model::common::Runtime;
     use crate::model::common::ByteRange;
+    use crate::model::common::Runtime;
     use crate::model::request::{Delivery, ProcessingRequest};
     use crate::model::{OpId, RequestId, SCHEMA_VERSION, TeamspaceId, TranscriptId};
     use crate::store::{EditSet, GitStore};
@@ -362,7 +545,11 @@ mod tests {
         crate::store::record::to_toml_bytes(r).unwrap()
     }
 
-    fn teamspace(name: &str, availability: Availability, lifecycle: Lifecycle) -> crate::model::teamspace::TeamspaceRecord {
+    fn teamspace(
+        name: &str,
+        availability: Availability,
+        lifecycle: Lifecycle,
+    ) -> crate::model::teamspace::TeamspaceRecord {
         crate::model::teamspace::TeamspaceRecord {
             schema: SCHEMA_VERSION,
             id: TeamspaceId::new(),
@@ -371,7 +558,11 @@ mod tests {
             name_history: vec![],
             lifecycle,
             retired: None,
-            runtime: Runtime { availability, bound: None, observed_at: None },
+            runtime: Runtime {
+                availability,
+                bound: None,
+                observed_at: None,
+            },
             project_repo: None,
             channel: Default::default(),
         }
@@ -395,7 +586,9 @@ mod tests {
 
     #[test]
     fn writer_check_halted_reason_fails() {
-        let c = writer_check(Some(&json!({"writer_halted": "lock contention on main", "ops": {}})));
+        let c = writer_check(Some(
+            &json!({"writer_halted": "lock contention on main", "ops": {}}),
+        ));
         assert!(!c.ok);
         assert_eq!(
             c.detail,
@@ -448,7 +641,11 @@ mod tests {
         assert!(c.detail.contains("+2 more"), "{}", c.detail);
         assert!(c.detail.contains("herdr-graph cancel <op>"), "{}", c.detail);
         assert!(c.detail.contains(ops[11].as_str()));
-        assert!(!c.detail.contains("poison 0;") && !c.detail.contains("poison 1;"), "only 10 are listed: {}", c.detail);
+        assert!(
+            !c.detail.contains("poison 0;") && !c.detail.contains("poison 1;"),
+            "only 10 are listed: {}",
+            c.detail
+        );
     }
 
     #[test]
@@ -458,21 +655,51 @@ mod tests {
         let mystery = teamspace("Mystery", Availability::Unknown, Lifecycle::Active);
         let fine = teamspace("Fine", Availability::Present, Lifecycle::Active);
         let gone = teamspace("Gone", Availability::Unknown, Lifecycle::Retired);
-        e.put(layout::teamspace_record(&layout::teamspace_dir("mystery")), bytes(&mystery));
-        e.put(layout::teamspace_record(&layout::teamspace_dir("fine")), bytes(&fine));
-        e.put(layout::teamspace_record(&layout::teamspace_dir("gone")), bytes(&gone));
+        e.put(
+            layout::teamspace_record(&layout::teamspace_dir("mystery")),
+            bytes(&mystery),
+        );
+        e.put(
+            layout::teamspace_record(&layout::teamspace_dir("fine")),
+            bytes(&fine),
+        );
+        e.put(
+            layout::teamspace_record(&layout::teamspace_dir("gone")),
+            bytes(&gone),
+        );
         commit(&store, &e);
-        let view = CommitView { store: &store, at: store.head().unwrap() };
+        let view = CommitView {
+            store: &store,
+            at: store.head().unwrap(),
+        };
         let c = unknown_objects_check(&view);
         assert!(!c.ok);
         assert!(c.detail.contains("teamspace Mystery"), "{}", c.detail);
-        assert!(!c.detail.contains("Fine") && !c.detail.contains("Gone"), "{}", c.detail);
-        assert!(c.detail.starts_with("1 with unknown availability"), "{}", c.detail);
+        assert!(
+            !c.detail.contains("Fine") && !c.detail.contains("Gone"),
+            "{}",
+            c.detail
+        );
+        assert!(
+            c.detail.starts_with("1 with unknown availability"),
+            "{}",
+            c.detail
+        );
 
         let mut e = EditSet::default();
-        e.put(layout::teamspace_record(&layout::teamspace_dir("mystery")), bytes(&teamspace("Mystery", Availability::Present, Lifecycle::Active)));
+        e.put(
+            layout::teamspace_record(&layout::teamspace_dir("mystery")),
+            bytes(&teamspace(
+                "Mystery",
+                Availability::Present,
+                Lifecycle::Active,
+            )),
+        );
         commit(&store, &e);
-        let view = CommitView { store: &store, at: store.head().unwrap() };
+        let view = CommitView {
+            store: &store,
+            at: store.head().unwrap(),
+        };
         assert!(unknown_objects_check(&view).ok);
     }
 
@@ -487,13 +714,19 @@ mod tests {
             e.put(layout::request_record(&r.id), bytes(r));
         }
         commit(&store, &e);
-        let view = CommitView { store: &store, at: store.head().unwrap() };
+        let view = CommitView {
+            store: &store,
+            at: store.head().unwrap(),
+        };
         let c = undeliverable_check(&view);
         assert!(!c.ok);
         assert_eq!(c.detail, format!("1 stuck: {}: no seat bound", stuck.id));
 
         let (_t2, empty) = instance();
-        let view = CommitView { store: &empty, at: empty.head().unwrap() };
+        let view = CommitView {
+            store: &empty,
+            at: empty.head().unwrap(),
+        };
         assert!(undeliverable_check(&view).ok);
     }
 
@@ -511,12 +744,18 @@ mod tests {
         let mut checks = Vec::new();
         instance_checks(&t.path().join("inst"), &mut checks);
         let names: Vec<_> = checks.iter().map(|c| c.name.as_str()).collect();
-        assert_eq!(names, ["unknown objects", "undeliverable requests", "failed ops"]);
+        assert_eq!(
+            names,
+            ["unknown objects", "undeliverable requests", "failed ops"]
+        );
         assert_eq!(checks[2].detail, "no journal yet");
         assert!(checks.iter().all(|c| c.ok), "{checks:?}");
     }
 
-    fn attention_row(status: crate::model::effect::EffectStatus, err: Option<&str>) -> crate::model::effect::EffectRecord {
+    fn attention_row(
+        status: crate::model::effect::EffectStatus,
+        err: Option<&str>,
+    ) -> crate::model::effect::EffectRecord {
         use crate::model::effect::{EffectKind, EffectRecord};
         let op = crate::model::OpId::new();
         let object = crate::model::SeatId::new().to_any();
@@ -543,9 +782,21 @@ mod tests {
         let rows = [attention_row(EffectStatus::Failed, Some("boom"))];
         let c = attention_effects_check(&rows, 1);
         assert!(c.ok && c.warn, "{c:?}");
-        assert!(c.detail.contains("1 effect(s) need attention"), "{}", c.detail);
-        assert!(c.detail.contains("create_tab") && c.detail.contains("failed: boom"), "{}", c.detail);
-        assert!(c.detail.contains("1 notice(s) not yet delivered"), "{}", c.detail);
+        assert!(
+            c.detail.contains("1 effect(s) need attention"),
+            "{}",
+            c.detail
+        );
+        assert!(
+            c.detail.contains("create_tab") && c.detail.contains("failed: boom"),
+            "{}",
+            c.detail
+        );
+        assert!(
+            c.detail.contains("1 notice(s) not yet delivered"),
+            "{}",
+            c.detail
+        );
         let c = attention_effects_check(&rows, 0);
         assert!(!c.detail.contains("not yet delivered"), "{}", c.detail);
     }
@@ -562,20 +813,37 @@ mod tests {
         let (t, _store) = instance();
         let root = t.path().join("inst");
         let j = Journal::open(&InstancePaths::new(&root).journal).unwrap();
-        j.upsert_effect(&attention_row(crate::model::effect::EffectStatus::NeedsRevision, Some("occupant busy"))).unwrap();
+        j.upsert_effect(&attention_row(
+            crate::model::effect::EffectStatus::NeedsRevision,
+            Some("occupant busy"),
+        ))
+        .unwrap();
         let mut checks = Vec::new();
         instance_checks(&root, &mut checks);
-        let c = checks.iter().find(|c| c.name == "attention effects").expect("attention check");
+        let c = checks
+            .iter()
+            .find(|c| c.name == "attention effects")
+            .expect("attention check");
         assert!(c.warn && c.detail.contains("occupant busy"), "{c:?}");
         assert!(checks.iter().all(|c| c.ok), "{checks:?}");
     }
 
     #[test]
     fn threads_check_connected_ok() {
-        let found = Ok(Some((PathBuf::from("/s/herdr-threads"), Source::HomeDefault)));
-        let c = threads_check(found, Some(&serde_json::json!({"connected": true, "capability": "service_ack"})));
+        let found = Ok(Some((
+            PathBuf::from("/s/herdr-threads"),
+            Source::HomeDefault,
+        )));
+        let c = threads_check(
+            found,
+            Some(&serde_json::json!({"connected": true, "capability": "service_ack"})),
+        );
         assert!(c.ok && !c.warn, "{c:?}");
-        assert!(c.detail.contains("state dir /s/herdr-threads"), "{}", c.detail);
+        assert!(
+            c.detail.contains("state dir /s/herdr-threads"),
+            "{}",
+            c.detail
+        );
         assert!(c.detail.contains("daemon connected"), "{}", c.detail);
         // No daemon: ok follows the discovery result.
         assert!(threads_check(Ok(Some((PathBuf::from("/s"), Source::EnvVar))), None).ok);
@@ -585,7 +853,11 @@ mod tests {
     fn threads_check_not_found_warns_with_hint() {
         let c = threads_check(Ok(None), None);
         assert!(c.ok && c.warn, "{c:?}");
-        assert!(c.detail.contains("not found") && c.detail.contains("threads_state_dir"), "{}", c.detail);
+        assert!(
+            c.detail.contains("not found") && c.detail.contains("threads_state_dir"),
+            "{}",
+            c.detail
+        );
         let c = threads_check(Err("both a and b exist".into()), None);
         assert!(!c.ok && !c.warn, "{c:?}");
         assert!(c.detail.contains("both a and b exist"), "{}", c.detail);
@@ -593,29 +865,47 @@ mod tests {
 
     #[test]
     fn threads_check_not_found_with_disconnected_daemon_warns() {
-        let c = threads_check(Ok(None), Some(&serde_json::json!({"connected": false, "error": "no state dir"})));
+        let c = threads_check(
+            Ok(None),
+            Some(&serde_json::json!({"connected": false, "error": "no state dir"})),
+        );
         assert!(c.ok && c.warn, "{c:?}");
         assert!(c.detail.contains("no state dir"), "{}", c.detail);
     }
 
     #[test]
     fn warning_does_not_fail_the_report() {
-        let r = DoctorReport { checks: vec![check("a", true, ""), warn_check("threads", "x")] };
+        let r = DoctorReport {
+            checks: vec![check("a", true, ""), warn_check("threads", "x")],
+        };
         assert!(r.all_ok());
     }
 
     #[test]
     fn threads_check_daemon_disconnected_fails() {
-        let found = Ok(Some((PathBuf::from("/s/herdr-threads"), Source::XdgDefault)));
-        let c = threads_check(found, Some(&serde_json::json!({"connected": false, "error": "refused"})));
+        let found = Ok(Some((
+            PathBuf::from("/s/herdr-threads"),
+            Source::XdgDefault,
+        )));
+        let c = threads_check(
+            found,
+            Some(&serde_json::json!({"connected": false, "error": "refused"})),
+        );
         assert!(!c.ok, "a found dir does not make a disconnected daemon ok");
-        assert!(c.detail.contains("refused") && c.detail.contains("/s/herdr-threads"), "{}", c.detail);
+        assert!(
+            c.detail.contains("refused") && c.detail.contains("/s/herdr-threads"),
+            "{}",
+            c.detail
+        );
     }
 
     #[test]
     fn doctor_without_instance_fails_first_check() {
         let home = tempfile::tempdir().unwrap();
-        let env = Env { home: Some(home.path().into()), ..Default::default() };
+        let env = Env {
+            home: Some(home.path().into()),
+            ..Default::default()
+        };
         let r = doctor(&env);
         assert_eq!(r.checks.len(), 1);
         assert!(!r.all_ok());

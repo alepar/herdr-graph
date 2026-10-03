@@ -26,18 +26,33 @@ pub const SUMMARIZER_NO_CLONES: &str = "summarizer_no_clones";
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destination {
     /// An active summarizer clone has an occupant: deliver on the seat channel.
-    Ready { seat: SeatId, seat_name: String, thread: Option<ThreadRef>, panes: Vec<HerdrPaneId> },
+    Ready {
+        seat: SeatId,
+        seat_name: String,
+        thread: Option<ThreadRef>,
+        panes: Vec<HerdrPaneId>,
+    },
     /// Active summarizer with an active clone but nobody in it: the reconciler relaunches the occupant
     /// (authority: the op that activated the seat), then delivery proceeds.
-    Relaunch { seat: SeatId, seat_name: String, clone: CloneId, authority: OpId },
+    Relaunch {
+        seat: SeatId,
+        seat_name: String,
+        clone: CloneId,
+        authority: OpId,
+    },
     /// Stays pending, flagged `undeliverable` (retired, dormant, no clones, or no destination at all).
-    Undeliverable { seat: Option<SeatId>, reason: &'static str },
+    Undeliverable {
+        seat: Option<SeatId>,
+        reason: &'static str,
+    },
 }
 
 impl Destination {
     pub fn label(&self) -> String {
         match self {
-            Destination::Ready { seat_name, .. } | Destination::Relaunch { seat_name, .. } => seat_name.clone(),
+            Destination::Ready { seat_name, .. } | Destination::Relaunch { seat_name, .. } => {
+                seat_name.clone()
+            }
             Destination::Undeliverable { .. } => "-".into(),
         }
     }
@@ -45,9 +60,16 @@ impl Destination {
 
 /// The teamspace's oldest non-retired seat with effective `role = summarizer` (ties by id), else
 /// `graph.toml summarizer_seat`. A retired summarizer is never activated (retirement precedence).
-pub(crate) fn resolve_destination(g: &Graph, tree: &dyn TreeRead, source_seat: &SeatId) -> Result<Destination, StoreError> {
+pub(crate) fn resolve_destination(
+    g: &Graph,
+    tree: &dyn TreeRead,
+    source_seat: &SeatId,
+) -> Result<Destination, StoreError> {
     let Some(source) = g.seats.get(source_seat) else {
-        return Ok(Destination::Undeliverable { seat: None, reason: NO_DESTINATION });
+        return Ok(Destination::Undeliverable {
+            seat: None,
+            reason: NO_DESTINATION,
+        });
     };
     let mut candidates = Vec::new();
     for seat in g.seats.values().filter(|s| s.teamspace == source.teamspace) {
@@ -61,26 +83,51 @@ pub(crate) fn resolve_destination(g: &Graph, tree: &dyn TreeRead, source_seat: &
     candidates.sort_by(|a, b| a.id.cmp(&b.id));
     let dest = match candidates.first() {
         Some(seat) => *seat,
-        None => match layout::read_graph(tree)?.summarizer_seat.and_then(|id| g.seats.get(&id)) {
+        None => match layout::read_graph(tree)?
+            .summarizer_seat
+            .and_then(|id| g.seats.get(&id))
+        {
             Some(seat) => seat,
-            None => return Ok(Destination::Undeliverable { seat: None, reason: NO_DESTINATION }),
+            None => {
+                return Ok(Destination::Undeliverable {
+                    seat: None,
+                    reason: NO_DESTINATION,
+                });
+            }
         },
     };
     use crate::model::common::Lifecycle;
     if dest.lifecycle == Lifecycle::Retired {
-        return Ok(Destination::Undeliverable { seat: Some(dest.id.clone()), reason: SUMMARIZER_RETIRED });
+        return Ok(Destination::Undeliverable {
+            seat: Some(dest.id.clone()),
+            reason: SUMMARIZER_RETIRED,
+        });
     }
     if !g.seat_active(dest) {
-        return Ok(Destination::Undeliverable { seat: Some(dest.id.clone()), reason: SUMMARIZER_DORMANT });
+        return Ok(Destination::Undeliverable {
+            seat: Some(dest.id.clone()),
+            reason: SUMMARIZER_DORMANT,
+        });
     }
-    let mut clones: Vec<_> = g.clones.values().filter(|c| c.seat == dest.id && g.clone_active(c)).collect();
+    let mut clones: Vec<_> = g
+        .clones
+        .values()
+        .filter(|c| c.seat == dest.id && g.clone_active(c))
+        .collect();
     clones.sort_by(|a, b| a.id.cmp(&b.id));
     if clones.is_empty() {
-        return Ok(Destination::Undeliverable { seat: Some(dest.id.clone()), reason: SUMMARIZER_NO_CLONES });
+        return Ok(Destination::Undeliverable {
+            seat: Some(dest.id.clone()),
+            reason: SUMMARIZER_NO_CLONES,
+        });
     }
     let occupied: Vec<_> = clones.iter().filter(|c| c.occupant.is_some()).collect();
     if occupied.is_empty() {
-        let authority = dest.activation.last_op.clone().unwrap_or_else(|| OpId::from_ulid(ulid::Ulid::nil()));
+        let authority = dest
+            .activation
+            .last_op
+            .clone()
+            .unwrap_or_else(|| OpId::from_ulid(ulid::Ulid::nil()));
         return Ok(Destination::Relaunch {
             seat: dest.id.clone(),
             seat_name: dest.name.clone(),
@@ -92,7 +139,10 @@ pub(crate) fn resolve_destination(g: &Graph, tree: &dyn TreeRead, source_seat: &
         seat: dest.id.clone(),
         seat_name: dest.name.clone(),
         thread: dest.channel.thread_id.clone().map(ThreadRef),
-        panes: occupied.iter().filter_map(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone())).collect(),
+        panes: occupied
+            .iter()
+            .filter_map(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()))
+            .collect(),
     })
 }
 
@@ -119,7 +169,11 @@ pub fn stat_file(path: &Path) -> std::io::Result<FileState> {
         return Err(std::io::Error::other("not a regular file"));
     }
     let aligned = aligned_len(&mut file, meta.len())?;
-    Ok(FileState { dev: meta.dev(), ino: meta.ino(), aligned })
+    Ok(FileState {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        aligned,
+    })
 }
 
 /// One row of `request list`.
@@ -139,7 +193,10 @@ pub struct RequestRow {
 impl RequestRow {
     /// `rq  status  tr  range  destination  undeliverable?`
     pub fn render(&self) -> String {
-        let status = serde_json::to_value(self.status).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default();
+        let status = serde_json::to_value(self.status)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
         let mut line = format!(
             "{}  {}  {}  {}-{}  {}",
             self.id, status, self.transcript, self.range.start, self.range.end, self.destination
@@ -172,7 +229,10 @@ impl ListFilter {
         if !(self.pending || self.unresolved || self.undispatched) {
             return true;
         }
-        let open = matches!(r.status, RequestStatus::Pending | RequestStatus::Delivered | RequestStatus::Dispatched);
+        let open = matches!(
+            r.status,
+            RequestStatus::Pending | RequestStatus::Delivered | RequestStatus::Dispatched
+        );
         let undispatched = matches!(r.status, RequestStatus::Pending | RequestStatus::Delivered);
         let live = (self.pending || self.undispatched)
             && (!self.pending || open)
@@ -184,8 +244,10 @@ impl ListFilter {
 /// `request list` rows of the committed tree (also the daemon-less read path of the CLI).
 pub fn list_view(tree: &dyn TreeRead, filter: ListFilter) -> Result<Vec<RequestRow>, StoreError> {
     let g = Graph::load(tree)?;
-    let transcripts: std::collections::BTreeMap<_, _> =
-        layout::list_transcripts(tree)?.into_iter().map(|(_, t)| (t.id.clone(), t)).collect();
+    let transcripts: std::collections::BTreeMap<_, _> = layout::list_transcripts(tree)?
+        .into_iter()
+        .map(|(_, t)| (t.id.clone(), t))
+        .collect();
     let mut rows = Vec::new();
     for (_, r) in layout::list_requests(tree)? {
         if !filter.keeps(&r) {

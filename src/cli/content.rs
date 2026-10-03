@@ -33,9 +33,21 @@ pub enum ContentAction {
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
-        Commands::Content { action: ContentAction::Write { object, rel, from, expect } } => {
-            let rel = rel.to_str().ok_or_else(|| anyhow::anyhow!("--rel is not valid UTF-8"))?.to_owned();
-            let bytes = std::fs::read(&from).map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
+        Commands::Content {
+            action:
+                ContentAction::Write {
+                    object,
+                    rel,
+                    from,
+                    expect,
+                },
+        } => {
+            let rel = rel
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("--rel is not valid UTF-8"))?
+                .to_owned();
+            let bytes = std::fs::read(&from)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
             let reply = call_daemon(
                 "content.write",
                 json!({ "object": object, "rel": rel, "bytes_b64": b64_encode(&bytes), "expect": expect }),
@@ -50,7 +62,11 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
                 println!("commit {c}");
             }
             if let Some(r) = reply.get("rejection").filter(|r| r.is_object()) {
-                println!("{}: {}", r["reason"].as_str().unwrap_or("rejected"), r["explanation"].as_str().unwrap_or_default());
+                println!(
+                    "{}: {}",
+                    r["reason"].as_str().unwrap_or("rejected"),
+                    r["explanation"].as_str().unwrap_or_default()
+                );
             }
             Ok(super::plan::exit_for_state(state))
         }

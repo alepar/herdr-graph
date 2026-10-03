@@ -32,17 +32,24 @@ use crate::store::Record;
 use crate::store::tree::{CommitView, TreeRead};
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, Reject};
 use effects::{Graph, GraphCache};
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 pub const CHANNEL_KEY: &str = "bookkeeping.channel";
 pub const INVITATION_KEY: &str = "bookkeeping.invitation";
 
 /// Register the threads effect source and executor with the reconciler.
-pub fn register_with(reconciler: &Reconciler, threads: Arc<dyn ThreadsPort>, mapping: Arc<dyn PaneSeatMap>) {
+pub fn register_with(
+    reconciler: &Reconciler,
+    threads: Arc<dyn ThreadsPort>,
+    mapping: Arc<dyn PaneSeatMap>,
+) {
     let cache = Arc::new(GraphCache::default());
-    reconciler.register_source(Arc::new(ThreadsSource::new(reconciler.instance(), cache.clone())));
+    reconciler.register_source(Arc::new(ThreadsSource::new(
+        reconciler.instance(),
+        cache.clone(),
+    )));
     reconciler.register_executor(Arc::new(effects::ThreadsExecutor::new(
         threads,
         mapping,
@@ -73,7 +80,10 @@ fn edit<R: Record>(
     f: impl FnOnce(&mut R) -> Result<(), MutationError>,
 ) -> Result<(), MutationError> {
     let loc = cx.tree.locate(object)?.ok_or_else(|| gone(object))?;
-    let mut rec: R = cx.tree.read_record(&loc.record_path)?.ok_or_else(|| gone(object))?;
+    let mut rec: R = cx
+        .tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| gone(object))?;
     f(&mut rec)?;
     cx.tree.put_record(loc.record_path, &mut rec)?;
     Ok(())
@@ -106,7 +116,10 @@ impl Mutation for SetChannel {
             })?,
             other => return Err(bug(format!("{other:?} objects have no channel"))),
         }
-        Ok(Applied { summary: format!("channel {} = {}", a.object, a.thread_id), action: None })
+        Ok(Applied {
+            summary: format!("channel {} = {}", a.object, a.thread_id),
+            action: None,
+        })
     }
 }
 
@@ -129,7 +142,10 @@ impl Mutation for SetInvitation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: InvitationArgs = args(cx)?;
         edit::<CloneRecord>(cx, &a.clone.to_any(), |r| {
-            let existing = r.invitations.iter_mut().find(|i| i.thread == a.thread && i.constraint == a.constraint);
+            let existing = r
+                .invitations
+                .iter_mut()
+                .find(|i| i.thread == a.thread && i.constraint == a.constraint);
             if let (Some(expect), Some(i)) = (&a.expect_occupant, &existing)
                 && i.link.as_ref().and_then(|l| l.occupant.as_ref()) != Some(expect)
             {
@@ -151,7 +167,10 @@ impl Mutation for SetInvitation {
             }
             Ok(())
         })?;
-        Ok(Applied { summary: format!("invitation {} {} {:?}", a.clone, a.thread, a.state), action: None })
+        Ok(Applied {
+            summary: format!("invitation {} {} {:?}", a.clone, a.thread, a.state),
+            action: None,
+        })
     }
 }
 
@@ -173,12 +192,23 @@ pub struct PendingInvitation {
     pub accept_command: String,
 }
 
-fn accept_command(thread: &str, constraint: InviteConstraint, link: Option<&ThreadsLink>) -> String {
+fn accept_command(
+    thread: &str,
+    constraint: InviteConstraint,
+    link: Option<&ThreadsLink>,
+) -> String {
     match constraint {
         InviteConstraint::Ordinary => format!("herdr-threads accept {thread}"),
         InviteConstraint::Required => match link {
-            Some(ThreadsLink { invitation: Some(inv), requirement: Some(req), revision: Some(rev), .. }) => {
-                format!("herdr-threads accept-required {thread} --invitation {inv} --requirement {req} --revision {rev}")
+            Some(ThreadsLink {
+                invitation: Some(inv),
+                requirement: Some(req),
+                revision: Some(rev),
+                ..
+            }) => {
+                format!(
+                    "herdr-threads accept-required {thread} --invitation {inv} --requirement {req} --revision {rev}"
+                )
             }
             // The episode ids are not recorded yet: the agent reads them from the thread.
             _ => format!("herdr-threads thread participants {thread}"),
@@ -189,8 +219,11 @@ fn accept_command(thread: &str, constraint: InviteConstraint, link: Option<&Thre
 /// The clone's invitations that are still waiting for its agent, with the command that answers each.
 /// An unreadable clone has none.
 pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingInvitation> {
-    let Ok(Some(loc)) = crate::store::layout::locate(tree, &clone.to_any()) else { return Vec::new() };
-    let Ok(Some(rec)) = crate::store::record::read_toml::<CloneRecord>(tree, &loc.record_path) else {
+    let Ok(Some(loc)) = crate::store::layout::locate(tree, &clone.to_any()) else {
+        return Vec::new();
+    };
+    let Ok(Some(rec)) = crate::store::record::read_toml::<CloneRecord>(tree, &loc.record_path)
+    else {
         return Vec::new();
     };
     rec.invitations
@@ -252,10 +285,25 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {
     let found = g
         .clones
         .values()
-        .filter(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref()).is_some_and(|p| p.0 == target))
-        .max_by_key(|c| (c.lifecycle == crate::model::common::CloneLifecycle::Active, c.rev))
+        .filter(|c| {
+            c.runtime
+                .bound
+                .as_ref()
+                .and_then(|b| b.pane_id.as_ref())
+                .is_some_and(|p| p.0 == target)
+        })
+        .max_by_key(|c| {
+            (
+                c.lifecycle == crate::model::common::CloneLifecycle::Active,
+                c.rev,
+            )
+        })
         .or_else(|| {
-            g.clones.values().find(|c| c.invitations.iter().any(|i| i.link.as_ref().is_some_and(|l| l.seat == target)))
+            g.clones.values().find(|c| {
+                c.invitations
+                    .iter()
+                    .any(|i| i.link.as_ref().is_some_and(|l| l.seat == target))
+            })
         })
         .or_else(|| CloneId::parse(target).ok().and_then(|id| g.clones.get(&id)))
         .cloned();
@@ -263,9 +311,17 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {
         Some(c) => g.seats.get(&c.seat),
         None => SeatId::parse(target).ok().and_then(|id| g.seats.get(&id)),
     };
-    let named = |id: String, name: &String| NamedId { id, name: name.clone() };
-    let teamspace = seat.and_then(|s| g.teamspaces.get(&s.teamspace)).map(|t| named(t.id.to_string(), &t.name));
-    let native_session = found.as_ref().and_then(|c| c.occupant.as_ref()).map(|o| o.native_session.to_string());
+    let named = |id: String, name: &String| NamedId {
+        id,
+        name: name.clone(),
+    };
+    let teamspace = seat
+        .and_then(|s| g.teamspaces.get(&s.teamspace))
+        .map(|t| named(t.id.to_string(), &t.name));
+    let native_session = found
+        .as_ref()
+        .and_then(|c| c.occupant.as_ref())
+        .map(|o| o.native_session.to_string());
     Ok(WhoReply {
         teamspace,
         seat: seat.map(|s| named(s.id.to_string(), &s.name)),
@@ -284,8 +340,13 @@ pub fn register_commands(reg: &mut Registry, store: Arc<dyn Store>) {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| CommandError::bad_request("who needs {target}"))?
                 .to_owned();
-            let head = store.head().map_err(|e| CommandError::internal(e.to_string()))?;
-            let view = CommitView { store: &*store, at: head };
+            let head = store
+                .head()
+                .map_err(|e| CommandError::internal(e.to_string()))?;
+            let view = CommitView {
+                store: &*store,
+                at: head,
+            };
             let reply = who(&view, &target).map_err(|e| CommandError::internal(e.to_string()))?;
             Ok(serde_json::json!(reply))
         }

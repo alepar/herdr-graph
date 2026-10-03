@@ -17,11 +17,18 @@ pub enum Commands {
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
-    let Some(root) = instance_or_none() else { return Ok(ExitCode::from(EXIT_NO_INSTANCE)) };
+    let Some(root) = instance_or_none() else {
+        return Ok(ExitCode::from(EXIT_NO_INSTANCE));
+    };
     let store = crate::store::GitStore::open(&root)?;
-    let view = CommitView { store: &store, at: store.head()? };
+    let view = CommitView {
+        store: &store,
+        at: store.head()?,
+    };
     match cmd {
-        Commands::Show { target } => print!("{}", ensure_newline(read::show(&view, &root, &target)?)),
+        Commands::Show { target } => {
+            print!("{}", ensure_newline(read::show(&view, &root, &target)?))
+        }
         Commands::List { kind } => {
             for row in read::list(&view, &root, kind.as_deref())? {
                 println!("{}", row.render());

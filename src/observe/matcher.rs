@@ -7,7 +7,9 @@
 //! teamspace's matched panes.
 use crate::model::clone::CloneRecord;
 use crate::model::common::{CloneLifecycle, Lifecycle};
-use crate::model::{AnyId, CloneId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, IdKind, SeatId, TeamspaceId};
+use crate::model::{
+    AnyId, CloneId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, IdKind, SeatId, TeamspaceId,
+};
 use crate::ports::herdr::{AgentSession, HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo};
 use crate::reconcile::desired::DesiredRuntime;
 use crate::reconcile::planner::token_of;
@@ -60,8 +62,13 @@ pub fn pane_locs(snap: &HerdrSnapshot) -> BTreeMap<HerdrPaneId, PaneLoc<'_>> {
     out
 }
 
-pub fn find_tab<'a>(snap: &'a HerdrSnapshot, id: &HerdrTabId) -> Option<(&'a WorkspaceInfo, &'a TabInfo)> {
-    snap.workspaces.iter().find_map(|w| w.tabs.iter().find(|t| &t.id == id).map(|t| (w, t)))
+pub fn find_tab<'a>(
+    snap: &'a HerdrSnapshot,
+    id: &HerdrTabId,
+) -> Option<(&'a WorkspaceInfo, &'a TabInfo)> {
+    snap.workspaces
+        .iter()
+        .find_map(|w| w.tabs.iter().find(|t| &t.id == id).map(|t| (w, t)))
 }
 
 pub fn find_ws<'a>(snap: &'a HerdrSnapshot, id: &HerdrWorkspaceId) -> Option<&'a WorkspaceInfo> {
@@ -71,7 +78,10 @@ pub fn find_ws<'a>(snap: &'a HerdrSnapshot, id: &HerdrWorkspaceId) -> Option<&'a
 /// Native id of the clone's current occupant session.
 pub fn current_native_id(c: &CloneRecord) -> Option<&str> {
     let occ = c.occupant.as_ref()?;
-    c.sessions.iter().find(|s| s.id == occ.native_session).map(|s| s.native_session_id.as_str())
+    c.sessions
+        .iter()
+        .find(|s| s.id == occ.native_session)
+        .map(|s| s.native_session_id.as_str())
 }
 
 /// The cwd graph recorded for the clone: its latest native session's, else the cwd it was created with.
@@ -97,16 +107,26 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
 
     // Panes, pass 1: graph token.
     for (pid, loc) in &locs {
-        let Some(any) = token_of(&loc.pane.metadata) else { continue };
+        let Some(any) = token_of(&loc.pane.metadata) else {
+            continue;
+        };
         if any.kind() != IdKind::Clone {
             continue;
         }
-        let Ok(c) = CloneId::parse(any.as_str()) else { continue };
+        let Ok(c) = CloneId::parse(any.as_str()) else {
+            continue;
+        };
         // A retired clone's leftover token must not hold a pane an active clone's committed binding names (an
         // undo adopted it): pass 2 links the pane to that clone, so it is never taken for gone before re-stamping.
-        if d.clones.get(&c).is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+        if d.clones
+            .get(&c)
+            .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
             && d.clones.values().any(|o| {
-                o.lifecycle == CloneLifecycle::Active && o.runtime.bound.as_ref().is_some_and(|b| b.pane_id.as_ref() == Some(pid))
+                o.lifecycle == CloneLifecycle::Active
+                    && o.runtime
+                        .bound
+                        .as_ref()
+                        .is_some_and(|b| b.pane_id.as_ref() == Some(pid))
             })
         {
             continue;
@@ -126,7 +146,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
             if c.lifecycle != CloneLifecycle::Active || m.clone_pane.contains_key(cid) {
                 continue;
             }
-            let Some(b) = c.runtime.bound.as_ref() else { continue };
+            let Some(b) = c.runtime.bound.as_ref() else {
+                continue;
+            };
             let term_eq = pane.terminal_id.is_some() && b.terminal_id == pane.terminal_id;
             // `clone rebind` records the chosen pane with the graph token but no terminal id (the id it had
             // belongs to a server that may be gone). Until the reconciler stamps the pane, this explicit
@@ -158,7 +180,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
         if m.panes.contains_key(pid) {
             continue;
         }
-        let Some(sid) = agent_session_id(loc.pane) else { continue };
+        let Some(sid) = agent_session_id(loc.pane) else {
+            continue;
+        };
         let hit = d
             .clones
             .iter()
@@ -200,7 +224,10 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
                 *votes.entry(loc.tab.id.clone()).or_default() += 1;
             }
         }
-        let best = votes.into_iter().filter(|(t, _)| !m.tabs.contains_key(t)).max_by_key(|(t, n)| (*n, std::cmp::Reverse(t.clone())));
+        let best = votes
+            .into_iter()
+            .filter(|(t, _)| !m.tabs.contains_key(t))
+            .max_by_key(|(t, n)| (*n, std::cmp::Reverse(t.clone())));
         if let Some((tid, _)) = best {
             m.link_tab(&tid, sid);
         }
@@ -208,11 +235,15 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
 
     // Workspaces.
     for ws in &snap.workspaces {
-        let Some(any) = token_of(&ws.metadata) else { continue };
+        let Some(any) = token_of(&ws.metadata) else {
+            continue;
+        };
         if any.kind() != IdKind::Teamspace {
             continue;
         }
-        let Ok(t) = TeamspaceId::parse(any.as_str()) else { continue };
+        let Ok(t) = TeamspaceId::parse(any.as_str()) else {
+            continue;
+        };
         if d.teamspaces.contains_key(&t) && !m.ts_ws.contains_key(&t) {
             m.link_ws(&ws.id, &t);
         }
@@ -257,17 +288,26 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
     // Bound, non-retired objects with no live counterpart.
     let mut unmatched: BTreeSet<AnyId> = BTreeSet::new();
     for (id, ts) in &d.teamspaces {
-        if ts.lifecycle != Lifecycle::Retired && ts.runtime.bound.is_some() && !m.ts_ws.contains_key(id) {
+        if ts.lifecycle != Lifecycle::Retired
+            && ts.runtime.bound.is_some()
+            && !m.ts_ws.contains_key(id)
+        {
             unmatched.insert(id.to_any());
         }
     }
     for (id, s) in &d.seats {
-        if s.lifecycle != Lifecycle::Retired && s.runtime.bound.is_some() && !m.seat_tab.contains_key(id) {
+        if s.lifecycle != Lifecycle::Retired
+            && s.runtime.bound.is_some()
+            && !m.seat_tab.contains_key(id)
+        {
             unmatched.insert(id.to_any());
         }
     }
     for (id, c) in &d.clones {
-        if c.lifecycle != CloneLifecycle::Retired && c.runtime.bound.is_some() && !m.clone_pane.contains_key(id) {
+        if c.lifecycle != CloneLifecycle::Retired
+            && c.runtime.bound.is_some()
+            && !m.clone_pane.contains_key(id)
+        {
             unmatched.insert(id.to_any());
         }
     }

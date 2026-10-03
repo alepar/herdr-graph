@@ -1,7 +1,9 @@
 //! The TOML document format of a template (`template create/edit --from <file>`; also the shipped
 //! `templates/*/template.toml` content): a `TemplateRecord` without the writer-owned bookkeeping.
 use crate::model::common::Role;
-use crate::model::template::{MemberDefaults, Relationship, Startup, TemplateMember, TemplateRecord};
+use crate::model::template::{
+    MemberDefaults, Relationship, Startup, TemplateMember, TemplateRecord,
+};
 use crate::model::{MemberId, SCHEMA_VERSION, TemplateId};
 use crate::plan::types::Reserved;
 use serde::{Deserialize, Serialize};
@@ -142,23 +144,58 @@ impl TemplateDocument {
     /// id (name when a side has no id); `agents_md` is compared only when the new side sets it.
     pub fn diff(old: &Self, new: &Self) -> Vec<FieldChange> {
         let mut out = Vec::new();
-        field(&mut out, "name", Some(json!(old.name)), Some(json!(new.name)));
+        field(
+            &mut out,
+            "name",
+            Some(json!(old.name)),
+            Some(json!(new.name)),
+        );
         defaults_diff(&mut out, "defaults", &old.defaults, &new.defaults);
-        let key = |m: &DocumentMember| m.id.as_ref().map_or_else(|| m.name.clone(), |i| i.to_string());
-        let olds: BTreeMap<String, &DocumentMember> = old.members.iter().map(|m| (key(m), m)).collect();
-        let news: BTreeMap<String, &DocumentMember> = new.members.iter().map(|m| (key(m), m)).collect();
+        let key = |m: &DocumentMember| {
+            m.id.as_ref()
+                .map_or_else(|| m.name.clone(), |i| i.to_string())
+        };
+        let olds: BTreeMap<String, &DocumentMember> =
+            old.members.iter().map(|m| (key(m), m)).collect();
+        let news: BTreeMap<String, &DocumentMember> =
+            new.members.iter().map(|m| (key(m), m)).collect();
         for (k, o) in &olds {
             match news.get(k) {
                 None => field(&mut out, &format!("members.{k}"), Some(json!(o.name)), None),
                 Some(n) => {
                     let p = format!("members.{k}");
-                    field(&mut out, &format!("{p}.name"), Some(json!(o.name)), Some(json!(n.name)));
-                    field(&mut out, &format!("{p}.role_ref"), json_opt(&o.role_ref), json_opt(&n.role_ref));
-                    field(&mut out, &format!("{p}.role"), json_opt(&o.role), json_opt(&n.role));
-                    field(&mut out, &format!("{p}.startup"), json_opt(&Some(o.startup)), json_opt(&Some(n.startup)));
+                    field(
+                        &mut out,
+                        &format!("{p}.name"),
+                        Some(json!(o.name)),
+                        Some(json!(n.name)),
+                    );
+                    field(
+                        &mut out,
+                        &format!("{p}.role_ref"),
+                        json_opt(&o.role_ref),
+                        json_opt(&n.role_ref),
+                    );
+                    field(
+                        &mut out,
+                        &format!("{p}.role"),
+                        json_opt(&o.role),
+                        json_opt(&n.role),
+                    );
+                    field(
+                        &mut out,
+                        &format!("{p}.startup"),
+                        json_opt(&Some(o.startup)),
+                        json_opt(&Some(n.startup)),
+                    );
                     defaults_diff(&mut out, &format!("{p}.defaults"), &o.defaults, &n.defaults);
                     if n.agents_md.is_some() && o.agents_md != n.agents_md {
-                        field(&mut out, &format!("{p}.agents_md"), json_opt(&o.agents_md), json_opt(&n.agents_md));
+                        field(
+                            &mut out,
+                            &format!("{p}.agents_md"),
+                            json_opt(&o.agents_md),
+                            json_opt(&n.agents_md),
+                        );
                     }
                 }
             }
@@ -186,13 +223,37 @@ fn json_opt<T: Serialize>(v: &Option<T>) -> Option<Value> {
 
 fn field(out: &mut Vec<FieldChange>, path: &str, before: Option<Value>, after: Option<Value>) {
     if before != after {
-        out.push(FieldChange { path: path.to_owned(), before, after });
+        out.push(FieldChange {
+            path: path.to_owned(),
+            before,
+            after,
+        });
     }
 }
 
 fn defaults_diff(out: &mut Vec<FieldChange>, p: &str, old: &MemberDefaults, new: &MemberDefaults) {
-    field(out, &format!("{p}.harness"), json_opt(&old.harness), json_opt(&new.harness));
-    field(out, &format!("{p}.model"), json_opt(&old.model), json_opt(&new.model));
-    field(out, &format!("{p}.args"), json_opt(&old.args), json_opt(&new.args));
-    field(out, &format!("{p}.summaries"), json_opt(&old.summaries), json_opt(&new.summaries));
+    field(
+        out,
+        &format!("{p}.harness"),
+        json_opt(&old.harness),
+        json_opt(&new.harness),
+    );
+    field(
+        out,
+        &format!("{p}.model"),
+        json_opt(&old.model),
+        json_opt(&new.model),
+    );
+    field(
+        out,
+        &format!("{p}.args"),
+        json_opt(&old.args),
+        json_opt(&new.args),
+    );
+    field(
+        out,
+        &format!("{p}.summaries"),
+        json_opt(&old.summaries),
+        json_opt(&new.summaries),
+    );
 }

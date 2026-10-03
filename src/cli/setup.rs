@@ -25,19 +25,32 @@ pub enum SetupTarget {
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
-        Commands::Setup { target: SetupTarget::Claude { uninstall } } => claude(uninstall),
+        Commands::Setup {
+            target: SetupTarget::Claude { uninstall },
+        } => claude(uninstall),
     }
 }
 
 fn claude(uninstall: bool) -> anyhow::Result<ExitCode> {
-    let env_dir = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from);
-    let home = std::env::var_os("HOME").filter(|v| !v.is_empty()).map(PathBuf::from);
+    let env_dir = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let home = std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
     let config = setup_claude::config_dir(env_dir.as_deref(), home.as_deref())
         .ok_or_else(|| anyhow::anyhow!("neither CLAUDE_CONFIG_DIR nor HOME is set"))?;
     if uninstall {
         let r = setup_claude::uninstall(&config)?;
         println!("claude config: {}", config.display());
-        println!("hook: {}", if r.hook_removed { "removed" } else { "not installed" });
+        println!(
+            "hook: {}",
+            if r.hook_removed {
+                "removed"
+            } else {
+                "not installed"
+            }
+        );
         if r.skills_removed.is_empty() {
             println!("skills: none installed");
         } else {

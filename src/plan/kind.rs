@@ -72,7 +72,10 @@ pub fn make_plan(
     let body = kind.plan(cx, &args, &mut reserved)?;
     Ok(Plan {
         id: PlanId::new(),
-        request: PlanRequest { kind: kind.kind(), args },
+        request: PlanRequest {
+            kind: kind.kind(),
+            args,
+        },
         committed_rev: cx.at.clone(),
         relied_on: body.relied_on,
         effects: body.effects,
@@ -92,11 +95,20 @@ impl KindRegistry {
     /// Panics on a duplicate kind or verb, and on a kind that does not require confirmation.
     pub fn register(&mut self, k: Arc<dyn OrgKind>) {
         let kind = k.kind();
-        assert!(kind.requires_confirmation(), "{kind:?} is not an organizational kind");
-        assert!(!self.by_kind.contains_key(&kind), "kind {kind:?} registered twice");
+        assert!(
+            kind.requires_confirmation(),
+            "{kind:?} is not an organizational kind"
+        );
+        assert!(
+            !self.by_kind.contains_key(&kind),
+            "kind {kind:?} registered twice"
+        );
         for (noun, verb) in k.verbs() {
             let key = ((*noun).to_owned(), (*verb).to_owned());
-            assert!(!self.by_verb.contains_key(&key), "verb {noun} {verb} registered twice");
+            assert!(
+                !self.by_verb.contains_key(&key),
+                "verb {noun} {verb} registered twice"
+            );
             self.by_verb.insert(key, kind);
         }
         self.by_kind.insert(kind, k);
@@ -119,13 +131,22 @@ impl KindRegistry {
             return Ok((self.by_kind[k].clone(), words[1..].to_vec()));
         }
         let given = words.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
-        Err(PlanError::Usage(format!("unknown change `{given}`; known changes: {}", self.usage())))
+        Err(PlanError::Usage(format!(
+            "unknown change `{given}`; known changes: {}",
+            self.usage()
+        )))
     }
 
     fn usage(&self) -> String {
         self.by_verb
             .keys()
-            .map(|(n, v)| if v.is_empty() { n.clone() } else { format!("{n} {v}") })
+            .map(|(n, v)| {
+                if v.is_empty() {
+                    n.clone()
+                } else {
+                    format!("{n} {v}")
+                }
+            })
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -140,7 +161,11 @@ impl KindRegistry {
     pub fn register_mutations(self: &Arc<Self>, reg: &mut MutationRegistry, plans: Arc<PlanStore>) {
         let instance = plans.instance();
         for kind in self.kinds() {
-            let m = super::apply::OrgMutation { kinds: self.clone(), plans: plans.clone(), instance: instance.clone() };
+            let m = super::apply::OrgMutation {
+                kinds: self.clone(),
+                plans: plans.clone(),
+                instance: instance.clone(),
+            };
             reg.register(crate::writer::kind_name(kind), Arc::new(m));
         }
     }

@@ -29,7 +29,11 @@ pub enum Commands {
         to: String,
     },
     /// Check whether an instruction's preconditions still hold.
-    CheckInstruction { op: String, object: String, rev: u64 },
+    CheckInstruction {
+        op: String,
+        object: String,
+        rev: u64,
+    },
     /// Rebind a clone to a pane.
     Rebind {
         clone: String,
@@ -45,9 +49,16 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
         Commands::Cancel { op } => cancel(&op),
         Commands::Reassign { op, to } => reassign(&op, &to),
         Commands::CheckInstruction { op, object, rev } => check_instruction(&op, &object, rev),
-        Commands::Rebind { clone, pane } => {
-            crate::cli::plan::plan_flow(vec!["clone".into(), "rebind".into(), clone, "--pane".into(), pane], false)
-        }
+        Commands::Rebind { clone, pane } => crate::cli::plan::plan_flow(
+            vec![
+                "clone".into(),
+                "rebind".into(),
+                clone,
+                "--pane".into(),
+                pane,
+            ],
+            false,
+        ),
     }
 }
 
@@ -60,7 +71,9 @@ fn direct() -> anyhow::Result<Direct> {
     let env = Env::from_process();
     let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
         .ok_or(ClientError::NoInstance)?;
-    Ok(Direct { paths: InstancePaths::new(&root) })
+    Ok(Direct {
+        paths: InstancePaths::new(&root),
+    })
 }
 
 impl Direct {
@@ -74,7 +87,11 @@ impl Direct {
 }
 
 /// A read: ask the daemon, and when none is running compute the same answer from the instance on disk.
-fn read(kind: &str, args: Value, fallback: impl FnOnce(&Direct) -> anyhow::Result<Value>) -> anyhow::Result<Value> {
+fn read(
+    kind: &str,
+    args: Value,
+    fallback: impl FnOnce(&Direct) -> anyhow::Result<Value>,
+) -> anyhow::Result<Value> {
     match call_daemon(kind, args, CallMode::NoEnsure) {
         Ok(v) => Ok(v),
         Err(ClientError::Unavailable(_)) => fallback(&direct()?),
@@ -87,7 +104,8 @@ fn remote(e: ClientError) -> anyhow::Error {
 }
 
 fn parse_op(s: &str) -> anyhow::Result<OpId> {
-    s.parse::<OpId>().map_err(|e| anyhow::anyhow!("operation id {s:?}: {e}"))
+    s.parse::<OpId>()
+        .map_err(|e| anyhow::anyhow!("operation id {s:?}: {e}"))
 }
 
 fn text(v: &Value) -> &str {
@@ -96,10 +114,18 @@ fn text(v: &Value) -> &str {
 
 /// `<op> <state> <summary>` plus the rejection, one op per block.
 fn render_op(o: &Value) -> String {
-    let mut out = format!("{} {} {}\n", text(&o["op"]), text(&o["state"]), text(&o["summary"]));
+    let mut out = format!(
+        "{} {} {}\n",
+        text(&o["op"]),
+        text(&o["state"]),
+        text(&o["summary"])
+    );
     if let Some(r) = o["rejection"].as_object() {
         let reason = r.get("reason").and_then(Value::as_str).unwrap_or("?");
-        let explanation = r.get("explanation").and_then(Value::as_str).unwrap_or_default();
+        let explanation = r
+            .get("explanation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         out.push_str(&format!("  {reason}: {explanation}\n"));
     }
     if let Some(by) = o["superseded_by"].as_str() {
@@ -110,12 +136,17 @@ fn render_op(o: &Value) -> String {
 
 fn list(unresolved: bool) -> anyhow::Result<ExitCode> {
     let reply = read("ops.list", json!({ "unresolved": unresolved }), |d| {
-        let Some(journal) = d.journal()? else { return Ok(json!({ "ops": [] })) };
+        let Some(journal) = d.journal()? else {
+            return Ok(json!({ "ops": [] }));
+        };
         Ok(ops::list_json(&journal, unresolved, 200)?)
     })?;
     let list = reply["ops"].as_array().cloned().unwrap_or_default();
     if list.is_empty() {
-        println!("no {}operations", if unresolved { "unresolved " } else { "" });
+        println!(
+            "no {}operations",
+            if unresolved { "unresolved " } else { "" }
+        );
     }
     for o in &list {
         print!("{}", render_op(o));
@@ -126,7 +157,9 @@ fn list(unresolved: bool) -> anyhow::Result<ExitCode> {
 fn show(id: &str) -> anyhow::Result<ExitCode> {
     let op = parse_op(id)?;
     let reply = read("ops.get", json!({ "op": op }), |d| {
-        let journal = d.journal()?.ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
+        let journal = d
+            .journal()?
+            .ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
         Ok(ops::op_detail(&journal, &op)?)
     })?;
     print!("{}", render_op(&reply["op"]));
@@ -135,7 +168,15 @@ fn show(id: &str) -> anyhow::Result<ExitCode> {
     if let Some(c) = reply["commit"].as_str() {
         println!("  commit: {c}");
     }
-    println!("  reminders sent: {}{}", reply["reminders"]["sent"], if reply["reminders"]["stopped"] == true { " (stopped)" } else { "" });
+    println!(
+        "  reminders sent: {}{}",
+        reply["reminders"]["sent"],
+        if reply["reminders"]["stopped"] == true {
+            " (stopped)"
+        } else {
+            ""
+        }
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -148,8 +189,17 @@ fn cancel(op: &str) -> anyhow::Result<ExitCode> {
 
 fn reassign(op: &str, to: &str) -> anyhow::Result<ExitCode> {
     let op = parse_op(op)?;
-    let reply = call_daemon("ops.reassign", json!({ "op": op, "to": to }), CallMode::Ensure).map_err(remote)?;
-    println!("{} reassigned to {}", text(&reply["op"]), text(&reply["requester_seat"]));
+    let reply = call_daemon(
+        "ops.reassign",
+        json!({ "op": op, "to": to }),
+        CallMode::Ensure,
+    )
+    .map_err(remote)?;
+    println!(
+        "{} reassigned to {}",
+        text(&reply["op"]),
+        text(&reply["requester_seat"])
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -157,12 +207,18 @@ fn reassign(op: &str, to: &str) -> anyhow::Result<ExitCode> {
 fn check_instruction(op: &str, object: &str, rev: u64) -> anyhow::Result<ExitCode> {
     let op = parse_op(op)?;
     let object = AnyId::parse(object).map_err(|e| anyhow::anyhow!("object id {object:?}: {e}"))?;
-    let reply = read("ops.check_instruction", json!({ "op": op, "object": object, "rev": rev }), |d| {
-        let journal = d.journal()?.ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
-        let store = crate::store::GitStore::open(&d.paths.root)?;
-        let status = ops::check_instruction(&journal, &store, &op, &object, rev)?;
-        Ok(json!({ "status": status }))
-    })?;
+    let reply = read(
+        "ops.check_instruction",
+        json!({ "op": op, "object": object, "rev": rev }),
+        |d| {
+            let journal = d
+                .journal()?
+                .ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
+            let store = crate::store::GitStore::open(&d.paths.root)?;
+            let status = ops::check_instruction(&journal, &store, &op, &object, rev)?;
+            Ok(json!({ "status": status }))
+        },
+    )?;
     println!("{}", text(&reply["status"]));
     Ok(ExitCode::SUCCESS)
 }
@@ -178,7 +234,10 @@ mod tests {
             "rejection": { "reason": "stale_plan", "explanation": "effects changed" },
             "superseded_by": null,
         });
-        assert_eq!(render_op(&o), "op_X rejected seat_rename seat=st_1\n  stale_plan: effects changed\n");
+        assert_eq!(
+            render_op(&o),
+            "op_X rejected seat_rename seat=st_1\n  stale_plan: effects changed\n"
+        );
         let o = json!({ "op": "op_Y", "state": "superseded", "summary": "s", "rejection": null, "superseded_by": "op_Z" });
         assert_eq!(render_op(&o), "op_Y superseded s\n  superseded by op_Z\n");
     }

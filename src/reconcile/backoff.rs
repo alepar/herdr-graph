@@ -61,9 +61,15 @@ mod tests {
         assert_eq!(jittered(b, 4000), Duration::from_millis(12000));
         for r in 0..9000u128 {
             let d = jittered(b, r);
-            assert!(d >= Duration::from_millis(8000) && d <= Duration::from_millis(12000), "{d:?}");
+            assert!(
+                d >= Duration::from_millis(8000) && d <= Duration::from_millis(12000),
+                "{d:?}"
+            );
         }
         let d = next(3);
-        assert!(d >= Duration::from_millis(3200) && d <= Duration::from_millis(4800), "{d:?}");
+        assert!(
+            d >= Duration::from_millis(3200) && d <= Duration::from_millis(4800),
+            "{d:?}"
+        );
     }
 }

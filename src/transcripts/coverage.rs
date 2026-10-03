@@ -38,7 +38,10 @@ pub fn gaps(requested: &[ByteRange], covered: &[ByteRange]) -> Vec<ByteRange> {
                 break;
             }
             if c.start > cursor {
-                out.push(ByteRange { start: cursor, end: c.start });
+                out.push(ByteRange {
+                    start: cursor,
+                    end: c.start,
+                });
             }
             cursor = cursor.max(c.end);
             if cursor >= req.end {
@@ -46,7 +49,10 @@ pub fn gaps(requested: &[ByteRange], covered: &[ByteRange]) -> Vec<ByteRange> {
             }
         }
         if cursor < req.end {
-            out.push(ByteRange { start: cursor, end: req.end });
+            out.push(ByteRange {
+                start: cursor,
+                end: req.end,
+            });
         }
     }
     out
@@ -55,8 +61,13 @@ pub fn gaps(requested: &[ByteRange], covered: &[ByteRange]) -> Vec<ByteRange> {
 /// The position just after the last `\n` at or before `end` (0 when there is none): the newline-aligned end
 /// of a transcript whose current length is `end`.
 pub fn align_end(file_bytes: &[u8], end: u64) -> u64 {
-    let limit = usize::try_from(end).unwrap_or(usize::MAX).min(file_bytes.len());
-    file_bytes[..limit].iter().rposition(|b| *b == b'\n').map_or(0, |i| i as u64 + 1)
+    let limit = usize::try_from(end)
+        .unwrap_or(usize::MAX)
+        .min(file_bytes.len());
+    file_bytes[..limit]
+        .iter()
+        .rposition(|b| *b == b'\n')
+        .map_or(0, |i| i as u64 + 1)
 }
 
 /// Newline-aligned length of an open file of length `len`, reading only the tail (transcripts get large).

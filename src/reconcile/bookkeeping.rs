@@ -54,7 +54,10 @@ fn edit<R: Record>(
     f: impl FnOnce(&mut R, &mut MutationCx<'_>) -> Result<(), MutationError>,
 ) -> Result<(), MutationError> {
     let loc = cx.tree.locate(object)?.ok_or_else(|| gone(object))?;
-    let mut rec: R = cx.tree.read_record(&loc.record_path)?.ok_or_else(|| gone(object))?;
+    let mut rec: R = cx
+        .tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| gone(object))?;
     f(&mut rec, cx)?;
     cx.tree.put_record(loc.record_path, &mut rec)?;
     Ok(())
@@ -96,7 +99,10 @@ impl Mutation for SetBinding {
             rt.availability = a.availability;
             rt.observed_at = Some(cx.now);
         })?;
-        Ok(Applied { summary: format!("bind {}", a.object), action: None })
+        Ok(Applied {
+            summary: format!("bind {}", a.object),
+            action: None,
+        })
     }
 }
 
@@ -108,7 +114,10 @@ impl Mutation for SetRuntime {
             rt.availability = a.availability;
             rt.observed_at = Some(cx.now);
         })?;
-        Ok(Applied { summary: format!("runtime {}", a.object), action: None })
+        Ok(Applied {
+            summary: format!("runtime {}", a.object),
+            action: None,
+        })
     }
 }
 

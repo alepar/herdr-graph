@@ -8,7 +8,9 @@
 #![allow(dead_code)]
 use herdr_graph::daemon::client::Client;
 use herdr_graph::daemon::lock;
-use herdr_graph::herdr::isolation::{self, IsolationGuard, PATH_VARS, TEST_ROOT_VAR, VIOLATIONS_LOG, scrubbed_env};
+use herdr_graph::herdr::isolation::{
+    self, IsolationGuard, PATH_VARS, TEST_ROOT_VAR, VIOLATIONS_LOG, scrubbed_env,
+};
 use std::ffi::OsStr;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -26,9 +28,21 @@ impl TestRoot {
     /// A fresh root `/private/tmp/hgt-<ulid lowercase>` (short: the `sockaddr_un` limit).
     pub fn new() -> Self {
         reap_orphans();
-        let root = PathBuf::from(format!("/private/tmp/hgt-{}", ulid::Ulid::new().to_string().to_lowercase()));
+        let root = PathBuf::from(format!(
+            "/private/tmp/hgt-{}",
+            ulid::Ulid::new().to_string().to_lowercase()
+        ));
         for d in [
-            "home", "config", "state", "data", "cache", "runtime", "threads-state", "claude", "plugin-config", "graph",
+            "home",
+            "config",
+            "state",
+            "data",
+            "cache",
+            "runtime",
+            "threads-state",
+            "claude",
+            "plugin-config",
+            "graph",
         ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
@@ -36,7 +50,9 @@ impl TestRoot {
         let guard = IsolationGuard::new(&root);
         for (k, v) in scrubbed_env(&root) {
             if PATH_VARS.contains(&k.as_str()) {
-                guard.check(Path::new(&v)).unwrap_or_else(|e| panic!("isolation guard refused {k}: {e}"));
+                guard
+                    .check(Path::new(&v))
+                    .unwrap_or_else(|e| panic!("isolation guard refused {k}: {e}"));
             }
         }
         isolation::arm();
@@ -79,9 +95,15 @@ impl TestRoot {
     /// Spawn into its own process group; the guard signals and reaps the group on drop.
     pub fn spawn(&self, cmd: &mut Command) -> ChildGuard {
         cmd.process_group(0);
-        let child = cmd.spawn().unwrap_or_else(|e| panic!("spawn {:?}: {e}", cmd.get_program()));
+        let child = cmd
+            .spawn()
+            .unwrap_or_else(|e| panic!("spawn {:?}: {e}", cmd.get_program()));
         let pgid = child.id() as i32;
-        ChildGuard { child: Some(child), pgid, reaped: false }
+        ChildGuard {
+            child: Some(child),
+            pgid,
+            reaped: false,
+        }
     }
 
     /// Contents of `<root>/isolation-violations.log` (empty when nothing tripped).
@@ -95,7 +117,9 @@ impl TestRoot {
             if depth == 0 {
                 return;
             }
-            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.file_name().is_some_and(|n| n == "daemon.lock") {
@@ -131,7 +155,10 @@ impl Drop for TestRoot {
             let _ = std::fs::remove_dir_all(&self.root);
         }
         if !violations.trim().is_empty() {
-            let msg = format!("isolation violations under {}:\n{violations}", self.root.display());
+            let msg = format!(
+                "isolation violations under {}:\n{violations}",
+                self.root.display()
+            );
             if std::thread::panicking() {
                 eprintln!("{msg}");
             } else {
@@ -176,7 +203,9 @@ impl ChildGuard {
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let Some(mut child) = self.child.take() else { return };
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
         if self.reaped {
             return;
         }
@@ -234,7 +263,11 @@ fn markers(line: &str) -> Vec<&str> {
 /// Pids [`reap_root`] would signal: the exact marker `HG_TEST_ROOT=<root>`, never a prefix match.
 pub fn processes_under(root: &Path) -> Vec<u32> {
     let root = root.to_string_lossy();
-    ps_lines().into_iter().filter(|(_, l)| markers(l).contains(&root.as_ref())).map(|(p, _)| p).collect()
+    ps_lines()
+        .into_iter()
+        .filter(|(_, l)| markers(l).contains(&root.as_ref()))
+        .map(|(p, _)| p)
+        .collect()
 }
 
 fn signal_all(pids: &[u32], sig: i32) {
@@ -276,7 +309,9 @@ pub fn reap_orphans() {
         ps_lines()
             .into_iter()
             .filter(|(_, l)| {
-                markers(l).iter().any(|m| ROOT_PREFIXES.iter().any(|p| m.starts_with(p)) && !Path::new(m).exists())
+                markers(l).iter().any(|m| {
+                    ROOT_PREFIXES.iter().any(|p| m.starts_with(p)) && !Path::new(m).exists()
+                })
             })
             .map(|(p, _)| p)
             .collect()

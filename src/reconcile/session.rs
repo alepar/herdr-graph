@@ -15,7 +15,9 @@ use std::time::Duration;
 /// Map a Herdr error of an idempotent call: unreachable or slow means retry later.
 pub fn transient_or_failed(e: HerdrError) -> ExecOutcome {
     match e {
-        HerdrError::Rejected { method, message } => ExecOutcome::Failed(format!("{method}: {message}")),
+        HerdrError::Rejected { method, message } => {
+            ExecOutcome::Failed(format!("{method}: {message}"))
+        }
         other => ExecOutcome::Transient(other.to_string()),
     }
 }
@@ -40,7 +42,10 @@ pub struct Relaunch<'a> {
 fn key_input(step: KeyStep) -> Vec<KeyInput> {
     match step {
         KeyStep::Key(k) => vec![KeyInput::Key(k.to_owned())],
-        KeyStep::SubmitText(t) => vec![KeyInput::Text(t.to_owned()), KeyInput::Key("enter".to_owned())],
+        KeyStep::SubmitText(t) => vec![
+            KeyInput::Text(t.to_owned()),
+            KeyInput::Key("enter".to_owned()),
+        ],
     }
 }
 
@@ -48,7 +53,10 @@ fn key_input(step: KeyStep) -> Vec<KeyInput> {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub enum ReplacePhase {
-    WaitingIdle { since: Timestamp, had_agent: bool },
+    WaitingIdle {
+        since: Timestamp,
+        had_agent: bool,
+    },
     Exiting {
         since: Timestamp,
         fallback_sent: bool,
@@ -56,7 +64,9 @@ pub enum ReplacePhase {
         fallback_at: Option<Timestamp>,
     },
     /// Saved before `agent.start`: a start was dispatched and its outcome is not known until the pane is inspected.
-    Starting { since: Timestamp },
+    Starting {
+        since: Timestamp,
+    },
 }
 
 fn state_key(effect: &EffectId) -> String {
@@ -69,7 +79,10 @@ fn load(journal: &Journal, effect: &EffectId) -> Option<ReplacePhase> {
 }
 
 fn save(journal: &Journal, effect: &EffectId, st: &ReplacePhase) {
-    let _ = journal.meta_set(&state_key(effect), &serde_json::to_string(st).unwrap_or_default());
+    let _ = journal.meta_set(
+        &state_key(effect),
+        &serde_json::to_string(st).unwrap_or_default(),
+    );
 }
 
 fn clear(journal: &Journal, effect: &EffectId) {
@@ -78,7 +91,11 @@ fn clear(journal: &Journal, effect: &EffectId) {
 
 /// Has the replacement of `effect` begun (a `replace:<effect>` phase is persisted)?
 pub fn has_state(journal: &Journal, effect: &EffectId) -> bool {
-    journal.meta_get(&state_key(effect)).ok().flatten().is_some()
+    journal
+        .meta_get(&state_key(effect))
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Forget the replacement state of `effect` (it ended).
@@ -105,7 +122,13 @@ async fn start(
     };
     // Write-ahead: with this phase on record, a lost start outcome is recognised instead of repeated.
     save(journal, effect, &ReplacePhase::Starting { since: now });
-    let started = herdr.start_agent(StartAgent { pane: pane.clone(), kind: to.kind.to_owned(), args: to.args }).await;
+    let started = herdr
+        .start_agent(StartAgent {
+            pane: pane.clone(),
+            kind: to.kind.to_owned(),
+            args: to.args,
+        })
+        .await;
     crate::failpoint!("reconcile.after_call.replace_session");
     start_outcome(started)
 }
@@ -114,7 +137,11 @@ async fn start(
 /// still ahead.
 fn recheck_at(cfg: &ReconcilerConfig, now: Timestamp, deadlines: &[Timestamp]) -> Timestamp {
     let poll = now + chrono::Duration::from_std(cfg.deferred_recheck).unwrap_or_default();
-    deadlines.iter().copied().filter(|d| *d > now).fold(poll, |a, d| a.min(d))
+    deadlines
+        .iter()
+        .copied()
+        .filter(|d| *d > now)
+        .fold(poll, |a, d| a.min(d))
 }
 
 /// Advance the replacement of the occupant of `pane` (launched as `from`) by one loop step: at most one probe per
@@ -131,7 +158,10 @@ pub async fn advance_replacement(
     now: Timestamp,
 ) -> ExecOutcome {
     let dur = |d: Duration| chrono::Duration::from_std(d).unwrap_or_default();
-    let state = load(journal, effect).unwrap_or(ReplacePhase::WaitingIdle { since: now, had_agent: false });
+    let state = load(journal, effect).unwrap_or(ReplacePhase::WaitingIdle {
+        since: now,
+        had_agent: false,
+    });
     if let ReplacePhase::Starting { .. } = state {
         // A start was dispatched and its outcome is unknown: an agent on the pane means it went through; a bare
         // shell means it never happened; anything else is the new agent coming up.
@@ -142,30 +172,51 @@ pub async fn advance_replacement(
         }
         return match herdr.process_info(pane).await {
             Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to, now).await,
-            Ok(_) => ExecOutcome::DeferredUntil(recheck_at(cfg, now, &[]), "waiting for the started agent to appear".into()),
+            Ok(_) => ExecOutcome::DeferredUntil(
+                recheck_at(cfg, now, &[]),
+                "waiting for the started agent to appear".into(),
+            ),
             Err(e) => transient_or_failed(e),
         };
     }
-    if let ReplacePhase::WaitingIdle { since, had_agent: seen } = state {
+    if let ReplacePhase::WaitingIdle {
+        since,
+        had_agent: seen,
+    } = state
+    {
         // 1. Idle gate: never interrupt a working agent.
         let mut had_agent = seen;
         match herdr.agent(pane).await {
             Ok(None) => {}
-            Ok(Some(a)) if matches!(a.status, AgentStatus::Idle | AgentStatus::Done) => had_agent = true,
+            Ok(Some(a)) if matches!(a.status, AgentStatus::Idle | AgentStatus::Done) => {
+                had_agent = true
+            }
             Ok(Some(_)) => {
                 if elapsed(now, since, cfg.idle_timeout) {
                     clear(journal, effect);
                     return ExecOutcome::NeedsRevision("occupant busy".into());
                 }
-                save(journal, effect, &ReplacePhase::WaitingIdle { since, had_agent: true });
+                save(
+                    journal,
+                    effect,
+                    &ReplacePhase::WaitingIdle {
+                        since,
+                        had_agent: true,
+                    },
+                );
                 let at = recheck_at(cfg, now, &[since + dur(cfg.idle_timeout)]);
-                return ExecOutcome::DeferredUntil(at, "waiting for the occupant to go idle".into());
+                return ExecOutcome::DeferredUntil(
+                    at,
+                    "waiting for the occupant to go idle".into(),
+                );
             }
             Err(e) => return transient_or_failed(e),
         }
         // 2. Exit sequence, unless the pane is already back at the shell (a retry after a transient start failure).
         match herdr.process_info(pane).await {
-            Ok(p) if p.is_shell && !had_agent => return start(herdr, journal, effect, pane, to, now).await,
+            Ok(p) if p.is_shell && !had_agent => {
+                return start(herdr, journal, effect, pane, to, now).await;
+            }
             Ok(_) => {}
             Err(e) => return transient_or_failed(e),
         }
@@ -175,22 +226,44 @@ pub async fn advance_replacement(
                 return transient_or_failed(e);
             }
         }
-        save(journal, effect, &ReplacePhase::Exiting { since: now, fallback_sent: false, fallback_at: None });
+        save(
+            journal,
+            effect,
+            &ReplacePhase::Exiting {
+                since: now,
+                fallback_sent: false,
+                fallback_at: None,
+            },
+        );
         return match herdr.process_info(pane).await {
             Ok(p) if p.is_shell => start(herdr, journal, effect, pane, to, now).await,
             Ok(_) => {
                 let mut deadlines = vec![now + dur(cfg.exit_timeout)];
-                if profile(from).exit.and_then(|s| s.if_still_running).is_some() {
+                if profile(from)
+                    .exit
+                    .and_then(|s| s.if_still_running)
+                    .is_some()
+                {
                     deadlines.push(now + dur(cfg.exit_followup));
                 }
-                ExecOutcome::DeferredUntil(recheck_at(cfg, now, &deadlines), "waiting for the occupant to exit".into())
+                ExecOutcome::DeferredUntil(
+                    recheck_at(cfg, now, &deadlines),
+                    "waiting for the occupant to exit".into(),
+                )
             }
             Err(e) => transient_or_failed(e),
         };
     }
 
     // 3. Wait for the shell; after a short while send the fallback if the agent is still there.
-    let ReplacePhase::Exiting { since, fallback_sent, fallback_at } = state else { unreachable!("WaitingIdle handled above") };
+    let ReplacePhase::Exiting {
+        since,
+        fallback_sent,
+        fallback_at,
+    } = state
+    else {
+        unreachable!("WaitingIdle handled above")
+    };
     match herdr.process_info(pane).await {
         Ok(p) if p.is_shell => return start(herdr, journal, effect, pane, to, now).await,
         Ok(_) => {}
@@ -205,11 +278,25 @@ pub async fn advance_replacement(
         if let Err(e) = herdr.send_keys(pane, &key_input(step)).await {
             return transient_or_failed(e);
         }
-        save(journal, effect, &ReplacePhase::Exiting { since, fallback_sent: true, fallback_at: Some(now) });
-        let at = recheck_at(cfg, now, &[now + dur(cfg.exit_followup), since + dur(cfg.exit_timeout)]);
+        save(
+            journal,
+            effect,
+            &ReplacePhase::Exiting {
+                since,
+                fallback_sent: true,
+                fallback_at: Some(now),
+            },
+        );
+        let at = recheck_at(
+            cfg,
+            now,
+            &[now + dur(cfg.exit_followup), since + dur(cfg.exit_timeout)],
+        );
         return ExecOutcome::DeferredUntil(at, "waiting for the occupant to exit".into());
     }
-    let followup_settled = fallback.is_none() || !fallback_sent || fallback_at.is_none_or(|f| elapsed(now, f, cfg.exit_followup));
+    let followup_settled = fallback.is_none()
+        || !fallback_sent
+        || fallback_at.is_none_or(|f| elapsed(now, f, cfg.exit_followup));
     if elapsed(now, since, cfg.exit_timeout) && followup_settled {
         clear(journal, effect);
         return ExecOutcome::NeedsRevision("occupant did not exit".into());
@@ -221,5 +308,8 @@ pub async fn advance_replacement(
     if fallback_sent && let Some(f) = fallback_at {
         deadlines.push(f + dur(cfg.exit_followup));
     }
-    ExecOutcome::DeferredUntil(recheck_at(cfg, now, &deadlines), "waiting for the occupant to exit".into())
+    ExecOutcome::DeferredUntil(
+        recheck_at(cfg, now, &deadlines),
+        "waiting for the occupant to exit".into(),
+    )
 }

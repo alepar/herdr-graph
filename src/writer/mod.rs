@@ -3,9 +3,9 @@
 pub mod commit;
 pub mod mutation;
 pub mod recovery;
-pub mod worktree;
 #[cfg(test)]
 mod tests;
+pub mod worktree;
 
 use crate::failpoint;
 use crate::journal::{Journal, JournalError, OpRow};
@@ -20,8 +20,8 @@ use crate::store::record::read_toml;
 use crate::store::{GitStore, Overlay};
 use git2::Oid;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub use mutation::*;
@@ -110,7 +110,12 @@ impl From<git2::Error> for Fail {
 /// What the pre-CAS phase produced.
 enum Phase {
     Done(StepOutcome),
-    Committed { commit: Oid, applied: Applied, old_tree: Oid, new_tree: Oid },
+    Committed {
+        commit: Oid,
+        applied: Applied,
+        old_tree: Oid,
+        new_tree: Oid,
+    },
 }
 
 fn journal_err(e: JournalError) -> WriterError {
@@ -163,9 +168,21 @@ impl WriterCore {
         self.events.subscribe()
     }
 
-    fn emit(&self, row: &OpRow, state: OpState, commit: Option<CommitId>, action: Option<ActionId>) {
+    fn emit(
+        &self,
+        row: &OpRow,
+        state: OpState,
+        commit: Option<CommitId>,
+        action: Option<ActionId>,
+    ) {
         // No subscribers is fine.
-        let _ = self.events.send(OpEvent { op: row.op.clone(), kind: row.request.kind, state, commit, action });
+        let _ = self.events.send(OpEvent {
+            op: row.op.clone(),
+            kind: row.request.kind,
+            state,
+            commit,
+            action,
+        });
     }
 
     /// Process exactly one admitted op (sync; git2 + rusqlite). Err(Halted) when writer_halted is set.
@@ -181,11 +198,19 @@ impl WriterCore {
             }
             Err(Fail::Halt(reason)) => {
                 *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
-                if self.journal.meta_get(WRITER_HALTED).ok().flatten().as_deref() != Some(reason.as_str())
+                if self
+                    .journal
+                    .meta_get(WRITER_HALTED)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    != Some(reason.as_str())
                     && let Err(e) = self.journal.meta_set(WRITER_HALTED, &reason)
                 {
                     self.infra_failures.fetch_add(1, Ordering::SeqCst);
-                    return Err(WriterError::Journal(format!("{reason}; could not record the halt: {e}")));
+                    return Err(WriterError::Journal(format!(
+                        "{reason}; could not record the halt: {e}"
+                    )));
                 }
                 Err(WriterError::Halted(reason))
             }
@@ -198,7 +223,12 @@ impl WriterCore {
     }
 
     fn step_inner(&self) -> Result<StepOutcome, Fail> {
-        if let Some(reason) = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        if let Some(reason) = self
+            .pending_halt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
             return Err(Fail::Halt(reason));
         }
         if let Some(reason) = self.journal.meta_get(WRITER_HALTED)? {
@@ -220,9 +250,12 @@ impl WriterCore {
 
         match self.apply_phase(&row, now) {
             Ok(Phase::Done(outcome)) => Ok(outcome),
-            Ok(Phase::Committed { commit, applied, old_tree, new_tree }) => {
-                self.finish_commit(&row, now, commit, applied, old_tree, new_tree)
-            }
+            Ok(Phase::Committed {
+                commit,
+                applied,
+                old_tree,
+                new_tree,
+            }) => self.finish_commit(&row, now, commit, applied, old_tree, new_tree),
             Err(Fail::Data(msg)) => {
                 self.finish_failed(&row.op, &format!("corrupt data: {msg}"), now)?;
                 self.emit(&row, OpState::Failed, None, None);
@@ -257,7 +290,12 @@ impl WriterCore {
         };
 
         let store: &dyn Store = &*self.store;
-        let mut cx = MutationCx { tree: Overlay::new(store, head.clone()), op: op.clone(), now, request: req };
+        let mut cx = MutationCx {
+            tree: Overlay::new(store, head.clone()),
+            op: op.clone(),
+            now,
+            request: req,
+        };
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| mutation.apply(&mut cx)));
         let applied = match result {
             Err(panic) => {
@@ -268,7 +306,9 @@ impl WriterCore {
                     .unwrap_or_else(|| "non-string panic".to_owned());
                 return self.fail_op(row, now, &format!("mutation {key} panicked: {what}"));
             }
-            Ok(Err(MutationError::Bug(why))) => return self.fail_op(row, now, &format!("mutation {key}: {why}")),
+            Ok(Err(MutationError::Bug(why))) => {
+                return self.fail_op(row, now, &format!("mutation {key}: {why}"));
+            }
             Ok(Err(MutationError::Reject(r))) => {
                 self.journal.finish_rejected(op, &r.into(), now)?;
                 self.emit(row, OpState::Rejected, None, None);
@@ -295,10 +335,19 @@ impl WriterCore {
             let c = commit::create_commit(repo, head_oid, new_tree, &message)?;
             Ok((c, old_tree))
         })?;
-        let cas = self.store.with_repo(|repo| Ok(commit::cas_main(repo, head_oid, new_commit, &message, cfg)))?;
+        let cas = self
+            .store
+            .with_repo(|repo| Ok(commit::cas_main(repo, head_oid, new_commit, &message, cfg)))?;
         match cas {
-            Ok(()) => Ok(Phase::Committed { commit: new_commit, applied, old_tree, new_tree }),
-            Err(commit::CasError::LockContention) => Err(Fail::Halt("git lock contention on refs/heads/main".into())),
+            Ok(()) => Ok(Phase::Committed {
+                commit: new_commit,
+                applied,
+                old_tree,
+                new_tree,
+            }),
+            Err(commit::CasError::LockContention) => {
+                Err(Fail::Halt("git lock contention on refs/heads/main".into()))
+            }
             Err(e) => Err(Fail::Infra(e.to_string())),
         }
     }
@@ -307,7 +356,9 @@ impl WriterCore {
     /// next idle drain hide it; resume/restart recovery will requeue it.
     fn finish_failed(&self, op: &OpId, reason: &str, now: Timestamp) -> Result<(), Fail> {
         self.journal.finish_failed(op, reason, now).map_err(|e| {
-            Fail::Halt(format!("failure finalization failed for {op}: {e}; run herdr-graph writer resume"))
+            Fail::Halt(format!(
+                "failure finalization failed for {op}: {e}; run herdr-graph writer resume"
+            ))
         })
     }
 
@@ -349,24 +400,50 @@ impl WriterCore {
         let root = self.store.root();
         let from = worktree::view_rev(root)
             .and_then(|v| Oid::from_str(&v.0).ok())
-            .and_then(|oid| self.store.with_repo(|r| Ok(r.find_commit(oid)?.tree_id())).ok())
+            .and_then(|oid| {
+                self.store
+                    .with_repo(|r| Ok(r.find_commit(oid)?.tree_id()))
+                    .ok()
+            })
             .unwrap_or(old_tree);
-        let ff = self
-            .store
-            .with_repo(|repo| Ok(worktree::fast_forward(repo, root, Some(from), new_tree, &commit_id, Some(op), now)));
+        let ff = self.store.with_repo(|repo| {
+            Ok(worktree::fast_forward(
+                repo,
+                root,
+                Some(from),
+                new_tree,
+                &commit_id,
+                Some(op),
+                now,
+            ))
+        });
         match ff {
             Ok(Ok(report)) if !report.dirty.is_empty() => {
-                eprintln!("herdr-graph: worktree_dirty: {} file(s) left untouched after {op}", report.dirty.len());
+                eprintln!(
+                    "herdr-graph: worktree_dirty: {} file(s) left untouched after {op}",
+                    report.dirty.len()
+                );
             }
             Ok(Ok(_)) => {}
-            Ok(Err(e)) | Err(e) => eprintln!("herdr-graph: working-tree fast-forward failed after {op}: {e}"),
+            Ok(Err(e)) | Err(e) => {
+                eprintln!("herdr-graph: working-tree fast-forward failed after {op}: {e}")
+            }
         }
-        self.emit(row, OpState::Committed, Some(commit_id.clone()), applied.action);
+        self.emit(
+            row,
+            OpState::Committed,
+            Some(commit_id.clone()),
+            applied.action,
+        );
         Ok(StepOutcome::Committed(op.clone(), commit_id))
     }
 
     /// Step 3: every `relied_on` must still hold at the committed head. Returns the rejection if not.
-    fn recheck_relied_on(&self, head: &CommitId, req: &crate::model::change::ChangeRequest) -> Result<Option<Reject>, StoreError> {
+    fn recheck_relied_on(
+        &self,
+        head: &CommitId,
+        req: &crate::model::change::ChangeRequest,
+    ) -> Result<Option<Reject>, StoreError> {
         let mut stale = Vec::new();
         let mut current = Vec::new();
         for r in &req.relied_on {
@@ -381,9 +458,15 @@ impl WriterCore {
                     Version::Rev(v) => format!("rev {v}"),
                     Version::Blob(h) => format!("blob {}", h.0),
                 };
-                stale.push(format!("{} expected {expected} but committed is {shown}", r.object));
+                stale.push(format!(
+                    "{} expected {expected} but committed is {shown}",
+                    r.object
+                ));
                 if let Some(v) = now_version {
-                    current.push(ReliedOn { object: r.object.clone(), version: v });
+                    current.push(ReliedOn {
+                        object: r.object.clone(),
+                        version: v,
+                    });
                 }
             }
         }
@@ -403,14 +486,20 @@ impl WriterCore {
         r: &ReliedOn,
         req: &crate::model::change::ChangeRequest,
     ) -> Result<Option<Version>, StoreError> {
-        let Some(loc) = self.store.locate(head, &r.object)? else { return Ok(None) };
+        let Some(loc) = self.store.locate(head, &r.object)? else {
+            return Ok(None);
+        };
         match &r.version {
             Version::Rev(_) => {
                 let table: Option<toml::Table> = read_toml(&self.store.at(head), &loc.record_path)?;
-                Ok(table.and_then(|t| t.get("rev").and_then(|v| v.as_integer())).map(|v| Version::Rev(v as u64)))
+                Ok(table
+                    .and_then(|t| t.get("rev").and_then(|v| v.as_integer()))
+                    .map(|v| Version::Rev(v as u64)))
             }
             Version::Blob(_) => {
-                let Some(rel) = req.args.get("path").and_then(|v| v.as_str()) else { return Ok(None) };
+                let Some(rel) = req.args.get("path").and_then(|v| v.as_str()) else {
+                    return Ok(None);
+                };
                 let path = loc.folder.join(rel)?;
                 Ok(self.store.blob_hash(head, &path)?.map(Version::Blob))
             }
@@ -418,7 +507,12 @@ impl WriterCore {
     }
 
     /// Step 6: `operations/<yyyy-mm>/<op>.toml` rides in the same commit as the change.
-    fn write_operation_record(&self, cx: &mut MutationCx<'_>, row: &OpRow, applied: &Applied) -> Result<(), StoreError> {
+    fn write_operation_record(
+        &self,
+        cx: &mut MutationCx<'_>,
+        row: &OpRow,
+        applied: &Applied,
+    ) -> Result<(), StoreError> {
         let req = &row.request;
         let mut rec = OperationRecord {
             schema: crate::model::SCHEMA_VERSION,
@@ -461,22 +555,46 @@ impl WriterCore {
     /// Operator-driven recovery of a halted writer: probe by running recovery and a journal round-trip; only when
     /// both succeed is the halt cleared. A failed probe keeps the halt (and its reason) untouched.
     pub fn resume(&self) -> Result<ResumeReport, WriterError> {
-        let reason = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        let reason = self
+            .pending_halt
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
             .or(self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?);
         let Some(reason) = reason else {
-            return Ok(ResumeReport { was_halted: false, reason: None, recovery: None });
+            return Ok(ResumeReport {
+                was_halted: false,
+                reason: None,
+                recovery: None,
+            });
         };
         let recovery = self.recover_inner(false)?;
         let stamp = self.clock.now().to_string();
-        self.journal.meta_set("writer_probe", &stamp).map_err(journal_err)?;
-        if self.journal.meta_get("writer_probe").map_err(journal_err)?.as_deref() != Some(stamp.as_str()) {
-            return Err(WriterError::Journal("journal probe read back a different value".into()));
+        self.journal
+            .meta_set("writer_probe", &stamp)
+            .map_err(journal_err)?;
+        if self
+            .journal
+            .meta_get("writer_probe")
+            .map_err(journal_err)?
+            .as_deref()
+            != Some(stamp.as_str())
+        {
+            return Err(WriterError::Journal(
+                "journal probe read back a different value".into(),
+            ));
         }
-        self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+        self.journal
+            .meta_delete(WRITER_HALTED)
+            .map_err(journal_err)?;
         *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.infra_failures.store(0, Ordering::SeqCst);
         self.wake.notify_one();
-        Ok(ResumeReport { was_halted: true, reason: Some(reason), recovery: Some(recovery) })
+        Ok(ResumeReport {
+            was_halted: true,
+            reason: Some(reason),
+            recovery: Some(recovery),
+        })
     }
 
     fn recover_inner(&self, clear_halt: bool) -> Result<recovery::RecoveryReport, WriterError> {
@@ -485,42 +603,71 @@ impl WriterCore {
         let to_store = |e: StoreError| WriterError::Journal(e.to_string());
         let (head_oid, removed) = self
             .store
-            .with_repo(|repo| Ok((repo.refname_to_id(commit::MAIN_REF)?, recovery::remove_stale_git_locks(repo))))
+            .with_repo(|repo| {
+                Ok((
+                    repo.refname_to_id(commit::MAIN_REF)?,
+                    recovery::remove_stale_git_locks(repo),
+                ))
+            })
             .map_err(to_store)?;
         report.removed_locks = removed;
 
-        let checkpoint = self.journal.checkpoint().map_err(journal_err)?.and_then(|c| Oid::from_str(&c.0).ok());
+        let checkpoint = self
+            .journal
+            .checkpoint()
+            .map_err(journal_err)?
+            .and_then(|c| Oid::from_str(&c.0).ok());
         let trailers = self
             .store
             .with_repo(|repo| recovery::trailers_since(repo, head_oid, checkpoint))
             .map_err(to_store)?;
         for (op, commit, action) in trailers {
-            let Some(row) = self.journal.get(&op).map_err(journal_err)? else { continue };
+            let Some(row) = self.journal.get(&op).map_err(journal_err)? else {
+                continue;
+            };
             match row.state {
                 OpState::Applying | OpState::Admitted => {
                     self.journal
-                        .finish_committed_superseding(&op, &commit, action.as_ref(), row.request.supersedes.as_ref(), now)
+                        .finish_committed_superseding(
+                            &op,
+                            &commit,
+                            action.as_ref(),
+                            row.request.supersedes.as_ref(),
+                            now,
+                        )
                         .map_err(journal_err)?;
                     report.marked_committed.push(op);
                 }
                 // Committed by an interrupted completion: re-apply a missed supersede.
                 OpState::Committed => {
-                    let Some(old) = &row.request.supersedes else { continue };
-                    let Some(target) = self.journal.get(old).map_err(journal_err)? else { continue };
+                    let Some(old) = &row.request.supersedes else {
+                        continue;
+                    };
+                    let Some(target) = self.journal.get(old).map_err(journal_err)? else {
+                        continue;
+                    };
                     if target.state == OpState::Superseded {
                         continue;
                     }
                     match self.journal.supersede(old, &op, now) {
                         Ok(()) => report.resuperseded.push(op),
-                        Err(e) => eprintln!("herdr-graph: recovery could not mark {old} superseded by {op}: {e}"),
+                        Err(e) => eprintln!(
+                            "herdr-graph: recovery could not mark {old} superseded by {op}: {e}"
+                        ),
                     }
                 }
                 _ => {}
             }
         }
-        for row in self.journal.list(&[OpState::Applying], usize::MAX >> 1).map_err(journal_err)? {
+        for row in self
+            .journal
+            .list(&[OpState::Applying], usize::MAX >> 1)
+            .map_err(journal_err)?
+        {
             // A crash mid-apply counts as an attempt, so a crash-looping op becomes poison.
-            self.journal.requeue(&row.op, true, now).map_err(journal_err)?;
+            self.journal
+                .requeue(&row.op, true, now)
+                .map_err(journal_err)?;
             report.requeued.push(row.op);
         }
         let head = CommitId(head_oid.to_string());
@@ -528,22 +675,34 @@ impl WriterCore {
         report.checkpoint = Some(head.clone());
 
         let root = self.store.root();
-        let from = worktree::view_rev(root).and_then(|v| Oid::from_str(&v.0).ok()).and_then(|oid| {
-            self.store.with_repo(|r| Ok(r.find_commit(oid)?.tree_id())).ok()
-        });
+        let from = worktree::view_rev(root)
+            .and_then(|v| Oid::from_str(&v.0).ok())
+            .and_then(|oid| {
+                self.store
+                    .with_repo(|r| Ok(r.find_commit(oid)?.tree_id()))
+                    .ok()
+            });
         report.ff = self
             .store
             .with_repo(|repo| {
                 let new_tree = repo.find_commit(head_oid)?.tree_id();
-                Ok(worktree::fast_forward(repo, root, from, new_tree, &head, None, now))
+                Ok(worktree::fast_forward(
+                    repo, root, from, new_tree, &head, None, now,
+                ))
             })
             .map_err(to_store)?
             .map_err(to_store)?;
         if clear_halt {
-            report.cleared_halt = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            report.cleared_halt = self
+                .pending_halt
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
                 .or(self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?);
             if report.cleared_halt.is_some() {
-                self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+                self.journal
+                    .meta_delete(WRITER_HALTED)
+                    .map_err(journal_err)?;
                 *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 self.infra_failures.store(0, Ordering::SeqCst);
             }
@@ -552,10 +711,16 @@ impl WriterCore {
     }
 
     /// Poll the journal until the op is terminal (committed|rejected|failed|cancelled|superseded) or timeout.
-    pub fn wait_terminal(&self, op: &OpId, timeout: Duration) -> Result<Option<OpState>, WriterError> {
+    pub fn wait_terminal(
+        &self,
+        op: &OpId,
+        timeout: Duration,
+    ) -> Result<Option<OpState>, WriterError> {
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            let Some(row) = self.journal.get(op).map_err(journal_err)? else { return Ok(None) };
+            let Some(row) = self.journal.get(op).map_err(journal_err)? else {
+                return Ok(None);
+            };
             if !matches!(row.state, OpState::Admitted | OpState::Applying) {
                 return Ok(Some(row.state));
             }
@@ -585,7 +750,8 @@ impl WriterCore {
                         let reason = format!("infrastructure failures: {e}");
                         let _ = self.journal.meta_set(WRITER_HALTED, &reason);
                     } else {
-                        let backoff = self.cfg.infra_backoff * 2u32.saturating_pow(n.saturating_sub(1));
+                        let backoff =
+                            self.cfg.infra_backoff * 2u32.saturating_pow(n.saturating_sub(1));
                         tokio::select! {
                             _ = tokio::time::sleep(backoff) => {}
                             _ = shutdown.changed() => {}
@@ -609,18 +775,31 @@ impl Writer for WriterCore {
     fn admit(&self, req: crate::model::change::ChangeRequest) -> Result<OpId, WriterError> {
         let key = mutation_key(&req);
         if self.registry.get(&key).is_none() {
-            return Err(WriterError::Invalid(format!("no mutation registered for {key}")));
+            return Err(WriterError::Invalid(format!(
+                "no mutation registered for {key}"
+            )));
         }
-        let head = self.store.head().map_err(|e| WriterError::Journal(e.to_string()))?;
+        let head = self
+            .store
+            .head()
+            .map_err(|e| WriterError::Journal(e.to_string()))?;
         for r in &req.relied_on {
             match self.store.locate(&head, &r.object) {
                 Ok(Some(_)) => {}
-                Ok(None) => return Err(WriterError::Invalid(format!("relied-on object {} does not exist", r.object))),
+                Ok(None) => {
+                    return Err(WriterError::Invalid(format!(
+                        "relied-on object {} does not exist",
+                        r.object
+                    )));
+                }
                 Err(e) => return Err(WriterError::Journal(e.to_string())),
             }
         }
         self.warn_if_queued_conflict(&req);
-        let op = self.journal.admit(&req, self.clock.now()).map_err(journal_err)?;
+        let op = self
+            .journal
+            .admit(&req, self.clock.now())
+            .map_err(journal_err)?;
         failpoint!("writer.after_admit");
         self.wake.notify_one();
         Ok(op)
@@ -635,9 +814,16 @@ impl WriterCore {
     /// Best-effort admission-time compatibility check against the queued projection: the op is still admitted
     /// (the writer's recheck is authoritative), the conflict is only logged.
     fn warn_if_queued_conflict(&self, req: &crate::model::change::ChangeRequest) {
-        let Ok(queued) = self.journal.list(&[OpState::Admitted, OpState::Applying], 1000) else { return };
+        let Ok(queued) = self
+            .journal
+            .list(&[OpState::Admitted, OpState::Applying], 1000)
+        else {
+            return;
+        };
         for r in &req.relied_on {
-            let clash = queued.iter().any(|q| q.request.relied_on.iter().any(|o| same_target(o, r)));
+            let clash = queued
+                .iter()
+                .any(|q| q.request.relied_on.iter().any(|o| same_target(o, r)));
             if clash {
                 eprintln!(
                     "herdr-graph: warning: queued op already relies on {} at the same version; one of them will be rejected",

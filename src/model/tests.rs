@@ -144,7 +144,11 @@ fn full_runtime() -> Runtime {
     }
 }
 fn minimal_runtime() -> Runtime {
-    Runtime { availability: Availability::Unknown, bound: None, observed_at: None }
+    Runtime {
+        availability: Availability::Unknown,
+        bound: None,
+        observed_at: None,
+    }
 }
 
 #[test]
@@ -154,7 +158,10 @@ fn graph_record_roundtrip() {
         instance_id: "inst".into(),
         schema_version: 1,
         summarizer_seat: Some(SeatId::new()),
-        defaults: GraphDefaults { harness: Some(Harness::Codex), model: Some("o3".into()) },
+        defaults: GraphDefaults {
+            harness: Some(Harness::Codex),
+            model: Some("o3".into()),
+        },
     });
     toml_rt(&GraphRecord {
         schema: 1,
@@ -177,7 +184,9 @@ fn teamspace_record_roundtrip() {
         retired: Some(retirement()),
         runtime: full_runtime(),
         project_repo: Some(PathBuf::from("/repo")),
-        channel: Channel { thread_id: Some("th1".into()) },
+        channel: Channel {
+            thread_id: Some("th1".into()),
+        },
     });
     toml_rt(&TeamspaceRecord {
         schema: 1,
@@ -205,7 +214,10 @@ fn seat_record_roundtrip() {
         lifecycle: Lifecycle::Active,
         retired: Some(retirement()),
         role: Some(Role::Summarizer),
-        template_ref: Some(TemplateRef { template: TemplateId::new(), member: MemberId::new() }),
+        template_ref: Some(TemplateRef {
+            template: TemplateId::new(),
+            member: MemberId::new(),
+        }),
         applications: vec![AppId::new()],
         overrides: SeatOverrides {
             harness: Some(Harness::Claude),
@@ -213,12 +225,21 @@ fn seat_record_roundtrip() {
             args: Some(vec!["--x".into()]),
             summaries: Some(false),
             cwd: Some(PathBuf::from("/w")),
-            instructions_sections: vec![InstructionSection { name: "n".into(), body: "b\nline".into() }],
+            instructions_sections: vec![InstructionSection {
+                name: "n".into(),
+                body: "b\nline".into(),
+            }],
         },
-        participation: Participation { seat_wide: vec!["th".into()] },
-        activation: Activation { last_op: Some(OpId::new()) },
+        participation: Participation {
+            seat_wide: vec!["th".into()],
+        },
+        activation: Activation {
+            last_op: Some(OpId::new()),
+        },
         runtime: full_runtime(),
-        channel: Channel { thread_id: Some("t".into()) },
+        channel: Channel {
+            thread_id: Some("t".into()),
+        },
         reload_required: true,
         moved_out: true,
     });
@@ -270,7 +291,11 @@ fn clone_record_roundtrip() {
         lifecycle: CloneLifecycle::Retired,
         retired: Some(retirement()),
         runtime: full_runtime(),
-        occupant: Some(Occupant { native_session: NsId::new(), harness: Harness::Codex, since: ts() }),
+        occupant: Some(Occupant {
+            native_session: NsId::new(),
+            harness: Harness::Codex,
+            since: ts(),
+        }),
         sessions: vec![
             native_session_full(),
             NativeSession {
@@ -356,14 +381,21 @@ fn template_record_roundtrip() {
             },
         ],
         relationships: vec![
-            Relationship { kind: RelationshipKind::ThreadParticipation, thread: "a".into(), members: MemberSelector::All },
+            Relationship {
+                kind: RelationshipKind::ThreadParticipation,
+                thread: "a".into(),
+                members: MemberSelector::All,
+            },
             Relationship {
                 kind: RelationshipKind::ThreadParticipation,
                 thread: "b".into(),
                 members: MemberSelector::Ids(vec![m1]),
             },
         ],
-        copied_from: Some(CopiedFrom { template: TemplateId::new(), at: ts() }),
+        copied_from: Some(CopiedFrom {
+            template: TemplateId::new(),
+            at: ts(),
+        }),
     });
     toml_rt(&TemplateRecord {
         schema: 1,
@@ -396,8 +428,14 @@ fn application_record_roundtrip() {
         additions: vec![SeatId::new()],
         exclusions: vec![MemberId::new()],
         reused: vec![
-            Reuse { seat: SeatId::new(), from: Some(AppId::new()) },
-            Reuse { seat: SeatId::new(), from: None },
+            Reuse {
+                seat: SeatId::new(),
+                from: Some(AppId::new()),
+            },
+            Reuse {
+                seat: SeatId::new(),
+                from: None,
+            },
         ],
         contributions: Contributions {
             relationships: vec![Relationship {
@@ -406,7 +444,10 @@ fn application_record_roundtrip() {
                 members: MemberSelector::All,
             }],
         },
-        created_by: CreatedBy { op: OpId::new(), action: ActionId::new() },
+        created_by: CreatedBy {
+            op: OpId::new(),
+            action: ActionId::new(),
+        },
     });
     toml_rt(&ApplicationRecord {
         schema: 1,
@@ -422,7 +463,10 @@ fn application_record_roundtrip() {
         exclusions: vec![],
         reused: vec![],
         contributions: Contributions::default(),
-        created_by: CreatedBy { op: OpId::new(), action: ActionId::new() },
+        created_by: CreatedBy {
+            op: OpId::new(),
+            action: ActionId::new(),
+        },
     });
 }
 
@@ -437,8 +481,17 @@ fn transcript_record_roundtrip() {
         seat: SeatId::new(),
         clone: CloneId::new(),
         source_seat_summaries_enabled_at_capture: true,
-        coverage: vec![ByteRange { start: 0, end: 100 }, ByteRange { start: 150, end: 200 }],
-        gaps: vec![ByteRange { start: 100, end: 150 }],
+        coverage: vec![
+            ByteRange { start: 0, end: 100 },
+            ByteRange {
+                start: 150,
+                end: 200,
+            },
+        ],
+        gaps: vec![ByteRange {
+            start: 100,
+            end: 150,
+        }],
         unresolved: Some("not found".into()),
     });
     toml_rt(&TranscriptRecord {
@@ -472,8 +525,18 @@ fn processing_request_roundtrip() {
             message_id: Some("m".into()),
             dispatched_at: Some(ts()),
             attempts: vec![
-                DeliveryAttempt { op_key: "k".into(), message_id: Some("m".into()), at: ts(), retry: true },
-                DeliveryAttempt { op_key: "k2".into(), message_id: None, at: ts(), retry: false },
+                DeliveryAttempt {
+                    op_key: "k".into(),
+                    message_id: Some("m".into()),
+                    at: ts(),
+                    retry: true,
+                },
+                DeliveryAttempt {
+                    op_key: "k2".into(),
+                    message_id: None,
+                    at: ts(),
+                    retry: false,
+                },
             ],
             reminded_at: Some(ts()),
         },
@@ -508,7 +571,10 @@ fn action_record_roundtrip() {
     after.insert("lifecycle".into(), toml::Value::String("retired".into()));
     let mut comp = toml::Table::new();
     comp.insert("restore_rev".into(), toml::Value::Integer(3));
-    comp.insert("names".into(), toml::Value::Array(vec![toml::Value::String("a".into())]));
+    comp.insert(
+        "names".into(),
+        toml::Value::Array(vec![toml::Value::String("a".into())]),
+    );
     toml_rt(&ActionRecord {
         schema: 1,
         id: ActionId::new(),
@@ -522,7 +588,11 @@ fn action_record_roundtrip() {
                 before: Some(toml::Value::Table(before)),
                 after: Some(toml::Value::Table(after)),
             },
-            AffectedObject { object: CloneId::new().to_any(), before: None, after: None },
+            AffectedObject {
+                object: CloneId::new().to_any(),
+                before: None,
+                after: None,
+            },
         ],
         retired: vec![SeatId::new().to_any()],
         already_retired: vec![CloneId::new().to_any()],
@@ -591,7 +661,11 @@ fn operation_record_roundtrip() {
             human: true,
         },
         state: OpState::Rejected,
-        confirmation: Some(Confirmation { mode: ConfirmMode::Relay, plan_hash: "h".into(), at: ts() }),
+        confirmation: Some(Confirmation {
+            mode: ConfirmMode::Relay,
+            plan_hash: "h".into(),
+            at: ts(),
+        }),
         plan: Some(PlanId::new()),
         commit: Some(CommitId("abc123".into())),
         action: Some(ActionId::new()),
@@ -603,8 +677,14 @@ fn operation_record_roundtrip() {
             reason: "stale".into(),
             explanation: "rev moved".into(),
             current_revs: vec![
-                ReliedOn { object: SeatId::new().to_any(), version: Version::Rev(4) },
-                ReliedOn { object: TemplateId::new().to_any(), version: Version::Blob(BlobHash("beef".into())) },
+                ReliedOn {
+                    object: SeatId::new().to_any(),
+                    version: Version::Rev(4),
+                },
+                ReliedOn {
+                    object: TemplateId::new().to_any(),
+                    version: Version::Blob(BlobHash("beef".into())),
+                },
             ],
         }),
     });
@@ -644,7 +724,10 @@ fn full_effect() -> EffectRecord {
         last_error: Some("boom".into()),
         updated_at: ts(),
         sched: EffectSched {
-            dispatched: Some(Dispatch { attempt: 3, at: ts() }),
+            dispatched: Some(Dispatch {
+                attempt: 3,
+                at: ts(),
+            }),
             retry_at: Some(ts()),
             wake_at: Some(ts()),
             defer_n: 2,
@@ -657,7 +740,10 @@ fn full_effect() -> EffectRecord {
 fn effect_record_without_sched_deserializes() {
     // A row journaled before the scheduling state moved onto it has no `sched` key.
     let mut v = serde_json::to_value(full_effect()).unwrap();
-    assert!(v.as_object_mut().unwrap().remove("sched").is_some(), "the full row carries a sched key");
+    assert!(
+        v.as_object_mut().unwrap().remove("sched").is_some(),
+        "the full row carries a sched key"
+    );
     let got: EffectRecord = serde_json::from_value(v).unwrap();
     assert_eq!(got.sched, EffectSched::default());
 }
@@ -726,10 +812,20 @@ fn change_request_json_roundtrip() {
         kind: RequestKind::SeatRename,
         args: serde_json::json!({"name": "x"}),
         relied_on: vec![
-            ReliedOn { object: SeatId::new().to_any(), version: Version::Rev(1) },
-            ReliedOn { object: SeatId::new().to_any(), version: Version::Blob(BlobHash("ab".into())) },
+            ReliedOn {
+                object: SeatId::new().to_any(),
+                version: Version::Rev(1),
+            },
+            ReliedOn {
+                object: SeatId::new().to_any(),
+                version: Version::Blob(BlobHash("ab".into())),
+            },
         ],
-        requester: Requester { human: true, seat: Some(SeatId::new()), ..Default::default() },
+        requester: Requester {
+            human: true,
+            seat: Some(SeatId::new()),
+            ..Default::default()
+        },
         supersedes: Some(OpId::new()),
         confirmed: None,
     });
@@ -750,17 +846,28 @@ fn change_request_confirmed_round_trips() {
     // Without `confirmed`: the key is absent from the JSON and an old row without it parses as None.
     let old = serde_json::to_value(&req).unwrap();
     assert!(old.get("confirmed").is_none());
-    assert_eq!(serde_json::from_value::<ChangeRequest>(old).unwrap().confirmed, None);
+    assert_eq!(
+        serde_json::from_value::<ChangeRequest>(old)
+            .unwrap()
+            .confirmed,
+        None
+    );
     // With `confirmed` (including observed facts).
     let mut observed = serde_json::Map::new();
     observed.insert("adopt_binding".into(), serde_json::json!({"pane_id": "p1"}));
     req.confirmed = Some(ConfirmedPlan {
         plan: PlanId::new(),
-        confirmation: Confirmation { mode: ConfirmMode::Relay, plan_hash: "h".into(), at: ts() },
+        confirmation: Confirmation {
+            mode: ConfirmMode::Relay,
+            plan_hash: "h".into(),
+            at: ts(),
+        },
         observed,
     });
     json_rt(&req);
-    assert!(serde_json::to_value(&req).unwrap()["confirmed"]["observed"]["adopt_binding"].is_object());
+    assert!(
+        serde_json::to_value(&req).unwrap()["confirmed"]["observed"]["adopt_binding"].is_object()
+    );
 }
 
 // ---- contract tests --------------------------------------------------------------------------
@@ -788,10 +895,18 @@ fn default_summaries_by_role() {
 
 #[test]
 fn request_kind_categories() {
-    for k in [RequestKind::SeatCreate, RequestKind::Undo, RequestKind::TemplateEdit] {
+    for k in [
+        RequestKind::SeatCreate,
+        RequestKind::Undo,
+        RequestKind::TemplateEdit,
+    ] {
         assert!(k.requires_confirmation(), "{k:?}");
     }
-    for k in [RequestKind::Observed, RequestKind::Bookkeeping, RequestKind::ContentWrite] {
+    for k in [
+        RequestKind::Observed,
+        RequestKind::Bookkeeping,
+        RequestKind::ContentWrite,
+    ] {
         assert!(!k.requires_confirmation(), "{k:?}");
     }
 }
@@ -805,24 +920,42 @@ fn byte_range_rejects_inverted() {
 
 #[test]
 fn harness_profiles() {
-    assert_eq!(profile(Harness::Claude).argv(Some("opus"), Some("abc"), &[]), ["--resume", "abc", "--model", "opus"]);
+    assert_eq!(
+        profile(Harness::Claude).argv(Some("opus"), Some("abc"), &[]),
+        ["--resume", "abc", "--model", "opus"]
+    );
     assert_eq!(
         profile(Harness::Codex).argv(Some("o3"), Some("x"), &[]),
         ["--no-daemon", "resume", "x", "-m", "o3"]
     );
-    assert_eq!(profile(Harness::Codex).argv(None, None, &[]), ["--no-daemon"]);
+    assert_eq!(
+        profile(Harness::Codex).argv(None, None, &[]),
+        ["--no-daemon"]
+    );
     assert!(profile(Harness::Shell).agent_kind.is_none());
     assert!(!profile(Harness::Shell).supports_resume());
     let exit = profile(Harness::Claude).exit.unwrap();
-    assert_eq!(exit.steps, &[KeyStep::Key("ctrl+c"), KeyStep::Key("ctrl+c")]);
+    assert_eq!(
+        exit.steps,
+        &[KeyStep::Key("ctrl+c"), KeyStep::Key("ctrl+c")]
+    );
     assert_eq!(exit.if_still_running, Some(KeyStep::SubmitText("/exit")));
 }
 
 #[test]
 fn claude_slug_and_paths() {
-    assert_eq!(claude_project_slug(Path::new("/Users/a/my.repo_x")), "-Users-a-my-repo-x");
-    assert_eq!(claude_config_root(None, Path::new("/h")), PathBuf::from("/h/.claude"));
-    assert_eq!(claude_config_root(Some(Path::new("/c")), Path::new("/h")), PathBuf::from("/c"));
+    assert_eq!(
+        claude_project_slug(Path::new("/Users/a/my.repo_x")),
+        "-Users-a-my-repo-x"
+    );
+    assert_eq!(
+        claude_config_root(None, Path::new("/h")),
+        PathBuf::from("/h/.claude")
+    );
+    assert_eq!(
+        claude_config_root(Some(Path::new("/c")), Path::new("/h")),
+        PathBuf::from("/c")
+    );
     assert_eq!(
         claude_transcript_path(Path::new("/c"), Path::new("/w/p"), "id1"),
         PathBuf::from("/c/projects/-w-p/id1.jsonl")
@@ -832,8 +965,14 @@ fn claude_slug_and_paths() {
 
 #[test]
 fn session_id_from_codex_argv() {
-    let argv: Vec<String> = ["codex", "--no-daemon", "resume", "abc"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(session_id_from_argv(&argv, "resume"), Some("abc".to_string()));
+    let argv: Vec<String> = ["codex", "--no-daemon", "resume", "abc"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        session_id_from_argv(&argv, "resume"),
+        Some("abc".to_string())
+    );
     assert_eq!(session_id_from_argv(&argv[..2], "resume"), None);
 }
 
@@ -854,14 +993,20 @@ fn launch_env_contract() {
 #[test]
 fn graph_token_roundtrip() {
     let id = SeatId::new();
-    assert_eq!(parse_graph_token(&graph_token(&id.to_any())), Some(id.to_any()));
+    assert_eq!(
+        parse_graph_token(&graph_token(&id.to_any())),
+        Some(id.to_any())
+    );
     assert_eq!(parse_graph_token("x=1"), None);
 }
 
 #[test]
 fn nonce_label_roundtrip() {
     let ef = EffectId::new();
-    assert_eq!(parse_nonce_label(&nonce_label("foreman", &ef)), Some(("foreman", ef.suffix6())));
+    assert_eq!(
+        parse_nonce_label(&nonce_label("foreman", &ef)),
+        Some(("foreman", ef.suffix6()))
+    );
     assert_eq!(parse_nonce_label("foreman"), None);
 }
 

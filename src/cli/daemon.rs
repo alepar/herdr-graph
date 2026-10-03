@@ -15,7 +15,9 @@ pub enum Commands {
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
-    let Commands::Daemon { ensure: ensure_only } = cmd;
+    let Commands::Daemon {
+        ensure: ensure_only,
+    } = cmd;
     let env = Env::from_process();
     if ensure_only {
         match ensure(&env, STARTUP_WAIT)? {

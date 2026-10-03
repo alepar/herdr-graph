@@ -11,7 +11,8 @@ use crate::model::application::ApplicationRecord;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{
-    AppLifecycle, Availability, Binding, CloneLifecycle, Lifecycle, Occupant, RetireMechanism, Runtime,
+    AppLifecycle, Availability, Binding, CloneLifecycle, Lifecycle, Occupant, RetireMechanism,
+    Runtime,
 };
 use crate::model::harness::Harness;
 use crate::model::operation::OpState;
@@ -19,7 +20,8 @@ use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::template::TemplateRecord;
 use crate::model::{
-    ActionId, AnyId, CloneId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, MemberId, NsId, PlanId, SeatId,
+    ActionId, AnyId, CloneId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, MemberId, NsId, PlanId,
+    SeatId,
 };
 use crate::observe::classify::CascadeRule;
 use crate::observe::mutations::cascade_request;
@@ -37,7 +39,9 @@ use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::CommitView;
 use crate::templates::register_kinds as register_template_kinds;
-use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore};
+use crate::writer::{
+    Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore,
+};
 use chrono::TimeZone;
 use serde_json::json;
 use std::sync::Arc;
@@ -56,10 +60,16 @@ struct Patch;
 impl Mutation for Patch {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a = &cx.request.args;
-        let clone = CloneId::parse(a["clone"].as_str().unwrap()).map_err(|e| MutationError::Bug(e.to_string()))?;
-        let loc = cx.tree.locate(&clone.to_any())?.ok_or_else(|| MutationError::Bug("no clone".into()))?;
-        let mut rec: CloneRecord =
-            cx.tree.read_record(&loc.record_path)?.ok_or_else(|| MutationError::Bug("no clone".into()))?;
+        let clone = CloneId::parse(a["clone"].as_str().unwrap())
+            .map_err(|e| MutationError::Bug(e.to_string()))?;
+        let loc = cx
+            .tree
+            .locate(&clone.to_any())?
+            .ok_or_else(|| MutationError::Bug("no clone".into()))?;
+        let mut rec: CloneRecord = cx
+            .tree
+            .read_record(&loc.record_path)?
+            .ok_or_else(|| MutationError::Bug("no clone".into()))?;
         if let Some(p) = a.get("pane").and_then(|v| v.as_str()) {
             rec.runtime = Runtime {
                 availability: Availability::Present,
@@ -75,10 +85,17 @@ impl Mutation for Patch {
             };
         }
         if a.get("occupy").is_some() {
-            rec.occupant = Some(Occupant { native_session: NsId::new(), harness: Harness::Claude, since: cx.now });
+            rec.occupant = Some(Occupant {
+                native_session: NsId::new(),
+                harness: Harness::Claude,
+                since: cx.now,
+            });
         }
         cx.tree.put_record(loc.record_path, &mut rec)?;
-        Ok(Applied { summary: "patch".into(), action: None })
+        Ok(Applied {
+            summary: "patch".into(),
+            action: None,
+        })
     }
 }
 
@@ -112,9 +129,30 @@ fn fx() -> Fx {
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
-    let w = WriterCore::new(store.clone(), journal, Arc::new(reg), clock.clone(), WriterConfig::default());
-    let deps = PlanDeps { kinds, plans, store: store.clone(), writer: w.clone(), clock: clock.clone(), instance: root };
-    Fx { _tmp: tmp, docs, deps, w, store, clock, n: std::cell::Cell::new(0) }
+    let w = WriterCore::new(
+        store.clone(),
+        journal,
+        Arc::new(reg),
+        clock.clone(),
+        WriterConfig::default(),
+    );
+    let deps = PlanDeps {
+        kinds,
+        plans,
+        store: store.clone(),
+        writer: w.clone(),
+        clock: clock.clone(),
+        instance: root,
+    };
+    Fx {
+        _tmp: tmp,
+        docs,
+        deps,
+        w,
+        store,
+        clock,
+        n: std::cell::Cell::new(0),
+    }
 }
 
 fn words(s: &str) -> Vec<String> {
@@ -122,11 +160,15 @@ fn words(s: &str) -> Vec<String> {
 }
 
 fn caller(pane: Option<&str>) -> CallerInfo {
-    CallerInfo { pane_id: pane.map(str::to_owned), ..CallerInfo::default() }
+    CallerInfo {
+        pane_id: pane.map(str::to_owned),
+        ..CallerInfo::default()
+    }
 }
 
 fn plan_as(fx: &Fx, change: &str, pane: Option<&str>) -> StoredPlan {
-    let v = create_plan(&fx.deps, &caller(pane), words(change)).unwrap_or_else(|e| panic!("{change}: {}", e.message));
+    let v = create_plan(&fx.deps, &caller(pane), words(change))
+        .unwrap_or_else(|e| panic!("{change}: {}", e.message));
     let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
     fx.deps.plans.get(&id).unwrap().unwrap()
 }
@@ -143,8 +185,14 @@ fn plan_err(fx: &Fx, change: &str) -> String {
 }
 
 fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
-    let op = admit_apply(&fx.deps, &caller(None), sp.plan.id.as_str(), Some(&sp.hash), "relay")
-        .unwrap_or_else(|e| panic!("admit: {}", e.message));
+    let op = admit_apply(
+        &fx.deps,
+        &caller(None),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit: {}", e.message));
     fx.w.drain().unwrap();
     fx.w.journal().get(&op).unwrap().unwrap()
 }
@@ -155,20 +203,35 @@ fn apply_plan_from_pane(fx: &Fx, sp: &StoredPlan, pane: &str, observed: Option<&
     if let Some(b) = observed {
         extra.insert(ADOPT_BINDING_KEY.into(), serde_json::to_value(b).unwrap());
     }
-    let op = admit_apply_with(&fx.deps, &caller(Some(pane)), sp.plan.id.as_str(), Some(&sp.hash), "relay", extra)
-        .unwrap_or_else(|e| panic!("admit: {}", e.message));
+    let op = admit_apply_with(
+        &fx.deps,
+        &caller(Some(pane)),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+        extra,
+    )
+    .unwrap_or_else(|e| panic!("admit: {}", e.message));
     fx.w.drain().unwrap();
     fx.w.journal().get(&op).unwrap().unwrap()
 }
 
 fn commit(fx: &Fx, change: &str) -> OpRow {
     let row = apply_plan(fx, &plan(fx, change));
-    assert_eq!(row.state, OpState::Committed, "{change}: {:?}", row.rejection);
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "{change}: {:?}",
+        row.rejection
+    );
     row
 }
 
 fn view(fx: &Fx) -> CommitView<'_> {
-    CommitView { store: &*fx.store, at: fx.store.head().unwrap() }
+    CommitView {
+        store: &*fx.store,
+        at: fx.store.head().unwrap(),
+    }
 }
 
 fn tick(fx: &Fx) {
@@ -176,12 +239,19 @@ fn tick(fx: &Fx) {
 }
 
 fn kinds_of(sp: &StoredPlan, kind: &str) -> Vec<AnyId> {
-    sp.plan.effects.iter().filter(|e| e.kind == kind).map(|e| e.object.clone()).collect()
+    sp.plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == kind)
+        .map(|e| e.object.clone())
+        .collect()
 }
 
 fn action(fx: &Fx, act: &ActionId) -> ActionRecord {
     let v = view(fx);
-    let loc = layout::locate(&v, &act.to_any()).unwrap().expect("action record committed");
+    let loc = layout::locate(&v, &act.to_any())
+        .unwrap()
+        .expect("action record committed");
     read_toml(&v, &loc.record_path).unwrap().unwrap()
 }
 
@@ -190,50 +260,90 @@ fn action_of(fx: &Fx, row: &OpRow) -> ActionRecord {
 }
 
 fn seat_named(fx: &Fx, name: &str) -> SeatRecord {
-    let mut found: Vec<_> = layout::all_seats(&view(fx)).unwrap().into_iter().filter(|(_, s)| s.name == name).collect();
+    let mut found: Vec<_> = layout::all_seats(&view(fx))
+        .unwrap()
+        .into_iter()
+        .filter(|(_, s)| s.name == name)
+        .collect();
     assert_eq!(found.len(), 1, "seat {name}");
     found.remove(0).1
 }
 
 fn seat_by_id(fx: &Fx, id: &SeatId) -> SeatRecord {
-    layout::all_seats(&view(fx)).unwrap().into_iter().map(|(_, s)| s).find(|s| &s.id == id).expect("seat")
+    layout::all_seats(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, s)| s)
+        .find(|s| &s.id == id)
+        .expect("seat")
 }
 
 fn clones_of(fx: &Fx, seat: &SeatId) -> Vec<CloneRecord> {
-    layout::all_clones(&view(fx)).unwrap().into_iter().map(|(_, c)| c).filter(|c| &c.seat == seat).collect()
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, c)| c)
+        .filter(|c| &c.seat == seat)
+        .collect()
 }
 
 fn clone_by_id(fx: &Fx, id: &CloneId) -> CloneRecord {
-    layout::all_clones(&view(fx)).unwrap().into_iter().map(|(_, c)| c).find(|c| &c.id == id).expect("clone")
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, c)| c)
+        .find(|c| &c.id == id)
+        .expect("clone")
 }
 
 fn ts_named(fx: &Fx, name: &str) -> TeamspaceRecord {
-    layout::list_teamspaces(&view(fx)).unwrap().into_iter().map(|(_, t)| t).find(|t| t.name == name).expect("teamspace")
+    layout::list_teamspaces(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.name == name)
+        .expect("teamspace")
 }
 
 fn app(fx: &Fx, name: &str) -> ApplicationRecord {
-    layout::list_applications(&view(fx)).unwrap().into_iter().map(|(_, a)| a).find(|a| a.name == name).expect("application")
+    layout::list_applications(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.name == name)
+        .expect("application")
 }
 
 fn tpl(fx: &Fx, name: &str) -> TemplateRecord {
-    layout::list_templates(&view(fx)).unwrap().into_iter().map(|(_, t)| t).find(|t| t.name == name).expect("template")
+    layout::list_templates(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.name == name)
+        .expect("template")
 }
 
 /// An observed closure cascade, committed directly (what the observer does when the user closes a tab).
 fn cascade(fx: &Fx, rule: CascadeRule, ids: &[AnyId]) -> ActionRecord {
-    let op = fx.w.admit(cascade_request(rule, ids, fx.clock.now())).unwrap();
+    let op =
+        fx.w.admit(cascade_request(rule, ids, fx.clock.now()))
+            .unwrap();
     fx.w.drain().unwrap();
     let row = fx.w.journal().get(&op).unwrap().unwrap();
-    assert_eq!(row.state, OpState::Committed, "cascade: {:?}", row.rejection);
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "cascade: {:?}",
+        row.rejection
+    );
     action_of(fx, &row)
 }
 
 fn patch(fx: &Fx, args: serde_json::Value) {
     let mut args = args;
     args["sub"] = json!("patch");
-    let op = fx
-        .w
-        .admit(ChangeRequest {
+    let op =
+        fx.w.admit(ChangeRequest {
             kind: RequestKind::Bookkeeping,
             args,
             relied_on: vec![],
@@ -243,7 +353,10 @@ fn patch(fx: &Fx, args: serde_json::Value) {
         })
         .unwrap();
     fx.w.drain().unwrap();
-    assert_eq!(fx.w.journal().get(&op).unwrap().unwrap().state, OpState::Committed);
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
 }
 
 fn alpha(fx: &Fx) {
@@ -252,7 +365,10 @@ fn alpha(fx: &Fx) {
 
 /// One active seat with `n` clones.
 fn active_seat(fx: &Fx, name: &str) -> SeatRecord {
-    commit(fx, &format!("seat create {name} --teamspace alpha --active"));
+    commit(
+        fx,
+        &format!("seat create {name} --teamspace alpha --active"),
+    );
     seat_named(fx, name)
 }
 
@@ -266,13 +382,21 @@ struct M {
 }
 
 fn m(id: &MemberId, name: &'static str, startup: &'static str) -> M {
-    M { id: id.clone(), name, startup, model: None }
+    M {
+        id: id.clone(),
+        name,
+        startup,
+        model: None,
+    }
 }
 
 fn doc_text(name: &str, members: &[M]) -> String {
     let mut s = format!("name = \"{name}\"\n");
     for m in members {
-        s.push_str(&format!("\n[[members]]\nid = \"{}\"\nname = \"{}\"\nstartup = \"{}\"\n", m.id, m.name, m.startup));
+        s.push_str(&format!(
+            "\n[[members]]\nid = \"{}\"\nname = \"{}\"\nstartup = \"{}\"\n",
+            m.id, m.name, m.startup
+        ));
         if let Some(model) = m.model {
             s.push_str(&format!("[members.defaults]\nmodel = \"{model}\"\n"));
         }
@@ -298,7 +422,10 @@ fn edit_template(fx: &Fx, name: &str, members: &[M]) -> OpRow {
 }
 
 fn apply_app(fx: &Fx, template: &str, name: &str) -> OpRow {
-    commit(fx, &format!("application apply {template} --teamspace alpha --name {name}"))
+    commit(
+        fx,
+        &format!("application apply {template} --teamspace alpha --name {name}"),
+    )
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -315,17 +442,31 @@ fn undo_tab_close_cascade_restores_seat_and_clones_excluding_already_retired() {
     assert_eq!(clones.len(), 2);
     let (c1, c2) = (clones[0].clone(), clones[1].clone());
     commit(&fx, &format!("clone retire {}", c2.id));
-    let act = cascade(&fx, CascadeRule::Tab, &[seat.id.to_any(), c1.id.to_any(), c2.id.to_any()]);
+    let act = cascade(
+        &fx,
+        CascadeRule::Tab,
+        &[seat.id.to_any(), c1.id.to_any(), c2.id.to_any()],
+    );
     assert_eq!(act.kind, ActionKind::ClosureCascade);
-    assert!(act.already_retired.contains(&c2.id.to_any()), "c2 was retired before the cascade");
+    assert!(
+        act.already_retired.contains(&c2.id.to_any()),
+        "c2 was retired before the cascade"
+    );
     assert!(act.retired.contains(&seat.id.to_any()) && act.retired.contains(&c1.id.to_any()));
     assert_eq!(seat_by_id(&fx, &seat.id).lifecycle, Lifecycle::Retired);
 
     let sp = plan(&fx, &format!("undo {}", act.id));
     assert_eq!(kinds_of(&sp, "seat.resurrect"), vec![seat.id.to_any()]);
-    assert_eq!(kinds_of(&sp, "clone.resurrect"), vec![c1.id.to_any()], "exactly the retired clone, not the already-retired one");
+    assert_eq!(
+        kinds_of(&sp, "clone.resurrect"),
+        vec![c1.id.to_any()],
+        "exactly the retired clone, not the already-retired one"
+    );
     assert_eq!(kinds_of(&sp, "runtime.open_tab"), vec![seat.id.to_any()]);
-    assert!(kinds_of(&sp, "runtime.open_pane").contains(&c1.id.to_any()), "the restored runtime gets a new pane");
+    assert!(
+        kinds_of(&sp, "runtime.open_pane").contains(&c1.id.to_any()),
+        "the restored runtime gets a new pane"
+    );
     assert!(sp.plan.repair_required.is_none());
 
     let row = apply_plan(&fx, &sp);
@@ -333,8 +474,16 @@ fn undo_tab_close_cascade_restores_seat_and_clones_excluding_already_retired() {
     assert_eq!(seat_by_id(&fx, &seat.id).lifecycle, Lifecycle::Active);
     let c1_after = clone_by_id(&fx, &c1.id);
     assert_eq!(c1_after.lifecycle, CloneLifecycle::Active);
-    assert_eq!(c1_after.runtime.availability, Availability::Absent, "the restored clone has no pane until the reconciler opens one");
-    assert_eq!(clone_by_id(&fx, &c2.id).lifecycle, CloneLifecycle::Retired, "the already-retired clone stays retired");
+    assert_eq!(
+        c1_after.runtime.availability,
+        Availability::Absent,
+        "the restored clone has no pane until the reconciler opens one"
+    );
+    assert_eq!(
+        clone_by_id(&fx, &c2.id).lifecycle,
+        CloneLifecycle::Retired,
+        "the already-retired clone stays retired"
+    );
 }
 
 #[test]
@@ -351,10 +500,22 @@ fn undo_keeps_previously_dormant_seats_dormant() {
     assert!(act.retired.contains(&sleeper.id.to_any()));
 
     let sp = plan(&fx, &format!("undo {}", act.id));
-    let sleeper_effect = sp.plan.effects.iter().find(|e| e.kind == "seat.resurrect" && e.object == sleeper.id.to_any()).unwrap();
+    let sleeper_effect = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.resurrect" && e.object == sleeper.id.to_any())
+        .unwrap();
     assert_eq!(sleeper_effect.detail["to"], json!("dormant"));
-    assert_eq!(kinds_of(&sp, "runtime.open_tab"), vec![active.id.to_any()], "only the previously active seat gets a tab");
-    assert_eq!(kinds_of(&sp, "runtime.open_workspace"), vec![ts.id.to_any()]);
+    assert_eq!(
+        kinds_of(&sp, "runtime.open_tab"),
+        vec![active.id.to_any()],
+        "only the previously active seat gets a tab"
+    );
+    assert_eq!(
+        kinds_of(&sp, "runtime.open_workspace"),
+        vec![ts.id.to_any()]
+    );
 
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
@@ -381,7 +542,11 @@ fn undo_plan_applied_seat_retirement_previews_and_applies_resurrection() {
     let back = seat_by_id(&fx, &seat.id);
     assert_eq!(back.lifecycle, Lifecycle::Active);
     assert!(back.retired.is_none());
-    assert!(clones_of(&fx, &seat.id).iter().all(|c| c.lifecycle == CloneLifecycle::Active));
+    assert!(
+        clones_of(&fx, &seat.id)
+            .iter()
+            .all(|c| c.lifecycle == CloneLifecycle::Active)
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -396,7 +561,11 @@ fn adoption_fixture(fx: &Fx, pane: &str) -> (SeatRecord, CloneRecord, CloneRecor
     let x = clones_of(fx, &other.id).remove(0);
     patch(fx, json!({ "clone": x.id, "pane": pane }));
     let f_clone = clones_of(fx, &foreman.id).remove(0);
-    let act = cascade(fx, CascadeRule::Tab, &[foreman.id.to_any(), f_clone.id.to_any()]);
+    let act = cascade(
+        fx,
+        CascadeRule::Tab,
+        &[foreman.id.to_any(), f_clone.id.to_any()],
+    );
     (foreman, f_clone, clone_by_id(fx, &x.id), act)
 }
 
@@ -405,22 +574,51 @@ fn adoption_preview_with_bound_caller_pane() {
     let fx = fx();
     let (foreman, f_clone, x, act) = adoption_fixture(&fx, "p-caller");
     let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
-    assert!(sp.plan.repair_required.is_none(), "{:?}", sp.plan.repair_required);
+    assert!(
+        sp.plan.repair_required.is_none(),
+        "{:?}",
+        sp.plan.repair_required
+    );
 
-    let adopt = sp.plan.effects.iter().find(|e| e.kind == "undo.adopt_pane").expect("the preview names the adoption");
-    assert_eq!(adopt.object, f_clone.id.to_any(), "the caller pane is adopted as the restored clone");
+    let adopt = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "undo.adopt_pane")
+        .expect("the preview names the adoption");
+    assert_eq!(
+        adopt.object,
+        f_clone.id.to_any(),
+        "the caller pane is adopted as the restored clone"
+    );
     assert_eq!(adopt.detail["pane"], json!("p-caller"));
     assert_eq!(adopt.detail["displaced_clone"], json!(x.id));
-    assert_eq!(adopt.detail["displaced_binding"]["pane_id"], json!("p-caller"), "the existing binding is shown");
+    assert_eq!(
+        adopt.detail["displaced_binding"]["pane_id"],
+        json!("p-caller"),
+        "the existing binding is shown"
+    );
     assert!(
         !kinds_of(&sp, "runtime.open_pane").contains(&f_clone.id.to_any()),
         "no second pane is opened for the adopted clone"
     );
-    let retire = sp.plan.effects.iter().find(|e| e.kind == "clone.retire").expect("the displaced clone is retired");
+    let retire = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "clone.retire")
+        .expect("the displaced clone is retired");
     assert_eq!(retire.object, x.id.to_any());
     assert_eq!(retire.detail["mechanism"], json!("undo"));
     assert_eq!(retire.detail["displaced_by_undo"], json!(true));
-    assert!(sp.plan.warnings.iter().any(|w| w.contains("last active clone")), "{:?}", sp.plan.warnings);
+    assert!(
+        sp.plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("last active clone")),
+        "{:?}",
+        sp.plan.warnings
+    );
 
     let observed = Binding {
         token: None,
@@ -428,28 +626,55 @@ fn adoption_preview_with_bound_caller_pane() {
         tab_id: Some(HerdrTabId("t9".into())),
         pane_id: Some(HerdrPaneId("p-caller".into())),
         terminal_id: Some(crate::model::HerdrTerminalId("term-caller".into())),
-        incarnation: crate::model::common::Incarnation { generation: 7, server_pid: Some(42), server_started: None },
+        incarnation: crate::model::common::Incarnation {
+            generation: 7,
+            server_pid: Some(42),
+            server_started: None,
+        },
     };
     let row = apply_plan_from_pane(&fx, &sp, "p-caller", Some(&observed));
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     let displaced = clone_by_id(&fx, &x.id);
     assert_eq!(displaced.lifecycle, CloneLifecycle::Retired);
     assert_eq!(displaced.retired.unwrap().mechanism, RetireMechanism::Undo);
-    assert!(displaced.runtime.bound.is_none(), "the pane is no longer the displaced clone's");
+    assert!(
+        displaced.runtime.bound.is_none(),
+        "the pane is no longer the displaced clone's"
+    );
     let adopted = clone_by_id(&fx, &f_clone.id);
     assert_eq!(adopted.lifecycle, CloneLifecycle::Active);
     // The undo commit itself holds the whole binding: nothing is left to admit after the commit, so the
     // reconciler woken by it finds a clone with a live pane.
     assert_eq!(adopted.runtime.availability, Availability::Present);
-    assert_eq!(adopted.runtime.bound, Some(observed.clone()), "the caller's pane exactly as observed, no token yet");
+    assert_eq!(
+        adopted.runtime.bound,
+        Some(observed.clone()),
+        "the caller's pane exactly as observed, no token yet"
+    );
     let foreman_now = seat_by_id(&fx, &foreman.id);
     assert_eq!(foreman_now.lifecycle, Lifecycle::Active);
-    assert_eq!(foreman_now.activation.last_op, Some(row.op.clone()), "the adopted pane's StampToken gets a fresh effect id");
+    assert_eq!(
+        foreman_now.activation.last_op,
+        Some(row.op.clone()),
+        "the adopted pane's StampToken gets a fresh effect id"
+    );
     let undo_act = action_of(&fx, &row);
-    assert_eq!(undo_act.compensation["adopt"]["clone"].as_str(), Some(f_clone.id.to_string().as_str()));
-    assert_eq!(undo_act.compensation["adopt"]["pane"].as_str(), Some("p-caller"));
-    assert_eq!(undo_act.compensation["adopt"]["displaced"].as_str(), Some(x.id.to_string().as_str()));
-    assert_eq!(undo_act.compensation["adopt"]["binding"]["tab_id"].as_str(), Some("t9"));
+    assert_eq!(
+        undo_act.compensation["adopt"]["clone"].as_str(),
+        Some(f_clone.id.to_string().as_str())
+    );
+    assert_eq!(
+        undo_act.compensation["adopt"]["pane"].as_str(),
+        Some("p-caller")
+    );
+    assert_eq!(
+        undo_act.compensation["adopt"]["displaced"].as_str(),
+        Some(x.id.to_string().as_str())
+    );
+    assert_eq!(
+        undo_act.compensation["adopt"]["binding"]["tab_id"].as_str(),
+        Some("t9")
+    );
 }
 
 #[test]
@@ -457,13 +682,34 @@ fn adoption_preview_from_bound_pane_does_not_warn_pane_closes() {
     let fx = fx();
     let (_, f_clone, x, act) = adoption_fixture(&fx, "p-caller");
     let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
-    assert!(!sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING), "the pane is adopted, not closed: {:?}", sp.plan.warnings);
-    let adopt = sp.plan.effects.iter().find(|e| e.kind == "undo.adopt_pane").expect("the adoption is named");
+    assert!(
+        !sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING),
+        "the pane is adopted, not closed: {:?}",
+        sp.plan.warnings
+    );
+    let adopt = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "undo.adopt_pane")
+        .expect("the adoption is named");
     assert_eq!(adopt.object, f_clone.id.to_any());
     assert_eq!(adopt.detail["displaced_clone"], json!(x.id));
-    let retire = sp.plan.effects.iter().find(|e| e.kind == "clone.retire").unwrap();
-    assert_eq!((retire.object.clone(), &retire.detail["displaced_by_undo"]), (x.id.to_any(), &json!(true)));
-    assert_eq!(retire.detail["binding"]["pane_id"], json!("p-caller"), "the displaced clone's binding is shown");
+    let retire = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "clone.retire")
+        .unwrap();
+    assert_eq!(
+        (retire.object.clone(), &retire.detail["displaced_by_undo"]),
+        (x.id.to_any(), &json!(true))
+    );
+    assert_eq!(
+        retire.detail["binding"]["pane_id"],
+        json!("p-caller"),
+        "the displaced clone's binding is shown"
+    );
 }
 
 #[test]
@@ -476,7 +722,10 @@ fn adoption_without_an_observed_pane_stays_unknown_until_the_observer_looks() {
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     let adopted = clone_by_id(&fx, &f_clone.id);
     assert_eq!(adopted.runtime.availability, Availability::Unknown);
-    assert_eq!(adopted.runtime.bound.unwrap().pane_id, Some(HerdrPaneId("p-caller".into())));
+    assert_eq!(
+        adopted.runtime.bound.unwrap().pane_id,
+        Some(HerdrPaneId("p-caller".into()))
+    );
 }
 
 #[test]
@@ -485,12 +734,34 @@ fn adoption_conflict_with_active_occupant_is_repair_required() {
     let (_, f_clone, x, act) = adoption_fixture(&fx, "p-busy");
     patch(&fx, json!({ "clone": x.id, "occupy": true }));
     let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-busy"));
-    let why = sp.plan.repair_required.clone().expect("an occupied displaced clone blocks the undo");
-    assert!(why.contains(x.id.as_str()) && why.contains("active"), "{why}");
-    let err = admit_apply(&fx.deps, &caller(None), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap_err();
+    let why = sp
+        .plan
+        .repair_required
+        .clone()
+        .expect("an occupied displaced clone blocks the undo");
+    assert!(
+        why.contains(x.id.as_str()) && why.contains("active"),
+        "{why}"
+    );
+    let err = admit_apply(
+        &fx.deps,
+        &caller(None),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_err();
     assert!(err.message.contains("repair"), "{}", err.message);
-    assert_eq!(clone_by_id(&fx, &f_clone.id).lifecycle, CloneLifecycle::Retired, "nothing was restored");
-    assert_eq!(clone_by_id(&fx, &x.id).lifecycle, CloneLifecycle::Active, "the occupied clone stays");
+    assert_eq!(
+        clone_by_id(&fx, &f_clone.id).lifecycle,
+        CloneLifecycle::Retired,
+        "nothing was restored"
+    );
+    assert_eq!(
+        clone_by_id(&fx, &x.id).lifecycle,
+        CloneLifecycle::Active,
+        "the occupied clone stays"
+    );
 }
 
 #[test]
@@ -503,12 +774,26 @@ fn occupant_gained_between_preview_and_apply_is_rejected() {
     let row = apply_plan_from_pane(&fx, &sp, "p-race", None);
     assert_eq!(row.state, OpState::Rejected);
     let r = row.rejection.expect("rejection");
-    assert!(matches!(r.reason.as_str(), "stale_plan" | "repair_required"), "{r:?}");
+    assert!(
+        matches!(r.reason.as_str(), "stale_plan" | "repair_required"),
+        "{r:?}"
+    );
     if r.reason == "repair_required" {
-        assert!(r.explanation.contains(x.id.as_str()), "the explanation names the occupied clone: {r:?}");
+        assert!(
+            r.explanation.contains(x.id.as_str()),
+            "the explanation names the occupied clone: {r:?}"
+        );
     }
-    assert_eq!(clone_by_id(&fx, &f_clone.id).lifecycle, CloneLifecycle::Retired, "nothing restored");
-    assert_eq!(clone_by_id(&fx, &x.id).lifecycle, CloneLifecycle::Active, "the occupied clone stays");
+    assert_eq!(
+        clone_by_id(&fx, &f_clone.id).lifecycle,
+        CloneLifecycle::Retired,
+        "nothing restored"
+    );
+    assert_eq!(
+        clone_by_id(&fx, &x.id).lifecycle,
+        CloneLifecycle::Active,
+        "the occupied clone stays"
+    );
 }
 
 #[test]
@@ -524,10 +809,21 @@ fn undo_closing_caller_pane_warns() {
     patch(&fx, json!({ "clone": clone.id, "pane": "p-me" }));
 
     let sp = plan_as(&fx, &format!("undo {}", h.id), Some("p-me"));
-    assert!(sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING), "{:?}", sp.plan.warnings);
+    assert!(
+        sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING),
+        "{:?}",
+        sp.plan.warnings
+    );
     assert!(kinds_of(&sp, "seat.retire").contains(&seat.id.to_any()));
     let elsewhere = plan_as(&fx, &format!("undo {}", h.id), Some("p-other"));
-    assert!(!elsewhere.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING), "a different pane is not closed");
+    assert!(
+        !elsewhere
+            .plan
+            .warnings
+            .iter()
+            .any(|w| w == CLOSES_PANE_WARNING),
+        "a different pane is not closed"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -539,25 +835,53 @@ fn hydration_undo_after_later_reuse_keeps_reused_seat() {
     let fx = fx();
     alpha(&fx);
     let (e_auth, reviewer_mem, e_billing) = (MemberId::new(), MemberId::new(), MemberId::new());
-    create_template(&fx, "auth-tpl", &[m(&e_auth, "engineer", "deferred"), m(&reviewer_mem, "reviewer", "deferred")]);
-    create_template(&fx, "billing-tpl", &[m(&e_billing, "billing-engineer", "deferred")]);
+    create_template(
+        &fx,
+        "auth-tpl",
+        &[
+            m(&e_auth, "engineer", "deferred"),
+            m(&reviewer_mem, "reviewer", "deferred"),
+        ],
+    );
+    create_template(
+        &fx,
+        "billing-tpl",
+        &[m(&e_billing, "billing-engineer", "deferred")],
+    );
     let hydrate = apply_app(&fx, "auth-tpl", "auth");
     let h = action_of(&fx, &hydrate);
     assert_eq!(h.kind, ActionKind::Hydrate);
     let auth = app(&fx, "auth");
     let engineer = auth.member_map[&e_auth].clone();
     let reviewer = auth.member_map[&reviewer_mem].clone();
-    commit(&fx, &format!("application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"));
+    commit(
+        &fx,
+        &format!(
+            "application apply billing-tpl --teamspace alpha --name billing --reuse {e_billing}={engineer}"
+        ),
+    );
 
     let sp = plan(&fx, &format!("undo {}", h.id));
-    assert_eq!(kinds_of(&sp, "seat.retire"), vec![reviewer.to_any()], "only the seat nothing else uses is withdrawn");
-    assert_eq!(kinds_of(&sp, "seat.keep"), vec![engineer.to_any()], "the seat billing reused later stays");
+    assert_eq!(
+        kinds_of(&sp, "seat.retire"),
+        vec![reviewer.to_any()],
+        "only the seat nothing else uses is withdrawn"
+    );
+    assert_eq!(
+        kinds_of(&sp, "seat.keep"),
+        vec![engineer.to_any()],
+        "the seat billing reused later stays"
+    );
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
 
     let r = seat_by_id(&fx, &reviewer);
     assert_eq!(r.lifecycle, Lifecycle::Retired);
-    assert_eq!(r.retired.unwrap().mechanism, RetireMechanism::Undo, "retirements performed by undo use mechanism undo");
+    assert_eq!(
+        r.retired.unwrap().mechanism,
+        RetireMechanism::Undo,
+        "retirements performed by undo use mechanism undo"
+    );
     assert_ne!(seat_by_id(&fx, &engineer).lifecycle, Lifecycle::Retired);
     assert_eq!(app(&fx, "auth").lifecycle, AppLifecycle::Retired);
     assert_eq!(app(&fx, "billing").lifecycle, AppLifecycle::Active);
@@ -573,19 +897,40 @@ fn template_edit_undo_inverse_patch() {
     create_template(&fx, "solo", &[m(&e, "engineer", "deferred")]);
     let before = tpl(&fx, "solo");
     assert_eq!(before.members[0].defaults.model, None);
-    let edit = edit_template(&fx, "solo", &[M { model: Some("opus"), ..m(&e, "engineer", "deferred") }]);
+    let edit = edit_template(
+        &fx,
+        "solo",
+        &[M {
+            model: Some("opus"),
+            ..m(&e, "engineer", "deferred")
+        }],
+    );
     let act = action_of(&fx, &edit);
     assert_eq!(act.kind, ActionKind::TemplateEdit);
-    assert_eq!(tpl(&fx, "solo").members[0].defaults.model.as_deref(), Some("opus"));
+    assert_eq!(
+        tpl(&fx, "solo").members[0].defaults.model.as_deref(),
+        Some("opus")
+    );
 
     let sp = plan(&fx, &format!("undo {}", act.id));
-    assert_eq!(kinds_of(&sp, "template.edit").len(), 1, "the inverse patch is a template edit");
+    assert_eq!(
+        kinds_of(&sp, "template.edit").len(),
+        1,
+        "the inverse patch is a template edit"
+    );
     assert!(sp.plan.repair_required.is_none());
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    assert_eq!(tpl(&fx, "solo").members[0].defaults.model, None, "the changed field is back to its before-value");
+    assert_eq!(
+        tpl(&fx, "solo").members[0].defaults.model,
+        None,
+        "the changed field is back to its before-value"
+    );
     let undo = action_of(&fx, &row);
-    assert_eq!((undo.kind, undo.undoes), (ActionKind::Undo, Some(act.id.clone())));
+    assert_eq!(
+        (undo.kind, undo.undoes),
+        (ActionKind::Undo, Some(act.id.clone()))
+    );
 }
 
 #[test]
@@ -593,15 +938,53 @@ fn template_edit_undo_with_conflicting_later_edit_is_repair_required() {
     let fx = fx();
     let e = MemberId::new();
     create_template(&fx, "solo", &[m(&e, "engineer", "deferred")]);
-    let first = action_of(&fx, &edit_template(&fx, "solo", &[M { model: Some("opus"), ..m(&e, "engineer", "deferred") }]));
-    let second = action_of(&fx, &edit_template(&fx, "solo", &[M { model: Some("sonnet"), ..m(&e, "engineer", "deferred") }]));
+    let first = action_of(
+        &fx,
+        &edit_template(
+            &fx,
+            "solo",
+            &[M {
+                model: Some("opus"),
+                ..m(&e, "engineer", "deferred")
+            }],
+        ),
+    );
+    let second = action_of(
+        &fx,
+        &edit_template(
+            &fx,
+            "solo",
+            &[M {
+                model: Some("sonnet"),
+                ..m(&e, "engineer", "deferred")
+            }],
+        ),
+    );
 
     let sp = plan(&fx, &format!("undo {}", first.id));
-    let why = sp.plan.repair_required.clone().expect("a later edit of the same field blocks the undo");
-    assert!(why.contains(second.id.as_str()), "the conflicting action is named: {why}");
-    let err = admit_apply(&fx.deps, &caller(None), sp.plan.id.as_str(), Some(&sp.hash), "relay").unwrap_err();
+    let why = sp
+        .plan
+        .repair_required
+        .clone()
+        .expect("a later edit of the same field blocks the undo");
+    assert!(
+        why.contains(second.id.as_str()),
+        "the conflicting action is named: {why}"
+    );
+    let err = admit_apply(
+        &fx.deps,
+        &caller(None),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_err();
     assert!(err.message.contains("repair"), "{}", err.message);
-    assert_eq!(tpl(&fx, "solo").members[0].defaults.model.as_deref(), Some("sonnet"), "the later edit is untouched");
+    assert_eq!(
+        tpl(&fx, "solo").members[0].defaults.model.as_deref(),
+        Some("sonnet"),
+        "the later edit is untouched"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -624,13 +1007,30 @@ fn candidates_newest_first_with_undone_marked() {
 
     let list = list_candidates(&view(&fx), 20).unwrap();
     let ids: Vec<&ActionId> = list.iter().map(|c| &c.act).collect();
-    assert_eq!(ids, vec![&acts[2].id, &acts[1].id, &acts[0].id], "newest first; the undo itself is not a candidate");
-    assert_eq!(list.iter().map(|c| c.undone).collect::<Vec<_>>(), vec![false, true, false]);
-    assert_eq!(list.iter().map(|c| c.index).collect::<Vec<_>>(), vec![1, 2, 3]);
-    assert_eq!(list_candidates(&view(&fx), 2).unwrap().len(), 2, "the list is limited");
+    assert_eq!(
+        ids,
+        vec![&acts[2].id, &acts[1].id, &acts[0].id],
+        "newest first; the undo itself is not a candidate"
+    );
+    assert_eq!(
+        list.iter().map(|c| c.undone).collect::<Vec<_>>(),
+        vec![false, true, false]
+    );
+    assert_eq!(
+        list.iter().map(|c| c.index).collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        list_candidates(&view(&fx), 2).unwrap().len(),
+        2,
+        "the list is limited"
+    );
     let text = render_list(&list);
     assert_eq!(text.matches("[undone]").count(), 1, "{text}");
-    assert!(text.lines().nth(1).unwrap().contains("[undone]"), "the undone entry is the second line: {text}");
+    assert!(
+        text.lines().nth(1).unwrap().contains("[undone]"),
+        "the undone entry is the second line: {text}"
+    );
     assert!(text.contains("a") && text.contains(acts[0].id.as_str()));
 }
 
@@ -645,16 +1045,30 @@ fn undo_writes_compensating_action_and_marks_original_undone() {
     let row = commit(&fx, &format!("undo {}", act.id));
     let undo = action_of(&fx, &row);
     assert_eq!(undo.kind, ActionKind::Undo);
-    assert_eq!(undo.undoes, Some(act.id.clone()), "kind undo, undoes the original act_");
+    assert_eq!(
+        undo.undoes,
+        Some(act.id.clone()),
+        "kind undo, undoes the original act_"
+    );
     assert_eq!(undo.ops, vec![row.op.clone()]);
-    assert!(undo.affected.iter().any(|a| a.object == seat.id.to_any()), "the resurrected seat is recorded");
+    assert!(
+        undo.affected.iter().any(|a| a.object == seat.id.to_any()),
+        "the resurrected seat is recorded"
+    );
     let orig = action(&fx, &act.id);
-    assert_eq!(orig.undone_by, vec![row.op.clone()], "the original action names the undo op");
+    assert_eq!(
+        orig.undone_by,
+        vec![row.op.clone()],
+        "the original action names the undo op"
+    );
     assert!(orig.rev > rev_before, "the original record's rev is bumped");
 
     let again = plan_err(&fx, &format!("undo {}", act.id));
     assert!(again.contains("already undone"), "{again}");
-    assert!(plan_err(&fx, &format!("undo {}", undo.id)).contains("cannot be undone"), "an undo is history, not a candidate");
+    assert!(
+        plan_err(&fx, &format!("undo {}", undo.id)).contains("cannot be undone"),
+        "an undo is history, not a candidate"
+    );
 }
 
 // exclusions added by a retirement ------------------------------------------------------------
@@ -662,7 +1076,11 @@ fn undo_writes_compensating_action_and_marks_original_undone() {
 fn duo_setup(fx: &Fx) -> (MemberId, MemberId) {
     alpha(fx);
     let (e, r) = (MemberId::new(), MemberId::new());
-    create_template(fx, "duo", &[m(&e, "engineer", "active"), m(&r, "reviewer", "active")]);
+    create_template(
+        fx,
+        "duo",
+        &[m(&e, "engineer", "active"), m(&r, "reviewer", "active")],
+    );
     apply_app(fx, "duo", "one");
     (e, r)
 }
@@ -670,7 +1088,12 @@ fn duo_setup(fx: &Fx) -> (MemberId, MemberId) {
 fn tab_close_engineer(fx: &Fx) -> (SeatRecord, ActionRecord) {
     let eng = seat_named(fx, "engineer");
     let mut ids = vec![eng.id.to_any()];
-    ids.extend(clones_of(fx, &eng.id).iter().filter(|c| c.lifecycle == CloneLifecycle::Active).map(|c| c.id.to_any()));
+    ids.extend(
+        clones_of(fx, &eng.id)
+            .iter()
+            .filter(|c| c.lifecycle == CloneLifecycle::Active)
+            .map(|c| c.id.to_any()),
+    );
     let act = cascade(fx, CascadeRule::Tab, &ids);
     (eng, act)
 }
@@ -682,10 +1105,15 @@ fn undo_tab_close_removes_the_exclusion_it_added() {
     let (eng, act) = tab_close_engineer(&fx);
     let a = app(&fx, "one");
     assert_eq!(a.exclusions, vec![e.clone()]);
-    let rows = act.compensation["exclusions_added"].as_array().expect("recorded");
+    let rows = act.compensation["exclusions_added"]
+        .as_array()
+        .expect("recorded");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["seat"].as_str(), Some(eng.id.to_string().as_str()));
-    assert_eq!(rows[0]["application"].as_str(), Some(a.id.to_string().as_str()));
+    assert_eq!(
+        rows[0]["application"].as_str(),
+        Some(a.id.to_string().as_str())
+    );
     assert_eq!(rows[0]["member"].as_str(), Some(e.to_string().as_str()));
     let st = crate::templates::structure::effective_structure(&view(&fx), &a).unwrap();
     assert!(st.excluded.contains(&e));

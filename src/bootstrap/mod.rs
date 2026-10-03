@@ -70,9 +70,11 @@ pub fn register_commands(reg: &mut Registry, deps: BootstrapDeps) {
         async move {
             let op = {
                 let d = d.clone();
-                tokio::task::spawn_blocking(move || content::admit_write(&d.plan, &cx.caller, &args))
-                    .await
-                    .map_err(internal)??
+                tokio::task::spawn_blocking(move || {
+                    content::admit_write(&d.plan, &cx.caller, &args)
+                })
+                .await
+                .map_err(internal)??
             };
             wait_result(&d.plan, &op).await
         }
@@ -94,7 +96,11 @@ fn abs(root: &Path, p: &RepoPath) -> String {
 }
 
 /// Regular files directly under `dir` whose name ends in `.md`, as absolute working-tree paths.
-fn markdown_in(tree: &dyn TreeRead, root: &Path, dir: &RepoPath) -> Result<Vec<String>, StoreError> {
+fn markdown_in(
+    tree: &dyn TreeRead,
+    root: &Path,
+    dir: &RepoPath,
+) -> Result<Vec<String>, StoreError> {
     let mut out = Vec::new();
     for e in tree.list_dir(dir)? {
         if e.kind == crate::ports::store::EntryKind::File && e.name.ends_with(".md") {
@@ -105,7 +111,12 @@ fn markdown_in(tree: &dyn TreeRead, root: &Path, dir: &RepoPath) -> Result<Vec<S
     Ok(out)
 }
 
-fn files_below(tree: &dyn TreeRead, root: &Path, dir: &RepoPath, out: &mut Vec<String>) -> Result<(), StoreError> {
+fn files_below(
+    tree: &dyn TreeRead,
+    root: &Path,
+    dir: &RepoPath,
+    out: &mut Vec<String>,
+) -> Result<(), StoreError> {
     for e in tree.list_dir(dir)? {
         let child = dir.join(&e.name)?;
         if e.kind == crate::ports::store::EntryKind::Dir {
@@ -130,35 +141,47 @@ fn bound_paths(
     clone_id: &CloneId,
 ) -> Result<BoundPaths, StoreError> {
     let seat_loc = layout::locate(tree, &seat_id.to_any())?.ok_or_else(|| missing(seat_id))?;
-    let seat: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat_id))?;
+    let seat: SeatRecord =
+        read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat_id))?;
     let clone_loc = layout::locate(tree, &clone_id.to_any())?.ok_or_else(|| missing(clone_id))?;
-    let clone: CloneRecord = read_toml(tree, &clone_loc.record_path)?.ok_or_else(|| missing(clone_id))?;
-    let ts_loc = layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
+    let clone: CloneRecord =
+        read_toml(tree, &clone_loc.record_path)?.ok_or_else(|| missing(clone_id))?;
+    let ts_loc =
+        layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
 
     let mut templates = Vec::new();
-    let mut push_template = |loc: &ObjectLocation, member: Option<&str>| -> Result<(), StoreError> {
-        let rec = abs(root, &loc.record_path);
-        if !templates.contains(&rec) {
-            templates.push(rec);
-        }
-        if let Some(name) = member {
-            let md = layout::member_agents_md(&loc.folder, &slugify(name));
-            if tree.read_file(&md)?.is_some() {
-                templates.push(abs(root, &md));
+    let mut push_template =
+        |loc: &ObjectLocation, member: Option<&str>| -> Result<(), StoreError> {
+            let rec = abs(root, &loc.record_path);
+            if !templates.contains(&rec) {
+                templates.push(rec);
             }
-        }
-        Ok(())
-    };
+            if let Some(name) = member {
+                let md = layout::member_agents_md(&loc.folder, &slugify(name));
+                if tree.read_file(&md)?.is_some() {
+                    templates.push(abs(root, &md));
+                }
+            }
+            Ok(())
+        };
     if let Some(r) = &seat.template_ref
         && let Some(loc) = layout::locate(tree, &r.template.to_any())?
     {
-        let member = read_toml::<TemplateRecord>(tree, &loc.record_path)?
-            .and_then(|t| t.members.into_iter().find(|m| m.id == r.member).map(|m| m.name));
+        let member = read_toml::<TemplateRecord>(tree, &loc.record_path)?.and_then(|t| {
+            t.members
+                .into_iter()
+                .find(|m| m.id == r.member)
+                .map(|m| m.name)
+        });
         push_template(&loc, member.as_deref())?;
     }
     for app in &seat.applications {
-        let Some(app_loc) = layout::locate(tree, &app.to_any())? else { continue };
-        let Some(app) = read_toml::<ApplicationRecord>(tree, &app_loc.record_path)? else { continue };
+        let Some(app_loc) = layout::locate(tree, &app.to_any())? else {
+            continue;
+        };
+        let Some(app) = read_toml::<ApplicationRecord>(tree, &app_loc.record_path)? else {
+            continue;
+        };
         if let Some(loc) = layout::locate(tree, &app.template.to_any())? {
             push_template(&loc, None)?;
         }
@@ -180,18 +203,31 @@ fn bound_paths(
         "clone_folder": abs(root, &clone_loc.folder),
         "clone_files": clone_files,
     });
-    Ok(BoundPaths { value, reload_required: clone.reload_required || seat.reload_required })
+    Ok(BoundPaths {
+        value,
+        reload_required: clone.reload_required || seat.reload_required,
+    })
 }
 
 fn missing(id: impl std::fmt::Display) -> StoreError {
-    StoreError::Corrupt { path: id.to_string(), reason: "object not found at the committed revision".into() }
+    StoreError::Corrupt {
+        path: id.to_string(),
+        reason: "object not found at the committed revision".into(),
+    }
 }
 
 /// `seat.resolve`: resolution, proposals (stored, never applied), paths, pending ops and invitations.
-pub fn seat_reply(d: &BootstrapDeps, caller: &CallerInfo, pane: Option<&PaneInfo>) -> Result<Value, CommandError> {
+pub fn seat_reply(
+    d: &BootstrapDeps,
+    caller: &CallerInfo,
+    pane: Option<&PaneInfo>,
+) -> Result<Value, CommandError> {
     let store: &dyn Store = &*d.plan.store;
     let head = store.head().map_err(internal)?;
-    let view = CommitView { store, at: head.clone() };
+    let view = CommitView {
+        store,
+        at: head.clone(),
+    };
     let root = d.plan.instance.as_path();
 
     let mut resolution = resolve_caller(&view, caller, pane);
@@ -214,38 +250,46 @@ pub fn seat_reply(d: &BootstrapDeps, caller: &CallerInfo, pane: Option<&PaneInfo
         }
     }
 
-    let global_rules = markdown_in(&view, root, &RepoPath::new("rules").map_err(internal)?).map_err(internal)?;
-    let (paths, pending_ops, invitations, reload_required, beads_query, beads_labels) = match &resolution {
-        Resolution::Bound { teamspace, seat, clone, native_session, .. } => {
-            let bp = bound_paths(&view, root, seat, clone).map_err(internal)?;
-            let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
-            let mut labels = json!({
-                "ts": format!("hg-ts:{teamspace}"),
-                "seat": format!("hg-seat:{seat}"),
-                "clone": format!("hg-clone:{clone}"),
-            });
-            if let Some(ns) = native_session {
-                labels["ns"] = json!(format!("hg-ns:{ns}"));
+    let global_rules =
+        markdown_in(&view, root, &RepoPath::new("rules").map_err(internal)?).map_err(internal)?;
+    let (paths, pending_ops, invitations, reload_required, beads_query, beads_labels) =
+        match &resolution {
+            Resolution::Bound {
+                teamspace,
+                seat,
+                clone,
+                native_session,
+                ..
+            } => {
+                let bp = bound_paths(&view, root, seat, clone).map_err(internal)?;
+                let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
+                let mut labels = json!({
+                    "ts": format!("hg-ts:{teamspace}"),
+                    "seat": format!("hg-seat:{seat}"),
+                    "clone": format!("hg-clone:{clone}"),
+                });
+                if let Some(ns) = native_session {
+                    labels["ns"] = json!(format!("hg-ns:{ns}"));
+                }
+                (
+                    bp.value,
+                    serde_json::to_value(ops).map_err(internal)?,
+                    serde_json::to_value(pending_invitations(&view, clone)).map_err(internal)?,
+                    bp.reload_required,
+                    json!(format!("bd list --label hg-seat:{seat}")),
+                    labels,
+                )
             }
-            (
-                bp.value,
-                serde_json::to_value(ops).map_err(internal)?,
-                serde_json::to_value(pending_invitations(&view, clone)).map_err(internal)?,
-                bp.reload_required,
-                json!(format!("bd list --label hg-seat:{seat}")),
-                labels,
-            )
-        }
-        _ => (
-            json!({ "templates": [], "rules": { "global": global_rules, "team": [], "seat": [] },
+            _ => (
+                json!({ "templates": [], "rules": { "global": global_rules, "team": [], "seat": [] },
                     "seat_agents_md": null, "seat_folder": null, "clone_folder": null, "clone_files": [] }),
-            json!([]),
-            json!([]),
-            false,
-            Value::Null,
-            Value::Null,
-        ),
-    };
+                json!([]),
+                json!([]),
+                false,
+                Value::Null,
+                Value::Null,
+            ),
+        };
     let dirty: Vec<String> = read_dirty(root).into_iter().map(|e| e.path).collect();
     let mut reply = json!({
         "resolution": resolution,
@@ -268,12 +312,21 @@ pub fn seat_reply(d: &BootstrapDeps, caller: &CallerInfo, pane: Option<&PaneInfo
 
 /// `seat --hook-prompt`: whether the SessionStart hook should print `run /seat`. True when `HERDR_GRAPH=1`
 /// (the pane was launched by graph) or when the pane id resolves to a bound live clone (spec §9, r2).
-pub fn wants_seat_prompt(graph_env: Option<&str>, tree: Option<&dyn TreeRead>, pane: Option<&str>) -> bool {
+pub fn wants_seat_prompt(
+    graph_env: Option<&str>,
+    tree: Option<&dyn TreeRead>,
+    pane: Option<&str>,
+) -> bool {
     if graph_env == Some("1") {
         return true;
     }
-    let (Some(tree), Some(pane)) = (tree, pane) else { return false };
-    let caller = CallerInfo { pane_id: Some(pane.to_owned()), ..CallerInfo::default() };
+    let (Some(tree), Some(pane)) = (tree, pane) else {
+        return false;
+    };
+    let caller = CallerInfo {
+        pane_id: Some(pane.to_owned()),
+        ..CallerInfo::default()
+    };
     matches!(resolve_caller(tree, &caller, None), Resolution::Bound { via, .. } if via == "binding")
 }
 
@@ -290,13 +343,20 @@ pub fn render_seat(reply: &Value) -> String {
             text(&r["clone"]),
             text(&r["via"])
         )),
-        Some(other) => out.push_str(&format!("{other}: this pane is not identified as a graph clone\n")),
+        Some(other) => out.push_str(&format!(
+            "{other}: this pane is not identified as a graph clone\n"
+        )),
         None => out.push_str("unknown resolution\n"),
     }
     if let Some(cands) = r["candidates"].as_array().filter(|c| !c.is_empty()) {
         out.push_str("candidates:\n");
         for c in cands {
-            out.push_str(&format!("  {} (seat {}): {}\n", text(&c["clone"]), text(&c["seat"]), text(&c["reason"])));
+            out.push_str(&format!(
+                "  {} (seat {}): {}\n",
+                text(&c["clone"]),
+                text(&c["seat"]),
+                text(&c["reason"])
+            ));
         }
     }
     if r["proposal"].is_object() {
@@ -320,7 +380,10 @@ pub fn render_seat(reply: &Value) -> String {
         text(&reply["view_rev"])
     ));
     let list = |out: &mut String, title: &str, v: &Value| {
-        let items: Vec<String> = v.as_array().map(|a| a.iter().map(&text).collect()).unwrap_or_default();
+        let items: Vec<String> = v
+            .as_array()
+            .map(|a| a.iter().map(&text).collect())
+            .unwrap_or_default();
         if !items.is_empty() {
             out.push_str(&format!("{title}:\n"));
             for i in items {
@@ -328,7 +391,11 @@ pub fn render_seat(reply: &Value) -> String {
             }
         }
     };
-    list(&mut out, "uncommitted local edits (worktree_dirty)", &reply["worktree_dirty"]);
+    list(
+        &mut out,
+        "uncommitted local edits (worktree_dirty)",
+        &reply["worktree_dirty"],
+    );
     let p = &reply["paths"];
     list(&mut out, "templates", &p["templates"]);
     list(&mut out, "global rules", &p["rules"]["global"]);
@@ -347,13 +414,26 @@ pub fn render_seat(reply: &Value) -> String {
     if let Some(ops) = reply["pending_ops"].as_array().filter(|o| !o.is_empty()) {
         out.push_str("pending ops:\n");
         for o in ops {
-            out.push_str(&format!("  {} {} {}\n", text(&o["op"]), text(&o["state"]), text(&o["summary"])));
+            out.push_str(&format!(
+                "  {} {} {}\n",
+                text(&o["op"]),
+                text(&o["state"]),
+                text(&o["summary"])
+            ));
         }
     }
-    if let Some(inv) = reply["pending_invitations"].as_array().filter(|i| !i.is_empty()) {
+    if let Some(inv) = reply["pending_invitations"]
+        .as_array()
+        .filter(|i| !i.is_empty())
+    {
         out.push_str("pending invitations (run the commands):\n");
         for i in inv {
-            out.push_str(&format!("  {} [{}]: {}\n", text(&i["thread"]), text(&i["constraint"]), text(&i["accept_command"])));
+            out.push_str(&format!(
+                "  {} [{}]: {}\n",
+                text(&i["thread"]),
+                text(&i["constraint"]),
+                text(&i["accept_command"])
+            ));
         }
     }
     if reply["reload_required"] == true {

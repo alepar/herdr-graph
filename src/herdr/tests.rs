@@ -1,6 +1,8 @@
 use super::client::{HerdrClient, RECONNECTED_EVENT};
-use super::fake::{FakeCall, Fault, FakeHerdr};
-use super::isolation::{IsolationError, IsolationGuard, live_resources_from, scrubbed_env_from, tripwire_verdict};
+use super::fake::{FakeCall, FakeHerdr, Fault};
+use super::isolation::{
+    IsolationError, IsolationGuard, live_resources_from, scrubbed_env_from, tripwire_verdict,
+};
 use super::{incarnation, wire};
 use crate::model::harness::StartOutcome;
 use crate::model::{HerdrPaneId, HerdrTabId, HerdrTerminalId, HerdrWorkspaceId};
@@ -133,7 +135,10 @@ fn pane(id: &str) -> HerdrPaneId {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let dir = PathBuf::from(format!("/private/tmp/hg-ut-{tag}-{}", ulid::Ulid::new().to_string().to_lowercase()));
+    let dir = PathBuf::from(format!(
+        "/private/tmp/hg-ut-{tag}-{}",
+        ulid::Ulid::new().to_string().to_lowercase()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -148,16 +153,31 @@ fn parse_snapshot_fixture() {
     let ws = &snap.workspaces[0];
     assert_eq!(ws.id, HerdrWorkspaceId("w2".into()));
     assert_eq!(ws.label, "fx");
-    assert_eq!(ws.metadata.get("hg").map(String::as_str), Some("ts_01HZZZZZZZZZZZZZZZZZZZZZZZ"));
-    assert_eq!(ws.tabs.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["1", "work"]);
+    assert_eq!(
+        ws.metadata.get("hg").map(String::as_str),
+        Some("ts_01HZZZZZZZZZZZZZZZZZZZZZZZ")
+    );
+    assert_eq!(
+        ws.tabs.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(),
+        ["1", "work"]
+    );
     assert_eq!(ws.tabs[0].id, HerdrTabId("w2:t1".into()));
 
     let labelled = &ws.tabs[0].panes[0];
     assert_eq!(labelled.id, pane("w2:p1"));
     assert_eq!(labelled.label.as_deref(), Some("planner"));
-    assert_eq!(labelled.terminal_id, Some(HerdrTerminalId("term_65cd82d92bdc57".into())));
-    assert_eq!(labelled.cwd.as_deref(), Some(Path::new("/private/tmp/hg-explore")));
-    assert_eq!(labelled.metadata.get("hg").map(String::as_str), Some("cl_01HYYYYYYYYYYYYYYYYYYYYYYY"));
+    assert_eq!(
+        labelled.terminal_id,
+        Some(HerdrTerminalId("term_65cd82d92bdc57".into()))
+    );
+    assert_eq!(
+        labelled.cwd.as_deref(),
+        Some(Path::new("/private/tmp/hg-explore"))
+    );
+    assert_eq!(
+        labelled.metadata.get("hg").map(String::as_str),
+        Some("cl_01HYYYYYYYYYYYYYYYYYYYYYYY")
+    );
     assert_eq!(labelled.agent, None);
 
     let agent_pane = &ws.tabs[1].panes[0];
@@ -166,28 +186,43 @@ fn parse_snapshot_fixture() {
     assert!(agent_pane.metadata.is_empty());
     assert_eq!(
         agent_pane.agent,
-        Some(AgentInfo { kind: "claude".into(), status: AgentStatus::Working, session: Some(AgentSession::Id("sess-123".into())) })
+        Some(AgentInfo {
+            kind: "claude".into(),
+            status: AgentStatus::Working,
+            session: Some(AgentSession::Id("sess-123".into()))
+        })
     );
 }
 
 #[test]
 fn parse_snapshot_rejects_malformed_and_maps_path_sessions() {
     let err = wire::parse_snapshot(&json!({"snapshot": {"workspaces": []}})).unwrap_err();
-    assert!(matches!(err, HerdrError::Protocol(m) if m.contains("tabs") || m.contains("agents") || m.contains("panes")));
+    assert!(
+        matches!(err, HerdrError::Protocol(m) if m.contains("tabs") || m.contains("agents") || m.contains("panes"))
+    );
     let agent = wire::parse_agent(&json!({
         "agent": "codex", "agent_status": "blocked",
         "agent_session": {"source": "s", "agent": "codex", "kind": "path", "value": "/x/rollout.jsonl"}
     }))
     .unwrap();
     assert_eq!(agent.status, AgentStatus::Blocked);
-    assert_eq!(agent.session, Some(AgentSession::Path(PathBuf::from("/x/rollout.jsonl"))));
-    assert_eq!(wire::parse_agent(&json!({"agent": null, "agent_status": "idle"})), None);
+    assert_eq!(
+        agent.session,
+        Some(AgentSession::Path(PathBuf::from("/x/rollout.jsonl")))
+    );
+    assert_eq!(
+        wire::parse_agent(&json!({"agent": null, "agent_status": "idle"})),
+        None
+    );
 }
 
 #[test]
 fn wire_error_maps_to_rejected() {
-    let line = r#"{"id":"hg-1","error":{"code":"agent_not_ready","message":"trust dialog showing"}}"#;
-    let wire::Frame::Response(resp) = wire::parse_frame(line).unwrap() else { panic!("not a response") };
+    let line =
+        r#"{"id":"hg-1","error":{"code":"agent_not_ready","message":"trust dialog showing"}}"#;
+    let wire::Frame::Response(resp) = wire::parse_frame(line).unwrap() else {
+        panic!("not a response")
+    };
     let err = wire::error_to_rejected(wire::M_AGENT_START, resp.error.as_ref().unwrap());
     match &err {
         HerdrError::Rejected { method, message } => {
@@ -202,12 +237,19 @@ fn wire_error_maps_to_rejected() {
 
 #[test]
 fn request_envelope_shape() {
-    let req = wire::WireRequest { id: "hg-7".into(), method: wire::M_TAB_CREATE, params: json!({"label": "t"}) };
+    let req = wire::WireRequest {
+        id: "hg-7".into(),
+        method: wire::M_TAB_CREATE,
+        params: json!({"label": "t"}),
+    };
     let line = req.to_line().unwrap();
     assert_eq!(*line.last().unwrap(), b'\n');
     assert_eq!(line.iter().filter(|b| **b == b'\n').count(), 1);
     let v: Value = serde_json::from_slice(&line).unwrap();
-    assert_eq!(v, json!({"id": "hg-7", "method": "tab.create", "params": {"label": "t"}}));
+    assert_eq!(
+        v,
+        json!({"id": "hg-7", "method": "tab.create", "params": {"label": "t"}})
+    );
 }
 
 #[test]
@@ -252,7 +294,10 @@ enum Reply {
     Error(&'static str, &'static str),
     Silent,
     /// Ack the subscription, send these event lines, then close (`hold` keeps the connection open).
-    Subscribe { events: Vec<Value>, hold: bool },
+    Subscribe {
+        events: Vec<Value>,
+        hold: bool,
+    },
 }
 
 /// Minimal Herdr stand-in: one request per connection, answered by `handler(method, params, nth_connection)`.
@@ -266,7 +311,9 @@ fn mini_server(
     tokio::spawn(async move {
         let mut n = 0usize;
         loop {
-            let Ok((stream, _)) = listener.accept().await else { return };
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
             let nth = n;
             n += 1;
             let handler = handler.clone();
@@ -280,7 +327,9 @@ fn mini_server(
                 let id = req["id"].clone();
                 match handler(req["method"].as_str().unwrap(), &req["params"], nth) {
                     Reply::Result(v) => {
-                        let _ = w.write_all(format!("{}\n", json!({"id": id, "result": v})).as_bytes()).await;
+                        let _ = w
+                            .write_all(format!("{}\n", json!({"id": id, "result": v})).as_bytes())
+                            .await;
                     }
                     Reply::Error(code, message) => {
                         let body = json!({"id": id, "error": {"code": code, "message": message}});
@@ -311,7 +360,10 @@ fn empty_snapshot() -> Value {
 #[tokio::test]
 async fn client_connect_failure_is_unavailable() {
     let c = HerdrClient::new(PathBuf::from("/private/tmp/hg-ut-absent.sock"));
-    assert!(matches!(c.request(wire::M_SNAPSHOT, json!({})).await, Err(HerdrError::Unavailable(_))));
+    assert!(matches!(
+        c.request(wire::M_SNAPSHOT, json!({})).await,
+        Err(HerdrError::Unavailable(_))
+    ));
 }
 
 #[tokio::test]
@@ -319,7 +371,10 @@ async fn client_deadline_is_timeout() {
     let dir = scratch("timeout");
     let socket = mini_server(&dir, |_, _, _| Reply::Silent);
     let c = HerdrClient::new(socket).with_timeout(Duration::from_millis(150));
-    assert!(matches!(c.request(wire::M_SNAPSHOT, json!({})).await, Err(HerdrError::Timeout)));
+    assert!(matches!(
+        c.request(wire::M_SNAPSHOT, json!({})).await,
+        Err(HerdrError::Timeout)
+    ));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -338,7 +393,11 @@ async fn client_sends_schema_params_and_returns_created_ids() {
     });
     let c = HerdrClient::new(socket);
     let made = c
-        .create_workspace(CreateWorkspace { label: "ws".into(), cwd: "/work".into(), env: vec![("A".into(), "1".into())] })
+        .create_workspace(CreateWorkspace {
+            label: "ws".into(),
+            cwd: "/work".into(),
+            env: vec![("A".into(), "1".into())],
+        })
         .await
         .unwrap();
     assert_eq!(made.workspace, Some(HerdrWorkspaceId("w9".into())));
@@ -347,7 +406,10 @@ async fn client_sends_schema_params_and_returns_created_ids() {
     let calls = seen.lock().unwrap().clone();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].0, "workspace.create");
-    assert_eq!(calls[0].1, json!({"label": "ws", "cwd": "/work", "env": {"A": "1"}, "focus": false}));
+    assert_eq!(
+        calls[0].1,
+        json!({"label": "ws", "cwd": "/work", "env": {"A": "1"}, "focus": false})
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -366,10 +428,22 @@ async fn client_start_agent_maps_outcomes() {
         _ => Reply::Error("unexpected", "unexpected"),
     });
     let c = HerdrClient::new(socket);
-    let start = |p: &str| StartAgent { pane: pane(p), kind: "claude".into(), args: vec![] };
-    assert_eq!(c.start_agent(start("ready")).await.unwrap(), StartOutcome::Started);
-    assert_eq!(c.start_agent(start("trust")).await.unwrap(), StartOutcome::BlockedNeedsHuman);
-    let StartOutcome::NeedsRevision { reason } = c.start_agent(start("busy")).await.unwrap() else { panic!("expected NeedsRevision") };
+    let start = |p: &str| StartAgent {
+        pane: pane(p),
+        kind: "claude".into(),
+        args: vec![],
+    };
+    assert_eq!(
+        c.start_agent(start("ready")).await.unwrap(),
+        StartOutcome::Started
+    );
+    assert_eq!(
+        c.start_agent(start("trust")).await.unwrap(),
+        StartOutcome::BlockedNeedsHuman
+    );
+    let StartOutcome::NeedsRevision { reason } = c.start_agent(start("busy")).await.unwrap() else {
+        panic!("expected NeedsRevision")
+    };
     assert!(reason.contains("pane_busy"));
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -377,7 +451,9 @@ async fn client_start_agent_maps_outcomes() {
 #[tokio::test]
 async fn client_agent_not_found_is_none() {
     let dir = scratch("agentget");
-    let socket = mini_server(&dir, |_, _, _| Reply::Error("agent_not_found", "agent target p not found"));
+    let socket = mini_server(&dir, |_, _, _| {
+        Reply::Error("agent_not_found", "agent target p not found")
+    });
     let c = HerdrClient::new(socket);
     assert_eq!(c.agent(&pane("p")).await.unwrap(), None);
     let _ = std::fs::remove_dir_all(dir);
@@ -393,12 +469,31 @@ async fn client_send_keys_batches_keys_and_sends_text_separately() {
         Reply::Result(json!({"type": "ok"}))
     });
     let c = HerdrClient::new(socket);
-    c.send_keys(&pane("p1"), &[KeyInput::Text("echo hi".into()), KeyInput::Key("Enter".into()), KeyInput::Key("Tab".into())])
-        .await
-        .unwrap();
+    c.send_keys(
+        &pane("p1"),
+        &[
+            KeyInput::Text("echo hi".into()),
+            KeyInput::Key("Enter".into()),
+            KeyInput::Key("Tab".into()),
+        ],
+    )
+    .await
+    .unwrap();
     let calls = seen.lock().unwrap().clone();
-    assert_eq!(calls[0], ("pane.send_text".to_owned(), json!({"pane_id": "p1", "text": "echo hi"})));
-    assert_eq!(calls[1], ("pane.send_keys".to_owned(), json!({"pane_id": "p1", "keys": ["Enter", "Tab"]})));
+    assert_eq!(
+        calls[0],
+        (
+            "pane.send_text".to_owned(),
+            json!({"pane_id": "p1", "text": "echo hi"})
+        )
+    );
+    assert_eq!(
+        calls[1],
+        (
+            "pane.send_keys".to_owned(),
+            json!({"pane_id": "p1", "keys": ["Enter", "Tab"]})
+        )
+    );
     assert_eq!(calls.len(), 2);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -410,31 +505,51 @@ async fn subscribe_forwards_events_then_reconnects_with_marker() {
         "session.snapshot" => Reply::Result(empty_snapshot()),
         "events.subscribe" => {
             // Every topic is requested; `pane.agent_status_changed` is per pane, so none for an empty snapshot.
-            let topics: Vec<&str> = p["subscriptions"].as_array().unwrap().iter().map(|s| s["type"].as_str().unwrap()).collect();
+            let topics: Vec<&str> = p["subscriptions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["type"].as_str().unwrap())
+                .collect();
             assert!(topics.contains(&"tab.created") && topics.contains(&"pane.agent_detected"));
             assert!(!topics.contains(&"pane.agent_status_changed"));
             // The first connection delivers one event and drops; later ones stay open.
-            Reply::Subscribe { events: vec![json!({"event": "tab_created", "data": {"tab_id": "t1"}})], hold: false }
+            Reply::Subscribe {
+                events: vec![json!({"event": "tab_created", "data": {"tab_id": "t1"}})],
+                hold: false,
+            }
         }
         _ => Reply::Error("unexpected", m.to_owned().leak()),
     });
     let c = HerdrClient::new(socket);
     let mut rx = c.subscribe().await.unwrap();
-    assert!(c.snapshot().await.unwrap().incarnation.generation >= 1, "subscribe bumps the generation");
-    let first = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+    assert!(
+        c.snapshot().await.unwrap().incarnation.generation >= 1,
+        "subscribe bumps the generation"
+    );
+    let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first.name, "tab_created");
     assert_eq!(first.payload["tab_id"], "t1");
     // The server dropped the connection after the event: the reader reconnects and says so.
     let mut saw_marker = None;
     for _ in 0..10 {
-        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         if ev.name == RECONNECTED_EVENT {
             saw_marker = Some(ev);
             break;
         }
     }
     let marker = saw_marker.expect("reconnect marker event");
-    assert!(marker.payload["generation"].as_u64().unwrap() >= 2, "reconnect bumps the generation again");
+    assert!(
+        marker.payload["generation"].as_u64().unwrap() >= 2,
+        "reconnect bumps the generation again"
+    );
     drop(rx);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -455,9 +570,15 @@ async fn snapshot_after_a_server_loss_is_a_new_incarnation() {
     });
     let c = HerdrClient::new(socket);
     let before = c.snapshot().await.unwrap().incarnation;
-    assert!(c.snapshot().await.is_err(), "the second snapshot is refused while the server shuts down");
+    assert!(
+        c.snapshot().await.is_err(),
+        "the second snapshot is refused while the server shuts down"
+    );
     let after = c.snapshot().await.unwrap().incarnation;
-    assert_ne!(before, after, "a snapshot after a lost server is not stamped with the old incarnation");
+    assert_ne!(
+        before, after,
+        "a snapshot after a lost server is not stamped with the old incarnation"
+    );
     // A healthy stream of snapshots keeps one incarnation.
     assert_eq!(c.snapshot().await.unwrap().incarnation, after);
     let _ = std::fs::remove_dir_all(dir);
@@ -469,14 +590,20 @@ async fn snapshot_after_a_server_loss_is_a_new_incarnation() {
 #[tokio::test]
 async fn snapshot_after_the_socket_was_rebound_is_a_new_incarnation() {
     let dir = scratch("rebound");
-    let serve = |dir: &Path| mini_server(dir, |m, _, _| match m {
-        "session.snapshot" => Reply::Result(empty_snapshot()),
-        _ => Reply::Error("unexpected", m.to_owned().leak()),
-    });
+    let serve = |dir: &Path| {
+        mini_server(dir, |m, _, _| match m {
+            "session.snapshot" => Reply::Result(empty_snapshot()),
+            _ => Reply::Error("unexpected", m.to_owned().leak()),
+        })
+    };
     let socket = serve(&dir);
     let c = HerdrClient::new(socket.clone());
     let before = c.snapshot().await.unwrap().incarnation;
-    assert_eq!(c.snapshot().await.unwrap().incarnation, before, "the same server keeps its incarnation");
+    assert_eq!(
+        c.snapshot().await.unwrap().incarnation,
+        before,
+        "the same server keeps its incarnation"
+    );
     std::fs::remove_file(&socket).unwrap();
     assert_eq!(serve(&dir), socket);
     let after = c.snapshot().await.unwrap().incarnation;
@@ -493,20 +620,33 @@ async fn subscription_loss_moves_the_generation_once() {
     let socket = mini_server(&dir, |m, _, nth| match m {
         "session.snapshot" => Reply::Result(empty_snapshot()),
         // The first subscription drops at once; the retries are held open.
-        "events.subscribe" => Reply::Subscribe { events: vec![], hold: nth > 1 },
+        "events.subscribe" => Reply::Subscribe {
+            events: vec![],
+            hold: nth > 1,
+        },
         _ => Reply::Error("unexpected", m.to_owned().leak()),
     });
     let c = HerdrClient::new(socket);
     let mut rx = c.subscribe().await.unwrap();
     let marker = loop {
-        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
         if ev.name == RECONNECTED_EVENT {
             break ev;
         }
     };
     let g = marker.payload["generation"].as_u64().unwrap();
-    assert_eq!(g, 2, "one subscribe plus one loss is two generations, not three");
-    assert_eq!(c.snapshot().await.unwrap().incarnation.generation, g, "the snapshot after the reconnect carries the marker's generation");
+    assert_eq!(
+        g, 2,
+        "one subscribe plus one loss is two generations, not three"
+    );
+    assert_eq!(
+        c.snapshot().await.unwrap().incarnation.generation,
+        g,
+        "the snapshot after the reconnect carries the marker's generation"
+    );
     drop(rx);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -514,7 +654,11 @@ async fn subscription_loss_moves_the_generation_once() {
 // ---------------------------------------------------------------- FakeHerdr
 
 fn ws_req(label: &str) -> CreateWorkspace {
-    CreateWorkspace { label: label.into(), cwd: "/w".into(), env: vec![("HERDR_GRAPH".into(), "1".into())] }
+    CreateWorkspace {
+        label: label.into(),
+        cwd: "/w".into(),
+        env: vec![("HERDR_GRAPH".into(), "1".into())],
+    }
 }
 
 fn drain(rx: &mut HerdrEventStream) -> Vec<String> {
@@ -530,11 +674,21 @@ async fn fake_create_and_snapshot() {
     let fake = FakeHerdr::new();
     let made = fake.create_workspace(ws_req("ws")).await.unwrap();
     let tab = fake
-        .create_tab(CreateTab { workspace: made.workspace.clone().unwrap(), label: "seat".into(), cwd: "/t".into(), env: vec![("K".into(), "V".into())] })
+        .create_tab(CreateTab {
+            workspace: made.workspace.clone().unwrap(),
+            label: "seat".into(),
+            cwd: "/t".into(),
+            env: vec![("K".into(), "V".into())],
+        })
         .await
         .unwrap();
     let split = fake
-        .split_pane(SplitPane { target: tab.pane.clone().unwrap(), direction: SplitDirection::Right, cwd: "/s".into(), env: vec![] })
+        .split_pane(SplitPane {
+            target: tab.pane.clone().unwrap(),
+            direction: SplitDirection::Right,
+            cwd: "/s".into(),
+            env: vec![],
+        })
         .await
         .unwrap();
     let snap = fake.snapshot().await.unwrap();
@@ -545,23 +699,50 @@ async fn fake_create_and_snapshot() {
     assert_eq!(ws.tabs[1].label, "seat");
     assert_eq!(ws.tabs[1].panes.len(), 2);
     let root = &ws.tabs[0].panes[0];
-    assert_eq!((root.id.0.as_str(), root.cwd.as_deref()), ("p1", Some(Path::new("/w"))));
+    assert_eq!(
+        (root.id.0.as_str(), root.cwd.as_deref()),
+        ("p1", Some(Path::new("/w")))
+    );
     assert_eq!(root.terminal_id, Some(HerdrTerminalId("term1".into())));
     assert_eq!(ws.tabs[1].panes[1].id, split.pane.unwrap());
-    assert_eq!(fake.pane_env(&tab.pane.unwrap()), Some(vec![("K".to_owned(), "V".to_owned())]));
+    assert_eq!(
+        fake.pane_env(&tab.pane.unwrap()),
+        Some(vec![("K".to_owned(), "V".to_owned())])
+    );
     assert!(fake.process_info(&pane("p1")).await.unwrap().is_shell);
 }
 
 #[tokio::test]
 async fn fake_close_last_pane_closes_tab() {
     let fake = FakeHerdr::new();
-    let ws = fake.create_workspace(ws_req("ws")).await.unwrap().workspace.unwrap();
-    let seat = fake.create_tab(CreateTab { workspace: ws.clone(), label: "seat".into(), cwd: "/".into(), env: vec![] }).await.unwrap();
+    let ws = fake
+        .create_workspace(ws_req("ws"))
+        .await
+        .unwrap()
+        .workspace
+        .unwrap();
+    let seat = fake
+        .create_tab(CreateTab {
+            workspace: ws.clone(),
+            label: "seat".into(),
+            cwd: "/".into(),
+            env: vec![],
+        })
+        .await
+        .unwrap();
     let extra = fake.add_user_pane(seat.tab.as_ref().unwrap(), "extra");
     fake.close_pane(seat.pane.as_ref().unwrap()).await.unwrap();
-    assert_eq!(fake.snapshot().await.unwrap().workspaces[0].tabs.len(), 2, "tab survives while a pane remains");
+    assert_eq!(
+        fake.snapshot().await.unwrap().workspaces[0].tabs.len(),
+        2,
+        "tab survives while a pane remains"
+    );
     fake.close_pane(&extra).await.unwrap();
-    let tabs = fake.snapshot().await.unwrap().workspaces[0].tabs.iter().map(|t| t.label.clone()).collect::<Vec<_>>();
+    let tabs = fake.snapshot().await.unwrap().workspaces[0]
+        .tabs
+        .iter()
+        .map(|t| t.label.clone())
+        .collect::<Vec<_>>();
     assert_eq!(tabs, ["1"]);
 }
 
@@ -585,12 +766,20 @@ async fn fake_events_emitted_to_subscribers() {
     let fake = FakeHerdr::new();
     let mut rx = fake.subscribe().await.unwrap();
     let made = fake.create_workspace(ws_req("ws")).await.unwrap();
-    assert_eq!(drain(&mut rx), ["workspace_created", "tab_created", "pane_created"]);
-    fake.rename_tab(made.tab.as_ref().unwrap(), "renamed").await.unwrap();
+    assert_eq!(
+        drain(&mut rx),
+        ["workspace_created", "tab_created", "pane_created"]
+    );
+    fake.rename_tab(made.tab.as_ref().unwrap(), "renamed")
+        .await
+        .unwrap();
     fake.user_rename_workspace(made.workspace.as_ref().unwrap(), "ws2");
     assert_eq!(drain(&mut rx), ["tab_renamed", "workspace_renamed"]);
     fake.user_close_pane(made.pane.as_ref().unwrap());
-    assert_eq!(drain(&mut rx), ["pane_closed", "tab_closed", "workspace_closed"]);
+    assert_eq!(
+        drain(&mut rx),
+        ["pane_closed", "tab_closed", "workspace_closed"]
+    );
     fake.disconnect_subscribers();
     assert!(rx.recv().await.is_none(), "stream ends after disconnect");
 }
@@ -599,23 +788,53 @@ async fn fake_events_emitted_to_subscribers() {
 async fn fake_fault_injection_lost_response_still_creates() {
     let fake = FakeHerdr::new();
     fake.fail_next("workspace.create", Fault::LostResponse);
-    assert!(matches!(fake.create_workspace(ws_req("lost")).await, Err(HerdrError::Timeout)));
-    assert_eq!(fake.snapshot().await.unwrap().workspaces.len(), 1, "call was performed");
+    assert!(matches!(
+        fake.create_workspace(ws_req("lost")).await,
+        Err(HerdrError::Timeout)
+    ));
+    assert_eq!(
+        fake.snapshot().await.unwrap().workspaces.len(),
+        1,
+        "call was performed"
+    );
 
     fake.fail_next("workspace.create", Fault::Unavailable);
-    assert!(matches!(fake.create_workspace(ws_req("never")).await, Err(HerdrError::Unavailable(_))));
-    assert_eq!(fake.snapshot().await.unwrap().workspaces.len(), 1, "unavailable call was not performed");
+    assert!(matches!(
+        fake.create_workspace(ws_req("never")).await,
+        Err(HerdrError::Unavailable(_))
+    ));
+    assert_eq!(
+        fake.snapshot().await.unwrap().workspaces.len(),
+        1,
+        "unavailable call was not performed"
+    );
 
     fake.fail_next("workspace.create", Fault::Rejected("nope".into()));
-    assert!(matches!(fake.create_workspace(ws_req("x")).await, Err(HerdrError::Rejected { message, .. }) if message == "nope"));
+    assert!(
+        matches!(fake.create_workspace(ws_req("x")).await, Err(HerdrError::Rejected { message, .. }) if message == "nope")
+    );
     // Faults are one-shot.
     fake.create_workspace(ws_req("fine")).await.unwrap();
     assert_eq!(fake.snapshot().await.unwrap().workspaces.len(), 2);
 
-    fake.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
-    let out = fake.start_agent(StartAgent { pane: pane("p1"), kind: "claude".into(), args: vec![] }).await.unwrap();
+    fake.fail_next(
+        "agent.start",
+        Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
+    );
+    let out = fake
+        .start_agent(StartAgent {
+            pane: pane("p1"),
+            kind: "claude".into(),
+            args: vec![],
+        })
+        .await
+        .unwrap();
     assert_eq!(out, StartOutcome::BlockedNeedsHuman);
-    assert_eq!(fake.agent(&pane("p1")).await.unwrap(), None, "scripted outcome starts nothing");
+    assert_eq!(
+        fake.agent(&pane("p1")).await.unwrap(),
+        None,
+        "scripted outcome starts nothing"
+    );
 }
 
 #[tokio::test]
@@ -627,12 +846,18 @@ async fn fake_restart_changes_pane_ids_keeps_terminal_ids() {
     let before = fake.snapshot().await.unwrap();
     fake.restart(true, true);
     let after = fake.snapshot().await.unwrap();
-    let (old, new) = (&before.workspaces[0].tabs[0].panes[0], &after.workspaces[0].tabs[0].panes[0]);
+    let (old, new) = (
+        &before.workspaces[0].tabs[0].panes[0],
+        &after.workspaces[0].tabs[0].panes[0],
+    );
     assert_ne!(old.id, new.id);
     assert_eq!(old.terminal_id, new.terminal_id);
     assert_eq!(new.metadata.get("hg").map(String::as_str), Some("cl_1"));
     assert_ne!(before.incarnation, after.incarnation);
-    assert!(fake.process_info(&new.id).await.unwrap().is_shell, "per-pane state follows the new id");
+    assert!(
+        fake.process_info(&new.id).await.unwrap().is_shell,
+        "per-pane state follows the new id"
+    );
 
     fake.restart(false, false);
     let dropped = &fake.snapshot().await.unwrap().workspaces[0].tabs[0].panes[0].clone();
@@ -644,11 +869,20 @@ async fn fake_restart_changes_pane_ids_keeps_terminal_ids() {
 async fn fake_metadata_stamps_visible_in_snapshot() {
     let fake = FakeHerdr::new();
     let made = fake.create_workspace(ws_req("ws")).await.unwrap();
-    fake.report_pane_metadata(made.pane.as_ref().unwrap(), "hg", "cl_X").await.unwrap();
-    fake.report_workspace_metadata(made.workspace.as_ref().unwrap(), "hg", "ts_X").await.unwrap();
-    fake.rename_pane(made.pane.as_ref().unwrap(), "planner").await.unwrap();
+    fake.report_pane_metadata(made.pane.as_ref().unwrap(), "hg", "cl_X")
+        .await
+        .unwrap();
+    fake.report_workspace_metadata(made.workspace.as_ref().unwrap(), "hg", "ts_X")
+        .await
+        .unwrap();
+    fake.rename_pane(made.pane.as_ref().unwrap(), "planner")
+        .await
+        .unwrap();
     let snap = fake.snapshot().await.unwrap();
-    assert_eq!(snap.workspaces[0].metadata.get("hg").map(String::as_str), Some("ts_X"));
+    assert_eq!(
+        snap.workspaces[0].metadata.get("hg").map(String::as_str),
+        Some("ts_X")
+    );
     let p = &snap.workspaces[0].tabs[0].panes[0];
     assert_eq!(p.metadata.get("hg").map(String::as_str), Some("cl_X"));
     assert_eq!(p.label.as_deref(), Some("planner"));
@@ -664,12 +898,20 @@ async fn fake_calls_recorded_in_order() {
     let made = fake.create_workspace(ws_req("ws")).await.unwrap();
     let ws = made.workspace.unwrap();
     fake.rename_workspace(&ws, "new").await.unwrap();
-    fake.send_keys(made.pane.as_ref().unwrap(), &[KeyInput::Text("ls".into()), KeyInput::Key("Enter".into())]).await.unwrap();
+    fake.send_keys(
+        made.pane.as_ref().unwrap(),
+        &[KeyInput::Text("ls".into()), KeyInput::Key("Enter".into())],
+    )
+    .await
+    .unwrap();
     fake.close_workspace(&ws).await.unwrap();
     let calls = fake.calls();
     assert_eq!(calls.len(), 4);
     assert!(matches!(&calls[0], FakeCall::CreateWorkspace(r) if r.label == "ws"));
-    assert_eq!(calls[1], FakeCall::RenameWorkspace(ws.clone(), "new".into()));
+    assert_eq!(
+        calls[1],
+        FakeCall::RenameWorkspace(ws.clone(), "new".into())
+    );
     assert!(matches!(&calls[2], FakeCall::SendKeys(p, k) if p.0 == "p1" && k.len() == 2));
     assert_eq!(calls[3], FakeCall::CloseWorkspace(ws));
     fake.clear_calls();
@@ -680,19 +922,40 @@ async fn fake_calls_recorded_in_order() {
 async fn fake_scripted_user_actions_mutate_and_emit() {
     let fake = FakeHerdr::new();
     let a = fake.create_workspace(ws_req("ws")).await.unwrap();
-    let seat = fake.create_tab(CreateTab { workspace: a.workspace.clone().unwrap(), label: "seat".into(), cwd: "/".into(), env: vec![] }).await.unwrap();
+    let seat = fake
+        .create_tab(CreateTab {
+            workspace: a.workspace.clone().unwrap(),
+            label: "seat".into(),
+            cwd: "/".into(),
+            env: vec![],
+        })
+        .await
+        .unwrap();
     let mut rx = fake.subscribe().await.unwrap();
     fake.user_move_pane(seat.pane.as_ref().unwrap(), a.tab.as_ref().unwrap());
     assert_eq!(drain(&mut rx), ["pane_moved", "tab_closed"]);
     let snap = fake.snapshot().await.unwrap();
-    assert_eq!(snap.workspaces[0].tabs.len(), 1, "emptied source tab closed");
+    assert_eq!(
+        snap.workspaces[0].tabs.len(),
+        1,
+        "emptied source tab closed"
+    );
     assert_eq!(snap.workspaces[0].tabs[0].panes.len(), 2);
     fake.set_agent(
         seat.pane.as_ref().unwrap(),
-        Some(AgentInfo { kind: "claude".into(), status: AgentStatus::Idle, session: None }),
+        Some(AgentInfo {
+            kind: "claude".into(),
+            status: AgentStatus::Idle,
+            session: None,
+        }),
     );
     assert_eq!(drain(&mut rx), ["pane_agent_detected"]);
-    assert!(fake.agent(seat.pane.as_ref().unwrap()).await.unwrap().is_some());
+    assert!(
+        fake.agent(seat.pane.as_ref().unwrap())
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 // ---------------------------------------------------------------- isolation guard
@@ -700,7 +963,10 @@ async fn fake_scripted_user_actions_mutate_and_emit() {
 #[test]
 fn guard_accepts_paths_under_root() {
     let root = scratch("guard-ok");
-    let guard = IsolationGuard::with_live(&root, vec![(PathBuf::from("/private/tmp/hg-ut-live-x"), "live")]);
+    let guard = IsolationGuard::with_live(
+        &root,
+        vec![(PathBuf::from("/private/tmp/hg-ut-live-x"), "live")],
+    );
     assert_eq!(guard.check(&root.join("herdr.sock")), Ok(()));
     assert_eq!(guard.check(&root.join("a/b/c/not-yet-created")), Ok(()));
     let _ = std::fs::remove_dir_all(root);
@@ -711,14 +977,23 @@ fn guard_rejects_outside_root() {
     let root = scratch("guard-out");
     let other = scratch("guard-other");
     let guard = IsolationGuard::with_live(&root, vec![]);
-    assert!(matches!(guard.check(&other.join("x.sock")), Err(IsolationError::OutsideRoot(..))));
+    assert!(matches!(
+        guard.check(&other.join("x.sock")),
+        Err(IsolationError::OutsideRoot(..))
+    ));
     // `..` in a not-yet-existing tail must not climb out of the root.
-    assert!(matches!(guard.check(&root.join("missing/../../escape")), Err(IsolationError::OutsideRoot(..))));
+    assert!(matches!(
+        guard.check(&root.join("missing/../../escape")),
+        Err(IsolationError::OutsideRoot(..))
+    ));
     let live_dir = scratch("guard-live");
     let guard = IsolationGuard::with_live(&root, vec![(live_dir.clone(), "the user's thing")]);
     assert_eq!(
         guard.check(&live_dir.join("s.sock")),
-        Err(IsolationError::LiveResource(live_dir.canonicalize().unwrap().join("s.sock"), "the user's thing"))
+        Err(IsolationError::LiveResource(
+            live_dir.canonicalize().unwrap().join("s.sock"),
+            "the user's thing"
+        ))
     );
     for d in [root, other, live_dir] {
         let _ = std::fs::remove_dir_all(d);
@@ -734,14 +1009,23 @@ fn guard_rejects_live_socket_even_if_symlinked_into_root() {
     let link = root.join("herdr.sock");
     std::os::unix::fs::symlink(&live_sock, &link).unwrap();
     let guard = IsolationGuard::with_live(&root, vec![(live_sock, "the user's Herdr API socket")]);
-    assert!(matches!(guard.check(&link), Err(IsolationError::LiveResource(_, "the user's Herdr API socket"))));
+    assert!(matches!(
+        guard.check(&link),
+        Err(IsolationError::LiveResource(
+            _,
+            "the user's Herdr API socket"
+        ))
+    ));
     for d in [root, live_dir] {
         let _ = std::fs::remove_dir_all(d);
     }
 }
 
 fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 #[test]
@@ -763,19 +1047,41 @@ fn scrubbed_env_drops_inherited_herdr_and_claude_vars() {
         ]),
     );
     let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    for k in ["HERDR_PANE_ID", "HERDR_ENV", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
+    for k in [
+        "HERDR_PANE_ID",
+        "HERDR_ENV",
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+    ] {
         assert_eq!(get(k), None, "{k} must not be inherited");
     }
     for k in [
-        "HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR",
-        "HERDR_CONFIG_PATH", "HERDR_SOCKET_PATH", "HERDR_PLUGIN_STATE_DIR", "HERDR_PLUGIN_CONFIG_DIR", "CLAUDE_CONFIG_DIR",
-        "HERDR_GRAPH_INSTANCE", "HG_TEST_ROOT",
+        "HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_STATE_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_RUNTIME_DIR",
+        "HERDR_CONFIG_PATH",
+        "HERDR_SOCKET_PATH",
+        "HERDR_PLUGIN_STATE_DIR",
+        "HERDR_PLUGIN_CONFIG_DIR",
+        "CLAUDE_CONFIG_DIR",
+        "HERDR_GRAPH_INSTANCE",
+        "HG_TEST_ROOT",
     ] {
         let v = get(k).unwrap_or_else(|| panic!("{k} missing"));
-        assert!(Path::new(v).starts_with(root), "{k}={v} is not under the private root");
+        assert!(
+            Path::new(v).starts_with(root),
+            "{k}={v} is not under the private root"
+        );
     }
     assert_eq!(get("PATH"), Some("/usr/bin"));
-    assert_eq!(get("HG_TEST_ROOT"), Some("/private/tmp/hg-ut-root"), "the marker is the root itself");
+    assert_eq!(
+        get("HG_TEST_ROOT"),
+        Some("/private/tmp/hg-ut-root"),
+        "the marker is the root itself"
+    );
     // No variable appears twice.
     let mut names: Vec<_> = env.iter().map(|(k, _)| k.as_str()).collect();
     names.sort_unstable();
@@ -798,18 +1104,32 @@ fn scrubbed_env_passes_only_explicit_credentials() {
     );
     let names: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
     assert!(names.contains(&"ANTHROPIC_API_KEY") && names.contains(&"OPENAI_API_KEY"));
-    for k in ["ANTHROPIC_AUTH_TOKEN", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"] {
+    for k in [
+        "ANTHROPIC_AUTH_TOKEN",
+        "AWS_SECRET_ACCESS_KEY",
+        "GITHUB_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    ] {
         assert!(!names.contains(&k), "{k} must not reach private children");
     }
     let none = scrubbed_env_from(Path::new("/private/tmp/hg-ut-root"), vars(&[]));
-    assert!(none.iter().all(|(k, _)| k != "ANTHROPIC_API_KEY" && k != "OPENAI_API_KEY"));
+    assert!(
+        none.iter()
+            .all(|(k, _)| k != "ANTHROPIC_API_KEY" && k != "OPENAI_API_KEY")
+    );
     // A host-provided plugin config dir or test-root marker is replaced, never passed through.
     let host = scrubbed_env_from(
         Path::new("/private/tmp/hg-ut-root"),
-        vars(&[("HERDR_PLUGIN_CONFIG_DIR", "/Users/real/plugin-cfg"), ("HG_TEST_ROOT", "/Users/real")]),
+        vars(&[
+            ("HERDR_PLUGIN_CONFIG_DIR", "/Users/real/plugin-cfg"),
+            ("HG_TEST_ROOT", "/Users/real"),
+        ]),
     );
     let get = |k: &str| host.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("HERDR_PLUGIN_CONFIG_DIR"), Some("/private/tmp/hg-ut-root/plugin-config"));
+    assert_eq!(
+        get("HERDR_PLUGIN_CONFIG_DIR"),
+        Some("/private/tmp/hg-ut-root/plugin-config")
+    );
     assert_eq!(get("HG_TEST_ROOT"), Some("/private/tmp/hg-ut-root"));
 }
 
@@ -838,7 +1158,10 @@ fn live_resources_cover_the_users_default_session_threads_claude_and_observer() 
 // ---------------------------------------------------------------- tripwire (hg-zmi.77)
 
 fn live_for_x() -> Vec<(PathBuf, &'static str)> {
-    live_resources_from(vars(&[("HOME", "/Users/x"), ("HERDR_SOCKET_PATH", "/Users/x/.config/herdr/herdr.sock")]))
+    live_resources_from(vars(&[
+        ("HOME", "/Users/x"),
+        ("HERDR_SOCKET_PATH", "/Users/x/.config/herdr/herdr.sock"),
+    ]))
 }
 
 #[test]
@@ -846,44 +1169,70 @@ fn tripwire_root_mode_rejects_outside_root() {
     let p = Path::new("/Users/x/.config/herdr-graph/config.toml");
     let root = Path::new("/private/tmp/hgt-r");
     let err = tripwire_verdict(p, Some(root), &[]).unwrap_err();
-    assert!(err.contains("/Users/x/.config/herdr-graph/config.toml"), "{err}");
+    assert!(
+        err.contains("/Users/x/.config/herdr-graph/config.toml"),
+        "{err}"
+    );
     assert!(err.contains("/private/tmp/hgt-r"), "{err}");
 }
 
 #[test]
 fn tripwire_root_mode_allows_inside_root() {
     let p = Path::new("/private/tmp/hgt-r/home/.config/herdr-graph/config.toml");
-    assert_eq!(tripwire_verdict(p, Some(Path::new("/private/tmp/hgt-r")), &[]), Ok(()));
+    assert_eq!(
+        tripwire_verdict(p, Some(Path::new("/private/tmp/hgt-r")), &[]),
+        Ok(())
+    );
 }
 
 #[test]
 fn tripwire_live_mode_rejects_user_graph_config_and_herdr_socket() {
     let live = live_for_x();
-    let cfg = tripwire_verdict(Path::new("/Users/x/.config/herdr-graph/config.toml"), None, &live).unwrap_err();
+    let cfg = tripwire_verdict(
+        Path::new("/Users/x/.config/herdr-graph/config.toml"),
+        None,
+        &live,
+    )
+    .unwrap_err();
     assert!(cfg.contains("the user's herdr-graph config"), "{cfg}");
-    let sock = tripwire_verdict(Path::new("/Users/x/.config/herdr/herdr.sock"), None, &live).unwrap_err();
+    let sock =
+        tripwire_verdict(Path::new("/Users/x/.config/herdr/herdr.sock"), None, &live).unwrap_err();
     assert!(sock.contains("Herdr"), "{sock}");
-    let claude = tripwire_verdict(Path::new("/Users/x/.claude/settings.json"), None, &live).unwrap_err();
+    let claude =
+        tripwire_verdict(Path::new("/Users/x/.claude/settings.json"), None, &live).unwrap_err();
     assert!(claude.contains("Claude"), "{claude}");
-    assert_eq!(tripwire_verdict(Path::new("/private/tmp/hg-ut-root/x"), None, &live), Ok(()));
+    assert_eq!(
+        tripwire_verdict(Path::new("/private/tmp/hg-ut-root/x"), None, &live),
+        Ok(())
+    );
 }
 
 #[test]
 fn armed_unit_tests_panic_on_real_home_config() {
-    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else { // isolation-ok: the tripwire must see the real HOME
+    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
+        // isolation-ok: the tripwire must see the real HOME
         eprintln!("HOME unset: skipping");
         return;
     };
     let r = std::panic::catch_unwind(|| crate::config::user_config_path(Path::new(&home)));
-    assert!(r.is_err(), "resolving the real ~/.config/herdr-graph must trip the armed tripwire");
+    assert!(
+        r.is_err(),
+        "resolving the real ~/.config/herdr-graph must trip the armed tripwire"
+    );
 }
 
 #[test]
 fn armed_unit_tests_panic_on_real_herdr_socket() {
-    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else { // isolation-ok: the tripwire must see the real HOME
+    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
+        // isolation-ok: the tripwire must see the real HOME
         eprintln!("HOME unset: skipping");
         return;
     };
-    let r = std::panic::catch_unwind(|| HerdrClient::new(PathBuf::from(&home).join(".config/herdr/herdr.sock")));
-    assert!(r.is_err(), "constructing a client for the user's live socket must trip the armed tripwire");
+    let r = std::panic::catch_unwind(|| {
+        HerdrClient::new(PathBuf::from(&home).join(".config/herdr/herdr.sock"))
+    });
+    assert!(
+        r.is_err(),
+        "constructing a client for the user's live socket must trip the armed tripwire"
+    );
 }

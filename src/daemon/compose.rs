@@ -38,7 +38,14 @@ const THREADS_PROBE_PERIOD: Duration = Duration::from_secs(30);
 pub const FIRST_PASS_LIMIT: Duration = Duration::from_secs(20);
 
 /// Startup steps, recorded in journal meta `startup:<n>` in this order.
-pub const STARTUP_STEPS: [&str; 6] = ["open", "registries", "recover", "drain", "first_pass", "loops"];
+pub const STARTUP_STEPS: [&str; 6] = [
+    "open",
+    "registries",
+    "recover",
+    "drain",
+    "first_pass",
+    "loops",
+];
 
 /// Services the composition needs; production builds them from the environment, tests inject fakes.
 pub struct Services {
@@ -57,7 +64,13 @@ impl Services {
         pane_seat_map: Arc<dyn PaneSeatMap>,
         clock: Arc<dyn Clock>,
     ) -> Self {
-        Self { herdr, threads, pane_seat_map, clock, reminder_period: REMINDER_PERIOD }
+        Self {
+            herdr,
+            threads,
+            pane_seat_map,
+            clock,
+            reminder_period: REMINDER_PERIOD,
+        }
     }
 
     /// Production services: the Herdr socket from the context, the threads service located by the default
@@ -72,17 +85,32 @@ impl Services {
         }
         let herdr = Arc::new(crate::herdr::HerdrClient::new(ctx.herdr_socket.clone()));
         let env = crate::config::Env::from_process();
-        let configured = crate::config::read_threads_state_dir(&env, &crate::config::plugin_config_dir_via_herdr);
-        let (threads, pane_seat_map) = production_threads(ctx, DiscoveryInputs::from_process(configured));
-        Ok(Self::new(herdr, threads, pane_seat_map, Arc::new(SystemClock)))
+        let configured = crate::config::read_threads_state_dir(
+            &env,
+            &crate::config::plugin_config_dir_via_herdr,
+        );
+        let (threads, pane_seat_map) =
+            production_threads(ctx, DiscoveryInputs::from_process(configured));
+        Ok(Self::new(
+            herdr,
+            threads,
+            pane_seat_map,
+            Arc::new(SystemClock),
+        ))
     }
 }
 
 /// The production threads port and pane-seat map over one lazily located endpoint. `inputs` drive the state
 /// directory discovery, re-run on every call (the threads daemon may be installed or started after graph).
-pub fn production_threads(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
+pub fn production_threads(
+    ctx: &DaemonCtx,
+    inputs: DiscoveryInputs,
+) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
     let endpoint = Arc::new(lazy::Endpoint::from_env(ctx, inputs));
-    (Arc::new(lazy::LazyThreads::new(endpoint.clone())), Arc::new(lazy::LazyMap::new(endpoint)))
+    (
+        Arc::new(lazy::LazyThreads::new(endpoint.clone())),
+        Arc::new(lazy::LazyMap::new(endpoint)),
+    )
 }
 
 /// Every organizational and internal mutation, registered once. Returns the kind registry (shared with the
@@ -109,7 +137,10 @@ pub fn mutation_registry(plans: Arc<PlanStore>) -> (Arc<KindRegistry>, MutationR
 /// Registers every component. Production entry point.
 pub async fn compose(reg: &mut Registry, ctx: &DaemonCtx) -> anyhow::Result<()> {
     #[cfg(feature = "test-support")]
-    if let Some(ms) = std::env::var("HG_TEST_COMPOSE_DELAY_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+    if let Some(ms) = std::env::var("HG_TEST_COMPOSE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
         tokio::time::sleep(Duration::from_millis(ms)).await;
     }
     compose_with(reg, ctx, Services::from_env(ctx)?).await
@@ -130,16 +161,27 @@ impl<'a> Startup<'a> {
         Ok(Self { journal, next: 0 })
     }
     fn step(&mut self, name: &str) -> anyhow::Result<()> {
-        self.journal.meta_set(&format!("startup:{}", self.next), name)?;
+        self.journal
+            .meta_set(&format!("startup:{}", self.next), name)?;
         self.next += 1;
         Ok(())
     }
 }
 
 /// See the module docs for the normative startup order.
-pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Services) -> anyhow::Result<()> {
+pub async fn compose_with(
+    reg: &mut Registry,
+    ctx: &DaemonCtx,
+    services: Services,
+) -> anyhow::Result<()> {
     let paths = &ctx.paths;
-    let Services { herdr, threads, pane_seat_map, clock, reminder_period } = services;
+    let Services {
+        herdr,
+        threads,
+        pane_seat_map,
+        clock,
+        reminder_period,
+    } = services;
     std::fs::create_dir_all(&paths.local)?;
 
     // 1. Store and journal.
@@ -152,7 +194,13 @@ pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Service
     // 2. Registries.
     let plans = Arc::new(PlanStore::new(paths.plans.clone()));
     let (kinds, muts) = mutation_registry(plans.clone());
-    let writer = WriterCore::new(git.clone(), journal.clone(), Arc::new(muts), clock.clone(), WriterConfig::default());
+    let writer = WriterCore::new(
+        git.clone(),
+        journal.clone(),
+        Arc::new(muts),
+        clock.clone(),
+        WriterConfig::default(),
+    );
     let writer_port: Arc<dyn Writer> = writer.clone();
     let reconciler = Reconciler::new(
         store.clone(),
@@ -160,7 +208,11 @@ pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Service
         writer_port.clone(),
         herdr.clone(),
         clock.clone(),
-        Arc::new(ThreadsNotifier { threads: threads.clone(), journal: journal.clone(), store: store.clone() }),
+        Arc::new(ThreadsNotifier {
+            threads: threads.clone(),
+            journal: journal.clone(),
+            store: store.clone(),
+        }),
         ReconcilerConfig::new(paths.root.clone()),
     );
     crate::threads::register_with(&reconciler, threads.clone(), pane_seat_map.clone());
@@ -217,14 +269,27 @@ pub async fn compose_with(reg: &mut Registry, ctx: &DaemonCtx, services: Service
     match tokio::time::timeout(FIRST_PASS_LIMIT, runtime.step_once()).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) => eprintln!("herdr-graph daemon: first observer pass failed: {e:#}"),
-        Err(_) => eprintln!("herdr-graph daemon: first observer pass did not finish in {FIRST_PASS_LIMIT:?}"),
+        Err(_) => eprintln!(
+            "herdr-graph daemon: first observer pass did not finish in {FIRST_PASS_LIMIT:?}"
+        ),
     }
     let _ = stop_tx.send(true);
     let _ = temp_writer.await;
     startup.step("first_pass")?;
 
     // 6. Loops, commands and status providers.
-    register_commands(reg, &kinds, &plans, &store, &writer_port, &clock, &journal, &herdr, &threads, paths.root.clone());
+    register_commands(
+        reg,
+        &kinds,
+        &plans,
+        &store,
+        &writer_port,
+        &clock,
+        &journal,
+        &herdr,
+        &threads,
+        paths.root.clone(),
+    );
     transcripts.register_commands(reg);
     register_writer_commands(reg, &writer);
 
@@ -276,7 +341,11 @@ fn register_commands(
     crate::plan::commands::register_commands(reg, plan_deps(&instance));
     crate::plan::ops::register_commands(
         reg,
-        OpsDeps { journal: journal.clone(), store: store.clone(), clock: clock.clone() },
+        OpsDeps {
+            journal: journal.clone(),
+            store: store.clone(),
+            clock: clock.clone(),
+        },
     );
     crate::undo::register_commands(
         reg,
@@ -304,9 +373,14 @@ fn register_commands(
 /// Registers the threads connection: a loop that keeps the service registration warm and records what the
 /// connection supports, shown by `status` as `components.threads`.
 fn register_threads_connection(reg: &mut Registry, threads: Arc<dyn ThreadsPort>) {
-    let state = Arc::new(Mutex::new(json!({ "connected": false, "note": "not probed yet" })));
+    let state = Arc::new(Mutex::new(
+        json!({ "connected": false, "note": "not probed yet" }),
+    ));
     let shown = state.clone();
-    reg.status_provider("threads", Arc::new(move || shown.lock().unwrap_or_else(|e| e.into_inner()).clone()));
+    reg.status_provider(
+        "threads",
+        Arc::new(move || shown.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+    );
     reg.background("threads.connection", move |mut sd| async move {
         loop {
             let v = match threads.delivery_capability().await {
@@ -325,21 +399,26 @@ fn register_threads_connection(reg: &mut Registry, threads: Arc<dyn ThreadsPort>
 /// `writer.resume`: clear a halted writer after a successful probe (recovery plus a journal round-trip).
 fn register_writer_commands(reg: &mut Registry, writer: &Arc<WriterCore>) {
     let w = writer.clone();
-    reg.command("writer.resume", move |_cx: crate::daemon::registry::CommandCtx, _args: serde_json::Value| {
-        let w = w.clone();
-        async move {
-            use crate::daemon::registry::CommandError;
-            let report = tokio::task::spawn_blocking(move || w.resume())
-                .await
-                .map_err(|e| CommandError::internal(format!("writer.resume task failed: {e}")))?
-                .map_err(|e| CommandError::unavailable(format!("probe failed, writer stays halted: {e}")))?;
-            Ok(json!({
-                "was_halted": report.was_halted,
-                "reason": report.reason,
-                "requeued": report.recovery.map(|r| r.requeued).unwrap_or_default(),
-            }))
-        }
-    });
+    reg.command(
+        "writer.resume",
+        move |_cx: crate::daemon::registry::CommandCtx, _args: serde_json::Value| {
+            let w = w.clone();
+            async move {
+                use crate::daemon::registry::CommandError;
+                let report = tokio::task::spawn_blocking(move || w.resume())
+                    .await
+                    .map_err(|e| CommandError::internal(format!("writer.resume task failed: {e}")))?
+                    .map_err(|e| {
+                        CommandError::unavailable(format!("probe failed, writer stays halted: {e}"))
+                    })?;
+                Ok(json!({
+                    "was_halted": report.was_halted,
+                    "reason": report.reason,
+                    "requeued": report.recovery.map(|r| r.requeued).unwrap_or_default(),
+                }))
+            }
+        },
+    );
 }
 
 /// Status components owned by the composition: `writer` and `reconciler` (`transcripts` and `threads` come
@@ -356,17 +435,18 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
         }),
     );
     let j = journal.clone();
-    reg.status_provider(
-        "reconciler",
-        Arc::new(move || reconciler_status(&j)),
-    );
+    reg.status_provider("reconciler", Arc::new(move || reconciler_status(&j)));
 }
 
 /// The `reconciler` status component: open effects, and every effect that needs a human with its last error.
 pub(crate) fn reconciler_status(j: &Journal) -> serde_json::Value {
-    use crate::model::effect::EffectStatus::{BlockedNeedsHuman, Failed, NeedsRevision, Pending, Unknown};
+    use crate::model::effect::EffectStatus::{
+        BlockedNeedsHuman, Failed, NeedsRevision, Pending, Unknown,
+    };
     let n = |s| j.effects_with_status(&[s]).map(|v| v.len()).unwrap_or(0);
-    let mut attention = j.effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed]).unwrap_or_default();
+    let mut attention = j
+        .effects_with_status(&[NeedsRevision, BlockedNeedsHuman, Failed])
+        .unwrap_or_default();
     attention.reverse();
     let attention: Vec<_> = attention
         .iter()
@@ -381,7 +461,11 @@ pub(crate) fn reconciler_status(j: &Journal) -> serde_json::Value {
             })
         })
         .collect();
-    let pending_notices = j.notice_counts().ok().and_then(|c| c.get("pending").copied()).unwrap_or(0);
+    let pending_notices = j
+        .notice_counts()
+        .ok()
+        .and_then(|c| c.get("pending").copied())
+        .unwrap_or(0);
     json!({
         "pending_effects": n(Pending),
         "unknown_effects": n(Unknown),
@@ -456,10 +540,17 @@ mod tests {
         assert_eq!(v["needs_revision_effects"], 1);
         assert_eq!(v["pending_notices"], 1);
         let a = v["attention"].as_array().unwrap();
-        let rows: Vec<_> = a.iter().map(|r| (r["status"].as_str().unwrap(), r["last_error"].as_str())).collect();
+        let rows: Vec<_> = a
+            .iter()
+            .map(|r| (r["status"].as_str().unwrap(), r["last_error"].as_str()))
+            .collect();
         assert_eq!(
             rows,
-            [("needs_revision", Some("occupant busy")), ("blocked_needs_human", None), ("failed", Some("boom"))],
+            [
+                ("needs_revision", Some("occupant busy")),
+                ("blocked_needs_human", None),
+                ("failed", Some("boom"))
+            ],
             "newest first, with last_error"
         );
     }
@@ -484,10 +575,15 @@ mod lazy {
     impl Endpoint {
         pub fn from_env(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> Self {
             let var = |n: &str| std::env::var_os(n).filter(|v| !v.is_empty());
-            let explicit = var("HERDR_GRAPH_THREADS_SOCKET").zip(var("HERDR_GRAPH_THREADS_INSTANCE")).and_then(|(s, i)| {
-                let instance = i.to_str()?.parse().ok()?;
-                Some(Discovered { socket: PathBuf::from(s), instance })
-            });
+            let explicit = var("HERDR_GRAPH_THREADS_SOCKET")
+                .zip(var("HERDR_GRAPH_THREADS_INSTANCE"))
+                .and_then(|(s, i)| {
+                    let instance = i.to_str()?.parse().ok()?;
+                    Some(Discovered {
+                        socket: PathBuf::from(s),
+                        instance,
+                    })
+                });
             Self {
                 inputs,
                 explicit,
@@ -510,7 +606,10 @@ mod lazy {
                 ));
             };
             crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
-                ThreadsError::Disconnected(format!("herdr-threads is not running (state dir {} from {source}): {e}", dir.display()))
+                ThreadsError::Disconnected(format!(
+                    "herdr-threads is not running (state dir {} from {source}): {e}",
+                    dir.display()
+                ))
             })
         }
     }
@@ -522,7 +621,10 @@ mod lazy {
 
     impl LazyThreads {
         pub fn new(endpoint: Arc<Endpoint>) -> Self {
-            Self { endpoint, inner: Mutex::new(None) }
+            Self {
+                endpoint,
+                inner: Mutex::new(None),
+            }
         }
 
         fn get(&self) -> Result<Arc<ServiceThreads>, ThreadsError> {
@@ -531,8 +633,12 @@ mod lazy {
                 return Ok(t.clone());
             }
             let d = self.endpoint.locate()?;
-            let t = ServiceThreads::with_system_clock(d.socket, self.endpoint.intents.clone(), d.instance)
-                .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
+            let t = ServiceThreads::with_system_clock(
+                d.socket,
+                self.endpoint.intents.clone(),
+                d.instance,
+            )
+            .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
             let t = Arc::new(t);
             *slot = Some(t.clone());
             Ok(t)
@@ -541,7 +647,12 @@ mod lazy {
 
     #[async_trait::async_trait]
     impl ThreadsPort for LazyThreads {
-        async fn ensure_thread(&self, scope: ChannelScope, topic: &str, op_key: &OpKey) -> Result<ThreadRef, ThreadsError> {
+        async fn ensure_thread(
+            &self,
+            scope: ChannelScope,
+            topic: &str,
+            op_key: &OpKey,
+        ) -> Result<ThreadRef, ThreadsError> {
             self.get()?.ensure_thread(scope, topic, op_key).await
         }
         async fn invite(
@@ -553,19 +664,43 @@ mod lazy {
         ) -> Result<(), ThreadsError> {
             self.get()?.invite(thread, seat, constraint, op_key).await
         }
-        async fn membership(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) -> Result<Option<InvitationState>, ThreadsError> {
+        async fn membership(
+            &self,
+            thread: &ThreadRef,
+            seat: &ThreadsSeatRef,
+        ) -> Result<Option<InvitationState>, ThreadsError> {
             self.get()?.membership(thread, seat).await
         }
-        async fn membership_detail(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) -> Result<Option<MembershipDetail>, ThreadsError> {
+        async fn membership_detail(
+            &self,
+            thread: &ThreadRef,
+            seat: &ThreadsSeatRef,
+        ) -> Result<Option<MembershipDetail>, ThreadsError> {
             self.get()?.membership_detail(thread, seat).await
         }
-        async fn notify(&self, thread: &ThreadRef, severity: Severity, body: &str, op_key: &OpKey) -> Result<(), ThreadsError> {
+        async fn notify(
+            &self,
+            thread: &ThreadRef,
+            severity: Severity,
+            body: &str,
+            op_key: &OpKey,
+        ) -> Result<(), ThreadsError> {
             self.get()?.notify(thread, severity, body, op_key).await
         }
-        async fn set_topic(&self, thread: &ThreadRef, topic: &str, op_key: &OpKey) -> Result<(), ThreadsError> {
+        async fn set_topic(
+            &self,
+            thread: &ThreadRef,
+            topic: &str,
+            op_key: &OpKey,
+        ) -> Result<(), ThreadsError> {
             self.get()?.set_topic(thread, topic, op_key).await
         }
-        async fn release_requirement(&self, thread: &ThreadRef, seat: &ThreadsSeatRef, op_key: &OpKey) -> Result<(), ThreadsError> {
+        async fn release_requirement(
+            &self,
+            thread: &ThreadRef,
+            seat: &ThreadsSeatRef,
+            op_key: &OpKey,
+        ) -> Result<(), ThreadsError> {
             self.get()?.release_requirement(thread, seat, op_key).await
         }
         async fn send_request(
@@ -575,9 +710,14 @@ mod lazy {
             body: &str,
             op_key: &OpKey,
         ) -> Result<MessageRef, ThreadsError> {
-            self.get()?.send_request(thread, recipients, body, op_key).await
+            self.get()?
+                .send_request(thread, recipients, body, op_key)
+                .await
         }
-        async fn receipt_state(&self, messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
+        async fn receipt_state(
+            &self,
+            messages: &[MessageRef],
+        ) -> Result<Vec<MessageReceipts>, ThreadsError> {
             self.get()?.receipt_state(messages).await
         }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
@@ -592,13 +732,19 @@ mod lazy {
 
     impl LazyMap {
         pub fn new(endpoint: Arc<Endpoint>) -> Self {
-            Self { endpoint, inner: Mutex::new(None) }
+            Self {
+                endpoint,
+                inner: Mutex::new(None),
+            }
         }
     }
 
     #[async_trait::async_trait]
     impl PaneSeatMap for LazyMap {
-        async fn seat_for(&self, pane: &HerdrPaneId) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
+        async fn seat_for(
+            &self,
+            pane: &HerdrPaneId,
+        ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
             let map = {
                 let mut slot = self.inner.lock().unwrap_or_else(|e| e.into_inner());
                 match &*slot {
@@ -624,8 +770,8 @@ mod lazy {
 mod fakes {
     use super::*;
     use crate::herdr::FakeHerdr;
-    use crate::model::{HerdrPaneId, HerdrTabId, HerdrWorkspaceId};
     use crate::model::harness::StartOutcome;
+    use crate::model::{HerdrPaneId, HerdrTabId, HerdrWorkspaceId};
     use crate::ports::herdr::*;
     use serde::{Deserialize, Serialize};
 
@@ -634,18 +780,59 @@ mod fakes {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "op", rename_all = "snake_case")]
     pub enum Logged {
-        CreateWorkspace { label: String, cwd: PathBuf, env: Vec<(String, String)> },
-        CreateTab { workspace: HerdrWorkspaceId, label: String, cwd: PathBuf, env: Vec<(String, String)> },
-        SplitPane { target: HerdrPaneId, down: bool, cwd: PathBuf, env: Vec<(String, String)> },
-        RenameWorkspace { id: HerdrWorkspaceId, label: String },
-        RenameTab { id: HerdrTabId, label: String },
-        RenamePane { id: HerdrPaneId, label: String },
-        CloseWorkspace { id: HerdrWorkspaceId },
-        CloseTab { id: HerdrTabId },
-        ClosePane { id: HerdrPaneId },
-        PaneMetadata { id: HerdrPaneId, key: String, value: String },
-        WorkspaceMetadata { id: HerdrWorkspaceId, key: String, value: String },
-        StartAgent { pane: HerdrPaneId, kind: String, args: Vec<String> },
+        CreateWorkspace {
+            label: String,
+            cwd: PathBuf,
+            env: Vec<(String, String)>,
+        },
+        CreateTab {
+            workspace: HerdrWorkspaceId,
+            label: String,
+            cwd: PathBuf,
+            env: Vec<(String, String)>,
+        },
+        SplitPane {
+            target: HerdrPaneId,
+            down: bool,
+            cwd: PathBuf,
+            env: Vec<(String, String)>,
+        },
+        RenameWorkspace {
+            id: HerdrWorkspaceId,
+            label: String,
+        },
+        RenameTab {
+            id: HerdrTabId,
+            label: String,
+        },
+        RenamePane {
+            id: HerdrPaneId,
+            label: String,
+        },
+        CloseWorkspace {
+            id: HerdrWorkspaceId,
+        },
+        CloseTab {
+            id: HerdrTabId,
+        },
+        ClosePane {
+            id: HerdrPaneId,
+        },
+        PaneMetadata {
+            id: HerdrPaneId,
+            key: String,
+            value: String,
+        },
+        WorkspaceMetadata {
+            id: HerdrWorkspaceId,
+            key: String,
+            value: String,
+        },
+        StartAgent {
+            pane: HerdrPaneId,
+            kind: String,
+            args: Vec<String>,
+        },
     }
 
     pub struct PersistentFakeHerdr {
@@ -657,8 +844,16 @@ mod fakes {
 
     impl PersistentFakeHerdr {
         pub fn open(path: PathBuf) -> Self {
-            let log = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-            Self { inner: FakeHerdr::new(), path, log: Mutex::new(log), replayed: tokio::sync::OnceCell::new() }
+            let log = std::fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+            Self {
+                inner: FakeHerdr::new(),
+                path,
+                log: Mutex::new(log),
+                replayed: tokio::sync::OnceCell::new(),
+            }
         }
 
         async fn replay(&self) {
@@ -667,7 +862,9 @@ mod fakes {
                     let entries = self.log.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     for e in entries {
                         if let Err(err) = self.apply(&e).await {
-                            eprintln!("herdr-graph daemon: fake herdr replay of {e:?} failed: {err}");
+                            eprintln!(
+                                "herdr-graph daemon: fake herdr replay of {e:?} failed: {err}"
+                            );
                         }
                     }
                 })
@@ -677,11 +874,43 @@ mod fakes {
         async fn apply(&self, e: &Logged) -> Result<(), HerdrError> {
             let h = &self.inner;
             match e.clone() {
-                Logged::CreateWorkspace { label, cwd, env } => h.create_workspace(CreateWorkspace { label, cwd, env }).await.map(drop),
-                Logged::CreateTab { workspace, label, cwd, env } => h.create_tab(CreateTab { workspace, label, cwd, env }).await.map(drop),
-                Logged::SplitPane { target, down, cwd, env } => {
-                    let direction = if down { SplitDirection::Down } else { SplitDirection::Right };
-                    h.split_pane(SplitPane { target, direction, cwd, env }).await.map(drop)
+                Logged::CreateWorkspace { label, cwd, env } => h
+                    .create_workspace(CreateWorkspace { label, cwd, env })
+                    .await
+                    .map(drop),
+                Logged::CreateTab {
+                    workspace,
+                    label,
+                    cwd,
+                    env,
+                } => h
+                    .create_tab(CreateTab {
+                        workspace,
+                        label,
+                        cwd,
+                        env,
+                    })
+                    .await
+                    .map(drop),
+                Logged::SplitPane {
+                    target,
+                    down,
+                    cwd,
+                    env,
+                } => {
+                    let direction = if down {
+                        SplitDirection::Down
+                    } else {
+                        SplitDirection::Right
+                    };
+                    h.split_pane(SplitPane {
+                        target,
+                        direction,
+                        cwd,
+                        env,
+                    })
+                    .await
+                    .map(drop)
                 }
                 Logged::RenameWorkspace { id, label } => h.rename_workspace(&id, &label).await,
                 Logged::RenameTab { id, label } => h.rename_tab(&id, &label).await,
@@ -689,9 +918,16 @@ mod fakes {
                 Logged::CloseWorkspace { id } => h.close_workspace(&id).await,
                 Logged::CloseTab { id } => h.close_tab(&id).await,
                 Logged::ClosePane { id } => h.close_pane(&id).await,
-                Logged::PaneMetadata { id, key, value } => h.report_pane_metadata(&id, &key, &value).await,
-                Logged::WorkspaceMetadata { id, key, value } => h.report_workspace_metadata(&id, &key, &value).await,
-                Logged::StartAgent { pane, kind, args } => h.start_agent(StartAgent { pane, kind, args }).await.map(drop),
+                Logged::PaneMetadata { id, key, value } => {
+                    h.report_pane_metadata(&id, &key, &value).await
+                }
+                Logged::WorkspaceMetadata { id, key, value } => {
+                    h.report_workspace_metadata(&id, &key, &value).await
+                }
+                Logged::StartAgent { pane, kind, args } => h
+                    .start_agent(StartAgent { pane, kind, args })
+                    .await
+                    .map(drop),
             }
         }
 
@@ -724,16 +960,33 @@ mod fakes {
         }
         async fn create_workspace(&self, req: CreateWorkspace) -> Result<Created, HerdrError> {
             self.replay().await;
-            let e = Logged::CreateWorkspace { label: req.label.clone(), cwd: req.cwd.clone(), env: req.env.clone() };
+            let e = Logged::CreateWorkspace {
+                label: req.label.clone(),
+                cwd: req.cwd.clone(),
+                env: req.env.clone(),
+            };
             self.record(e, self.inner.create_workspace(req).await)
         }
-        async fn rename_workspace(&self, id: &HerdrWorkspaceId, label: &str) -> Result<(), HerdrError> {
+        async fn rename_workspace(
+            &self,
+            id: &HerdrWorkspaceId,
+            label: &str,
+        ) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::RenameWorkspace { id: id.clone(), label: label.into() }, self.inner.rename_workspace(id, label).await)
+            self.record(
+                Logged::RenameWorkspace {
+                    id: id.clone(),
+                    label: label.into(),
+                },
+                self.inner.rename_workspace(id, label).await,
+            )
         }
         async fn close_workspace(&self, id: &HerdrWorkspaceId) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::CloseWorkspace { id: id.clone() }, self.inner.close_workspace(id).await)
+            self.record(
+                Logged::CloseWorkspace { id: id.clone() },
+                self.inner.close_workspace(id).await,
+            )
         }
         async fn create_tab(&self, req: CreateTab) -> Result<Created, HerdrError> {
             self.replay().await;
@@ -747,11 +1000,20 @@ mod fakes {
         }
         async fn rename_tab(&self, id: &HerdrTabId, label: &str) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::RenameTab { id: id.clone(), label: label.into() }, self.inner.rename_tab(id, label).await)
+            self.record(
+                Logged::RenameTab {
+                    id: id.clone(),
+                    label: label.into(),
+                },
+                self.inner.rename_tab(id, label).await,
+            )
         }
         async fn close_tab(&self, id: &HerdrTabId) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::CloseTab { id: id.clone() }, self.inner.close_tab(id).await)
+            self.record(
+                Logged::CloseTab { id: id.clone() },
+                self.inner.close_tab(id).await,
+            )
         }
         async fn split_pane(&self, req: SplitPane) -> Result<Created, HerdrError> {
             self.replay().await;
@@ -765,25 +1027,59 @@ mod fakes {
         }
         async fn rename_pane(&self, id: &HerdrPaneId, label: &str) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::RenamePane { id: id.clone(), label: label.into() }, self.inner.rename_pane(id, label).await)
+            self.record(
+                Logged::RenamePane {
+                    id: id.clone(),
+                    label: label.into(),
+                },
+                self.inner.rename_pane(id, label).await,
+            )
         }
         async fn close_pane(&self, id: &HerdrPaneId) -> Result<(), HerdrError> {
             self.replay().await;
-            self.record(Logged::ClosePane { id: id.clone() }, self.inner.close_pane(id).await)
+            self.record(
+                Logged::ClosePane { id: id.clone() },
+                self.inner.close_pane(id).await,
+            )
         }
-        async fn report_pane_metadata(&self, id: &HerdrPaneId, key: &str, value: &str) -> Result<(), HerdrError> {
+        async fn report_pane_metadata(
+            &self,
+            id: &HerdrPaneId,
+            key: &str,
+            value: &str,
+        ) -> Result<(), HerdrError> {
             self.replay().await;
-            let e = Logged::PaneMetadata { id: id.clone(), key: key.into(), value: value.into() };
+            let e = Logged::PaneMetadata {
+                id: id.clone(),
+                key: key.into(),
+                value: value.into(),
+            };
             self.record(e, self.inner.report_pane_metadata(id, key, value).await)
         }
-        async fn report_workspace_metadata(&self, id: &HerdrWorkspaceId, key: &str, value: &str) -> Result<(), HerdrError> {
+        async fn report_workspace_metadata(
+            &self,
+            id: &HerdrWorkspaceId,
+            key: &str,
+            value: &str,
+        ) -> Result<(), HerdrError> {
             self.replay().await;
-            let e = Logged::WorkspaceMetadata { id: id.clone(), key: key.into(), value: value.into() };
-            self.record(e, self.inner.report_workspace_metadata(id, key, value).await)
+            let e = Logged::WorkspaceMetadata {
+                id: id.clone(),
+                key: key.into(),
+                value: value.into(),
+            };
+            self.record(
+                e,
+                self.inner.report_workspace_metadata(id, key, value).await,
+            )
         }
         async fn start_agent(&self, req: StartAgent) -> Result<StartOutcome, HerdrError> {
             self.replay().await;
-            let e = Logged::StartAgent { pane: req.pane.clone(), kind: req.kind.clone(), args: req.args.clone() };
+            let e = Logged::StartAgent {
+                pane: req.pane.clone(),
+                kind: req.kind.clone(),
+                args: req.args.clone(),
+            };
             self.record(e, self.inner.start_agent(req).await)
         }
         async fn agent(&self, pane: &HerdrPaneId) -> Result<Option<AgentInfo>, HerdrError> {
@@ -802,7 +1098,9 @@ mod fakes {
 
     pub fn services(ctx: &DaemonCtx) -> Services {
         Services::new(
-            Arc::new(PersistentFakeHerdr::open(ctx.paths.local.join("fake-herdr.json"))),
+            Arc::new(PersistentFakeHerdr::open(
+                ctx.paths.local.join("fake-herdr.json"),
+            )),
             Arc::new(crate::threads::FakeThreads::new()),
             Arc::new(crate::threads::FakePaneSeatMap::new()),
             Arc::new(SystemClock),

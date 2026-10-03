@@ -61,6 +61,9 @@ mod tests {
         let fallback = wait_until(Duration::from_secs(25));
         assert!(fallback >= now + Duration::from_secs(25));
         let d = now + Duration::from_secs(1);
-        within(d, async { assert_eq!(wait_until(Duration::from_secs(25)), d) }).await;
+        within(d, async {
+            assert_eq!(wait_until(Duration::from_secs(25)), d)
+        })
+        .await;
     }
 }

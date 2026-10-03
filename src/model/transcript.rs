@@ -1,5 +1,5 @@
 //! Transcript record `transcripts/<seat-id>/<tr-id>.toml` (spec §8.1).
-use crate::model::common::{is_false, ByteRange};
+use crate::model::common::{ByteRange, is_false};
 use crate::model::ids::{CloneId, NsId, SeatId, TranscriptId};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

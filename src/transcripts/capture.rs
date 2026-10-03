@@ -4,12 +4,12 @@
 //! triggers request creation for the session that just ended.
 use super::{Transcripts, clone_for_pane, internal};
 use crate::daemon::registry::{CallerInfo, CommandError};
-use crate::model::harness::Harness;
-use crate::model::native_session::SessionEndReason;
 use crate::ipc::IpcErrorCode;
-use crate::model::common::CloneLifecycle;
 use crate::model::change::ChangeRequest;
+use crate::model::common::CloneLifecycle;
+use crate::model::harness::Harness;
 use crate::model::native_session::NativeSession;
+use crate::model::native_session::SessionEndReason;
 use crate::model::operation::OpState;
 use crate::model::{CloneId, OpId, SeatId, Timestamp};
 use crate::observe::mutations::occupancy_request;
@@ -188,13 +188,21 @@ impl Transcripts {
     /// Returns the number of reports applied.
     pub async fn ingest_spool(&self) -> usize {
         let mut state = self.spool_lock.lock().await;
-        if matches!(self.journal.meta_get(crate::writer::WRITER_HALTED), Ok(Some(_))) {
+        if matches!(
+            self.journal.meta_get(crate::writer::WRITER_HALTED),
+            Ok(Some(_))
+        ) {
             return 0;
         }
         let dir = spool_dir(self.reconciler.instance());
-        let Ok(rd) = std::fs::read_dir(&dir) else { return 0 };
-        let mut files: Vec<PathBuf> =
-            rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return 0;
+        };
+        let mut files: Vec<PathBuf> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
         files.sort();
         state.inflight.retain(|p, _| files.contains(p));
         let mut applied = 0;
@@ -202,12 +210,17 @@ impl Transcripts {
             if let Some(op) = state.inflight.get(&path).map(|e| e.op.clone()) {
                 match self.writer.status(&op) {
                     Ok(Some(OpState::Committed)) => {
-                        let Some(entry) = state.inflight.remove(&path) else { continue };
+                        let Some(entry) = state.inflight.remove(&path) else {
+                            continue;
+                        };
                         if self.finish_spooled(&entry.pending, op).await {
                             applied += 1;
                         }
                         if let Err(e) = std::fs::remove_file(&path) {
-                            eprintln!("herdr-graph: transcripts: cannot remove spooled report {}: {e}", path.display());
+                            eprintln!(
+                                "herdr-graph: transcripts: cannot remove spooled report {}: {e}",
+                                path.display()
+                            );
                             return applied;
                         }
                         continue;
@@ -218,14 +231,19 @@ impl Transcripts {
                         state.inflight.remove(&path);
                     }
                     Err(e) => {
-                        eprintln!("herdr-graph: transcripts: spooled report {} kept: {e}", path.display());
+                        eprintln!(
+                            "herdr-graph: transcripts: spooled report {} kept: {e}",
+                            path.display()
+                        );
                         return applied;
                     }
                 }
             }
             let parsed = std::fs::read(&path)
                 .map_err(|e| e.to_string())
-                .and_then(|b| serde_json::from_slice::<SpooledReport>(&b).map_err(|e| e.to_string()));
+                .and_then(|b| {
+                    serde_json::from_slice::<SpooledReport>(&b).map_err(|e| e.to_string())
+                });
             let report = match parsed {
                 Ok(r) => r,
                 Err(e) => {
@@ -233,35 +251,48 @@ impl Transcripts {
                     continue;
                 }
             };
-            let outcome = match self.resolve_report(&report.caller, report.args, true, report.spooled_at) {
-                Ok(Resolved::Done(v)) => Ok(v["changed"] == true),
-                Ok(Resolved::Admit(p, request)) => match self.writer.admit(*request) {
-                    Ok(op) => {
-                        state.inflight.insert(path.clone(), InFlight { op: op.clone(), pending: *p });
-                        match self.wait_committed(op).await {
-                            Ok(op) => match state.inflight.remove(&path) {
-                                Some(e) => Ok(self.finish_spooled(&e.pending, op).await),
-                                None => Ok(false),
-                            },
-                            Err(e) => {
-                                if matches!(e.code, IpcErrorCode::BadRequest | IpcErrorCode::Rejected) {
-                                    state.inflight.remove(&path);
+            let outcome =
+                match self.resolve_report(&report.caller, report.args, true, report.spooled_at) {
+                    Ok(Resolved::Done(v)) => Ok(v["changed"] == true),
+                    Ok(Resolved::Admit(p, request)) => match self.writer.admit(*request) {
+                        Ok(op) => {
+                            state.inflight.insert(
+                                path.clone(),
+                                InFlight {
+                                    op: op.clone(),
+                                    pending: *p,
+                                },
+                            );
+                            match self.wait_committed(op).await {
+                                Ok(op) => match state.inflight.remove(&path) {
+                                    Some(e) => Ok(self.finish_spooled(&e.pending, op).await),
+                                    None => Ok(false),
+                                },
+                                Err(e) => {
+                                    if matches!(
+                                        e.code,
+                                        IpcErrorCode::BadRequest | IpcErrorCode::Rejected
+                                    ) {
+                                        state.inflight.remove(&path);
+                                    }
+                                    Err(e)
                                 }
-                                Err(e)
                             }
                         }
-                    }
-                    Err(e) => Err(CommandError::unavailable(e.to_string())),
-                },
-                Err(e) => Err(e),
-            };
+                        Err(e) => Err(CommandError::unavailable(e.to_string())),
+                    },
+                    Err(e) => Err(e),
+                };
             match outcome {
                 Ok(changed) => {
                     if changed {
                         applied += 1;
                     }
                     if let Err(e) = std::fs::remove_file(&path) {
-                        eprintln!("herdr-graph: transcripts: cannot remove spooled report {}: {e}", path.display());
+                        eprintln!(
+                            "herdr-graph: transcripts: cannot remove spooled report {}: {e}",
+                            path.display()
+                        );
                         return applied;
                     }
                 }
@@ -269,7 +300,11 @@ impl Transcripts {
                     quarantine(&dir, &path, &e.message);
                 }
                 Err(e) => {
-                    eprintln!("herdr-graph: transcripts: spooled report {} kept: {}", path.display(), e.message);
+                    eprintln!(
+                        "herdr-graph: transcripts: spooled report {} kept: {}",
+                        path.display(),
+                        e.message
+                    );
                     return applied;
                 }
             }
@@ -277,7 +312,10 @@ impl Transcripts {
         applied
     }
 
-    pub(crate) async fn run_spool(self: std::sync::Arc<Self>, mut sd: crate::daemon::registry::Shutdown) -> anyhow::Result<()> {
+    pub(crate) async fn run_spool(
+        self: std::sync::Arc<Self>,
+        mut sd: crate::daemon::registry::Shutdown,
+    ) -> anyhow::Result<()> {
         loop {
             self.ingest_spool().await;
             tokio::select! {
@@ -296,18 +334,31 @@ impl Transcripts {
         skip_known: bool,
         at: Timestamp,
     ) -> Result<Resolved, CommandError> {
-        let a: ReportArgs = serde_json::from_value(args).map_err(|e| CommandError::bad_request(e.to_string()))?;
+        let a: ReportArgs =
+            serde_json::from_value(args).map_err(|e| CommandError::bad_request(e.to_string()))?;
         let (clone, seat, previous, known) = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;
-            let by_id = |raw: &str| CloneId::parse(raw).ok().filter(|id| g.clones.contains_key(id));
+            let by_id = |raw: &str| {
+                CloneId::parse(raw)
+                    .ok()
+                    .filter(|id| g.clones.contains_key(id))
+            };
             let id = a
                 .clone
                 .as_deref()
                 .and_then(by_id)
                 .or_else(|| caller.graph_clone.as_deref().and_then(by_id))
-                .or_else(|| a.pane.as_deref().or(caller.pane_id.as_deref()).and_then(|p| clone_for_pane(&g, p)));
-            let Some(rec) = id.and_then(|id| g.clones.get(&id)).filter(|c| c.lifecycle == CloneLifecycle::Active) else {
+                .or_else(|| {
+                    a.pane
+                        .as_deref()
+                        .or(caller.pane_id.as_deref())
+                        .and_then(|p| clone_for_pane(&g, p))
+                });
+            let Some(rec) = id
+                .and_then(|id| g.clones.get(&id))
+                .filter(|c| c.lifecycle == CloneLifecycle::Active)
+            else {
                 return Ok(Resolved::Done(json!({ "resolved": false })));
             };
             let previous = rec
@@ -315,7 +366,10 @@ impl Transcripts {
                 .as_ref()
                 .and_then(|o| rec.sessions.iter().find(|s| s.id == o.native_session))
                 .cloned();
-            let known = rec.sessions.iter().any(|s| s.native_session_id == a.capture.native_session_id);
+            let known = rec
+                .sessions
+                .iter()
+                .any(|s| s.native_session_id == a.capture.native_session_id);
             (rec.id.clone(), rec.seat.clone(), previous, known)
         };
         if skip_known && known {
@@ -323,18 +377,33 @@ impl Transcripts {
                 json!({ "resolved": true, "clone": clone, "changed": false, "duplicate": true, "source": a.source }),
             ));
         }
-        if previous.as_ref().is_some_and(|p| p.native_session_id == a.capture.native_session_id) {
-            return Ok(Resolved::Done(json!({ "resolved": true, "clone": clone, "changed": false, "source": a.source })));
+        if previous
+            .as_ref()
+            .is_some_and(|p| p.native_session_id == a.capture.native_session_id)
+        {
+            return Ok(Resolved::Done(
+                json!({ "resolved": true, "clone": clone, "changed": false, "source": a.source }),
+            ));
         }
         let end = previous.as_ref().map(|_| SessionEndReason::SessionChanged);
         let request = occupancy_request(&clone, end, Some(&a.capture), at);
-        let pending = Pending { clone, seat, previous, native: a.capture.native_session_id, source: a.source };
+        let pending = Pending {
+            clone,
+            seat,
+            previous,
+            native: a.capture.native_session_id,
+            source: a.source,
+        };
         Ok(Resolved::Admit(Box::new(pending), Box::new(request)))
     }
 
     /// The occupancy op committed: when it ended the previous session, request that session's transcript.
     /// The mutation drops a duplicate or stale report, in which case nothing changed and nothing is requested.
-    async fn finish_report(&self, p: &Pending, op: OpId) -> Result<serde_json::Value, CommandError> {
+    async fn finish_report(
+        &self,
+        p: &Pending,
+        op: OpId,
+    ) -> Result<serde_json::Value, CommandError> {
         let (changed, previous_ended) = {
             let view = self.view().map_err(internal)?;
             let g = Graph::load(&view).map_err(internal)?;
@@ -344,10 +413,13 @@ impl Transcripts {
                 r.sessions.iter().find(|s| s.id == o.native_session)
             });
             let changed = occupant.is_some_and(|s| s.native_session_id == p.native);
-            let previous_ended = p
-                .previous
-                .as_ref()
-                .is_some_and(|prev| rec.is_some_and(|r| r.sessions.iter().any(|s| s.id == prev.id && s.ended.is_some())));
+            let previous_ended = p.previous.as_ref().is_some_and(|prev| {
+                rec.is_some_and(|r| {
+                    r.sessions
+                        .iter()
+                        .any(|s| s.id == prev.id && s.ended.is_some())
+                })
+            });
             (changed, previous_ended)
         };
         if let Some(prev) = p.previous.as_ref().filter(|_| previous_ended) {
@@ -370,7 +442,10 @@ impl Transcripts {
         match self.finish_report(p, op).await {
             Ok(v) => v["changed"] == true,
             Err(e) => {
-                eprintln!("herdr-graph: transcripts: spooled report for {} not finished: {}", p.clone, e.message);
+                eprintln!(
+                    "herdr-graph: transcripts: spooled report for {} not finished: {}",
+                    p.clone, e.message
+                );
                 false
             }
         }
@@ -378,11 +453,17 @@ impl Transcripts {
 }
 
 fn quarantine(dir: &Path, path: &Path, why: &str) {
-    eprintln!("herdr-graph: transcripts: spooled report {} rejected: {why}", path.display());
+    eprintln!(
+        "herdr-graph: transcripts: spooled report {} rejected: {why}",
+        path.display()
+    );
     let rejected = dir.join("rejected");
     let moved = std::fs::create_dir_all(&rejected)
         .and_then(|()| std::fs::rename(path, rejected.join(path.file_name().unwrap_or_default())));
     if let Err(e) = moved {
-        eprintln!("herdr-graph: transcripts: cannot quarantine {}: {e}", path.display());
+        eprintln!(
+            "herdr-graph: transcripts: cannot quarantine {}: {e}",
+            path.display()
+        );
     }
 }

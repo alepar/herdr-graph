@@ -6,17 +6,19 @@
 //! `send_request` whose receipts the liveness scan polls. Neither ever completes a request.
 use super::mutations::{bookkeeping_request, is_merged};
 use super::requests::{Destination, resolve_destination};
-use crate::model::request::{DeliveryAttempt, ProcessingRequest, RequestStatus};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
+use crate::model::request::{DeliveryAttempt, ProcessingRequest, RequestStatus};
 use crate::model::{ByteRange, HerdrPaneId, RequestId, Timestamp, TranscriptId};
+use crate::ports::store::StoreError;
+use crate::ports::threads::{
+    DeliveryCapability, OpKey, Severity, ThreadRef, ThreadsError, ThreadsPort,
+};
+use crate::ports::writer::Writer;
 use crate::reconcile::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
 use crate::threads::PaneSeatMap;
 use crate::threads::effects::Graph;
-use crate::ports::store::StoreError;
-use crate::ports::threads::{DeliveryCapability, OpKey, Severity, ThreadRef, ThreadsError, ThreadsPort};
-use crate::ports::writer::Writer;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -37,7 +39,9 @@ fn threads_outcome(e: ThreadsError) -> DeliverOutcome {
     match e {
         ThreadsError::ServiceBusy => DeliverOutcome::Transient("threads service busy".into()),
         ThreadsError::Disconnected(m) => DeliverOutcome::Transient(m),
-        ThreadsError::Unsupported => DeliverOutcome::Failed("operation unsupported by this threads service".into()),
+        ThreadsError::Unsupported => {
+            DeliverOutcome::Failed("operation unsupported by this threads service".into())
+        }
         ThreadsError::Rejected(m) => DeliverOutcome::Failed(m),
     }
 }
@@ -85,7 +89,11 @@ pub fn prepare(tree: &dyn TreeRead, rq: &ProcessingRequest) -> Result<Prepared, 
         .map(|(_, t)| t)
         .find(|t| t.id == rq.transcript)
         .ok_or(DeliverOutcome::Obsolete)?;
-    let source_seat = g.seats.get(&tr.seat).map(|s| s.name.clone()).unwrap_or_else(|| tr.seat.to_string());
+    let source_seat = g
+        .seats
+        .get(&tr.seat)
+        .map(|s| s.name.clone())
+        .unwrap_or_else(|| tr.seat.to_string());
     match resolve_destination(&g, tree, &tr.seat).map_err(read)? {
         Destination::Ready { thread, panes, .. } => Ok(Prepared {
             rq: rq.id.clone(),
@@ -97,7 +105,9 @@ pub fn prepare(tree: &dyn TreeRead, rq: &ProcessingRequest) -> Result<Prepared, 
             thread,
             panes,
         }),
-        Destination::Relaunch { .. } => Err(DeliverOutcome::Deferred("summarizer has no occupant yet".into())),
+        Destination::Relaunch { .. } => Err(DeliverOutcome::Deferred(
+            "summarizer has no occupant yet".into(),
+        )),
         Destination::Undeliverable { reason, .. } => Err(DeliverOutcome::Deferred(reason.into())),
     }
 }
@@ -116,7 +126,13 @@ impl DeliveryCore {
 
     /// Deliver one attempt (fresh op key per attempt number) and record it as a bookkeeping write that only
     /// applies while the attempt count is still `p.n`, so a duplicate delivery of the same attempt is a no-op.
-    pub async fn deliver(&self, p: &Prepared, writer: &dyn Writer, now: Timestamp, retry: bool) -> DeliverOutcome {
+    pub async fn deliver(
+        &self,
+        p: &Prepared,
+        writer: &dyn Writer,
+        now: Timestamp,
+        retry: bool,
+    ) -> DeliverOutcome {
         let Some(thread) = p.thread.clone() else {
             return DeliverOutcome::Deferred("summarizer channel not created yet".into());
         };
@@ -129,7 +145,12 @@ impl DeliveryCore {
             Ok(m) => m,
             Err(o) => return o,
         };
-        let attempt = DeliveryAttempt { op_key: op_key.0.clone(), message_id, at: now, retry };
+        let attempt = DeliveryAttempt {
+            op_key: op_key.0.clone(),
+            message_id,
+            at: now,
+            retry,
+        };
         let request = bookkeeping_request(
             "request_delivery",
             serde_json::json!({ "rq": p.rq, "expect_attempts": p.n, "attempt": attempt }),
@@ -160,7 +181,9 @@ impl DeliveryCore {
                     }
                 }
                 if recipients.is_empty() {
-                    return Err(DeliverOutcome::Deferred("summarizer panes are not threads seats yet".into()));
+                    return Err(DeliverOutcome::Deferred(
+                        "summarizer panes are not threads seats yet".into(),
+                    ));
                 }
                 let id = self
                     .threads
@@ -193,24 +216,42 @@ impl EffectSource for DeliverySource {
         let requests = match layout::list_requests(cx.tree) {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("herdr-graph: transcripts: cannot list requests at {}: {e}", cx.head.0);
+                eprintln!(
+                    "herdr-graph: transcripts: cannot list requests at {}: {e}",
+                    cx.head.0
+                );
                 return Vec::new();
             }
         };
         let pending: Vec<ProcessingRequest> = requests
             .into_iter()
             .map(|(_, r)| r)
-            .filter(|r| r.status == RequestStatus::Pending && !is_merged(r) && r.unresolved.is_none())
+            .filter(|r| {
+                r.status == RequestStatus::Pending && !is_merged(r) && r.unresolved.is_none()
+            })
             .collect();
         if pending.is_empty() {
             return Vec::new();
         }
-        let Ok(g) = Graph::load(cx.tree) else { return Vec::new() };
-        let Ok(transcripts) = layout::list_transcripts(cx.tree) else { return Vec::new() };
+        let Ok(g) = Graph::load(cx.tree) else {
+            return Vec::new();
+        };
+        let Ok(transcripts) = layout::list_transcripts(cx.tree) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for rq in pending {
-            let Some(tr) = transcripts.iter().map(|(_, t)| t).find(|t| t.id == rq.transcript) else { continue };
-            if !matches!(resolve_destination(&g, cx.tree, &tr.seat), Ok(Destination::Ready { .. })) {
+            let Some(tr) = transcripts
+                .iter()
+                .map(|(_, t)| t)
+                .find(|t| t.id == rq.transcript)
+            else {
+                continue;
+            };
+            if !matches!(
+                resolve_destination(&g, cx.tree, &tr.seat),
+                Ok(Destination::Ready { .. })
+            ) {
                 continue;
             }
             let object = rq.id.to_any();
@@ -260,7 +301,10 @@ impl EffectExecutor for DeliveryExecutor {
             let Ok(rq_id) = RequestId::parse(e.object.as_str()) else {
                 return ExecOutcome::Failed(format!("{} is not a request id", e.object));
             };
-            let rq = match crate::store::record::read_toml::<ProcessingRequest>(cx.tree, &layout::request_record(&rq_id)) {
+            let rq = match crate::store::record::read_toml::<ProcessingRequest>(
+                cx.tree,
+                &layout::request_record(&rq_id),
+            ) {
                 Ok(Some(r)) => r,
                 Ok(None) => return ExecOutcome::Obsolete,
                 Err(err) => return ExecOutcome::Transient(format!("cannot read {rq_id}: {err}")),

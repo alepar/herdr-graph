@@ -14,7 +14,11 @@ pub struct Baseline {
 
 impl Baseline {
     pub fn new(snapshot: HerdrSnapshot, taken_at: Timestamp) -> Self {
-        Self { incarnation: snapshot.incarnation.clone(), snapshot, taken_at }
+        Self {
+            incarnation: snapshot.incarnation.clone(),
+            snapshot,
+            taken_at,
+        }
     }
 }
 

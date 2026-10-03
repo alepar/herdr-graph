@@ -1,10 +1,10 @@
 //! Effect source and executor registration API (spec §4.4). Other components (threads, delivery)
 //! register their effect families here; the Herdr family is built in (`herdr_exec`).
 use crate::journal::Journal;
+use crate::model::EffectId;
 use crate::model::Timestamp;
 use crate::model::common::CommitId;
 use crate::model::effect::{EffectKind, EffectRecord};
-use crate::model::EffectId;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot};
 use crate::ports::writer::Writer;
 use crate::store::tree::TreeRead;

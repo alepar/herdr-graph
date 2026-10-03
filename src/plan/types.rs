@@ -2,7 +2,8 @@
 use crate::daemon::registry::CallerInfo;
 use crate::model::change::{ReliedOn, RequestKind, Requester};
 use crate::model::{
-    ActionId, AnyId, AppId, CloneId, CommitId, MemberId, OpId, PlanId, SeatId, TeamspaceId, TemplateId, Timestamp,
+    ActionId, AnyId, AppId, CloneId, CommitId, MemberId, OpId, PlanId, SeatId, TeamspaceId,
+    TemplateId, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -20,7 +21,12 @@ pub struct PlanEffect {
 
 impl PlanEffect {
     pub fn new(kind: &str, object: impl Into<AnyId>, detail: serde_json::Value) -> Self {
-        Self { kind: kind.to_owned(), object: object.into(), detail, induced: false }
+        Self {
+            kind: kind.to_owned(),
+            object: object.into(),
+            detail,
+            induced: false,
+        }
     }
 
     pub fn induced(mut self) -> Self {
@@ -35,7 +41,8 @@ impl PlanEffect {
             serde_json::Value::Null => {}
             serde_json::Value::Object(m) if m.is_empty() => {}
             serde_json::Value::Object(m) => {
-                let parts: Vec<String> = m.iter().map(|(k, v)| format!("{k}={}", short(v))).collect();
+                let parts: Vec<String> =
+                    m.iter().map(|(k, v)| format!("{k}={}", short(v))).collect();
                 s.push(' ');
                 s.push_str(&parts.join(" "));
             }
@@ -77,7 +84,15 @@ macro_rules! reserved_id {
         }
     )*};
 }
-reserved_id!(SeatId, CloneId, TeamspaceId, AppId, ActionId, MemberId, TemplateId);
+reserved_id!(
+    SeatId,
+    CloneId,
+    TeamspaceId,
+    AppId,
+    ActionId,
+    MemberId,
+    TemplateId
+);
 
 impl Reserved {
     /// The id in `slot`, minting and recording one when the slot is empty (or holds a foreign id).

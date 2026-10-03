@@ -8,7 +8,8 @@ use std::path::PathBuf;
 pub struct RepoPath(String);
 impl RepoPath {
     pub fn new(s: &str) -> Result<Self, StoreError> {
-        let bad = s.starts_with('/') || s.contains('\\') || s.split('/').any(|c| c == ".." || c == ".");
+        let bad =
+            s.starts_with('/') || s.contains('\\') || s.split('/').any(|c| c == ".." || c == ".");
         if bad {
             return Err(StoreError::InvalidPath(s.to_owned()));
         }
@@ -93,8 +94,10 @@ pub fn read_record<R: DeserializeOwned>(
         path: path.as_str().into(),
         reason: e.to_string(),
     })?;
-    toml::from_str(&text).map(Some).map_err(|e| StoreError::Corrupt {
-        path: path.as_str().into(),
-        reason: e.to_string(),
-    })
+    toml::from_str(&text)
+        .map(Some)
+        .map_err(|e| StoreError::Corrupt {
+            path: path.as_str().into(),
+            reason: e.to_string(),
+        })
 }

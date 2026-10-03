@@ -1,5 +1,5 @@
 //! `init` — owned by hg-zmi.2.
-use crate::store::init::{init_instance, write_user_config, UserConfigOutcome};
+use crate::store::init::{UserConfigOutcome, init_instance, write_user_config};
 use clap::Subcommand;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -21,7 +21,11 @@ pub enum Commands {
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
-        Commands::Init { path, with_examples, no_user_config } => {
+        Commands::Init {
+            path,
+            with_examples,
+            no_user_config,
+        } => {
             std::fs::create_dir_all(&path)?;
             let path = path.canonicalize()?;
             let commit = init_instance(&path)?;
@@ -29,7 +33,11 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             println!("commit:   {}", commit.0);
             if with_examples {
                 let examples = crate::bootstrap::examples::install_examples(&path)?;
-                println!("examples: {} (commit {})", crate::bootstrap::examples::EXAMPLES_DIR, examples.0);
+                println!(
+                    "examples: {} (commit {})",
+                    crate::bootstrap::examples::EXAMPLES_DIR,
+                    examples.0
+                );
             }
             if no_user_config {
                 println!(

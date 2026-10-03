@@ -6,7 +6,9 @@ mod support;
 use herdr_graph::config::InstancePaths;
 use herdr_graph::daemon::DaemonCtx;
 use herdr_graph::daemon::client::{Client, ClientError};
-use herdr_graph::daemon::compose::{STARTUP_STEPS, Services, compose_with, mutation_registry, production_threads};
+use herdr_graph::daemon::compose::{
+    STARTUP_STEPS, Services, compose_with, mutation_registry, production_threads,
+};
 use herdr_graph::daemon::registry::{CallerInfo, Registry, Shutdown, shutdown_channel};
 use herdr_graph::herdr::FakeHerdr;
 use herdr_graph::herdr::fake::FakeCall;
@@ -19,10 +21,10 @@ use herdr_graph::ports::clock::ManualClock;
 use herdr_graph::ports::herdr::{AgentInfo, AgentSession, AgentStatus, HerdrApi};
 use herdr_graph::ports::store::Store;
 use herdr_graph::ports::writer::{Writer, WriterError};
+use herdr_graph::store::GitStore;
 use herdr_graph::store::init::init_instance;
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
-use herdr_graph::store::GitStore;
 use herdr_graph::threads::discovery::DiscoveryInputs;
 use herdr_graph::threads::{FakePaneSeatMap, FakeThreads};
 use serde_json::{Value, json};
@@ -59,8 +61,17 @@ struct Fakes {
 }
 
 fn fakes() -> (Fakes, Services) {
-    let f = Fakes { herdr: FakeHerdr::new(), threads: Arc::new(FakeThreads::new()), clock: Arc::new(ManualClock::new(chrono::Utc::now())) };
-    let mut s = Services::new(f.herdr.clone(), f.threads.clone(), Arc::new(FakePaneSeatMap::new()), f.clock.clone());
+    let f = Fakes {
+        herdr: FakeHerdr::new(),
+        threads: Arc::new(FakeThreads::new()),
+        clock: Arc::new(ManualClock::new(chrono::Utc::now())),
+    };
+    let mut s = Services::new(
+        f.herdr.clone(),
+        f.threads.clone(),
+        Arc::new(FakePaneSeatMap::new()),
+        f.clock.clone(),
+    );
     s.reminder_period = Duration::from_millis(40);
     (f, s)
 }
@@ -79,7 +90,9 @@ impl Daemon {
     /// Compose against `root` (an initialised instance) without serving or spawning anything.
     async fn compose_only(root: &Path, services: Services) -> Registry {
         let mut reg = Registry::default();
-        compose_with(&mut reg, &ctx_for(root), services).await.expect("compose");
+        compose_with(&mut reg, &ctx_for(root), services)
+            .await
+            .expect("compose");
         reg
     }
 
@@ -108,16 +121,29 @@ impl Daemon {
             started_at: chrono::Utc::now(),
             shutdown_tx: stop.clone(),
         };
-        let server = tokio::spawn(herdr_graph::daemon::server::serve(listener, registry.clone(), builtins, shutdown));
+        let server = tokio::spawn(herdr_graph::daemon::server::serve(
+            listener,
+            registry.clone(),
+            builtins,
+            shutdown,
+        ));
         let mut tasks: Vec<_> = tasks;
         tasks.push(server);
-        Daemon { root: root.to_path_buf(), sock, registry, fakes, stop, tasks }
+        Daemon {
+            root: root.to_path_buf(),
+            sock,
+            registry,
+            fakes,
+            stop,
+            tasks,
+        }
     }
 
     async fn call(&self, kind: &str, args: Value) -> Result<Value, ClientError> {
         let (sock, kind) = (self.sock.clone(), kind.to_owned());
         tokio::task::spawn_blocking(move || {
-            let mut c = Client::connect(&sock, Duration::from_secs(30)).map_err(|e| ClientError::Unavailable(e.to_string()))?;
+            let mut c = Client::connect(&sock, Duration::from_secs(30))
+                .map_err(|e| ClientError::Unavailable(e.to_string()))?;
             c.call(&kind, args)
         })
         .await
@@ -132,9 +158,14 @@ impl Daemon {
             }
             v
         };
-        let plan = self.call("plan.create", with_caller(json!({ "words": words }))).await.unwrap_or_else(|e| panic!("plan {words:?}: {e}"));
+        let plan = self
+            .call("plan.create", with_caller(json!({ "words": words })))
+            .await
+            .unwrap_or_else(|e| panic!("plan {words:?}: {e}"));
         let apply = json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay" });
-        self.call("plan.apply", with_caller(apply)).await.unwrap_or_else(|e| panic!("apply {words:?}: {e}"))
+        self.call("plan.apply", with_caller(apply))
+            .await
+            .unwrap_or_else(|e| panic!("apply {words:?}: {e}"))
     }
 
     async fn committed(&self, words: &[&str]) -> Value {
@@ -182,19 +213,45 @@ async fn composed_daemon_plan_apply_via_ipc_commits() {
     let before = d.fakes.herdr.calls();
     assert!(before.len() <= 1, "{before:?}");
 
-    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "foreman",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "shell",
+    ])
+    .await;
     let herdr = d.fakes.herdr.clone();
     eventually("a CreateWorkspace and CreateTab from the loop step", || {
         let calls = herdr.calls();
-        calls.iter().any(|c| matches!(c, FakeCall::CreateWorkspace(_))) && calls.iter().any(|c| matches!(c, FakeCall::CreateTab(_)))
+        calls
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateWorkspace(_)))
+            && calls.iter().any(|c| matches!(c, FakeCall::CreateTab(_)))
     })
     .await;
-    let tabs = herdr.calls().iter().filter(|c| matches!(c, FakeCall::CreateTab(_))).count();
+    let tabs = herdr
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, FakeCall::CreateTab(_)))
+        .count();
     assert_eq!(tabs, 1, "one tab for one seat");
 
     // The op is in the journal as committed, and `ops.list` (a composed command) sees it.
     let ops = d.call("ops.list", json!({})).await.unwrap();
-    assert!(ops["ops"].as_array().unwrap().iter().filter(|o| o["state"] == "committed").count() >= 2, "{ops}");
+    assert!(
+        ops["ops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["state"] == "committed")
+            .count()
+            >= 2,
+        "{ops}"
+    );
     d.stop().await;
 }
 
@@ -203,17 +260,33 @@ async fn writer_resume_over_ipc_clears_halt() {
     let (_dir, root) = new_instance();
     let d = Daemon::start(&root).await;
     let journal = Journal::open(&InstancePaths::new(&root).journal).unwrap();
-    journal.meta_set(herdr_graph::writer::WRITER_HALTED, "lock contention on main").unwrap();
+    journal
+        .meta_set(
+            herdr_graph::writer::WRITER_HALTED,
+            "lock contention on main",
+        )
+        .unwrap();
     let status = d.call("status", json!({})).await.unwrap();
-    assert_eq!(status["components"]["writer"]["writer_halted"], "lock contention on main");
+    assert_eq!(
+        status["components"]["writer"]["writer_halted"],
+        "lock contention on main"
+    );
 
     let r = d.call("writer.resume", json!({})).await.unwrap();
     assert_eq!(r["was_halted"], true, "{r}");
     assert_eq!(r["reason"], "lock contention on main", "{r}");
     assert!(r["requeued"].as_array().unwrap().is_empty(), "{r}");
     let status = d.call("status", json!({})).await.unwrap();
-    assert!(status["components"]["writer"]["writer_halted"].is_null(), "{status}");
-    assert_eq!(journal.meta_get(herdr_graph::writer::WRITER_HALTED).unwrap(), None);
+    assert!(
+        status["components"]["writer"]["writer_halted"].is_null(),
+        "{status}"
+    );
+    assert_eq!(
+        journal
+            .meta_get(herdr_graph::writer::WRITER_HALTED)
+            .unwrap(),
+        None
+    );
 
     d.committed(&["teamspace", "create", "after-resume"]).await;
     d.stop().await;
@@ -278,10 +351,14 @@ async fn every_kind_and_command_registered() {
         "session.report",
         "who",
     ] {
-        assert!(have.iter().any(|k| k == want), "command {want} not registered; have {have:?}");
+        assert!(
+            have.iter().any(|k| k == want),
+            "command {want} not registered; have {have:?}"
+        );
     }
 
-    let (_kinds, muts) = mutation_registry(Arc::new(PlanStore::new(root.join(".graph-local/plans"))));
+    let (_kinds, muts) =
+        mutation_registry(Arc::new(PlanStore::new(root.join(".graph-local/plans"))));
     let keys = muts.keys();
     let mut want: Vec<String> = ORG_KINDS.iter().map(|s| s.to_string()).collect();
     want.extend(
@@ -307,7 +384,10 @@ async fn every_kind_and_command_registered() {
         .map(String::from),
     );
     for k in &want {
-        assert!(keys.contains(k), "mutation {k} not registered; have {keys:?}");
+        assert!(
+            keys.contains(k),
+            "mutation {k} not registered; have {keys:?}"
+        );
     }
     // The composed daemon's writer admits only registered kinds: its registry is this same function's output.
     d.stop().await;
@@ -318,17 +398,28 @@ struct JournalOnly(Arc<Journal>);
 
 impl Writer for JournalOnly {
     fn admit(&self, request: ChangeRequest) -> Result<herdr_graph::model::OpId, WriterError> {
-        let op = self.0.admit(&request, chrono::Utc::now()).map_err(|e| WriterError::Journal(e.to_string()))?;
-        self.0.begin_applying(&op, chrono::Utc::now()).map_err(|e| WriterError::Journal(e.to_string()))?;
+        let op = self
+            .0
+            .admit(&request, chrono::Utc::now())
+            .map_err(|e| WriterError::Journal(e.to_string()))?;
+        self.0
+            .begin_applying(&op, chrono::Utc::now())
+            .map_err(|e| WriterError::Journal(e.to_string()))?;
         Ok(op)
     }
     fn status(&self, op: &herdr_graph::model::OpId) -> Result<Option<OpState>, WriterError> {
-        Ok(self.0.get(op).map_err(|e| WriterError::Journal(e.to_string()))?.map(|r| r.state))
+        Ok(self
+            .0
+            .get(op)
+            .map_err(|e| WriterError::Journal(e.to_string()))?
+            .map(|r| r.state))
     }
 }
 
 fn startup_record(journal: &Journal) -> Vec<String> {
-    (0..STARTUP_STEPS.len()).filter_map(|n| journal.meta_get(&format!("startup:{n}")).unwrap()).collect()
+    (0..STARTUP_STEPS.len())
+        .filter_map(|n| journal.meta_get(&format!("startup:{n}")).unwrap())
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -351,8 +442,20 @@ async fn startup_convergence_order() {
         instance: root.clone(),
     };
     let caller = Default::default();
-    let plan = herdr_graph::plan::commands::create_plan(&deps, &caller, vec!["teamspace".into(), "create".into(), "t".into()]).unwrap();
-    let op = herdr_graph::plan::commands::admit_apply(&deps, &caller, plan["plan_id"].as_str().unwrap(), plan["hash"].as_str(), "relay").unwrap();
+    let plan = herdr_graph::plan::commands::create_plan(
+        &deps,
+        &caller,
+        vec!["teamspace".into(), "create".into(), "t".into()],
+    )
+    .unwrap();
+    let op = herdr_graph::plan::commands::admit_apply(
+        &deps,
+        &caller,
+        plan["plan_id"].as_str().unwrap(),
+        plan["hash"].as_str(),
+        "relay",
+    )
+    .unwrap();
     assert_eq!(journal.get(&op).unwrap().unwrap().state, OpState::Applying);
     drop(deps);
 
@@ -365,12 +468,31 @@ async fn startup_convergence_order() {
 
     // compose_with returned but no loop has been spawned: everything below was done by startup itself.
     assert_eq!(startup_record(&journal), STARTUP_STEPS.to_vec());
-    assert_eq!(journal.meta_get("startup:9").unwrap(), None, "records of an earlier boot are cleared");
+    assert_eq!(
+        journal.meta_get("startup:9").unwrap(),
+        None,
+        "records of an earlier boot are cleared"
+    );
     let row = journal.get(&op).unwrap().unwrap();
-    assert_eq!(row.state, OpState::Committed, "recovery + drain commit the op before any loop exists");
+    assert_eq!(
+        row.state,
+        OpState::Committed,
+        "recovery + drain commit the op before any loop exists"
+    );
     let loops: Vec<String> = reg.take_loops().into_iter().map(|(n, _)| n).collect();
-    for want in ["writer", "observer", "plan.reminders", "transcripts.session_ended", "transcripts.watcher", "transcripts.liveness", "threads.connection"] {
-        assert!(loops.iter().any(|n| n == want), "loop {want} missing from {loops:?}");
+    for want in [
+        "writer",
+        "observer",
+        "plan.reminders",
+        "transcripts.session_ended",
+        "transcripts.watcher",
+        "transcripts.liveness",
+        "threads.connection",
+    ] {
+        assert!(
+            loops.iter().any(|n| n == want),
+            "loop {want} missing from {loops:?}"
+        );
     }
     drop(f);
 }
@@ -381,29 +503,64 @@ async fn recomposing_against_a_live_herdr_creates_nothing_twice() {
     // the snapshot, and executes nothing again.
     let (_dir, root) = new_instance();
     let (fakes, services) = fakes();
-    let (herdr, threads, clock) = (fakes.herdr.clone(), fakes.threads.clone(), fakes.clock.clone());
+    let (herdr, threads, clock) = (
+        fakes.herdr.clone(),
+        fakes.threads.clone(),
+        fakes.clock.clone(),
+    );
     let d = Daemon::start_with(&root, fakes, services).await;
     d.committed(&["teamspace", "create", "t", "--active"]).await;
-    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "foreman",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "shell",
+    ])
+    .await;
     eventually("the tab and its binding", || {
-        herdr.calls().iter().any(|c| matches!(c, FakeCall::CreateTab(_))) && bound_pane(&d, "foreman").is_some()
+        herdr
+            .calls()
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_)))
+            && bound_pane(&d, "foreman").is_some()
     })
     .await;
     d.stop().await;
 
     herdr.clear_calls();
-    let again = Services::new(herdr.clone(), threads, Arc::new(FakePaneSeatMap::new()), clock);
+    let again = Services::new(
+        herdr.clone(),
+        threads,
+        Arc::new(FakePaneSeatMap::new()),
+        clock,
+    );
     let _reg = Daemon::compose_only(&root, again).await;
     let creates = herdr
         .calls()
         .into_iter()
-        .filter(|c| matches!(c, FakeCall::CreateWorkspace(_) | FakeCall::CreateTab(_) | FakeCall::SplitPane(_)))
+        .filter(|c| {
+            matches!(
+                c,
+                FakeCall::CreateWorkspace(_) | FakeCall::CreateTab(_) | FakeCall::SplitPane(_)
+            )
+        })
         .count();
     assert_eq!(creates, 0, "{:?}", herdr.calls());
 }
 
 fn graph_seat(d: &Daemon, name: &str) -> herdr_graph::model::seat::SeatRecord {
-    d.with_view(|v| layout::all_seats(v).unwrap().into_iter().map(|(_, s)| s).find(|s| s.name == name)).unwrap_or_else(|| panic!("no seat {name}"))
+    d.with_view(|v| {
+        layout::all_seats(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s)
+            .find(|s| s.name == name)
+    })
+    .unwrap_or_else(|| panic!("no seat {name}"))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -411,21 +568,48 @@ async fn reminder_loop_fires_on_fake_clock() {
     let (_dir, root) = new_instance();
     let d = Daemon::start(&root).await;
     d.committed(&["teamspace", "create", "t", "--active"]).await;
-    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
-    eventually("the seat channel thread", || graph_seat(&d, "foreman").channel.thread_id.is_some()).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "foreman",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "shell",
+    ])
+    .await;
+    eventually("the seat channel thread", || {
+        graph_seat(&d, "foreman").channel.thread_id.is_some()
+    })
+    .await;
     let seat = graph_seat(&d, "foreman");
-    let caller = serde_json::to_value(CallerInfo { graph_seat: Some(seat.id.to_string()), ..Default::default() }).unwrap();
+    let caller = serde_json::to_value(CallerInfo {
+        graph_seat: Some(seat.id.to_string()),
+        ..Default::default()
+    })
+    .unwrap();
 
     // Two plans against the same revision: the second one is stale once the first is applied, and is rejected.
     let plan = |new: &str| {
         let d = &d;
         let caller = caller.clone();
         let new = new.to_owned();
-        async move { d.call("plan.create", json!({ "words": ["seat", "rename", "foreman", new], "_caller": caller })).await.unwrap() }
+        async move {
+            d.call(
+                "plan.create",
+                json!({ "words": ["seat", "rename", "foreman", new], "_caller": caller }),
+            )
+            .await
+            .unwrap()
+        }
     };
     let (a, b) = (plan("boss").await, plan("chief").await);
     let apply = |p: &Value| json!({ "plan": p["plan_id"], "confirm": p["hash"], "mode": "relay", "_caller": caller.clone() });
-    assert_eq!(d.call("plan.apply", apply(&a)).await.unwrap()["state"], "committed");
+    assert_eq!(
+        d.call("plan.apply", apply(&a)).await.unwrap()["state"],
+        "committed"
+    );
     let rejected = d.call("plan.apply", apply(&b)).await.unwrap();
     assert_eq!(rejected["state"], "rejected", "{rejected}");
     let op = rejected["op"].as_str().unwrap().to_owned();
@@ -436,7 +620,12 @@ async fn reminder_loop_fires_on_fake_clock() {
         let want = format!("rem:{op}:{index}");
         let threads = d.fakes.threads.clone();
         let thread = thread.clone();
-        move || threads.notifications().iter().any(|n| n.thread.0 == thread && n.op_key.0 == want)
+        move || {
+            threads
+                .notifications()
+                .iter()
+                .any(|n| n.thread.0 == thread && n.op_key.0 == want)
+        }
     };
     eventually("the initial notice", sent(0)).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -448,12 +637,23 @@ async fn reminder_loop_fires_on_fake_clock() {
 }
 
 fn claude(session: AgentSession) -> Option<AgentInfo> {
-    Some(AgentInfo { kind: "claude".into(), status: AgentStatus::Idle, session: Some(session) })
+    Some(AgentInfo {
+        kind: "claude".into(),
+        status: AgentStatus::Idle,
+        session: Some(session),
+    })
 }
 
 fn clone_of(d: &Daemon, seat: &str) -> herdr_graph::model::clone::CloneRecord {
     let id = graph_seat(d, seat).id;
-    d.with_view(|v| layout::all_clones(v).unwrap().into_iter().map(|(_, c)| c).find(|c| c.seat == id)).unwrap_or_else(|| panic!("no clone of {seat}"))
+    d.with_view(|v| {
+        layout::all_clones(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, c)| c)
+            .find(|c| c.seat == id)
+    })
+    .unwrap_or_else(|| panic!("no clone of {seat}"))
 }
 
 fn bound_pane(d: &Daemon, seat: &str) -> Option<herdr_graph::model::HerdrPaneId> {
@@ -464,20 +664,62 @@ fn bound_pane(d: &Daemon, seat: &str) -> Option<herdr_graph::model::HerdrPaneId>
 async fn session_end_flows_to_transcripts() {
     let (dir, root) = new_instance();
     let d = Daemon::start(&root).await;
-    d.committed(&["teamspace", "create", "alpha", "--active"]).await;
-    d.committed(&["seat", "create", "worker", "--teamspace", "alpha", "--active", "--harness", "claude"]).await;
-    d.committed(&["seat", "create", "sum", "--teamspace", "alpha", "--active", "--harness", "claude", "--role", "summarizer"]).await;
-    eventually("both panes bound", || bound_pane(&d, "worker").is_some() && bound_pane(&d, "sum").is_some()).await;
-    eventually("channels", || graph_seat(&d, "sum").channel.thread_id.is_some()).await;
-    let (worker_pane, sum_pane) = (bound_pane(&d, "worker").unwrap(), bound_pane(&d, "sum").unwrap());
+    d.committed(&["teamspace", "create", "alpha", "--active"])
+        .await;
+    d.committed(&[
+        "seat",
+        "create",
+        "worker",
+        "--teamspace",
+        "alpha",
+        "--active",
+        "--harness",
+        "claude",
+    ])
+    .await;
+    d.committed(&[
+        "seat",
+        "create",
+        "sum",
+        "--teamspace",
+        "alpha",
+        "--active",
+        "--harness",
+        "claude",
+        "--role",
+        "summarizer",
+    ])
+    .await;
+    eventually("both panes bound", || {
+        bound_pane(&d, "worker").is_some() && bound_pane(&d, "sum").is_some()
+    })
+    .await;
+    eventually("channels", || {
+        graph_seat(&d, "sum").channel.thread_id.is_some()
+    })
+    .await;
+    let (worker_pane, sum_pane) = (
+        bound_pane(&d, "worker").unwrap(),
+        bound_pane(&d, "sum").unwrap(),
+    );
 
     // The summarizer is staffed; the worker runs a session whose transcript is a real file.
-    d.fakes.herdr.set_agent(&sum_pane, claude(AgentSession::Id("sum-session".into())));
-    eventually("summarizer occupant", || clone_of(&d, "sum").occupant.is_some()).await;
+    d.fakes
+        .herdr
+        .set_agent(&sum_pane, claude(AgentSession::Id("sum-session".into())));
+    eventually("summarizer occupant", || {
+        clone_of(&d, "sum").occupant.is_some()
+    })
+    .await;
     let transcript = dir.path().join("worker-session.jsonl");
     std::fs::write(&transcript, "{\"n\":1}\n{\"n\":2}\n").unwrap();
-    d.fakes.herdr.set_agent(&worker_pane, claude(AgentSession::Path(transcript.clone())));
-    eventually("worker occupant", || clone_of(&d, "worker").occupant.is_some()).await;
+    d.fakes
+        .herdr
+        .set_agent(&worker_pane, claude(AgentSession::Path(transcript.clone())));
+    eventually("worker occupant", || {
+        clone_of(&d, "worker").occupant.is_some()
+    })
+    .await;
 
     // The agent exits: the observer commits the end, the hook reaches transcripts, a request is created and
     // delivered to the summarizer's channel (fallback Notify).
@@ -485,11 +727,18 @@ async fn session_end_flows_to_transcripts() {
     let sum_thread = graph_seat(&d, "sum").channel.thread_id.clone().unwrap();
     let threads = d.fakes.threads.clone();
     eventually("a delivery notice naming the request", || {
-        threads.notifications().iter().any(|n| n.thread.0 == sum_thread && n.body.contains("rq_"))
+        threads
+            .notifications()
+            .iter()
+            .any(|n| n.thread.0 == sum_thread && n.body.contains("rq_"))
     })
     .await;
     let requests = d.with_view(|v| layout::list_requests(v).unwrap());
-    assert_eq!(requests.len(), 1, "exactly one request for the ended session");
+    assert_eq!(
+        requests.len(),
+        1,
+        "exactly one request for the ended session"
+    );
     d.stop().await;
 }
 
@@ -499,26 +748,62 @@ async fn session_end_flows_to_transcripts() {
 
 fn clones_of_seat(d: &Daemon, seat: &str) -> Vec<herdr_graph::model::clone::CloneRecord> {
     let id = graph_seat(d, seat).id;
-    d.with_view(|v| layout::all_clones(v).unwrap().into_iter().map(|(_, c)| c).filter(|c| c.seat == id).collect())
+    d.with_view(|v| {
+        layout::all_clones(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, c)| c)
+            .filter(|c| c.seat == id)
+            .collect()
+    })
 }
 
 /// The newest undo candidate whose summary contains `what`.
 async fn undo_act(d: &Daemon, what: &str) -> String {
     let list = d.call("undo.list", json!({})).await.unwrap();
-    let c = list["candidates"].as_array().unwrap().iter().find(|c| c["summary"].as_str().is_some_and(|s| s.contains(what)));
-    c.unwrap_or_else(|| panic!("no undo candidate containing {what:?}: {list}"))["act"].as_str().unwrap().to_owned()
+    let c = list["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["summary"].as_str().is_some_and(|s| s.contains(what)));
+    c.unwrap_or_else(|| panic!("no undo candidate containing {what:?}: {list}"))["act"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 fn herdr_creates(d: &Daemon) -> usize {
-    d.fakes.herdr.calls().iter().filter(|c| matches!(c, FakeCall::SplitPane(_) | FakeCall::CreateTab(_) | FakeCall::CreateWorkspace(_))).count()
+    d.fakes
+        .herdr
+        .calls()
+        .iter()
+        .filter(|c| {
+            matches!(
+                c,
+                FakeCall::SplitPane(_) | FakeCall::CreateTab(_) | FakeCall::CreateWorkspace(_)
+            )
+        })
+        .count()
 }
 
 /// plan.create `["undo", act]` from `caller_pane`, then `undo.apply` with the plan's hash.
 async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::HerdrPaneId) -> Value {
-    let caller = serde_json::to_value(CallerInfo { pane_id: Some(caller_pane.0.clone()), ..Default::default() }).unwrap();
-    let plan = d.call("plan.create", json!({ "words": ["undo", act], "_caller": caller })).await.unwrap();
+    let caller = serde_json::to_value(CallerInfo {
+        pane_id: Some(caller_pane.0.clone()),
+        ..Default::default()
+    })
+    .unwrap();
+    let plan = d
+        .call(
+            "plan.create",
+            json!({ "words": ["undo", act], "_caller": caller }),
+        )
+        .await
+        .unwrap();
     assert!(
-        plan["plan"]["effects"].as_array().is_some_and(|e| e.iter().any(|e| e["kind"] == "undo.adopt_pane")),
+        plan["plan"]["effects"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|e| e["kind"] == "undo.adopt_pane")),
         "the preview names the adoption: {plan}"
     );
     let r = d.call("undo.apply", json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay", "_caller": caller })).await.unwrap();
@@ -526,7 +811,11 @@ async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::Herd
     let deadline = Instant::now() + WAIT;
     loop {
         let op = d.call("ops.get", json!({ "op": r["op"] })).await.unwrap();
-        let state = op["state"].as_str().or(op["op"]["state"].as_str()).unwrap_or("").to_owned();
+        let state = op["state"]
+            .as_str()
+            .or(op["op"]["state"].as_str())
+            .unwrap_or("")
+            .to_owned();
         if !matches!(state.as_str(), "admitted" | "applying" | "") {
             assert_eq!(state, "committed", "{op}");
             return r;
@@ -558,25 +847,60 @@ async fn settle(d: &Daemon) {
 
 async fn two_clone_seat(d: &Daemon) {
     d.committed(&["teamspace", "create", "t", "--active"]).await;
-    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
-    eventually("the first clone's pane", || bound_pane(d, "foreman").is_some()).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "foreman",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "shell",
+    ])
+    .await;
+    eventually("the first clone's pane", || {
+        bound_pane(d, "foreman").is_some()
+    })
+    .await;
     d.committed(&["clone", "add", "foreman"]).await;
     eventually("both clones' panes", || {
         let cs = clones_of_seat(d, "foreman");
-        cs.len() == 2 && cs.iter().all(|c| c.runtime.bound.as_ref().is_some_and(|b| b.pane_id.is_some()))
+        cs.len() == 2
+            && cs.iter().all(|c| {
+                c.runtime
+                    .bound
+                    .as_ref()
+                    .is_some_and(|b| b.pane_id.is_some())
+            })
     })
     .await;
     settle(d).await;
 }
 
-fn tab_of_pane(snap: &herdr_graph::ports::herdr::HerdrSnapshot, pane: &herdr_graph::model::HerdrPaneId) -> herdr_graph::model::HerdrTabId {
-    snap.workspaces.iter().flat_map(|w| w.tabs.iter()).find(|t| t.panes.iter().any(|p| &p.id == pane)).expect("pane in a tab").id.clone()
+fn tab_of_pane(
+    snap: &herdr_graph::ports::herdr::HerdrSnapshot,
+    pane: &herdr_graph::model::HerdrPaneId,
+) -> herdr_graph::model::HerdrTabId {
+    snap.workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter())
+        .find(|t| t.panes.iter().any(|p| &p.id == pane))
+        .expect("pane in a tab")
+        .id
+        .clone()
 }
 
 fn seat_lifecycle(d: &Daemon, name: &str) -> herdr_graph::model::common::Lifecycle {
-    d.with_view(|v| layout::all_seats(v).unwrap().into_iter().map(|(_, s)| s).filter(|s| s.name == name).max_by_key(|s| s.rev))
-        .map(|s| s.lifecycle)
-        .unwrap_or_else(|| panic!("no seat {name}"))
+    d.with_view(|v| {
+        layout::all_seats(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s)
+            .filter(|s| s.name == name)
+            .max_by_key(|s| s.rev)
+    })
+    .map(|s| s.lifecycle)
+    .unwrap_or_else(|| panic!("no seat {name}"))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -585,29 +909,72 @@ async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
     let (_dir, root) = new_instance();
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
-    let victim = clones_of_seat(&d, "foreman").into_iter().find(|c| c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) != bound_pane(&d, "foreman")).unwrap();
-    let victim_pane = victim.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()).unwrap();
+    let victim = clones_of_seat(&d, "foreman")
+        .into_iter()
+        .find(|c| {
+            c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) != bound_pane(&d, "foreman")
+        })
+        .unwrap();
+    let victim_pane = victim
+        .runtime
+        .bound
+        .as_ref()
+        .and_then(|b| b.pane_id.clone())
+        .unwrap();
     let tab = tab_of_pane(&d.fakes.herdr.snapshot().await.unwrap(), &victim_pane);
 
     d.fakes.herdr.user_close_pane(&victim_pane);
-    eventually("the victim to retire", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == victim.id && c.retired.is_some())).await;
+    eventually("the victim to retire", || {
+        clones_of_seat(&d, "foreman")
+            .iter()
+            .any(|c| c.id == victim.id && c.retired.is_some())
+    })
+    .await;
     settle(&d).await;
     let act = undo_act(&d, "closure").await;
     let caller = d.fakes.herdr.add_user_pane(&tab, "caller");
     d.fakes.herdr.clear_calls();
 
     undo_from(&d, &act, &caller).await;
-    eventually("the victim to be active again", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == victim.id && c.retired.is_none())).await;
+    eventually("the victim to be active again", || {
+        clones_of_seat(&d, "foreman")
+            .iter()
+            .any(|c| c.id == victim.id && c.retired.is_none())
+    })
+    .await;
     settle(&d).await;
 
-    assert_eq!(herdr_creates(&d), 0, "no pane or tab is created for the adopted clone: {:?}", d.fakes.herdr.calls());
-    let now = clones_of_seat(&d, "foreman").into_iter().find(|c| c.id == victim.id).unwrap();
+    assert_eq!(
+        herdr_creates(&d),
+        0,
+        "no pane or tab is created for the adopted clone: {:?}",
+        d.fakes.herdr.calls()
+    );
+    let now = clones_of_seat(&d, "foreman")
+        .into_iter()
+        .find(|c| c.id == victim.id)
+        .unwrap();
     assert_eq!(now.lifecycle, CloneLifecycle::Active);
     assert_eq!(now.runtime.availability, Availability::Present);
-    assert_eq!(now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()), Some(caller.clone()));
+    assert_eq!(
+        now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()),
+        Some(caller.clone())
+    );
     let snap = d.fakes.herdr.snapshot().await.unwrap();
-    let pane = snap.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.panes.iter()).find(|p| p.id == caller).unwrap();
-    assert!(pane.metadata.values().any(|v| v.contains(&victim.id.to_string())), "the caller pane carries hg=<clone>: {:?}", pane.metadata);
+    let pane = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter())
+        .flat_map(|t| t.panes.iter())
+        .find(|p| p.id == caller)
+        .unwrap();
+    assert!(
+        pane.metadata
+            .values()
+            .any(|v| v.contains(&victim.id.to_string())),
+        "the caller pane carries hg=<clone>: {:?}",
+        pane.metadata
+    );
     d.stop().await;
 }
 
@@ -619,56 +986,128 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     let (_dir, root) = new_instance();
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
-    let pane_of_clone = |c: &herdr_graph::model::clone::CloneRecord| c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()).unwrap();
+    let pane_of_clone = |c: &herdr_graph::model::clone::CloneRecord| {
+        c.runtime
+            .bound
+            .as_ref()
+            .and_then(|b| b.pane_id.clone())
+            .unwrap()
+    };
     let cs = clones_of_seat(&d, "foreman");
     let (a, b) = (cs[0].clone(), cs[1].clone());
     let (pa, pb) = (pane_of_clone(&a), pane_of_clone(&b));
-    let panes_before = |s: &herdr_graph::ports::herdr::HerdrSnapshot| s.workspaces.iter().flat_map(|w| w.tabs.iter()).map(|t| t.panes.len()).sum::<usize>();
+    let panes_before = |s: &herdr_graph::ports::herdr::HerdrSnapshot| {
+        s.workspaces
+            .iter()
+            .flat_map(|w| w.tabs.iter())
+            .map(|t| t.panes.len())
+            .sum::<usize>()
+    };
 
     d.fakes.herdr.user_close_pane(&pb);
-    eventually("B to retire", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == b.id && c.retired.is_some())).await;
+    eventually("B to retire", || {
+        clones_of_seat(&d, "foreman")
+            .iter()
+            .any(|c| c.id == b.id && c.retired.is_some())
+    })
+    .await;
     settle(&d).await;
     let act = undo_act(&d, "closure").await;
     let panes_n = panes_before(&d.fakes.herdr.snapshot().await.unwrap());
-    let sessions_a = clones_of_seat(&d, "foreman").into_iter().find(|c| c.id == a.id).unwrap().sessions;
+    let sessions_a = clones_of_seat(&d, "foreman")
+        .into_iter()
+        .find(|c| c.id == a.id)
+        .unwrap()
+        .sessions;
     d.fakes.herdr.clear_calls();
 
     // The caller is A's own pane, bound to A.
     undo_from(&d, &act, &pa).await;
-    eventually("B to be active again", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == b.id && c.retired.is_none())).await;
+    eventually("B to be active again", || {
+        clones_of_seat(&d, "foreman")
+            .iter()
+            .any(|c| c.id == b.id && c.retired.is_none())
+    })
+    .await;
     // Undo commits the adoption before the shared loop re-stamps the pane. A quiet
     // call log can mean that loop is still writing bookkeeping, especially under load.
     let expected_token = format!("hg={}", b.id);
     let deadline = Instant::now() + WAIT;
     loop {
         let snap = d.fakes.herdr.snapshot().await.unwrap();
-        if snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes)
-            .any(|p| p.id == pa && p.metadata.get("hg") == Some(&expected_token)) {
+        if snap
+            .workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.id == pa && p.metadata.get("hg") == Some(&expected_token))
+        {
             break;
         }
-        assert!(Instant::now() < deadline, "adopted pane was never re-stamped");
+        assert!(
+            Instant::now() < deadline,
+            "adopted pane was never re-stamped"
+        );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     settle(&d).await;
 
     let calls = d.fakes.herdr.calls();
-    assert!(!calls.iter().any(|c| matches!(c, FakeCall::ClosePane(p) if *p == pa) || matches!(c, FakeCall::CloseTab(_))), "{calls:?}");
+    assert!(
+        !calls
+            .iter()
+            .any(|c| matches!(c, FakeCall::ClosePane(p) if *p == pa)
+                || matches!(c, FakeCall::CloseTab(_))),
+        "{calls:?}"
+    );
     assert_eq!(herdr_creates(&d), 0, "{calls:?}");
     let snap = d.fakes.herdr.snapshot().await.unwrap();
     assert_eq!(panes_before(&snap), panes_n, "no pane created or closed");
-    let pane = snap.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.panes.iter()).find(|p| p.id == pa).expect("the adopted pane survives");
-    assert_eq!(pane.metadata.get("hg"), Some(&format!("hg={}", b.id)), "re-stamped for the restored clone: {:?}", pane.metadata);
+    let pane = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter())
+        .flat_map(|t| t.panes.iter())
+        .find(|p| p.id == pa)
+        .expect("the adopted pane survives");
+    assert_eq!(
+        pane.metadata.get("hg"),
+        Some(&format!("hg={}", b.id)),
+        "re-stamped for the restored clone: {:?}",
+        pane.metadata
+    );
     let now = clones_of_seat(&d, "foreman");
-    let (b_now, a_now) = (now.iter().find(|c| c.id == b.id).unwrap(), now.iter().find(|c| c.id == a.id).unwrap());
-    assert_eq!((b_now.lifecycle, b_now.runtime.availability), (CloneLifecycle::Active, Availability::Present));
-    assert_eq!(b_now.runtime.bound.as_ref().and_then(|x| x.pane_id.clone()), Some(pa.clone()));
-    assert_eq!(a_now.retired.as_ref().map(|r| r.mechanism), Some(RetireMechanism::Undo));
-    assert_eq!(a_now.sessions, sessions_a, "the displaced clone keeps its history");
+    let (b_now, a_now) = (
+        now.iter().find(|c| c.id == b.id).unwrap(),
+        now.iter().find(|c| c.id == a.id).unwrap(),
+    );
+    assert_eq!(
+        (b_now.lifecycle, b_now.runtime.availability),
+        (CloneLifecycle::Active, Availability::Present)
+    );
+    assert_eq!(
+        b_now.runtime.bound.as_ref().and_then(|x| x.pane_id.clone()),
+        Some(pa.clone())
+    );
+    assert_eq!(
+        a_now.retired.as_ref().map(|r| r.mechanism),
+        Some(RetireMechanism::Undo)
+    );
+    assert_eq!(
+        a_now.sessions, sessions_a,
+        "the displaced clone keeps its history"
+    );
 
     // The observer does not take the adopted pane for gone later either.
     settle(&d).await;
-    let after = clones_of_seat(&d, "foreman").into_iter().find(|c| c.id == b.id).unwrap();
-    assert_eq!((after.lifecycle, after.retired.is_none()), (CloneLifecycle::Active, true));
+    let after = clones_of_seat(&d, "foreman")
+        .into_iter()
+        .find(|c| c.id == b.id)
+        .unwrap();
+    assert_eq!(
+        (after.lifecycle, after.retired.is_none()),
+        (CloneLifecycle::Active, true)
+    );
     d.stop().await;
 }
 
@@ -678,7 +1117,17 @@ async fn undo_tab_close_from_pane_adopts_caller_pane() {
     let (_dir, root) = new_instance();
     let d = Daemon::start(&root).await;
     d.committed(&["teamspace", "create", "t", "--active"]).await;
-    d.committed(&["seat", "create", "foreman", "--teamspace", "t", "--active", "--harness", "shell"]).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "foreman",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "shell",
+    ])
+    .await;
     eventually("the pane", || bound_pane(&d, "foreman").is_some()).await;
     settle(&d).await;
     let snap = d.fakes.herdr.snapshot().await.unwrap();
@@ -688,31 +1137,65 @@ async fn undo_tab_close_from_pane_adopts_caller_pane() {
     let scratch = d
         .fakes
         .herdr
-        .create_tab(herdr_graph::ports::herdr::CreateTab { workspace: ws, label: "scratch".into(), cwd: "/".into(), env: vec![] })
+        .create_tab(herdr_graph::ports::herdr::CreateTab {
+            workspace: ws,
+            label: "scratch".into(),
+            cwd: "/".into(),
+            env: vec![],
+        })
         .await
         .unwrap();
     let scratch_tab = scratch.tab.unwrap();
     let clone = clone_of(&d, "foreman");
 
     d.fakes.herdr.user_close_tab(&foreman_tab);
-    eventually("the seat to retire", || seat_lifecycle(&d, "foreman") == Lifecycle::Retired).await;
+    eventually("the seat to retire", || {
+        seat_lifecycle(&d, "foreman") == Lifecycle::Retired
+    })
+    .await;
     settle(&d).await;
     let act = undo_act(&d, "closure").await;
     let caller = d.fakes.herdr.add_user_pane(&scratch_tab, "caller");
     d.fakes.herdr.clear_calls();
 
     undo_from(&d, &act, &caller).await;
-    eventually("the seat to be active again", || seat_lifecycle(&d, "foreman") == Lifecycle::Active).await;
+    eventually("the seat to be active again", || {
+        seat_lifecycle(&d, "foreman") == Lifecycle::Active
+    })
+    .await;
     settle(&d).await;
 
-    assert_eq!(herdr_creates(&d), 0, "no tab is created for the adopted clone: {:?}", d.fakes.herdr.calls());
+    assert_eq!(
+        herdr_creates(&d),
+        0,
+        "no tab is created for the adopted clone: {:?}",
+        d.fakes.herdr.calls()
+    );
     let now = clone_of(&d, "foreman");
     assert_eq!(now.id, clone.id);
-    assert_eq!(now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()), Some(caller.clone()));
-    assert_eq!(now.runtime.availability, herdr_graph::model::common::Availability::Present);
+    assert_eq!(
+        now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()),
+        Some(caller.clone())
+    );
+    assert_eq!(
+        now.runtime.availability,
+        herdr_graph::model::common::Availability::Present
+    );
     let snap = d.fakes.herdr.snapshot().await.unwrap();
-    let pane = snap.workspaces.iter().flat_map(|w| w.tabs.iter()).flat_map(|t| t.panes.iter()).find(|p| p.id == caller).unwrap();
-    assert!(pane.metadata.values().any(|v| v.contains(&clone.id.to_string())), "the caller pane carries hg=<clone>: {:?}", pane.metadata);
+    let pane = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter())
+        .flat_map(|t| t.panes.iter())
+        .find(|p| p.id == caller)
+        .unwrap();
+    assert!(
+        pane.metadata
+            .values()
+            .any(|v| v.contains(&clone.id.to_string())),
+        "the caller pane carries hg=<clone>: {:?}",
+        pane.metadata
+    );
     d.stop().await;
 }
 
@@ -743,7 +1226,11 @@ mod subprocess {
             let listener = UnixListener::bind(root.herdr_socket()).unwrap();
             let l2 = listener.try_clone().unwrap();
             std::thread::spawn(move || for _conn in l2.incoming() {});
-            Fixture { root, instance, _listener: listener }
+            Fixture {
+                root,
+                instance,
+                _listener: listener,
+            }
         }
 
         fn cmd(&self, args: &[&str]) -> Command {
@@ -770,11 +1257,23 @@ mod subprocess {
             if let Some(fp) = failpoints {
                 c.env("HG_FAILPOINTS", fp);
             }
-            let log = std::fs::OpenOptions::new().create(true).append(true).open(self.root.path().join("daemon.out")).unwrap();
-            let child = self.root.spawn(c.stdin(Stdio::null()).stdout(log.try_clone().unwrap()).stderr(log));
+            let log = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(self.root.path().join("daemon.out"))
+                .unwrap();
+            let child = self.root.spawn(
+                c.stdin(Stdio::null())
+                    .stdout(log.try_clone().unwrap())
+                    .stderr(log),
+            );
             let deadline = Instant::now() + WAIT_SECS;
             while herdr_graph::daemon::client::hello(&self.paths().socket).is_none() {
-                assert!(Instant::now() < deadline, "daemon did not come up; log: {}", self.daemon_log());
+                assert!(
+                    Instant::now() < deadline,
+                    "daemon did not come up; log: {}",
+                    self.daemon_log()
+                );
                 std::thread::sleep(Duration::from_millis(50));
             }
             self.wait_ready();
@@ -790,11 +1289,20 @@ mod subprocess {
                 if let Some(h) = herdr_graph::daemon::client::hello(&self.paths().socket) {
                     match h["state"].as_str() {
                         Some("ready") => return,
-                        Some("failed") => panic!("daemon failed to start: {h}; log: {}{}", self.daemon_log(), self.instance_log()),
+                        Some("failed") => panic!(
+                            "daemon failed to start: {h}; log: {}{}",
+                            self.daemon_log(),
+                            self.instance_log()
+                        ),
                         _ => {}
                     }
                 }
-                assert!(Instant::now() < deadline, "daemon did not become ready; log: {}{}", self.daemon_log(), self.instance_log());
+                assert!(
+                    Instant::now() < deadline,
+                    "daemon did not become ready; log: {}{}",
+                    self.daemon_log(),
+                    self.instance_log()
+                );
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
@@ -812,12 +1320,23 @@ mod subprocess {
             let mut args = vec!["plan", "--json"];
             args.extend_from_slice(words);
             let out = self.run(&args);
-            assert!(out.status.success(), "plan {words:?}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "plan {words:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             serde_json::from_slice(&out.stdout).expect("plan --json prints JSON")
         }
 
         fn apply(&self, plan: &Value) -> Output {
-            self.run(&["apply", plan["plan_id"].as_str().unwrap(), "--confirm", plan["hash"].as_str().unwrap(), "--confirmed-by", "user-relay"])
+            self.run(&[
+                "apply",
+                plan["plan_id"].as_str().unwrap(),
+                "--confirm",
+                plan["hash"].as_str().unwrap(),
+                "--confirmed-by",
+                "user-relay",
+            ])
         }
 
         fn fake_log(&self) -> Vec<Value> {
@@ -851,18 +1370,32 @@ mod subprocess {
     fn kill_and_restart_recovers_journal_before_loops() {
         let f = Fixture::new();
         let out = f.run(&["daemon", "--ensure"]);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         f.wait_ready();
         let plan = f.plan(&["teamspace", "create", "t"]);
         let applied = f.apply(&plan);
-        assert!(applied.status.success(), "{}", String::from_utf8_lossy(&applied.stderr));
+        assert!(
+            applied.status.success(),
+            "{}",
+            String::from_utf8_lossy(&applied.stderr)
+        );
         assert_eq!(startup_record(&f.journal()), STARTUP_STEPS.to_vec());
 
         // SIGKILL the daemon (pid from the lock info, argv-verified: never a stray process).
         let pid = lock::read_info(&f.paths().lock).expect("lock info").pid;
-        let ps = Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output().unwrap();
+        let ps = Command::new("ps")
+            .args(["-o", "command=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
         let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
-        assert!(cmdline.contains(env!("CARGO_BIN_EXE_herdr-graph")) && cmdline.contains(" daemon"), "not our daemon: {cmdline}");
+        assert!(
+            cmdline.contains(env!("CARGO_BIN_EXE_herdr-graph")) && cmdline.contains(" daemon"),
+            "not our daemon: {cmdline}"
+        );
         // SAFETY: the pid was verified above to be this test's daemon.
         assert_eq!(unsafe { libc::kill(pid as i32, libc::SIGKILL) }, 0);
         let deadline = Instant::now() + WAIT_SECS;
@@ -872,13 +1405,24 @@ mod subprocess {
         assert!(!pid_alive(pid));
 
         let out = f.run(&["daemon", "--ensure"]);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         f.wait_ready();
         let status = f.client().call("status", json!({})).unwrap();
         assert_eq!(status["state"], "ready", "{status}");
-        assert_eq!(status["components"]["writer"]["ops"]["committed"], 1, "{status}");
+        assert_eq!(
+            status["components"]["writer"]["ops"]["committed"], 1,
+            "{status}"
+        );
         assert_ne!(status["pid"].as_u64().unwrap() as u32, pid);
-        assert_eq!(startup_record(&f.journal()), STARTUP_STEPS.to_vec(), "the restart ran the startup order again");
+        assert_eq!(
+            startup_record(&f.journal()),
+            STARTUP_STEPS.to_vec(),
+            "the restart ran the startup order again"
+        );
     }
 
     #[test]
@@ -887,20 +1431,38 @@ mod subprocess {
         let mut daemon = f.spawn_daemon(Some("writer.after_cas_before_journal=exit:43"));
         let plan = f.plan(&["teamspace", "create", "t"]);
         let applied = f.apply(&plan);
-        assert!(!applied.status.success(), "the daemon died mid-commit; apply cannot succeed");
-        assert_eq!(wait_exit(&mut daemon).code(), Some(43), "{}", f.daemon_log());
+        assert!(
+            !applied.status.success(),
+            "the daemon died mid-commit; apply cannot succeed"
+        );
+        assert_eq!(
+            wait_exit(&mut daemon).code(),
+            Some(43),
+            "{}",
+            f.daemon_log()
+        );
         // Git has the commit but the journal still shows the op unfinished.
         let journal = f.journal();
-        assert!(!journal.counts().unwrap().contains_key("committed"), "{:?}", journal.counts());
+        assert!(
+            !journal.counts().unwrap().contains_key("committed"),
+            "{:?}",
+            journal.counts()
+        );
         drop(journal);
 
         let mut again = f.spawn_daemon(None);
         let status = f.client().call("status", json!({})).unwrap();
         assert_eq!(status["state"], "ready", "{status}");
-        assert_eq!(status["components"]["writer"]["ops"]["committed"], 1, "{status}");
+        assert_eq!(
+            status["components"]["writer"]["ops"]["committed"], 1,
+            "{status}"
+        );
         let store = GitStore::open(&f.instance).unwrap();
         let head = store.head().unwrap();
-        let view = CommitView { store: &store, at: head };
+        let view = CommitView {
+            store: &store,
+            at: head,
+        };
         assert_eq!(layout::list_teamspaces(&view).unwrap().len(), 1);
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut again);
@@ -928,7 +1490,11 @@ mod subprocess {
             } else {
                 last = (usize::MAX, 0);
             }
-            assert!(Instant::now() < deadline, "{what}: effects never settled: {status}; log: {}", f.daemon_log());
+            assert!(
+                Instant::now() < deadline,
+                "{what}: effects never settled: {status}; log: {}",
+                f.daemon_log()
+            );
             std::thread::sleep(Duration::from_millis(150));
         }
     }
@@ -942,7 +1508,11 @@ mod subprocess {
         let mut first = f.spawn_daemon(None);
         for words in setup {
             let out = f.apply(&f.plan(words));
-            assert!(out.status.success(), "{words:?}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "{words:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
         wait_settled(&f, "phase 1");
         f.client().call("shutdown", json!({})).unwrap();
@@ -953,8 +1523,18 @@ mod subprocess {
         let failpoint = format!("reconcile.after_call.{kind}=exit:42");
         let mut doomed = f.spawn_daemon(Some(&failpoint));
         let _ = f.apply(&f.plan(trigger));
-        assert_eq!(wait_exit(&mut doomed).code(), Some(42), "{}", f.daemon_log());
-        assert_eq!(f.fake_count(fake_op), before + 1, "the {fake_op} reached Herdr before the crash: {:?}", f.fake_log());
+        assert_eq!(
+            wait_exit(&mut doomed).code(),
+            Some(42),
+            "{}",
+            f.daemon_log()
+        );
+        assert_eq!(
+            f.fake_count(fake_op),
+            before + 1,
+            "the {fake_op} reached Herdr before the crash: {:?}",
+            f.fake_log()
+        );
 
         // Phase 3: restart without failpoints: the effect is re-correlated from the snapshot, not re-executed.
         let mut third = f.spawn_daemon(None);
@@ -963,13 +1543,25 @@ mod subprocess {
             let status = f.client().call("status", json!({})).unwrap();
             let r = &status["components"]["reconciler"];
             if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
-                assert_eq!(r["needs_revision_effects"], 0, "a lost outcome must be adopted, not sent for revision: {status}");
+                assert_eq!(
+                    r["needs_revision_effects"], 0,
+                    "a lost outcome must be adopted, not sent for revision: {status}"
+                );
                 break;
             }
-            assert!(Instant::now() < deadline, "effects never settled: {status}; log: {}", f.daemon_log());
+            assert!(
+                Instant::now() < deadline,
+                "effects never settled: {status}; log: {}",
+                f.daemon_log()
+            );
             std::thread::sleep(Duration::from_millis(100));
         }
-        assert_eq!(f.fake_count(fake_op), before + 1, "at most once: {:?}", f.fake_log());
+        assert_eq!(
+            f.fake_count(fake_op),
+            before + 1,
+            "at most once: {:?}",
+            f.fake_log()
+        );
         f.client().call("shutdown", json!({})).unwrap();
         wait_exit(&mut third);
     }
@@ -984,8 +1576,25 @@ mod subprocess {
             "create_tab",
             &[
                 &["teamspace", "create", "t", "--active"],
-                &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
-                &["seat", "create", "worker", "--teamspace", "t", "--harness", "shell"],
+                &[
+                    "seat",
+                    "create",
+                    "keeper",
+                    "--teamspace",
+                    "t",
+                    "--active",
+                    "--harness",
+                    "shell",
+                ],
+                &[
+                    "seat",
+                    "create",
+                    "worker",
+                    "--teamspace",
+                    "t",
+                    "--harness",
+                    "shell",
+                ],
             ],
             &["seat", "activate", "worker"],
             "create_tab",
@@ -998,7 +1607,16 @@ mod subprocess {
         crash_after_call(
             "create_workspace",
             &[&["teamspace", "create", "t", "--active"]],
-            &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
+            &[
+                "seat",
+                "create",
+                "keeper",
+                "--teamspace",
+                "t",
+                "--active",
+                "--harness",
+                "shell",
+            ],
             "create_workspace",
         );
     }
@@ -1009,7 +1627,16 @@ mod subprocess {
             "split_pane",
             &[
                 &["teamspace", "create", "t", "--active"],
-                &["seat", "create", "keeper", "--teamspace", "t", "--active", "--harness", "shell"],
+                &[
+                    "seat",
+                    "create",
+                    "keeper",
+                    "--teamspace",
+                    "t",
+                    "--active",
+                    "--harness",
+                    "shell",
+                ],
             ],
             &["clone", "add", "keeper"],
             "split_pane",
@@ -1021,7 +1648,16 @@ mod subprocess {
         crash_after_call(
             "start_agent",
             &[&["teamspace", "create", "t", "--active"]],
-            &["seat", "create", "worker", "--teamspace", "t", "--active", "--harness", "claude"],
+            &[
+                "seat",
+                "create",
+                "worker",
+                "--teamspace",
+                "t",
+                "--active",
+                "--harness",
+                "claude",
+            ],
             "start_agent",
         );
     }
@@ -1037,26 +1673,52 @@ async fn production_threads_port_finds_default_state_dir_without_env() {
     let home = dir.path().join("home");
     let threads_dir = home.join(".local/state/herdr/plugins/herdr-threads");
     std::fs::create_dir_all(&threads_dir).unwrap();
-    let inputs = DiscoveryInputs { home: Some(home), ..Default::default() };
+    let inputs = DiscoveryInputs {
+        home: Some(home),
+        ..Default::default()
+    };
     let (threads, _map) = production_threads(&ctx_for(dir.path()), inputs);
-    let err = threads.delivery_capability().await.expect_err("no threads daemon runs in the empty state dir").to_string();
-    assert!(err.contains(&threads_dir.display().to_string()), "discovery must name the directory it found: {err}");
-    assert!(!err.contains("not found") && !err.contains("not configured"), "{err}");
+    let err = threads
+        .delivery_capability()
+        .await
+        .expect_err("no threads daemon runs in the empty state dir")
+        .to_string();
+    assert!(
+        err.contains(&threads_dir.display().to_string()),
+        "discovery must name the directory it found: {err}"
+    );
+    assert!(
+        !err.contains("not found") && !err.contains("not configured"),
+        "{err}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_threads_port_reports_missing_install() {
     let dir = tempfile::tempdir().unwrap();
-    let inputs = DiscoveryInputs { home: Some(dir.path().join("empty-home")), ..Default::default() };
+    let inputs = DiscoveryInputs {
+        home: Some(dir.path().join("empty-home")),
+        ..Default::default()
+    };
     let (threads, _map) = production_threads(&ctx_for(dir.path()), inputs);
-    let err = threads.delivery_capability().await.expect_err("nothing installed").to_string();
-    assert!(err.contains("state directory not found") && err.contains("threads_state_dir"), "{err}");
+    let err = threads
+        .delivery_capability()
+        .await
+        .expect_err("nothing installed")
+        .to_string();
+    assert!(
+        err.contains("state directory not found") && err.contains("threads_state_dir"),
+        "{err}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn composed_daemon_status_shows_threads_discovery_error() {
     let (dir, root) = new_instance();
-    let inputs = DiscoveryInputs { home: Some(dir.path().join("empty-home")), ..Default::default() };
+    let inputs = DiscoveryInputs {
+        home: Some(dir.path().join("empty-home")),
+        ..Default::default()
+    };
     let (f, base) = fakes();
     let (threads, map) = production_threads(&ctx_for(&root), inputs);
     let mut services = Services::new(f.herdr.clone(), threads, map, f.clock.clone());
@@ -1073,6 +1735,9 @@ async fn composed_daemon_status_shows_threads_discovery_error() {
     }
     assert_eq!(shown["connected"], false, "{shown}");
     let err = shown["error"].as_str().unwrap_or_default();
-    assert!(err.contains("state directory not found") && err.contains("threads_state_dir"), "{shown}");
+    assert!(
+        err.contains("state directory not found") && err.contains("threads_state_dir"),
+        "{shown}"
+    );
     d.stop().await;
 }

@@ -1,6 +1,6 @@
 //! Read-only tree views and the pending-edit overlay used by writer mutations.
 use super::layout;
-use super::record::{parse_toml, to_toml_bytes, Record};
+use super::record::{Record, parse_toml, to_toml_bytes};
 use crate::model::{AnyId, CommitId};
 use crate::ports::store::{DirEntry, EntryKind, ObjectLocation, RepoPath, Store, StoreError};
 use serde::de::DeserializeOwned;
@@ -61,7 +61,10 @@ fn under(dir: &RepoPath, p: &RepoPath) -> Option<String> {
     if dir.as_str().is_empty() {
         return Some(p.as_str().to_owned());
     }
-    p.as_str().strip_prefix(dir.as_str()).and_then(|r| r.strip_prefix('/')).map(str::to_owned)
+    p.as_str()
+        .strip_prefix(dir.as_str())
+        .and_then(|r| r.strip_prefix('/'))
+        .map(str::to_owned)
 }
 
 /// Base commit + pending edits. Reads see the edits. Used by writer mutations (hg-zmi.3+).
@@ -73,7 +76,11 @@ pub struct Overlay<'a> {
 
 impl<'a> Overlay<'a> {
     pub fn new(store: &'a dyn Store, base: CommitId) -> Self {
-        Self { base: CommitView { store, at: base }, edits: EditSet::default(), base_cache: RefCell::new(HashMap::new()) }
+        Self {
+            base: CommitView { store, at: base },
+            edits: EditSet::default(),
+            base_cache: RefCell::new(HashMap::new()),
+        }
     }
     pub fn base(&self) -> &CommitId {
         &self.base.at
@@ -102,11 +109,18 @@ impl<'a> Overlay<'a> {
                 None => (0, Some(loc.record_path)),
                 Some(b) => {
                     let t: toml::Table = parse_toml(&loc.record_path, &b)?;
-                    (t.get("rev").and_then(|v| v.as_integer()).map_or(0, |v| v as u64), Some(loc.record_path))
+                    (
+                        t.get("rev")
+                            .and_then(|v| v.as_integer())
+                            .map_or(0, |v| v as u64),
+                        Some(loc.record_path),
+                    )
                 }
             },
         };
-        self.base_cache.borrow_mut().insert(id.clone(), info.clone());
+        self.base_cache
+            .borrow_mut()
+            .insert(id.clone(), info.clone());
         Ok(info)
     }
 
@@ -129,7 +143,10 @@ impl<'a> Overlay<'a> {
         let rev = base_rev + 1;
         rec.set_rev(rev);
         let bytes = to_toml_bytes(rec).map_err(|e| match e {
-            StoreError::Corrupt { reason, .. } => StoreError::Corrupt { path: p.as_str().into(), reason },
+            StoreError::Corrupt { reason, .. } => StoreError::Corrupt {
+                path: p.as_str().into(),
+                reason,
+            },
             other => other,
         })?;
         self.edits.put(p, bytes);
@@ -163,7 +180,11 @@ impl<'a> Overlay<'a> {
     }
 
     /// Move every file under `from` to the same relative path under `to`; returns (old, new) pairs.
-    pub fn move_dir(&mut self, from: &RepoPath, to: &RepoPath) -> Result<Vec<(RepoPath, RepoPath)>, StoreError> {
+    pub fn move_dir(
+        &mut self,
+        from: &RepoPath,
+        to: &RepoPath,
+    ) -> Result<Vec<(RepoPath, RepoPath)>, StoreError> {
         let mut moved = Vec::new();
         for old in self.files_under(from)? {
             let rel = under(from, &old).expect("file is under dir");
@@ -226,6 +247,9 @@ impl TreeRead for Overlay<'_> {
                 }
             }
         }
-        Ok(names.into_iter().map(|(name, kind)| DirEntry { name, kind }).collect())
+        Ok(names
+            .into_iter()
+            .map(|(name, kind)| DirEntry { name, kind })
+            .collect())
     }
 }
