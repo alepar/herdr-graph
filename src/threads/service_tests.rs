@@ -32,7 +32,8 @@ struct Service {
 }
 
 fn api_error(code: ErrorCode) -> ApiError {
-    ApiError { detail: format!("{code:?}"), code, restart_argv: None, required_minimum_bytes: None }
+    let detail = format!("{code:?}");
+    ApiError::constructor_for(code)(&detail)
 }
 
 fn requirement(thread: &ThreadId, seat: &SeatId, state: RequirementState) -> RequiredMembership {
