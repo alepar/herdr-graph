@@ -1,11 +1,35 @@
-status: completed with 0 unresolved Blocking, 7 escalations [degraded: final review: not ready, sweep: FAIL @ 1237eb1 (2563 passed, 1 failed)]
+status: resumed handoff fixes verified; five tiers PASS; credential-dependent agent flows SKIPPED; awaiting integration choice
+original-run-status: completed with 0 unresolved Blocking, 7 escalations [degraded: final review: not ready, sweep: FAIL @ 1237eb1 (2563 passed, 1 failed)]
 metrics: https://github.com/alepar/superpowers/issues/12
 
 # herdr-graph MVP — super-auto run report (2026-10-02)
 
 Branch `super-auto/herdr-graph-implementation` @ `1237eb1` vs `main` @ `5a04fc7`: 129 commits; product code/tests/skills/templates: 175 files, +50,777 lines. Epic `hg-zmi` is closed. Sources: `run.md` (this directory), the super-code ledger `.superpowers/sdd/hg-zmi-plan/progress.md` in the integration worktree (git-ignored; disappears with the worktree), the bead tree `bd list --label sp:hg-zmi --all`, the roast reports in this directory.
 
-**How to read the status line.** 0 Blocking: neither design roast (2 rounds, converged) nor code roast (2 rounds, converged) confirmed a Blocking finding. The 7 escalations are all **design-roast** external-fact questions about Herdr 0.9.1 behaviour that no judge could verify (listed under Remaining); each was designed around defensively, none was adjudicated. `codeBuckets.escalated` is empty (the one quarantined task, hg-zmi.20, was re-entered and landed). The final whole-epic review (super-code, after the sweep-fix pass) still says **not ready** and the full-suite sweep re-run has **1 failing test** — see Remaining.
+**How to read the original status line.** 0 Blocking: neither design roast (2 rounds, converged) nor code roast (2 rounds, converged) confirmed a Blocking finding. The 7 escalations are all **design-roast** external-fact questions about Herdr 0.9.1 behaviour that no judge could verify (listed under Remaining); each was designed around defensively, none was adjudicated. `codeBuckets.escalated` is empty (the one quarantined task, hg-zmi.20, was re-entered and landed). The final whole-epic review (super-code, after the sweep-fix pass) still says **not ready** and the full-suite sweep re-run has **1 failing test** — see Remaining.
+
+## 2026-10-03 resumed handoff follow-up
+
+The original status and Remaining section below describe the October 2 run. Current behavior and tier evidence are recorded in [verification-matrix.md](../../../verification-matrix.md).
+
+The resumed checkout matched the handoff: clean `main` and `origin/main` at `86d76e0`. Follow-up work is on local branch `fix/handoff-followups`, with no public push:
+
+- `ca853f3`: wait for the derived view after observed renames and the restored token after undo adoption; halt on failed operation finalization, retaining a memory halt if journal persistence also fails; prune resolved/orphaned worktree dirty markers without replacing malformed data; route attention notices to the requester channel or affected seat/teamspace channel, leaving delivery durably pending while unavailable.
+- `f9ce9e2`: format Rust sources and tests separately from behavioral changes.
+- `43dc14d`: retain isolation-audit waiver comments on the checked expressions after formatting.
+- `d849baa`: recover a completed but unstamped workspace creation by its durable nonce after a connection generation change. The fresh private sweep exposed two unstamped workspaces and stalled seat creation after daemon kill. The deterministic regression reproduced two creates before the fix and one after it; the private daemon-kill test then passed 10 consecutive repetitions. Identity regressions reject reused IDs with a different label, a valid foreign token, and ambiguous nonce matches.
+- `2d4578b`: apply the derived-view rename wait to the broader private golden-path harness, which reproduced the same directory assertion race after all 30 dedicated private flows passed. The corrected golden path passes.
+
+
+Review caught and resolved two additional gaps: loss of the writer halt when both terminal-state and halt-metadata writes fail, and replacement of malformed dirty-marker data by a permissive reader. The recovery fix received a separate review with no blocking findings. The parallel undo regression passed 20 consecutive runs after replacing its fixed quiet wait with a token condition.
+
+The opted-in real-agent tier was attempted in isolated private state. Claude launch/resume skipped for missing `ANTHROPIC_API_KEY`, Codex for missing `OPENAI_API_KEY`, and the real-agent summarizer flow for missing credentials/private Claude login. The shell configuration ran; agent launch/resume and summarizer behavior remain unverified (`hg-6w5`, blocked). User configuration was not copied.
+
+Upstream herdr-threads live service-ACK evidence landed at `d254ee5d`: pinned Claude 2.1.287 and Codex 0.159.3 manual initial SS0/SS1/SS2, exact-ID root ACK, handoff ACK and child-absence cells passed with `cooperative_top_level` provenance. Codex required per-run `features.shell_snapshot=false`; upstream `ht-l16` remains open. These upstream cells are separate from graph's real-agent summarizer path.
+
+Final sequential sweep: default 644/0, crash-injection 658/0, private Herdr 690/0, no-default-features 642/0, real threads 2/0 (passed/failed). Formatting and whitespace checks pass. [followup-verification.json](followup-verification.json) preserves the results and credential skips. The external dependency ended at `0a532229`; compared with tested product code `2fbe38ee`, its changes are upstream test support and a dependency-owned build profile, leaving graph dependency production code unchanged.
+
+Remaining review nits were triaged into beads: `hg-45s` content boundaries/archive lifecycle, `hg-7mx` build handshake, `hg-ebk` logged errors, `hg-299` history scans/repository mutex, `hg-afm` transcript identity writes, `hg-obb` spooled resume/backlog, `hg-wnd` shared atomic spool, `hg-830` migration/stress coverage, `hg-6lv` portable dependency symlink, and `hg-4k3` skill documentation of apply exit code 3. These are follow-up work, rather than implemented changes in this branch.
 
 ## Implemented
 

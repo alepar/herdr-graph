@@ -272,4 +272,12 @@ Never touch the user's live Herdr session or memory observer in tests.
 
 ## Post-Implementation Notes
 
+**2026-10-03 — Changes vs. original design.** Attention notices prefer the requester's channel when available; for seatless requesters or missing requester channels, use the affected seat's channel (a clone resolves to its owning seat), or the affected teamspace channel for teamspace effects. The user selected durable pending delivery while channels are unavailable.
+
+Failed operation finalization halts the writer and preserves that halt in memory if its journal write also fails; operator resume/restart recovery requeues the applying operation. Working-tree dirty markers represent unresolved edits and retain their per-op identities; each fast-forward prunes resolved/orphaned entries and fails without overwriting an unreadable or malformed marker file.
+
+Integration assertions wait for the derived working-tree revision and restored pane token, since committed state becomes visible before those side effects finish. Rust sources and tests were formatted separately from behavioral fixes.
+
+The recovery sweep also found that a workspace created before the event subscription could retain a Done creation effect and an unstamped nonce label while its temporary ID belonged to the old generation. `LiveIndex` now correlates durable creation nonces across generations before considering another create, restricted to the same graph object and unique unclaimed workspace. This also covers daemon crash between creation and stamping. Regression tests reject reused IDs without the nonce, foreign graph tokens, and ambiguous matches.
+
 *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*

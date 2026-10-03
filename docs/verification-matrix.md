@@ -5,10 +5,11 @@ Which contract behaviours of herdr-graph are checked against what. Written by hg
 
 | | |
 |---|---|
-| date | 2026-10-02 |
+| date | 2026-10-03 |
 | herdr | 0.9.1 (API protocol 22), private server per test, never the user's session |
-| code under test | `ab1c681e04c0` (hg-zmi.19 base: integration branch + stack parent hg-zmi.16); the tier-3 suite is in the commit that adds this file |
+| code under test | `ca853f3` behavioral fixes, `f9ce9e2` formatting, `43dc14d` isolation-comment repair, `d849baa` unstamped workspace recovery, `2d4578b` golden-path rename wait |
 | machine | macOS, aarch64 |
+| threads dependency | product code at `2fbe38ee`; checkout ended at `0a532229` (upstream test support/profile changes only). `d254ee5d` supplies live-ACK evidence |
 
 ## Status words
 
@@ -16,15 +17,38 @@ Which contract behaviours of herdr-graph are checked against what. Written by hg
   herdr-threads (tier 5) and passed on the date above.
 - `verified-fake`: tiers 1-2 with fakes (`FakeHerdr`, `FakeThreads`, `ManualClock`) or a real git store/journal without
   Herdr; the unit test path is cited.
-- `assumed`: nothing exercised it, it was skipped, or the exercise found a product defect (marked `DEFECT Dn`, see
-  "Known defects"; the repro test is `#[ignore]`d and named in the row). Never read `assumed` as working.
+- `assumed`: the behavior remains unexercised or was skipped. Never read `assumed` as working.
+  Historical defects D1–D3 below have been fixed and their regressions run in the normal suite.
 
-Commands that produced the tier-3 rows:
+Verification commands (run sequentially; concurrent feature builds can replace the binary used by subprocess tests):
 
+```sh
+cargo test --no-fail-fast
+cargo test --features test-support
+cargo test --features private-herdr -- --test-threads=1
+cargo test --no-default-features
+HG_REAL_THREADS=1 cargo test --features private-herdr --test threads_real -- --test-threads=1 --nocapture
+HG_REAL_AGENTS=1 cargo test --features private-herdr --test config_smoke --test real_agent_smoke -- --test-threads=1 --nocapture
+cargo fmt --check
 ```
-cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1 --nocapture
-cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test-threads=1   # the DEFECT repros, expected to fail
-```
+
+## Final follow-up sweep
+
+All five tiers completed with exit code 0. Default/crash/no-default used the same runtime code as the final private run. The additional correction (`2d4578b`) only changes the private golden-path rename wait; the full private tier ran again after it.
+
+| tier | passed | failed | ignored |
+|---|---:|---:|---:|
+| default | 644 | 0 | 1 |
+| test-support | 658 | 0 | 1 |
+| private-herdr | 690 | 0 | 6 |
+| no-default | 642 | 0 | 1 |
+| real-threads | 2 | 0 | 0 |
+
+`cargo fmt --check` and `git diff --check` passed. Counts are test-harness results, not claims that opted-out real-agent tests exercised agents. The opted-in agent attempt verified the shell configuration but skipped Claude/Codex launch-resume and the summarizer flow for absent credentials/private login. Packaging and spikes remain intentionally ignored in the normal sweep.
+
+Durable summary: [followup-verification.json](superpowers/runs/2026-10-02-herdr-graph-implementation/followup-verification.json). The upstream checkout advanced to `0a532229` during verification; its source changes are confined to cfg-gated test support, and its dependency-owned profile does not apply when graph is the Cargo root. Graph dependency production code is unchanged from `2fbe38ee`.
+
+Spikes 1–4 retain their historical private-server evidence from 2026-10-02; they are ignored during the normal sweep.
 
 ## Tier-3 flows (`tests/e2e_private_herdr.rs`, real daemon + CLI + private Herdr, harness `shell`)
 
@@ -36,19 +60,19 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 | close a tab: seat and all its clones retire, folder archived, undoable "tab closure" | 4.3, 6 | verified-real | `e2e_close_tab_retires_seat_and_clones` |
 | close a workspace: every seat of the teamspace retires, dormant ones included, teamspace retires, nothing recreated | 4.3 | verified-real | `e2e_close_workspace_retires_all_incl_dormant` |
 | undo a tab closure: seat and clones active again, restored in a NEW tab | 6 | verified-real | `e2e_undo_tab_close_restores_in_new_tab` |
-| undo run from a pane of the private Herdr adopts that pane as the restored clone (pane-closure and tab-closure variants) | 6 | verified | D1 (fixed by hg-zmi.51): `e2e_undo_from_pane_adopts_caller_pane`, `e2e_undo_tab_close_from_pane_adopts_caller_pane` |
-| undo run from a pane bound to another clone adopts the pane; the displaced clone is retired, the pane is never closed | 6 | verified | F2 (hg-zmi.54): `e2e_undo_from_bound_pane_adopts_and_keeps_it`, composed `undo_from_pane_bound_to_other_clone_keeps_that_pane` (`tests/daemon_composed.rs`) |
+| undo run from a pane of the private Herdr adopts that pane as the restored clone (pane-closure and tab-closure variants) | 6 | verified-real | D1 (fixed by hg-zmi.51): `e2e_undo_from_pane_adopts_caller_pane`, `e2e_undo_tab_close_from_pane_adopts_caller_pane` |
+| undo run from a pane bound to another clone adopts the pane; the displaced clone is retired, the pane is never closed | 6 | verified-real | F2 (hg-zmi.54): `e2e_undo_from_bound_pane_adopts_and_keeps_it`, composed `undo_from_pane_bound_to_other_clone_keeps_that_pane` (`tests/daemon_composed.rs`) |
 | template edit adding a member opens exactly one new tab, existing members untouched | 5 | verified-real | `e2e_template_edit_adds_member_new_tab` |
 | application retire closes the application's exclusive seats and their tabs, a bystander seat stays | 5 | verified-real | `e2e_application_retire_closes_exclusive_seats` |
 | events withheld from the daemon (SIGSTOP burst: 60 renames, final rename, pane close) converge from a fresh snapshot | 4.3.1 | verified-real | `e2e_event_loss_reconnect_converges`; whether Herdr buffers or drops the withheld events was not distinguished, so a truly dropped event is not shown at this tier (tier 2: `src/observe/tests.rs`) |
 | SIGKILL of the daemon right after three seat ops commit: restart converges, one tab/pane/token per seat, nothing duplicated | 3.6, 4.4 | verified-real | `e2e_daemon_kill_mid_op_recovers_no_duplicates` (the kill lands while effects are in flight; not a deterministic failpoint, those are tier 2) |
 | Herdr private-server restart: bound objects become `unknown`, no mass retirement, no recreation, no duplicate tab/pane; an explicit `clone rebind` re-adopts each pane and the clone is present again | 4.3.2 | verified-real | `e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates` |
-| after a rebind the pane's Herdr token is re-stamped | 4.2 | verified | `e2e_rebind_restamps_token_after_herdr_restart` (D2 regression); tier 2: `rebind_after_restart_restamps_token` in `src/observe/tests.rs` |
+| after a rebind the pane's Herdr token is re-stamped | 4.2 | verified-real | `e2e_rebind_restamps_token_after_herdr_restart` (D2 regression); tier 2: `rebind_after_restart_restamps_token` in `src/observe/tests.rs` |
 | close a tab while the daemon is down: seat `unknown` on restart, not retired, tab not recreated | 4.3.2 | verified-real | `e2e_close_while_daemon_down_unknown_not_recreated` |
 | retire a seat's last clone: plan shows the induced `seat.retire` and `runtime.close_tab`; afterwards tab gone, seat retired exactly once, no "observed" closure | 3.3, 4.4 | verified-real | `e2e_retire_last_clone_induced_seat_retirement_once` |
 | seat deactivate: tab closed, seat dormant, clones and seat not retired, not recorded as a closure | 4.4 | verified-real | `e2e_seat_deactivate_closes_tab_no_retirement` |
 | move a seat's only pane to another (non-seat) tab: clone `reload_required`, seat active + `absent` + `moved_out`, no tab recreated | 4.3 | verified-real | `e2e_move_only_pane_moved_out_no_recreate` |
-| move a pane into ANOTHER seat's tab leaves that seat's name and tab label alone | 4.3 | verified | `e2e_move_pane_into_other_seat_tab_keeps_that_seats_name` (regression for D3) |
+| move a pane into ANOTHER seat's tab leaves that seat's name and tab label alone | 4.3 | verified-real | `e2e_move_pane_into_other_seat_tab_keeps_that_seats_name` (regression for D3) |
 | a rename whose event the daemon never handled (daemon stopped, then killed) is recovered once from the snapshot diff | 4.3.2 | verified-real | `e2e_dropped_rename_recovered` |
 | rename a tab while the daemon is down: recorded as an observed rename on restart, not reverted | 4.3.2 | verified-real | `e2e_rename_while_daemon_down_recorded` |
 | summary of a closed seat: request routed to the summarizer, ack then complete, file lands in the archived seat folder (`summaries/` only) | 8.2, 3.5 | verified-real | `e2e_summary_lands_in_archived_seat_folder` (the test plays the summarizer; no real agent) |
@@ -81,24 +105,43 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 | threads: an acceptance (Required invite) is never fabricated by graph | 7.1 | verified-fake | `src/threads/tests.rs::acceptance_never_fabricated`, `invite_required_for_occupied_clone_on_seat_and_teamspace_channels` |
 | threads against a real herdr-threads daemon: channel, invite, membership, notify, release | 7.1 | verified-real | `tests/threads_real.rs::real_threads_channel_invite_membership_notify_release`, run with `HG_REAL_THREADS=1` on the date above: 1 passed (an isolated herdr-threads daemon built from `third_party/herdr-threads`); without the variable the test skips |
 | fallback delivery notifies the summarizer channel with the rq id | 7.4 | verified-fake | `src/transcripts/tests.rs::fallback_delivery_notifies_summarizer_channel_with_rq_id` |
-| service-ack delivery (graph hands the request to the threads service and waits for its receipt) | 7.4 | verified-real | herdr-threads ht-5nb @ 84de563d; `tests/threads_real.rs::real_threads_channel_invite_membership_notify_release` (`HG_REAL_THREADS=1`: Send → Pending → native `ack` → Acknowledged); adapter `src/threads/service_tests.rs::ack::send_request_and_receipt_state_round_trip`; delivery `src/transcripts/tests.rs::service_ack::service_ack_delivery_records_message_id_and_receipt` (default features) |
+| service-ack delivery (graph hands the request to the threads service and waits for its receipt) | 7.4 | verified-real | herdr-threads ht-5nb (introduced at `84de563d`, tested at `2fbe38ee`); `tests/threads_real.rs::real_threads_channel_invite_membership_notify_release` (`HG_REAL_THREADS=1`: Send → Pending → native `ack` → Acknowledged); adapter `src/threads/service_tests.rs::ack::send_request_and_receipt_state_round_trip`; delivery `src/transcripts/tests.rs::service_ack::service_ack_delivery_records_message_id_and_receipt` (default features) |
 | composition root: startup order, every kind registered, reminder loop, session end flows to transcripts | 1, 3.7 | verified-fake | `tests/daemon_composed.rs` (in-process) |
 | Herdr client against a private server: create tab/panes with env, snapshot, events, reconnect, process info, rejections | 4.1 | verified-real | `tests/herdr_client.rs` |
 | plugin manifest, build script, README structure | 12 | verified-real | `tests/packaging.rs` (`plugin_links_into_private_herdr`, `--disabled` link), `e2e_plugin_link_status_action_single_daemon` |
+
+## Handoff regressions (2026-10-03)
+
+| contract behavior | status | evidence |
+|---|---|---|
+| failed operation finalization halts the writer; resume recovers it, including when the halt marker could not be persisted | verified-fake | `src/writer/tests.rs::poison_finish_failed_error_halts_run_and_resume_finishes`, `corrupt_data_finalization_failure_halts_and_resume_finishes`, `finalization_and_halt_record_failure_remain_recoverable` |
+| fast-forward clears resolved and orphaned dirty markers, preserves unresolved edits and per-op identities, and fails without replacing unreadable/malformed marker contents | verified-fake | `src/writer/worktree.rs::tests::dirty_entries_clear_after_resolution_but_keep_unresolved_edits`, `orphaned_edits_do_not_leave_active_dirty_markers`, `malformed_dirty_marker_is_preserved_on_refresh_failure` |
+| a seatless attention notice waits durably for the affected seat channel, then delivers once | verified-fake | `src/reconcile/tests.rs::seatless_attention_notice_waits_for_affected_seat_channel`; requester delivery across threads disconnect: `needs_revision_notice_survives_threads_down` |
+| completed workspace creation is recovered by its durable nonce after a generation change before stamping, even when another activation changes the desired operation; reused IDs, foreign tokens and ambiguous nonce matches are rejected | verified-fake | `completed_workspace_create_survives_generation_change_before_stamp`, `workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguity`; private daemon-kill regression passed 10 consecutive runs |
+| renamed directory assertions wait for `view_rev` to catch up with committed main | verified-real | `e2e_rename_tab_renames_seat_moves_path_history`, `integration_sweep::golden::sweep_golden_path` |
+| undo adoption checks wait for the restored clone token, preserving caller pane and displaced clone history under parallel tests | verified-fake | `tests/daemon_composed.rs::undo_from_pane_bound_to_other_clone_keeps_that_pane` |
+
+Upstream live service-ACK evidence is now available in herdr-threads at `d254ee5d`:
+[service-send-native.md](../third_party/herdr-threads/docs/validation/service-send-native.md).
+Pinned Claude 2.1.287 and Codex 0.159.3 manual initial cells passed SS0/SS1/SS2,
+exact-message-ID root ACK, handoff ACK, and child-absence checks. Stored provenance
+is `cooperative_top_level` joined to transcript calls. Codex used the per-run
+`features.shell_snapshot=false` workaround; upstream driver hardening `ht-l16` remains open.
+This is upstream service evidence, not graph's real-agent summarizer flow.
 
 ## Harness configurations (hg-zmi.15, `tests/config_smoke.rs`)
 
 | contract behaviour | spec § | status | evidence |
 |---|---|---|---|
 | `shell` seat: workspace and tab names, pane token, no `StartAgent`, env readable from the pane | 4.1 | verified-real | `config_shell_seat_tab_pane_env`: `CONFIG shell: VERIFIED` |
-| `claude` seat: launch with profile args, session resume after a model change | 4.1, 4.5 | assumed | `config_claude_launch_and_resume`: `CONFIG claude: SKIPPED (HG_REAL_AGENTS=1 not set)`; needs `HG_REAL_AGENTS=1`, `claude` on PATH and an explicit `ANTHROPIC_API_KEY`, none used here |
-| `codex` seat: launch with profile args, session resume after a model change | 4.1, 4.5 | assumed | `config_codex_launch_and_resume`: `CONFIG codex: SKIPPED (HG_REAL_AGENTS=1 not set)`; needs `HG_REAL_AGENTS=1`, `codex` on PATH and `OPENAI_API_KEY`, none used here |
+| `claude` seat: launch with profile args, session resume after a model change | 4.1, 4.5 | assumed | `config_claude_launch_and_resume`: `CONFIG claude: SKIPPED (ANTHROPIC_API_KEY not set)` on the opt-in run; needs `HG_REAL_AGENTS=1`, `claude` on PATH and an explicit `ANTHROPIC_API_KEY`, none used here |
+| `codex` seat: launch with profile args, session resume after a model change | 4.1, 4.5 | assumed | `config_codex_launch_and_resume`: `CONFIG codex: SKIPPED (OPENAI_API_KEY not set)` on the opt-in run; needs `HG_REAL_AGENTS=1`, `codex` on PATH and `OPENAI_API_KEY`, none used here |
 
 ## Real agents (hg-zmi.16, `tests/real_agent_smoke.rs`)
 
 | contract behaviour | spec § | status | evidence |
 |---|---|---|---|
-| a real Claude foreman is prompted `/seat` by the SessionStart hook and resolves; its session end creates an rq; a real summarizer acks and completes with coverage | 8, 9, 11 tier 4 | assumed | `real_agent_seat_bootstrap_and_summarizer_flow`: `REAL-AGENT: SKIPPED (HG_REAL_AGENTS is not 1)`; with the gate set it still skips without an API key or a `claude auth status` login (hg-zmi.16 report); the verified path has never executed |
+| a real Claude foreman is prompted `/seat` by the SessionStart hook and resolves; its session end creates an rq; a real summarizer acks and completes with coverage | 8, 9, 11 tier 4 | assumed | `real_agent_seat_bootstrap_and_summarizer_flow`: REAL-AGENT: SKIPPED (no `ANTHROPIC_API_KEY`; private `claude auth status` reports no login) with `HG_REAL_AGENTS=1`; the end-to-end agent path remains unverified |
 
 ## Herdr spikes (`docs/herdr-spikes.md`, `tests/herdr_spikes.rs`, run with `--ignored`)
 
@@ -113,8 +156,7 @@ cargo test --features private-herdr --test e2e_private_herdr -- --ignored --test
 
 ## Known defects found by this suite
 
-These are product defects, reported to the coordinator, not fixed here (task 19 changes no source). Each has an
-`#[ignore]`d test that reproduces it: `cargo test --features private-herdr --test e2e_private_herdr -- --ignored <name>`.
+These historical product defects were fixed during MVP implementation. Their regression tests run by default in the private-Herdr tier.
 
 - **D1 (fixed by hg-zmi.51): undo adoption of the caller's pane lost a race with the reconciler.** `undo` run from a pane commits with
   `undo.adopt_pane pane=<caller>`; the daemon admits the adopted binding only after the op has committed, but the

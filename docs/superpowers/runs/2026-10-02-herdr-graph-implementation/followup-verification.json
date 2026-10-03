@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-03",
+  "graph_code_commit": "2d4578b00c557daa2e8e213f804fc31526bab93d",
+  "dependency_product_commit": "2fbe38ee88b19679c25dc5833f6ca3045a50b7c5",
+  "dependency_checkout_at_end": "0a532229",
+  "dependency_note": "0a532229 changes cfg-gated upstream test support and a dependency-owned build profile; graph dependency production code is unchanged from 2fbe38ee.",
+  "tiers": [
+    {
+      "tier": "default",
+      "exit_code": 0,
+      "passed": 644,
+      "failed": 0,
+      "ignored": 1,
+      "elapsed_seconds": 238.59
+    },
+    {
+      "tier": "test-support",
+      "exit_code": 0,
+      "passed": 658,
+      "failed": 0,
+      "ignored": 1,
+      "elapsed_seconds": 179.49
+    },
+    {
+      "tier": "private-herdr",
+      "exit_code": 0,
+      "passed": 690,
+      "failed": 0,
+      "ignored": 6,
+      "elapsed_seconds": 405.85
+    },
+    {
+      "tier": "no-default",
+      "exit_code": 0,
+      "passed": 642,
+      "failed": 0,
+      "ignored": 1,
+      "elapsed_seconds": 148.98
+    },
+    {
+      "tier": "real-threads",
+      "exit_code": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "elapsed_seconds": 36.53
+    }
+  ],
+  "real_agents": {
+    "attempted": true,
+    "claude_launch_resume": "skipped: ANTHROPIC_API_KEY missing",
+    "codex_launch_resume": "skipped: OPENAI_API_KEY missing",
+    "bootstrap_and_summarizer": "skipped: no ANTHROPIC_API_KEY and private Claude auth reports no login",
+    "shell_configuration": "verified"
+  },
+  "focused_repetitions": {
+    "parallel_undo": {
+      "passed": 20,
+      "failed": 0
+    },
+    "private_daemon_kill": {
+      "passed": 10,
+      "failed": 0
+    }
+  },
+  "checks": {
+    "cargo_fmt_check": "pass",
+    "git_diff_check": "pass"
+  }
+}

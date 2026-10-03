@@ -95,9 +95,9 @@ ln -sfn <path-to-herdr-threads> third_party/herdr-threads
 | --- | --- |
 | 1-2 unit and integration | `cargo test` |
 | crash-injection | `cargo test --features test-support` |
-| 3 private Herdr server | `cargo test --features private-herdr` |
-| 4 real agents | `HG_REAL_AGENTS=1 cargo test` |
-| 5 real threads | `HG_REAL_THREADS=1 cargo test` |
+| 3 private Herdr server | `cargo test --features private-herdr -- --test-threads=1` |
+| 4 real agents | `HG_REAL_AGENTS=1 cargo test --features private-herdr --test config_smoke --test real_agent_smoke -- --test-threads=1 --nocapture` |
+| 5 real threads | `HG_REAL_THREADS=1 cargo test --features private-herdr --test threads_real -- --test-threads=1 --nocapture` |
 
 All tiers use private servers and isolated state. The release-build packaging test is ignored by default: `cargo test --test packaging -- --ignored build_script_places_binary`.
 
@@ -105,26 +105,15 @@ Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) go
 
 ## Verification matrix
 
-What is checked against what, from [docs/verification-matrix.md](docs/verification-matrix.md) (herdr 0.9.1, 2026-10-02). Of 59 rows:
+[docs/verification-matrix.md](docs/verification-matrix.md) records the current test results and the evidence for each behavior (private Herdr 0.9.1, macOS aarch64, 2026-10-03).
 
-| Status | Rows | Meaning |
-| --- | --- | --- |
-| `verified-real` | 37 | ran against a private real Herdr (tier 3), or a real herdr-threads daemon (tier 5), and passed |
-| `verified-fake` | 13 | covered by tiers 1-2 with fakes or a real git store; the unit test is cited |
-| `assumed` | 9 | not exercised, skipped, or exercised and found broken |
+`verified-real` means exercised against private Herdr or an isolated herdr-threads daemon. `verified-fake` means covered with fakes or a real Git store and journal. `assumed` marks behavior that remains unexercised or skipped.
 
-Run the tier-3 suite serially: `cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1` (25 flows, about two minutes; `e2e_plugin_link_status_action_single_daemon` runs a release build).
+Run tier 3 serially: `cargo test --features private-herdr -- --test-threads=1`. The seat-rename and undo-adoption regressions wait for the derived view and pane token respectively. Historical defects D1–D3 have been fixed; their regressions run in the normal suite.
 
-The `assumed` rows:
+Real-agent launch/resume, SessionStart bootstrap, and the agent summarizer flow still require the opt-in tier and credentials. Service-ACK delivery is exercised against an isolated threads daemon; real summarizer-agent delivery is separate. Herdr live handoff remains untested.
 
-- Undo run from a pane adopts that pane as the restored clone: **product defect D1**, the undo commits but the caller's pane is never bound (`#[ignore]`d repro `e2e_undo_from_pane_adopts_caller_pane`).
-- Token re-stamp after `clone rebind`: **product defect D2** (`e2e_rebind_restamps_token_after_herdr_restart`).
-- Moving a pane into another seat's tab leaves that seat alone: **product defect D3**, the tab is renamed and the other seat with it (`e2e_move_pane_into_other_seat_tab_keeps_that_seats_name`).
-- Service-ack delivery: verified against a real herdr-threads daemon (opt-in `HG_REAL_THREADS=1`: send, pending receipt, native `herdr-threads ack`, acknowledged receipt); not yet exercised with a real summarizer agent (tier 4).
-- `claude` and `codex` harness configurations, and the real-agent summarizer flow: skipped without `HG_REAL_AGENTS=1`, the agent binary and an explicit API key.
-- `agent_session` of an `agent.start`ed Claude without Herdr's integration (spike 5), and Herdr live handoff: never run.
-
-Reproduce a defect with `cargo test --features private-herdr --test e2e_private_herdr -- --ignored <name> --test-threads=1`.
+Run feature tiers sequentially: another Cargo feature build can replace `target/debug/herdr-graph` while subprocess tests are using it.
 
 ## Design documents
 
