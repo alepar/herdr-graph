@@ -787,18 +787,63 @@ fn begin_applying_journal_error_counts_and_halts() {
     assert!(reason.contains("infrastructure failures"), "{reason}");
 }
 
-#[test]
-fn poison_finish_failed_error_counts() {
-    let fx = fx();
+#[tokio::test(flavor = "multi_thread")]
+async fn poison_finish_failed_error_halts_run_and_resume_finishes() {
+    let fx = fx_with(WriterConfig { infra_backoff: Duration::from_millis(5), ..Default::default() });
     let op = fx.w.admit(pair(1)).unwrap();
     for _ in 1..=3 {
         fx.w.journal().begin_applying(&op, t0()).unwrap();
         fx.w.journal().requeue(&op, true, t0()).unwrap();
     }
     trigger(&fx, "failed");
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(fx.w.clone().run(rx));
+    let result = tokio::time::timeout(Duration::from_secs(2), async {
+        while fx.w.journal().meta_get(WRITER_HALTED).unwrap().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await;
+    tx.send(true).unwrap();
+    task.await.unwrap();
+    assert!(result.is_ok(), "failure finalization stranded the op without halting");
+    assert_eq!(row(&fx, &op).state, OpState::Applying);
+    drop_trigger(&fx);
+    fx.w.resume().unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(row(&fx, &op).state, OpState::Failed);
+}
+
+#[test]
+fn finalization_and_halt_record_failure_remain_recoverable() {
+    let fx = fx();
+    let op = fx.w.admit(book("corrupt", json!({}))).unwrap();
+    trigger(&fx, "failed");
+    fx.w.journal().execute_batch_for_test(
+        "CREATE TRIGGER halt_insert BEFORE INSERT ON meta WHEN NEW.key='writer_halted'          BEGIN SELECT RAISE(ABORT, 'halt unavailable'); END;"
+    ).unwrap();
     assert!(matches!(fx.w.step(), Err(WriterError::Journal(_))));
-    assert_eq!(fx.w.infra_failures.load(Ordering::SeqCst), 1);
-    assert_eq!(row(&fx, &op).state, OpState::Applying, "not failed: the journal write was refused");
+    assert_eq!(row(&fx, &op).state, OpState::Applying);
+    assert!(matches!(fx.w.step(), Err(WriterError::Journal(_))), "must retry recording the halt, not become idle");
+    assert_eq!(fx.w.infra_failures.load(Ordering::SeqCst), 2);
+    fx.w.journal().execute_batch_for_test("DROP TRIGGER halt_insert;").unwrap();
+    drop_trigger(&fx);
+    // Even before the halt could be persisted, operator recovery must see it.
+    assert!(fx.w.resume().unwrap().was_halted);
+    fx.w.drain().unwrap();
+    assert_eq!(row(&fx, &op).state, OpState::Failed);
+}
+
+#[test]
+fn corrupt_data_finalization_failure_halts_and_resume_finishes() {
+    let fx = fx();
+    let op = fx.w.admit(book("corrupt", json!({}))).unwrap();
+    trigger(&fx, "failed");
+    assert!(matches!(fx.w.step(), Err(WriterError::Halted(_))));
+    assert_eq!(row(&fx, &op).state, OpState::Applying);
+    drop_trigger(&fx);
+    fx.w.resume().unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(row(&fx, &op).state, OpState::Failed);
 }
 
 #[test]

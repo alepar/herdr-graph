@@ -85,11 +85,15 @@ pub struct StepReport {
 #[async_trait::async_trait]
 pub trait RequesterNotifier: Send + Sync {
     fn notify(&self, op: &OpId, severity: Severity, text: &str);
-    /// Durable delivery of one journaled notice. Ok(true) delivered, Ok(false) nowhere to deliver (logged),
+    /// Durable delivery of one journaled notice. Ok(true) delivered, Ok(false) destination unavailable (retry later),
     /// Err(why) retry later. Default: the synchronous `notify`, counted as delivered.
     async fn deliver(&self, op: &OpId, severity: Severity, text: &str, _key: &OpKey) -> Result<bool, String> {
         self.notify(op, severity, text);
         Ok(true)
+    }
+    /// The affected effect supplies a fallback destination for seatless requesters.
+    async fn deliver_effect(&self, effect: &EffectRecord, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
+        self.deliver(&effect.op, severity, text, key).await
     }
 }
 
@@ -99,7 +103,8 @@ fn notice_key(op: &OpId, text: &str) -> OpKey {
     OpKey(format!("{op}:notify:{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]))
 }
 
-/// Default notifier: the requester seat's channel thread through the threads port. No thread: log only.
+/// Default notifier: requester channel, falling back to the affected seat's channel.
+/// An unavailable destination stays journaled for retry.
 pub struct ThreadsNotifier {
     pub threads: Arc<dyn ThreadsPort>,
     pub journal: Arc<Journal>,
@@ -107,14 +112,33 @@ pub struct ThreadsNotifier {
 }
 
 impl ThreadsNotifier {
-    fn thread_for(&self, op: &OpId) -> Option<ThreadRef> {
-        let seat = self.journal.get(op).ok().flatten()?.request.requester.seat?;
+    fn thread_for(&self, op: &OpId, affected: Option<&crate::model::AnyId>) -> Option<ThreadRef> {
         let head = self.store.head().ok()?;
         let tree = CommitView { store: &*self.store, at: head };
-        let loc = crate::store::layout::locate(&tree, &seat.to_any()).ok().flatten()?;
-        let rec: crate::model::seat::SeatRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
-        rec.channel.thread_id.map(ThreadRef)
+        let channel = |object: &crate::model::AnyId| -> Option<ThreadRef> {
+            let loc = crate::store::layout::locate(&tree, object).ok().flatten()?;
+            match object.kind() {
+                crate::model::IdKind::Seat => {
+                    let rec: crate::model::seat::SeatRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
+                    rec.channel.thread_id.map(ThreadRef)
+                }
+                crate::model::IdKind::Clone => {
+                    let rec: crate::model::clone::CloneRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
+                    let seat_loc = crate::store::layout::locate(&tree, &rec.seat.to_any()).ok().flatten()?;
+                    let seat: crate::model::seat::SeatRecord = crate::store::record::read_toml(&tree, &seat_loc.record_path).ok().flatten()?;
+                    seat.channel.thread_id.map(ThreadRef)
+                }
+                crate::model::IdKind::Teamspace => {
+                    let rec: crate::model::teamspace::TeamspaceRecord = crate::store::record::read_toml(&tree, &loc.record_path).ok().flatten()?;
+                    rec.channel.thread_id.map(ThreadRef)
+                }
+                _ => None,
+            }
+        };
+        let requester = self.journal.get(op).ok().flatten().and_then(|r| r.request.requester.seat);
+        requester.and_then(|seat| channel(&seat.to_any())).or_else(|| affected.and_then(channel))
     }
+
 }
 
 #[async_trait::async_trait]
@@ -124,10 +148,17 @@ impl RequesterNotifier for ThreadsNotifier {
     }
 
     async fn deliver(&self, op: &OpId, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
-        let Some(thread) = self.thread_for(op) else {
+        let Some(thread) = self.thread_for(op, None) else {
             eprintln!("herdr-graph: reconcile: {text}");
-            return Ok(false);
+            return Err("notice destination channel is unavailable".into());
         };
+        self.threads.notify(&thread, severity, text, key).await.map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+
+    async fn deliver_effect(&self, effect: &EffectRecord, severity: Severity, text: &str, key: &OpKey) -> Result<bool, String> {
+        let thread = self.thread_for(&effect.op, Some(&effect.object))
+            .ok_or_else(|| "notice destination channel is unavailable".to_owned())?;
         self.threads.notify(&thread, severity, text, key).await.map_err(|e| e.to_string())?;
         Ok(true)
     }
@@ -314,26 +345,28 @@ impl Reconciler {
             }
         };
         for n in due {
-            let holds = matches!(
-                self.journal.get_effect(&n.effect),
-                Ok(Some(r)) if matches!(
-                    r.status,
-                    EffectStatus::NeedsRevision | EffectStatus::BlockedNeedsHuman | EffectStatus::Failed
-                )
-            );
+            let effect = match self.journal.get_effect(&n.effect) {
+                Ok(effect) => effect,
+                Err(e) => {
+                    eprintln!("herdr-graph: reconcile: cannot read notice effect {}: {e}", n.effect);
+                    continue;
+                }
+            };
             let done = |state: &str| {
                 if let Err(e) = self.journal.notice_done(&n.key, state, now) {
                     eprintln!("herdr-graph: reconcile: cannot update notice {}: {e}", n.key);
                 }
             };
-            if !holds {
+            let Some(effect) = effect.filter(|r| matches!(r.status,
+                EffectStatus::NeedsRevision | EffectStatus::BlockedNeedsHuman | EffectStatus::Failed)) else {
                 done("void");
                 continue;
-            }
-            match self.notifier.deliver(&n.op, n.severity, &n.text, &OpKey(n.key.clone())).await {
+            };
+            let delivered = self.notifier.deliver_effect(&effect, n.severity, &n.text, &OpKey(n.key.clone())).await;
+            match delivered {
                 Ok(true) => done("delivered"),
-                Ok(false) => done("logged"),
-                Err(why) => {
+                other => {
+                    let why = other.err().unwrap_or_else(|| "notice destination channel is unavailable".into());
                     let wait = backoff::next(n.attempts.saturating_add(1));
                     let at = now + chrono::Duration::from_std(wait).unwrap_or_default();
                     eprintln!("herdr-graph: reconcile: notice {} not delivered (will retry): {why}", n.key);

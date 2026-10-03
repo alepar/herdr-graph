@@ -472,6 +472,13 @@ fn e2e_rename_tab_renames_seat_moves_path_history() {
     rig.raw_ok("tab.rename", json!({ "tab_id": tab.id.0, "label": "chief" }));
 
     rig.wait_until("the seat to be renamed", WAIT, |r| r.row("seats", "chief", "active").is_some());
+    // Committed reads become visible before the derived working-tree fast-forward finishes.
+    // Wait for that boundary before inspecting the directory move.
+    rig.wait_until("the renamed working-tree view", WAIT, |r| {
+        let store = herdr_graph::store::GitStore::open(&r.instance).unwrap();
+        use herdr_graph::ports::store::Store;
+        herdr_graph::writer::worktree::view_rev(&r.instance) == Some(store.head().unwrap())
+    });
     let after = rig.seat("chief");
     assert_eq!(after.id, before.id, "same seat, new name");
     assert!(rig.row("seats", "foreman", "active").is_none());

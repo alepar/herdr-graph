@@ -1501,6 +1501,38 @@ async fn needs_revision_notice_survives_threads_down() {
 }
 
 #[tokio::test]
+async fn seatless_attention_notice_waits_for_affected_seat_channel() {
+    let fx = fx();
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    threads.add_thread("t-foreman", "foreman");
+    let rec = Reconciler::new(
+        fx.store.clone(), fx.journal.clone(), fx.w.clone(), fx.herdr.clone(), fx.clock.clone(),
+        Arc::new(ThreadsNotifier { threads: threads.clone(), journal: fx.journal.clone(), store: fx.store.clone() }),
+        ReconcilerConfig::new(fx.deps.instance.clone()),
+    );
+    activate(&fx, "claude");
+    let foreman = seat(&fx, "foreman");
+    fx.herdr.fail_next("agent.start", Fault::StartOutcome(StartOutcome::BlockedNeedsHuman));
+    rec.step_fresh().await;
+    fx.w.drain().unwrap();
+    assert_eq!(notices_in(&fx, "pending"), 1, "no channel yet: do not drop the notice");
+    assert_eq!(notices_in(&fx, "logged"), 0);
+    assert!(threads.notifications().is_empty());
+    assert!(rec.next_wake().is_some());
+
+    admit_bookkeeping(&fx, json!({"sub": "test_set_thread", "seat": foreman.id, "thread": "t-foreman"}));
+    fx.clock.advance(chrono::Duration::minutes(10));
+    rec.deliver_notices().await;
+    assert_eq!(notices_in(&fx, "pending"), 0);
+    assert_eq!(notices_in(&fx, "delivered"), 1);
+    let sent = threads.notifications();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].thread, ThreadRef("t-foreman".into()));
+    rec.deliver_notices().await;
+    assert_eq!(threads.notifications().len(), 1);
+}
+
+#[tokio::test]
 async fn blocked_needs_human_is_noticed() {
     let fx = fx();
     activate(&fx, "claude");

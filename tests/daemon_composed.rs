@@ -636,6 +636,19 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     // The caller is A's own pane, bound to A.
     undo_from(&d, &act, &pa).await;
     eventually("B to be active again", || clones_of_seat(&d, "foreman").iter().any(|c| c.id == b.id && c.retired.is_none())).await;
+    // Undo commits the adoption before the shared loop re-stamps the pane. A quiet
+    // call log can mean that loop is still writing bookkeeping, especially under load.
+    let expected_token = format!("hg={}", b.id);
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let snap = d.fakes.herdr.snapshot().await.unwrap();
+        if snap.workspaces.iter().flat_map(|w| &w.tabs).flat_map(|t| &t.panes)
+            .any(|p| p.id == pa && p.metadata.get("hg") == Some(&expected_token)) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "adopted pane was never re-stamped");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
     settle(&d).await;
 
     let calls = d.fakes.herdr.calls();

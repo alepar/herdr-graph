@@ -5,7 +5,6 @@ use crate::ports::store::StoreError;
 use git2::{Delta, ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 fn git_err(e: git2::Error) -> StoreError {
@@ -54,7 +53,8 @@ fn disk_blob(path: &Path) -> Result<Option<Oid>, StoreError> {
 
 /// FF the working tree from tree `old` (None = unknown/empty) to `new` (spec §3.5): for each changed path,
 /// write or delete only when the on-disk content equals the old blob (or already equals the new one);
-/// otherwise leave it and append a DirtyEntry (JSON line) to .graph-local/worktree_dirty. Directories that
+/// otherwise leave it and record a DirtyEntry (JSON line) in .graph-local/worktree_dirty.
+/// Each fast-forward prunes resolved entries, including files moved to orphans. Directories that
 /// held deleted files and no longer exist in `new` have their remaining files moved to
 /// .graph-local/orphans/<op>/<old path>. Then refresh the index from `new` and write .graph-local/view_rev.
 /// Idempotent. With `old = None` every path of `new` is treated as added: missing files are written and
@@ -68,6 +68,7 @@ pub fn fast_forward(
     op: Option<&OpId>,
     now: Timestamp,
 ) -> Result<FfReport, StoreError> {
+    let dirty_entries = read_dirty_preserving(root)?;
     let new_tree = repo.find_tree(new).map_err(git_err)?;
     let old_tree = old.map(|o| repo.find_tree(o)).transpose().map_err(git_err)?;
     let diff = repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None).map_err(git_err)?;
@@ -151,14 +152,38 @@ pub fn fast_forward(
     index.write().map_err(git_err)?;
 
     std::fs::create_dir_all(local_dir(root))?;
-    if !report.dirty.is_empty() {
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dirty_file(root))?;
-        for path in &report.dirty {
-            let entry = DirtyEntry { path: path.clone(), op: op.cloned(), at: now };
-            let line = serde_json::to_string(&entry).map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
-            writeln!(f, "{line}")?;
+    // Retain per-op entries for unresolved paths so notifications keep their
+    // idempotency keys, but remove markers whose disk content now matches main.
+    let unresolved = |path: &str| -> Result<bool, StoreError> {
+        let disk = root.join(path);
+        let expected = new_tree.get_path(Path::new(path)).ok()
+            .filter(|e| e.kind() == Some(ObjectType::Blob)).map(|e| e.id());
+        Ok(disk_blob(&disk)? != expected
+            || (expected.is_none() && std::fs::symlink_metadata(&disk).is_ok()))
+    };
+    let mut entries = Vec::new();
+    for entry in dirty_entries {
+        if unresolved(&entry.path)? {
+            entries.push(entry);
         }
     }
+    let mut active_dirty = Vec::new();
+    for path in &report.dirty {
+        if !unresolved(path)? {
+            continue;
+        }
+        active_dirty.push(path.clone());
+        if !entries.iter().any(|e| e.path == *path && e.op.as_ref() == op) {
+            entries.push(DirtyEntry { path: path.clone(), op: op.cloned(), at: now });
+        }
+    }
+    report.dirty = active_dirty;
+    let mut bytes = Vec::new();
+    for entry in entries {
+        serde_json::to_writer(&mut bytes, &entry).map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
+        bytes.push(b'\n');
+    }
+    crate::fsutil::write_atomic(&dirty_file(root), &bytes)?;
     crate::fsutil::write_atomic(&view_rev_file(root), commit.0.as_bytes())?;
     Ok(report)
 }
@@ -174,6 +199,18 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), StoreError> {
         }
     }
     Ok(())
+}
+
+/// The writer must not replace a marker file it could not read completely.
+fn read_dirty_preserving(root: &Path) -> Result<Vec<DirtyEntry>, StoreError> {
+    let text = match std::fs::read_to_string(dirty_file(root)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    text.lines().map(|line| {
+        serde_json::from_str(line).map_err(|e| StoreError::Io(std::io::Error::other(e)))
+    }).collect()
 }
 
 /// Dirty entries, deduped by path, newest wins; a missing file means none.
@@ -313,6 +350,60 @@ mod tests {
         let suffixed = PathBuf::from(format!("{}.1", dest.display()));
         assert_eq!(std::fs::read_to_string(&suffixed).unwrap(), "new copy");
         assert_eq!(r.orphaned[0].1, suffixed.to_string_lossy());
+    }
+
+    #[test]
+    fn dirty_entries_clear_after_resolution_but_keep_unresolved_edits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let old = tree_of(&repo, &[("a.md", "old"), ("b.md", "old")]);
+        let new = tree_of(&repo, &[("a.md", "new"), ("b.md", "new")]);
+        let c = CommitId("c".into());
+        fast_forward(&repo, root, None, old, &c, None, at(1)).unwrap();
+        std::fs::write(root.join("a.md"), "mine").unwrap();
+        std::fs::write(root.join("b.md"), "mine").unwrap();
+        fast_forward(&repo, root, Some(old), new, &c, None, at(2)).unwrap();
+        assert_eq!(read_dirty(root).len(), 2);
+        std::fs::write(root.join("a.md"), "new").unwrap();
+        // No changed paths: stale markers must still be refreshed.
+        fast_forward(&repo, root, Some(new), new, &c, None, at(3)).unwrap();
+        let dirty = read_dirty(root);
+        assert_eq!(dirty.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), vec!["b.md"]);
+        assert_eq!(std::fs::read_to_string(root.join("b.md")).unwrap(), "mine");
+        std::fs::write(root.join("b.md"), "new").unwrap();
+        fast_forward(&repo, root, Some(new), new, &c, None, at(4)).unwrap();
+        assert!(read_dirty(root).is_empty());
+    }
+
+    #[test]
+    fn malformed_dirty_marker_is_preserved_on_refresh_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let tree = tree_of(&repo, &[("a.md", "old")]);
+        let c = CommitId("c".into());
+        fast_forward(&repo, root, None, tree, &c, None, at(1)).unwrap();
+        let marker = "truncated unresolved entry\n";
+        std::fs::write(dirty_file(root), marker).unwrap();
+        assert!(fast_forward(&repo, root, Some(tree), tree, &c, None, at(2)).is_err());
+        assert_eq!(std::fs::read_to_string(dirty_file(root)).unwrap(), marker);
+    }
+
+    #[test]
+    fn orphaned_edits_do_not_leave_active_dirty_markers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = Repository::init(root).unwrap();
+        let old = tree_of(&repo, &[("dir/a.md", "old")]);
+        let new = tree_of(&repo, &[("new/a.md", "old")]);
+        let c = CommitId("c".into());
+        fast_forward(&repo, root, None, old, &c, None, at(1)).unwrap();
+        std::fs::write(root.join("dir/a.md"), "mine").unwrap();
+        let report = fast_forward(&repo, root, Some(old), new, &c, None, at(2)).unwrap();
+        assert_eq!(report.orphaned.len(), 1);
+        assert_eq!(std::fs::read_to_string(&report.orphaned[0].1).unwrap(), "mine");
+        assert!(read_dirty(root).is_empty(), "the edited file is now in orphans");
     }
 
     #[test]

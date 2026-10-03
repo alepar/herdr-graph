@@ -20,7 +20,7 @@ use crate::store::record::read_toml;
 use crate::store::{GitStore, Overlay};
 use git2::Oid;
 use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -126,6 +126,7 @@ pub struct WriterCore {
     events: tokio::sync::broadcast::Sender<OpEvent>,
     wake: Arc<tokio::sync::Notify>,
     infra_failures: AtomicU32,
+    pending_halt: Mutex<Option<String>>,
 }
 
 impl WriterCore {
@@ -146,6 +147,7 @@ impl WriterCore {
             events,
             wake: Arc::new(tokio::sync::Notify::new()),
             infra_failures: AtomicU32::new(0),
+            pending_halt: Mutex::new(None),
         })
     }
 
@@ -178,6 +180,7 @@ impl WriterCore {
                 Ok(o)
             }
             Err(Fail::Halt(reason)) => {
+                *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
                 if self.journal.meta_get(WRITER_HALTED).ok().flatten().as_deref() != Some(reason.as_str())
                     && let Err(e) = self.journal.meta_set(WRITER_HALTED, &reason)
                 {
@@ -195,6 +198,9 @@ impl WriterCore {
     }
 
     fn step_inner(&self) -> Result<StepOutcome, Fail> {
+        if let Some(reason) = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            return Err(Fail::Halt(reason));
+        }
         if let Some(reason) = self.journal.meta_get(WRITER_HALTED)? {
             return Err(Fail::Halt(reason));
         }
@@ -207,7 +213,7 @@ impl WriterCore {
         };
         if attempts > self.cfg.max_attempts {
             let reason = format!("poison: exceeded {} attempts", self.cfg.max_attempts);
-            self.journal.finish_failed(&row.op, &reason, now)?;
+            self.finish_failed(&row.op, &reason, now)?;
             self.emit(&row, OpState::Failed, None, None);
             return Ok(StepOutcome::Failed(row.op));
         }
@@ -218,7 +224,7 @@ impl WriterCore {
                 self.finish_commit(&row, now, commit, applied, old_tree, new_tree)
             }
             Err(Fail::Data(msg)) => {
-                self.journal.finish_failed(&row.op, &format!("corrupt data: {msg}"), now)?;
+                self.finish_failed(&row.op, &format!("corrupt data: {msg}"), now)?;
                 self.emit(&row, OpState::Failed, None, None);
                 Ok(StepOutcome::Failed(row.op))
             }
@@ -245,7 +251,7 @@ impl WriterCore {
 
         let key = mutation_key(req);
         let Some(mutation) = self.registry.get(&key) else {
-            self.journal.finish_failed(op, &format!("no mutation registered for {key}"), now)?;
+            self.finish_failed(op, &format!("no mutation registered for {key}"), now)?;
             self.emit(row, OpState::Failed, None, None);
             return Ok(Phase::Done(StepOutcome::Failed(op.clone())));
         };
@@ -297,8 +303,16 @@ impl WriterCore {
         }
     }
 
+    /// A failed terminal write leaves an applying row. Halt instead of letting the
+    /// next idle drain hide it; resume/restart recovery will requeue it.
+    fn finish_failed(&self, op: &OpId, reason: &str, now: Timestamp) -> Result<(), Fail> {
+        self.journal.finish_failed(op, reason, now).map_err(|e| {
+            Fail::Halt(format!("failure finalization failed for {op}: {e}; run herdr-graph writer resume"))
+        })
+    }
+
     fn fail_op(&self, row: &OpRow, now: Timestamp, reason: &str) -> Result<Phase, Fail> {
-        self.journal.finish_failed(&row.op, reason, now)?;
+        self.finish_failed(&row.op, reason, now)?;
         self.emit(row, OpState::Failed, None, None);
         Ok(Phase::Done(StepOutcome::Failed(row.op.clone())))
     }
@@ -447,7 +461,9 @@ impl WriterCore {
     /// Operator-driven recovery of a halted writer: probe by running recovery and a journal round-trip; only when
     /// both succeed is the halt cleared. A failed probe keeps the halt (and its reason) untouched.
     pub fn resume(&self) -> Result<ResumeReport, WriterError> {
-        let Some(reason) = self.journal.meta_get(WRITER_HALTED).map_err(journal_err)? else {
+        let reason = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            .or(self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?);
+        let Some(reason) = reason else {
             return Ok(ResumeReport { was_halted: false, reason: None, recovery: None });
         };
         let recovery = self.recover_inner(false)?;
@@ -457,6 +473,7 @@ impl WriterCore {
             return Err(WriterError::Journal("journal probe read back a different value".into()));
         }
         self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+        *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.infra_failures.store(0, Ordering::SeqCst);
         self.wake.notify_one();
         Ok(ResumeReport { was_halted: true, reason: Some(reason), recovery: Some(recovery) })
@@ -523,9 +540,11 @@ impl WriterCore {
             .map_err(to_store)?
             .map_err(to_store)?;
         if clear_halt {
-            report.cleared_halt = self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?;
+            report.cleared_halt = self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()).clone()
+                .or(self.journal.meta_get(WRITER_HALTED).map_err(journal_err)?);
             if report.cleared_halt.is_some() {
                 self.journal.meta_delete(WRITER_HALTED).map_err(journal_err)?;
+                *self.pending_halt.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 self.infra_failures.store(0, Ordering::SeqCst);
             }
         }
