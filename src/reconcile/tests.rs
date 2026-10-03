@@ -567,6 +567,90 @@ async fn transient_failure_retried_with_backoff() {
 }
 
 #[tokio::test]
+async fn completed_workspace_create_survives_generation_change_before_stamp() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr
+        .fail_next("workspace.report_metadata", Fault::Unavailable);
+    step(&fx).await;
+    assert_eq!(
+        rows(&fx, EffectKind::CreateWorkspace)[0].status,
+        EffectStatus::Done
+    );
+    assert!(
+        fx.herdr.snapshot().await.unwrap().workspaces[0]
+            .metadata
+            .is_empty()
+    );
+
+    // The startup pass can create a workspace before the event subscription advances the generation.
+    // A later activation also changes the op used to derive new effect IDs.
+    let _events = fx.herdr.subscribe().await.unwrap();
+    commit(
+        &fx,
+        "seat create helper --teamspace alpha --active --harness claude",
+    );
+    fx.clock.advance(chrono::Duration::seconds(60));
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CreateWorkspace(_))),
+        1
+    );
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(snap.workspaces.len(), 1);
+    assert!(snap.workspaces[0].metadata.contains_key("hg"));
+    assert!(only_clone(&fx, "foreman").runtime.bound.is_some());
+    assert!(only_clone(&fx, "helper").runtime.bound.is_some());
+}
+
+#[tokio::test]
+async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguity() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr
+        .fail_next("workspace.report_metadata", Fault::Unavailable);
+    step(&fx).await;
+    let _events = fx.herdr.subscribe().await.unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let ts = desired.workspaces[0].ts.clone();
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert!(
+        super::planner::LiveIndex::new(&snap, &desired, &fx.journal)
+            .workspace(&ts)
+            .is_some()
+    );
+
+    let mut reused = snap.clone();
+    reused.workspaces[0].label = "unrelated workspace".into();
+    assert!(
+        super::planner::LiveIndex::new(&reused, &desired, &fx.journal)
+            .workspace(&ts)
+            .is_none()
+    );
+
+    let mut foreign = snap.clone();
+    foreign.workspaces[0]
+        .metadata
+        .insert("hg".into(), format!("hg={}", SeatId::new()));
+    assert!(
+        super::planner::LiveIndex::new(&foreign, &desired, &fx.journal)
+            .workspace(&ts)
+            .is_none()
+    );
+
+    let mut ambiguous = snap.clone();
+    let mut duplicate = snap.workspaces[0].clone();
+    duplicate.id = crate::model::HerdrWorkspaceId("other-workspace".into());
+    ambiguous.workspaces.push(duplicate);
+    assert!(
+        super::planner::LiveIndex::new(&ambiguous, &desired, &fx.journal)
+            .workspace(&ts)
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn lost_response_create_adopted_by_nonce() {
     let fx = fx();
     activate(&fx, "claude");

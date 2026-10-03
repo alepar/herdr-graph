@@ -137,6 +137,33 @@ impl<'a> LiveIndex<'a> {
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
+        // A completed create can outlive its incarnation before token stamping (startup subscription,
+        // disconnect or daemon crash). Its durable nonce identifies the workspace without trusting a
+        // reused Herdr ID. Open creates use the same correlation after a lost response.
+        let nonces: BTreeSet<_> = self
+            .journal
+            .effects_for_object(&any)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| {
+                e.kind == EffectKind::CreateWorkspace
+                    && matches!(
+                        e.status,
+                        EffectStatus::Pending | EffectStatus::Unknown | EffectStatus::Done
+                    )
+            })
+            .filter_map(|e| e.nonce_label)
+            .collect();
+        let mut matches = self
+            .snap
+            .workspaces
+            .iter()
+            .filter(|w| token_of(&w.metadata).is_none() && nonces.contains(&w.label));
+        if let Some(ws) = matches.next()
+            && matches.next().is_none()
+        {
+            return Some(LiveWorkspace { ws, stamped: false });
+        }
         // A rebound clone pane (see `pane`) places its teamspace's workspace.
         self.desired
             .panes

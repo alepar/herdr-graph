@@ -309,10 +309,16 @@ impl E2e {
             }
             std::thread::sleep(Duration::from_millis(150));
         }
+        let status = self.cli(&["status"]);
+        let snapshot = self.rt.block_on(self.herdr.client().snapshot());
         panic!(
-            "timed out ({}s) waiting for {desc}\ndaemon log:\n{}",
+            "timed out ({}s) waiting for {desc}\ndaemon log:\n{}\nstatus:\n{}{}\nsnapshot:\n{:#?}\nopen effects:\n{:?}",
             timeout.as_secs(),
-            self.daemon_log()
+            self.daemon_log(),
+            stdout(&status),
+            stderr(&status),
+            snapshot,
+            self.open_effects(),
         );
     }
 
