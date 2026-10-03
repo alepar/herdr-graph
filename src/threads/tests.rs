@@ -941,9 +941,9 @@ async fn delivery_capability_fallback_without_feature() {
     let dir = tempfile::tempdir().unwrap();
     let t = ServiceThreads::with_system_clock(dir.path().join("none.sock"), dir.path().join("state/intents"), uuid::Uuid::new_v4()).unwrap();
     assert_eq!(t.delivery_capability().await.unwrap(), DeliveryCapability::NotifyFallback, "no I/O, no registration probe");
+    // send_request/receipt_state are real (ht-5nb); with no daemon behind the socket they fail to connect.
     let r = t.send_request(&ThreadRef("t".into()), &[seat_ref("s")], "b", &OpKey("k".into())).await;
-    assert!(matches!(r, Err(ThreadsError::Unsupported)));
-    assert!(matches!(t.receipt_state(&[]).await, Err(ThreadsError::Unsupported)));
+    assert!(r.is_err());
     // The fake reports the same by default and can model a v2 service.
     let fake = FakeThreads::new();
     assert_eq!(fake.delivery_capability().await.unwrap(), DeliveryCapability::NotifyFallback);

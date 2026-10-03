@@ -6,13 +6,13 @@ use super::fake::thread_for_ensure_key;
 use crate::model::clone::{InvitationState, InviteConstraint};
 use crate::ports::threads::*;
 use herdr_threads::client::service::{PersistentServiceClient, ServiceCallError, ServiceIntentJournal};
-use herdr_threads::protocol::ids::{OperationId, RequirementId, SeatId, ThreadId};
+use herdr_threads::protocol::ids::{MessageId, OperationId, RequirementId, SeatId, ThreadId};
 use herdr_threads::protocol::pagination::PageRequest;
-use herdr_threads::protocol::results::{ApiError, ErrorCode};
+use herdr_threads::protocol::results::{ApiError, ErrorCode, ReceiptStatus, Recipient};
 use herdr_threads::protocol::service::{
     EnsureManagedThread, InvitationConstraint, NotificationSeverity, ReleaseRequirement, RequirementState,
-    ServiceInvite, ServiceMembership, ServiceMembershipQuery, ServiceNotify, ServiceOperation, ServiceResult,
-    ServiceSetTopic, VoluntaryMembershipState,
+    SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership, ServiceMembershipQuery, ServiceNotify,
+    ServiceOperation, ServiceReceiptsQuery, ServiceResult, ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
 };
 use herdr_threads::protocol::time::{CallBudget, Cancellation, Clock as ThreadsClock, MonoInstant};
 use sha2::{Digest, Sha256};
@@ -122,10 +122,6 @@ pub struct ServiceThreads {
     client: PersistentServiceClient,
     clock: Arc<dyn ThreadsClock>,
     timeout: Duration,
-    #[cfg_attr(not(feature = "threads-service-ack"), allow(dead_code))]
-    socket: PathBuf,
-    #[cfg_attr(not(feature = "threads-service-ack"), allow(dead_code))]
-    instance: uuid::Uuid,
     /// Mutations whose outcome is unknown: replayed (same envelope) after the next registration.
     pending: tokio::sync::Mutex<Vec<OperationId>>,
     #[cfg_attr(not(feature = "threads-service-ack"), allow(dead_code))]
@@ -148,13 +144,11 @@ impl ServiceThreads {
         }
         let journal = ServiceIntentJournal::open(&intents_dir)?;
         let pending = journal.pending()?;
-        let client = PersistentServiceClient::new(socket.clone(), clock.clone(), instance, None, journal);
+        let client = PersistentServiceClient::new(socket, clock.clone(), instance, None, journal);
         Ok(Self {
             client,
             clock,
             timeout: Duration::from_secs(10),
-            socket,
-            instance,
             pending: tokio::sync::Mutex::new(pending),
             capability: tokio::sync::Mutex::new(None),
         })
@@ -403,17 +397,48 @@ impl ThreadsPort for ServiceThreads {
 
     async fn send_request(
         &self,
-        _thread: &ThreadRef,
-        _recipients: &[ThreadsSeatRef],
-        _body: &str,
-        _op_key: &OpKey,
+        thread: &ThreadRef,
+        recipients: &[ThreadsSeatRef],
+        body: &str,
+        op_key: &OpKey,
     ) -> Result<MessageRef, ThreadsError> {
-        // The service ACK operations (Send/Receipts) are not in the service protocol this build links.
-        Err(ThreadsError::Unsupported)
+        let recipients = recipients.iter().map(seat_id).collect::<Result<Vec<_>, _>>()?;
+        let op = ServiceOperation::Send(ServiceSend {
+            thread: thread_id(thread)?,
+            body: clip(body, SERVICE_SEND_MAX_BODY_BYTES),
+            recipients,
+            deadline_millis: None,
+            operation: operation_id(op_key),
+        });
+        match self.mutate(op).await? {
+            ServiceResult::MessageSent(m) => Ok(MessageRef(m.summary.message.as_str().to_owned())),
+            other => Err(rejected("send_request", format!("unexpected result {other:?}"))),
+        }
     }
 
-    async fn receipt_state(&self, _messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
-        Err(ThreadsError::Unsupported)
+    async fn receipt_state(&self, messages: &[MessageRef]) -> Result<Vec<MessageReceipts>, ThreadsError> {
+        self.ready().await?;
+        let mut out = Vec::with_capacity(messages.len());
+        for message in messages {
+            let id = MessageId::parse(message.0.clone()).map_err(|e| rejected("message id", e))?;
+            let mut recipients = Vec::new();
+            let mut page = PageRequest::default();
+            loop {
+                let q = ServiceOperation::Receipts(ServiceReceiptsQuery { message: id.clone(), page: page.clone() });
+                let inspection = match self.client.query(q, &self.budget()).await {
+                    Ok(ServiceResult::Receipts(i)) => i,
+                    Ok(_) => return Err(ThreadsError::Rejected("unexpected result for a receipts query".into())),
+                    Err(e) => return Err(api_error(e)),
+                };
+                recipients.extend(inspection.recipients.items.iter().map(receipt_of));
+                match inspection.recipients.next_cursor {
+                    Some(cursor) if inspection.recipients.has_more => page.cursor = Some(cursor),
+                    _ => break,
+                }
+            }
+            out.push(MessageReceipts { message: message.clone(), recipients });
+        }
+        Ok(out)
     }
 
     #[cfg(not(feature = "threads-service-ack"))]
@@ -421,55 +446,36 @@ impl ThreadsPort for ServiceThreads {
         Ok(DeliveryCapability::NotifyFallback)
     }
 
+    /// The client registers `service_session_v2` (herdr-threads ht-5nb), so a registered session can Send and
+    /// read Receipts. A service older than the amendment refuses that registration as unsupported: that, and
+    /// only that, selects the Notify fallback. Connection trouble is returned for the caller to retry.
     #[cfg(feature = "threads-service-ack")]
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
         let mut cached = self.capability.lock().await;
         if let Some(c) = *cached {
             return Ok(c);
         }
-        let c = self.probe_service_ack().await?;
+        let c = match self.ready().await {
+            Ok(()) => DeliveryCapability::ServiceAck,
+            Err(ThreadsError::Unsupported) => DeliveryCapability::NotifyFallback,
+            Err(e) => return Err(e),
+        };
         *cached = Some(c);
         Ok(c)
     }
 }
 
-#[cfg(feature = "threads-service-ack")]
-impl ServiceThreads {
-    /// Raw `Register{service_session_v2}` on a throwaway connection: `Unsupported` (an older service) means
-    /// the Notify fallback; the registered v1 session is untouched either way.
-    async fn probe_service_ack(&self) -> Result<DeliveryCapability, ThreadsError> {
-        use herdr_threads::daemon::transport::{read_frame, write_frame};
-        use herdr_threads::protocol::service::{
-            ServiceRegister, ServiceRequest, ServiceWireRequest, ServiceWireResponse,
-        };
-        use herdr_threads::protocol::wire::PROTOCOL_VERSION;
-        let mut stream = tokio::time::timeout(Duration::from_secs(2), tokio::net::UnixStream::connect(&self.socket))
-            .await
-            .map_err(|_| ThreadsError::Disconnected("threads connect timed out".into()))?
-            .map_err(|e| ThreadsError::Disconnected(format!("threads connect: {e}")))?;
-        let request = ServiceWireRequest {
-            version: PROTOCOL_VERSION,
-            request_id: uuid::Uuid::new_v4().to_string(),
-            expected_instance: self.instance.to_string(),
-            service: ServiceRequest::Register(ServiceRegister { capability: "service_session_v2".into() }),
-        };
-        let body = serde_json::to_vec(&request).map_err(|e| rejected("probe", e))?;
-        let exchange = async {
-            write_frame(&mut stream, &body).await?;
-            read_frame(&mut stream).await
-        };
-        let bytes = tokio::time::timeout(self.timeout, exchange)
-            .await
-            .map_err(|_| ThreadsError::Disconnected("capability probe timed out".into()))?
-            .map_err(|e| ThreadsError::Disconnected(format!("capability probe: {e}")))?;
-        let response: ServiceWireResponse = serde_json::from_slice(&bytes).map_err(|e| rejected("probe response", e))?;
-        match response.result {
-            Ok(ServiceResult::Registered(_)) => Ok(DeliveryCapability::ServiceAck),
-            Ok(_) => Ok(DeliveryCapability::NotifyFallback),
-            Err(e) if matches!(e.code, ErrorCode::Unsupported | ErrorCode::InvalidRequest) => {
-                Ok(DeliveryCapability::NotifyFallback)
-            }
-            Err(e) => Err(api_error(e)),
-        }
-    }
+fn receipt_of(r: &Recipient) -> RecipientReceipt {
+    let state = match r.effective_status {
+        ReceiptStatus::Pending => ReceiptState::Pending,
+        ReceiptStatus::Retired => ReceiptState::Retired,
+        ReceiptStatus::Acknowledged => ReceiptState::Acknowledged {
+            at: r
+                .ack_provenance
+                .as_ref()
+                .and_then(|a| chrono::DateTime::from_timestamp_millis(a.decided_at.0))
+                .unwrap_or_else(chrono::Utc::now),
+        },
+    };
+    RecipientReceipt { seat: ThreadsSeatRef(r.seat.as_str().to_owned()), state }
 }

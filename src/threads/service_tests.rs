@@ -29,6 +29,10 @@ struct Service {
     /// `(operation key, request id)` of every mutation frame received.
     mutations: Mutex<Vec<(String, String)>>,
     members: Mutex<Vec<ServiceMembership>>,
+    /// `(thread, explicit recipients)` of every Send.
+    sent: Mutex<Vec<(String, Vec<String>)>>,
+    /// Seats whose receipt for the sent message is acknowledged (others stay pending).
+    acked: Mutex<Vec<String>>,
 }
 
 fn api_error(code: ErrorCode) -> ApiError {
@@ -120,6 +124,49 @@ impl Service {
                         ServiceResult::RequirementReleased(m.requirement.clone().unwrap())
                     }
                     ServiceOperation::Archive(_) | ServiceOperation::Reopen(_) => return Some(Err(api_error(ErrorCode::Unsupported))),
+                    ServiceOperation::Send(m) => {
+                        let recipients: Vec<String> = m.recipients.iter().map(|r| r.as_str().to_owned()).collect();
+                        let n = recipients.len();
+                        self.sent.lock().unwrap().push((m.thread.as_str().to_owned(), recipients));
+                        serde_json::from_value(json!({
+                            "kind": "message_sent", "data": { "summary": {
+                                "message": "msg-1", "thread": m.thread.as_str(), "author": null, "kind": "ordinary",
+                                "sequence": 7, "created_at": 1, "actor_label": "graph", "preview_data": "x",
+                                "preview_omitted": false, "preview_detail_argv": null },
+                              "author": "graph", "recipient_count": n.max(1), "receipt_duration_millis": 600000 }
+                        }))
+                        .unwrap()
+                    }
+                    ServiceOperation::History(_) => return Some(Err(api_error(ErrorCode::Unsupported))),
+                    ServiceOperation::Receipts(q) => {
+                        let acked = self.acked.lock().unwrap().clone();
+                        let seats: Vec<String> =
+                            self.sent.lock().unwrap().last().map(|(_, r)| r.clone()).unwrap_or_default();
+                        let items: Vec<_> = seats
+                            .iter()
+                            .map(|seat| {
+                                let done = acked.contains(seat);
+                                let st = if done { "acknowledged" } else { "pending" };
+                                json!({ "seat": seat, "status": st, "physical_status": st, "effective_status": st,
+                                        "retirement_cutover": null, "cleanup_state": null,
+                                        "ack_provenance": done.then(|| json!({ "actor": seat, "generation": 1,
+                                            "native_observation": "ack", "decided_at": 1_700_000_000_000i64 })) })
+                            })
+                            .collect();
+                        let n_acked = items.iter().filter(|i| i["effective_status"] == "acknowledged").count();
+                        serde_json::from_value(json!({
+                            "kind": "receipts", "data": {
+                                "message": { "message": q.message.as_str(), "thread": "t", "author": null, "kind": "ordinary",
+                                    "sequence": 7, "created_at": 1, "actor_label": "graph", "preview_data": "x",
+                                    "preview_omitted": false, "preview_detail_argv": null },
+                                "delivery": { "committed": seats.len(), "attempted": null, "submitted": null, "read": null,
+                                              "acknowledged": n_acked },
+                                "recipients": { "items": items, "next_cursor": null, "next_argv": null,
+                                    "high_water_ordinal": 0, "scope_revision": null, "has_more": false,
+                                    "stop_reason": "complete", "consistency": "bounded_live" } }
+                        }))
+                        .unwrap()
+                    }
                 }))
             }
         }
@@ -283,9 +330,35 @@ async fn unresolved_intents_survive_a_restart_of_the_adapter() {
 mod ack {
     use super::*;
 
-    /// A service that answers the v2 probe with `Unsupported`, like every service before the ACK amendment.
+    /// Send posts an ACK-required request to the given threads seats; Receipts maps each recipient's effective
+    /// status, with the ACK time from its provenance.
     #[tokio::test]
-    async fn v2_probe_unsupported_falls_back_and_keeps_the_session() {
+    async fn send_request_and_receipt_state_round_trip() {
+        let fx = fx().await;
+        let thread = fx.threads.ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_S".into())).await.unwrap();
+        let seats = [ThreadsSeatRef("seat-a".into()), ThreadsSeatRef("seat-b".into())];
+        let msg = fx.threads.send_request(&thread, &seats, "process rq_1", &OpKey("deliver:rq_1".into())).await.unwrap();
+        assert_eq!(msg, MessageRef("msg-1".into()));
+        let sent = fx.svc.sent.lock().unwrap().clone();
+        assert_eq!(sent, vec![(thread.0.clone(), vec!["seat-a".to_owned(), "seat-b".to_owned()])]);
+        fx.svc.acked.lock().unwrap().push("seat-a".into());
+        let r = fx.threads.receipt_state(std::slice::from_ref(&msg)).await.unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].message, msg);
+        assert_eq!(r[0].recipients.len(), 2);
+        assert!(matches!(r[0].recipients[0].state, ReceiptState::Acknowledged { at } if at.timestamp_millis() == 1_700_000_000_000));
+        assert_eq!(r[0].recipients[1].state, ReceiptState::Pending);
+        // The same delivery key again carries the same operation key, which the daemon deduplicates
+        // (journaled exactly-once server side; this stand-in does not model that).
+        fx.threads.send_request(&thread, &seats, "process rq_1", &OpKey("deliver:rq_1".into())).await.unwrap();
+        let keys: Vec<String> = fx.svc.mutations.lock().unwrap().iter().map(|m| m.0.clone()).collect();
+        assert_eq!(keys.iter().filter(|k| k.as_str() == "deliver:rq_1").count(), 2, "{keys:?}");
+    }
+
+    /// A service that refuses `service_session_v2` registration as unsupported, like every service before the
+    /// ACK amendment (ht-5nb), selects the Notify fallback; a v2 registration selects ServiceAck.
+    #[tokio::test]
+    async fn v2_registration_unsupported_falls_back() {
         let fx = fx().await;
         // The stand-in's Register ignores the capability and succeeds, i.e. it supports v2.
         assert_eq!(fx.threads.delivery_capability().await.unwrap(), DeliveryCapability::ServiceAck);

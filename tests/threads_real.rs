@@ -183,6 +183,25 @@ async fn real_threads_channel_invite_membership_notify_release() {
     ok("read", &read);
     assert!(stdout(&read).contains("graph says hello"), "{}", stdout(&read));
 
+    // Service-ACK delivery (herdr-threads ht-5nb): a v2 registration, an ACK-required request to the joined
+    // seat, pending until the native agent ACKs it by exact id; ACK means received, never processed.
+    assert_eq!(threads.delivery_capability().await.unwrap(), DeliveryCapability::ServiceAck);
+    let msg = threads
+        .send_request(&thread, std::slice::from_ref(&seat), "graph request rq_REAL", &OpKey("deliver:rq_REAL".into()))
+        .await
+        .expect("service send");
+    let r = threads.receipt_state(std::slice::from_ref(&msg)).await.expect("receipts");
+    assert_eq!(r[0].recipients.len(), 1, "{r:?}");
+    assert_eq!(r[0].recipients[0].seat, seat);
+    assert_eq!(r[0].recipients[0].state, ReceiptState::Pending, "no ACK is ever fabricated");
+    let ack = daemon.cli(Some(&pane), &["ack", &msg.0]);
+    ok("ack", &ack);
+    poll("acknowledged receipt", async || {
+        let r = threads.receipt_state(std::slice::from_ref(&msg)).await.ok()?;
+        matches!(r[0].recipients[0].state, ReceiptState::Acknowledged { .. }).then_some(())
+    })
+    .await;
+
     // ReleaseRequirement cleans up: the requirement episode ends, and a second release is clean.
     threads.release_requirement(&thread, &seat, &OpKey("release:real:1".into())).await.expect("release");
     assert_eq!(threads.membership(&thread, &seat).await.unwrap(), Some(InvitationState::Released));

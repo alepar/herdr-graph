@@ -67,7 +67,7 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 
 
 ## Threads integration and amendment status
 
-herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). The threads amendment epic `ht-5nb` was accepted 2026-10-02 but has not landed. Until it does, delivery uses the Notify fallback: ACK lives in graph, not threads. The cargo feature `threads-service-ack` switches to service ACK once it lands.
+herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. Against a herdr-threads older than `ht-5nb`, v2 registration is refused and graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
 
 ### herdr-threads discovery
 
@@ -120,7 +120,7 @@ The `assumed` rows:
 - Undo run from a pane adopts that pane as the restored clone: **product defect D1**, the undo commits but the caller's pane is never bound (`#[ignore]`d repro `e2e_undo_from_pane_adopts_caller_pane`).
 - Token re-stamp after `clone rebind`: **product defect D2** (`e2e_rebind_restamps_token_after_herdr_restart`).
 - Moving a pane into another seat's tab leaves that seat alone: **product defect D3**, the tab is renamed and the other seat with it (`e2e_move_pane_into_other_seat_tab_keeps_that_seats_name`).
-- Service-ack delivery: waits for the herdr-threads epic ht-5nb (fallback delivery is verified).
+- Service-ack delivery: verified against a real herdr-threads daemon (opt-in `HG_REAL_THREADS=1`: send, pending receipt, native `herdr-threads ack`, acknowledged receipt); not yet exercised with a real summarizer agent (tier 4).
 - `claude` and `codex` harness configurations, and the real-agent summarizer flow: skipped without `HG_REAL_AGENTS=1`, the agent binary and an explicit API key.
 - `agent_session` of an `agent.start`ed Claude without Herdr's integration (spike 5), and Herdr live handoff: never run.
 

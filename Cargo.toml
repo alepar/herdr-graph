@@ -14,10 +14,11 @@ name = "herdr-graph"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["threads-service-ack"]
 # Failpoints and other test-only hooks (crash-injection, hg-zmi.3).
 test-support = []
-# herdr-threads service ACK delivery (spec §7.4), off until threads epic ht-5nb lands.
+# herdr-threads service ACK delivery (spec §7.4); needs herdr-threads with ht-5nb (service_session_v2).
+# On by default; a service older than ht-5nb refuses v2 registration and graph falls back to Notify.
 threads-service-ack = []
 # Tier-3 private Herdr server tests (spec §11).
 private-herdr = []
