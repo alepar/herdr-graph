@@ -66,9 +66,9 @@ fn build_script_is_executable() {
 #[ignore = "runs a release build; run with: cargo test --test packaging -- --ignored build_script_places_binary"]
 fn build_script_places_binary() {
     let bin_dir = root().join("bin");
-    let out = Command::new(root().join("scripts/build.sh"))
+    let out = Command::new(root().join("scripts/build.sh")) // isolation-ok: release build
         .output()
-        .unwrap(); // isolation-ok: release build / --version only
+        .unwrap();
     assert!(
         out.status.success(),
         "build.sh failed: {}",

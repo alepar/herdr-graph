@@ -2156,10 +2156,10 @@ fn e2e_plugin_link_status_action_single_daemon() {
         return;
     };
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let build = Command::new(repo.join("scripts/build.sh"))
+    let build = Command::new(repo.join("scripts/build.sh")) // isolation-ok: cargo build of this crate
         .current_dir(repo)
         .output()
-        .unwrap(); // isolation-ok: cargo build of this crate
+        .unwrap();
     assert!(
         build.status.success(),
         "scripts/build.sh: {}",
@@ -2179,14 +2179,14 @@ fn e2e_plugin_link_status_action_single_daemon() {
         rig.herdr.root.clone(),
     );
     let herdr = move |args: &[&str]| -> Output {
-        Command::new(&herdr_path)
+        Command::new(&herdr_path) // isolation-ok: private fixture environment
             .env_clear()
             .envs(env.iter().cloned())
-            .env("HERDR_PLUGIN_STATE_DIR", &state)
+            .env("HERDR_PLUGIN_STATE_DIR", &state) // isolation-ok: state under the private root
             .current_dir(&root)
             .args(args)
             .output()
-            .unwrap() // isolation-ok: plugin state dir under the private root
+            .unwrap()
     };
     let link = herdr(&["plugin", "link", repo.to_str().unwrap()]);
     assert!(

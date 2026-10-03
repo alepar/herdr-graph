@@ -1209,8 +1209,8 @@ fn tripwire_live_mode_rejects_user_graph_config_and_herdr_socket() {
 
 #[test]
 fn armed_unit_tests_panic_on_real_home_config() {
-    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
-        // isolation-ok: the tripwire must see the real HOME
+    let home = std::env::var_os("HOME"); // isolation-ok: the tripwire must see the real HOME
+    let Some(home) = home.filter(|h| !h.is_empty()) else {
         eprintln!("HOME unset: skipping");
         return;
     };
@@ -1223,8 +1223,8 @@ fn armed_unit_tests_panic_on_real_home_config() {
 
 #[test]
 fn armed_unit_tests_panic_on_real_herdr_socket() {
-    let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) else {
-        // isolation-ok: the tripwire must see the real HOME
+    let home = std::env::var_os("HOME"); // isolation-ok: the tripwire must see the real HOME
+    let Some(home) = home.filter(|h| !h.is_empty()) else {
         eprintln!("HOME unset: skipping");
         return;
     };
