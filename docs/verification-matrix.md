@@ -11,6 +11,25 @@ Which contract behaviours of herdr-graph are checked against what. Written by hg
 | machine | macOS, aarch64 |
 | threads dependency | product code at `2fbe38ee`; checkout ended at `0a532229` (upstream test support/profile changes only). `d254ee5d` supplies live-ACK evidence |
 
+## herdr-threads 0.2.6 compatibility (2026-10-05)
+
+The graph adapter was verified against herdr-threads **0.2.6**, commit `0baf8654`, using wire protocol **6**. Rebuild graph and restart its daemon after upgrading the dependency; the older graph binary uses an incompatible wire version. The October 3 sweep below remains historical evidence.
+
+Required changes: active-only pane lookup now sets `SeatsQuery.include_retired = false`; `ReceiptStatus::NotRequired` maps to a distinct graph `ReceiptState::NotRequired`. A waived ACK never records summarizer dispatch. Existing persisted graph receipt values remain valid. Graph-managed channels are excluded from upstream automatic quiet-channel archival.
+
+| check | result |
+|---|---|
+| `cargo check --offline --all-targets --all-features` | pass |
+| `cargo test --offline --no-fail-fast` | 645 passed, 0 failed, 1 intentionally ignored |
+| `cargo check --offline --no-default-features --all-targets` | pass |
+| `cargo test --offline --no-default-features --lib threads::` | 48 passed, 0 failed |
+| `HG_REAL_THREADS=1 cargo test --offline --features private-herdr --test threads_real -- --test-threads=1 --nocapture` | 2 passed, 0 failed; private real 0.2.6 daemon |
+| `cargo fmt --check`, `git diff --check` | pass |
+
+The private service test resolves a seat and registers a synthetic Claude SessionStart through public APIs, then uses cooperative top-level claims for acceptance, reads and exact-ID ACK. It verifies discovery, idempotent channel creation, topic changes, required invitation acceptance, notifications, Pending → Acknowledged receipts, requirement release and ServiceBusy handling. It uses no credentials or live Herdr resources. Human-only service audiences now produce `InvalidRequest: no receipt recipients`; the old human fixture therefore could not exercise agent delivery.
+
+`waived_receipt_is_not_an_acknowledgement` covers wire-to-port mapping, while `service_ack_delivery_records_message_id_and_receipt` includes both Pending and NotRequired recipients and verifies that the request stays Delivered until an actual ACK arrives. Full native agent launch/bootstrap/summarizer execution remains subject to the credential limits documented below. Review found no additional production compatibility gaps.
+
 ## Status words
 
 - `verified-real`: a test ran the behaviour against a private real Herdr (tier 3), real agents (tier 4) or real

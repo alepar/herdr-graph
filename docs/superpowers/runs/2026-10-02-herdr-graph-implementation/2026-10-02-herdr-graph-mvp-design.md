@@ -272,6 +272,8 @@ Never touch the user's live Herdr session or memory observer in tests.
 
 ## Post-Implementation Notes
 
+**2026-10-05 — Changes vs. original design (herdr-threads 0.2.6).** The graph threads port now preserves upstream's `NotRequired` receipt separately from `Acknowledged`; a waived obligation does not establish dispatch. Pane-to-seat queries explicitly exclude retired seats. The dependency uses wire protocol 6, requiring a rebuilt graph binary and daemon restart after upgrading. Private service integration registers a synthetic native session through public seat resolution and SessionStart APIs, since human-only audiences no longer create receipt-bearing service messages. The fixture uses cooperative top-level claims for native acceptance and ACK, without credentials.
+
 **2026-10-03 — Changes vs. original design.** Attention notices prefer the requester's channel when available; for seatless requesters or missing requester channels, use the affected seat's channel (a clone resolves to its owning seat), or the affected teamspace channel for teamspace effects. The user selected durable pending delivery while channels are unavailable.
 
 Failed operation finalization halts the writer and preserves that halt in memory if its journal write also fails; operator resume/restart recovery requeues the applying operation. Working-tree dirty markers represent unresolved edits and retain their per-op identities; each fast-forward prunes resolved/orphaned entries and fails without overwriting an unreadable or malformed marker file.

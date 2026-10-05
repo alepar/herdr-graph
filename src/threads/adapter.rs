@@ -566,6 +566,7 @@ fn receipt_of(r: &Recipient) -> RecipientReceipt {
     let state = match r.effective_status {
         ReceiptStatus::Pending => ReceiptState::Pending,
         ReceiptStatus::Retired => ReceiptState::Retired,
+        ReceiptStatus::NotRequired => ReceiptState::NotRequired,
         ReceiptStatus::Acknowledged => ReceiptState::Acknowledged {
             at: r
                 .ack_provenance
@@ -577,5 +578,21 @@ fn receipt_of(r: &Recipient) -> RecipientReceipt {
     RecipientReceipt {
         seat: ThreadsSeatRef(r.seat.as_str().to_owned()),
         state,
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn waived_receipt_is_not_an_acknowledgement() {
+        let recipient: Recipient = serde_json::from_value(serde_json::json!({
+            "seat": "human-seat", "status": "not_required", "physical_status": "pending",
+            "effective_status": "not_required", "retirement_cutover": null,
+            "cleanup_state": null, "ack_provenance": null
+        }))
+        .unwrap();
+        assert_eq!(receipt_of(&recipient).state, ReceiptState::NotRequired);
     }
 }

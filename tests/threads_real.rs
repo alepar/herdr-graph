@@ -68,6 +68,69 @@ impl<'a> ThreadsDaemon<'a> {
         c.stdin(Stdio::null()).output().expect("herdr-threads runs")
     }
 
+    /// Register a synthetic native session through the public hook, without credentials.
+    fn register_agent(&self, pane: &HerdrPaneId) {
+        use std::os::unix::fs::PermissionsExt;
+        let resolved = self.cli(Some(pane), &["seat", "resolve", "--pane", &pane.0]);
+        ok("resolve agent seat", &resolved);
+        let bin = self.herdr.root.join("fixture-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let claude = bin.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\necho '2.1.283 (Claude Code)'\n").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let transcript = self.herdr.root.join("fixture-session.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+        let payload = self.herdr.root.join("fixture-hook.json");
+        std::fs::write(&payload, serde_json::to_vec(&serde_json::json!({
+            "hook_event_name": "SessionStart", "session_id": "graph-threads-test",
+            "transcript_path": transcript, "cwd": self.herdr.root.join("home"), "source": "startup"
+        })).unwrap()).unwrap();
+        let path = self
+            .herdr
+            .env
+            .iter()
+            .find(|(key, _)| key == "PATH")
+            .unwrap()
+            .1
+            .clone();
+        let out = self
+            .herdr
+            .command(&self.bin)
+            .args(["--state-dir"])
+            .arg(&self.state)
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["hook", "claude"])
+            .env("HERDR_ENV", "1")
+            .env("HERDR_PANE_ID", &pane.0)
+            .env("HERDR_SOCKET_PATH", &self.herdr.socket)
+            .env("PATH", format!("{}:{path}", bin.display()))
+            .stdin(Stdio::from(std::fs::File::open(payload).unwrap()))
+            .output()
+            .unwrap();
+        ok("native session hook", &out);
+        assert!(
+            !stdout(&out).is_empty(),
+            "native hook did not register: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn agent_cli(&self, pane: &HerdrPaneId, seat: &ThreadsSeatRef, args: &[&str]) -> Output {
+        let mut native = vec![
+            "--cooperative-seat",
+            &seat.0,
+            "--cooperative-target",
+            &pane.0,
+            "--cooperative-harness",
+            "claude",
+            "--cooperative-role",
+            "top-level",
+        ];
+        native.extend_from_slice(args);
+        self.cli(Some(pane), &native)
+    }
+
     fn start(herdr: &'a PrivateHerdr, bin: PathBuf) -> Self {
         Self::start_at(herdr, bin, herdr.root.join("threads-state"))
     }
@@ -170,7 +233,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
         Arc::new(herdr_threads::app::SystemClock::new());
     let map = ThreadsSeatMap::new(found.socket.clone(), found.instance, clock);
 
-    // A pane in the private Herdr, registered as a threads seat (a person's seat: `me init`).
+    // A pane in the private Herdr, registered as a synthetic native agent seat.
     let client = herdr.client();
     let created = client
         .create_workspace(CreateWorkspace {
@@ -181,13 +244,12 @@ async fn real_threads_channel_invite_membership_notify_release() {
         .await
         .expect("workspace");
     let pane = created.pane.clone().expect("first pane");
-    let init = daemon.cli(Some(&pane), &["me", "init"]);
-    ok("me init", &init);
+    daemon.register_agent(&pane);
     let seat = poll("the pane's threads seat", async || {
         map.seat_for(&pane).await.ok().flatten()
     })
     .await;
-    assert!(seat.0.starts_with("seat-"), "{seat:?}");
+    assert!(!seat.0.is_empty(), "{seat:?}"); // Seat IDs are opaque.
 
     // EnsureThread: idempotent by operation key.
     let key = OpKey("ensure:st_REALTEST".into());
@@ -242,8 +304,9 @@ async fn real_threads_channel_invite_membership_notify_release() {
     );
 
     // The agent accepts with the exact command graph prints for `/seat`.
-    let accept = daemon.cli(
-        Some(&pane),
+    let accept = daemon.agent_cli(
+        &pane,
+        &seat,
         &[
             "accept-required",
             &thread.0,
@@ -272,7 +335,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
         )
         .await
         .expect("notify");
-    let read = daemon.cli(Some(&pane), &["read", &thread.0, "--json"]);
+    let read = daemon.agent_cli(&pane, &seat, &["read", &thread.0, "--json"]);
     ok("read", &read);
     assert!(
         stdout(&read).contains("graph says hello"),
@@ -306,7 +369,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
         ReceiptState::Pending,
         "no ACK is ever fabricated"
     );
-    let ack = daemon.cli(Some(&pane), &["ack", &msg.0]);
+    let ack = daemon.agent_cli(&pane, &seat, &["ack", &msg.0]);
     ok("ack", &ack);
     poll("acknowledged receipt", async || {
         let r = threads

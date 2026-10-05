@@ -46,6 +46,7 @@ impl PaneSeatMap for ThreadsSeatMap {
         let query = SeatsQuery {
             page: PageRequest::default(),
             target: Some(target),
+            include_retired: false,
         };
         let budget = call_budget(&*self.clock, self.timeout);
         match self.client.call_async(Command::Seats(query), &budget).await {

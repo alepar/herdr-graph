@@ -44,8 +44,12 @@ pub enum DeliveryCapability {
 #[serde(rename_all = "snake_case")]
 pub enum ReceiptState {
     Pending,
-    Acknowledged { at: Timestamp },
+    Acknowledged {
+        at: Timestamp,
+    },
     Retired,
+    /// The recipient has no ACK obligation; this is not proof of dispatch.
+    NotRequired,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

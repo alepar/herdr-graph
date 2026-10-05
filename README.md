@@ -67,7 +67,9 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 
 
 ## Threads integration and amendment status
 
-herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. Against a herdr-threads older than `ht-5nb`, v2 registration is refused and graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
+herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. If a compatible daemon refuses v2 registration as unsupported, graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
+
+The dependency is herdr-threads **0.2.6**, using wire protocol **6**. Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane lookup excludes retired threads seats. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
 
 ### herdr-threads discovery
 

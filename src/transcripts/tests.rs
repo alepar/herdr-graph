@@ -2423,6 +2423,10 @@ mod service_ack {
                             seat: ThreadsSeatRef("other".into()),
                             state: ReceiptState::Pending,
                         }))
+                        .chain(std::iter::once(RecipientReceipt {
+                            seat: ThreadsSeatRef("human".into()),
+                            state: ReceiptState::NotRequired,
+                        }))
                         .collect(),
                 })
                 .collect())
@@ -2483,7 +2487,7 @@ mod service_ack {
             "no Notify fallback when the ACK path works"
         );
 
-        // No receipt yet: still delivered.
+        // Pending and waived receipts are not ACKs: still delivered.
         fx.tr.liveness_scan().await.unwrap();
         assert_eq!(the_request(&fx).status, RequestStatus::Delivered);
         // The summarizer's ACK arrives as a receipt: dispatched, still not success.
