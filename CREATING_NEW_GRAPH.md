@@ -46,7 +46,9 @@ For each reusable seat template, define instructions and runtime defaults:
 
 Each instruction set should also specify authority boundaries, expected outputs, collaboration practices, context-loading instructions, and recovery/handoff behavior.
 
-The reusable-seat-template model was approved on 2026-10-05 and remains to implement. Current code embeds members in team templates. Its `role` field has operational markers (`system`, `cron`, `dispatcher`, `summarizer`), rather than profession roles; preserve the associated behavior when replacing that terminology.
+The reusable-seat-template model is implemented. Both kinds share `TemplateId` and the `templates/<name>/` namespace: `kind = "seat"` supplies reusable instructions/defaults; `kind = "team"` contains members/relationships and is the only kind accepted by application apply. Omitted kind reads as team for existing records. Each team member can use a typed `seat_template = "tpl_…"` reference and `responsibility` text; unknown references and references to team definitions are rejected. Template kind cannot change during an edit.
+
+Operational markers use `system_duty` (`system`, `cron`, `dispatcher`, `summarizer`). Existing `role` fields and CLI `--role` remain read aliases; `--system-duty` is canonical. The unused profession `role_ref` is ignored. Designated summarizer discovery and source-summary eligibility retain their behavior.
 
 ## Instructions for an instantiated seat
 
@@ -63,7 +65,9 @@ Factory-wide rules
 
 This is a recommended composition convention, not an existing automatic instruction renderer. The instance-specific part answers: which project/feature, who coordinates it, what is authorized, which threads to use, and where its work/evidence live. Keep task progress in Beads and knowledge in the project's existing knowledge system.
 
-Current code copies the member's `AGENTS.md` into the new seat as-is. It does not interpolate project names or feature parameters. Reusable instructions should tell occupants to resolve their identity through `/seat` and read referenced context. Any generated instance brief needs an explicit factory convention or additional implementation. The approved change will make `/seat` expose reusable seat-template instructions as well as member specialization and instance context. Current code does not yet resolve those reusable references.
+`/seat` exposes live references to reusable template records/instructions, every participating application's member specialization/responsibility, application records, the seat record/context and scoped rules. It does not interpolate project names or produce a semantic brief. New reusable members keep specialization in the template; legacy inline members retain initial member-AGENTS copying into seat context. Existing context files are preserved.
+
+Use `herdr-graph plan template create|edit <name-or-id> --from <file.toml>` followed by the ordinary confirmation/apply flow. The create/edit document accepts root and member `agents_md` strings. Omission keeps an existing file; an empty string clears it. Direct `content write` to a reusable template's or actual member's instruction file is rejected: instruction changes need template revisions, a reviewed effect preview and undo. Other opaque content remains writable under the ordinary content rules.
 
 Approved runtime precedence for reusable seat templates:
 
@@ -72,9 +76,9 @@ seat instance override → team member override → seat template default
   → team template default → graph default
 ```
 
-Current code still uses seat override → embedded member default → template default → graph default.
+This order applies to harness, model, arguments and summary eligibility. Explicit empty arguments override inherited arguments. When an existing seat is explicitly reused, its canonical template reference controls runtime configuration; the additional application contributes instruction context and membership.
 
-Applicable fields fall back to built-in defaults when none is configured. This runtime precedence is separate from the recommended instruction structure above.
+Applicable fields fall back to built-in defaults when none is configured. This runtime precedence is separate from the recommended instruction structure above. Live definition/reference changes and instruction edits appear in reviewed plans and apply immediately through reconciliation, including required session replacements for surviving reused seats. Explicit overrides remain in force. Undo restores prior configuration/instructions and detects conflicting later edits; native resume remains limited by the harness.
 
 ## Other state and materials
 
@@ -94,4 +98,4 @@ Some of these are graph records; others are instructions or references to extern
 
 You generally do not hand-author clone/session history, transcript indexes, processing requests, or undo/operation records. Graph produces those.
 
-The shipped `project-team` and `feature-team` templates are starting examples: they currently have foreman/researcher and engineer/reviewer respectively. The factory described in the vision needs richer compositions and operating instructions.
+The shipped `project-team` and `feature-team` templates are starting examples: they contain foreman/researcher/engineer and engineer/reviewer respectively. Both teams reference the same reusable engineer definition and create independent seats. Engineer, researcher, reviewer and designer seat definitions are supplied. The factory described in the vision needs richer compositions and operating instructions.

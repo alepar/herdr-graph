@@ -35,7 +35,7 @@ fn threads_binary() -> PathBuf {
     let target = crate_root().join("target/threads-bin");
     let bin = target.join("debug/herdr-threads");
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())) // isolation-ok: cargo build of the threads checkout
-        .args(["build", "--manifest-path"])
+        .args(["build", "--locked", "--offline", "--manifest-path"])
         .arg(crate_root().join("third_party/herdr-threads/Cargo.toml"))
         .arg("--target-dir")
         .arg(&target)

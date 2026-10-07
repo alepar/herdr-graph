@@ -42,7 +42,16 @@ Write notes and other files into an object's folder with
 `herdr-graph content write --object <id> --rel <path inside the folder> --from <file>`.
 Add `--expect <blob>` to refuse the write when the file changed since you read it. The folder is
 resolved when the write happens, so renames do not matter. You cannot write record files such as
-`seat.toml`, and a retired object only accepts files under `summaries/`.
+`seat.toml`, and a retired object only accepts files under `summaries/`. Reusable template root
+`AGENTS.md` and actual member `members/<name>/AGENTS.md` require `plan template edit <id>
+--from <file.toml>` and the same confirmation/apply flow above. Set root/member `agents_md` in
+that document: omission keeps existing instructions and an empty string clears them. Template
+edits preview live dependencies and session replacements and retain conflict-aware undo.
+
+Team members use typed `seat_template` IDs and `responsibility` to specialize reusable
+`kind = "seat"` definitions. Applications require `kind = "team"` (the legacy default). Shared
+definitions create independent seats; explicit member mappings select actual seat reuse.
+Operational duties use `--system-duty`; legacy `--role` remains accepted.
 
 ## Finding things
 

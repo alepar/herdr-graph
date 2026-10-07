@@ -24,10 +24,15 @@ Find out who you are in the graph, then read what applies to you.
      proposed. Treat it the same way.
 
 3. Read the files yourself. Everything is listed under `paths`:
-   - `templates`: templates that apply to your seat
+   - `templates`: live reusable/team template records and instructions, member specialization
+     for all participating applications, application records, and the seat record
    - `rules.global`, `rules.team`, `rules.seat`: rules, most general first
    - `seat_agents_md`: your seat's own instructions
    - `clone_files`: files kept for this clone
+
+   Read member `responsibility` alongside its instruction references and your instance context.
+   These references are live; no generated brief or string interpolation is implied. Explicit reuse
+   keeps canonical runtime configuration while exposing all participating contexts.
    Do not summarize them to the user unless asked; follow them.
 
 4. Check freshness. If `worktree_dirty` is not empty, those files have local edits that the graph

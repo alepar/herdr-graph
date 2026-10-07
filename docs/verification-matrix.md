@@ -3,6 +3,12 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## Agreed fixes and herdr-threads 0.2.9 (2026-10-07)
+
+Current integration uses herdr-threads **0.2.9**, commit `223b61a88625d7f442d22d9b8728dc4b2282b15f`, annotated tag `v0.2.9`, wire protocol **6**, and private Herdr **0.9.1**. The local checkout and official remote tag match; release metadata and source/API inspection are recorded in [the release handoff](releases/2026-10-07-agreed-fixes-handoff.md). That handoff also records the exact sequential validation commands/counts for reusable templates, dual-layout storage and service integration. Older tables/claims below retain their original dates and evidence.
+
+The private threads fixture registers a synthetic Claude SessionStart through the public hook, then runs explicit cooperative CLI invitation acceptance/read/exact-ID ACK. This proves real daemon/service contracts and isolated production discovery; it does not prove real native agent launch, bootstrap, summarizer execution, root-agent cells or live-session behavior. Unsupported-v2 fallback and waived-ACK behavior are covered by graph adapter/fake tests; no older real daemon is launched. No live services or native instances were changed.
+
 | | |
 |---|---|
 | date | 2026-10-03 |
