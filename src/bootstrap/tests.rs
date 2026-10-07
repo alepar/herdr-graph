@@ -127,6 +127,7 @@ fn fx_with(prepare: impl FnOnce(&Path)) -> Fx {
     register_core_kinds(&mut kinds);
     register_extra_kinds(&mut kinds);
     register_template_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
@@ -1660,4 +1661,260 @@ fn template_instruction_content_writes_require_reviewable_template_edit() {
             OpState::Committed
         );
     }
+}
+
+// F1: instruction paths may change, but specialization belongs to the stable member ID.
+struct MemberRenameFixture {
+    fx: Fx,
+    input: std::path::PathBuf,
+    target: crate::model::template::TemplateRecord,
+    mappings: Vec<(
+        crate::model::AppId,
+        BTreeMap<crate::model::MemberId, SeatId>,
+    )>,
+    seat: SeatId,
+    clone: CloneId,
+}
+
+const ORIGINAL_SPECIALIZATION: &str = "  team specialization\r\nλ\n\n";
+
+fn member_rename_fixture(participating: bool) -> MemberRenameFixture {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    let input = fx.root.parent().unwrap().join("rename-input.toml");
+    let create = |name: &str, text: String| {
+        std::fs::write(&input, text).unwrap();
+        commit(
+            &fx,
+            &format!("template create {name} --from {}", input.display()),
+        );
+    };
+    create(
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'Reusable'\n".into(),
+    );
+    let shared = layout::list_templates(&view(&fx)).unwrap().remove(0).1.id;
+    for (name, member) in [("team", "dev"), ("borrower", "peer")] {
+        create(
+            name,
+            format!(
+                "name = '{name}'\n[[members]]\nname = '{member}'\nstartup = 'active'\nseat_template = '{shared}'\nagents_md = {}\n",
+                serde_json::to_string(ORIGINAL_SPECIALIZATION).unwrap()
+            ),
+        );
+    }
+    commit(&fx, "application apply team --teamspace alpha --name one");
+    let seat = seat_rec(&fx, "dev");
+    let target_name = if participating { "borrower" } else { "team" };
+    let records = layout::list_templates(&view(&fx)).unwrap();
+    let borrower = &records
+        .iter()
+        .find(|(_, t)| t.name == "borrower")
+        .unwrap()
+        .1;
+    commit(
+        &fx,
+        &format!(
+            "application apply borrower --teamspace alpha --name two --reuse {}={}",
+            borrower.members[0].id, seat.id
+        ),
+    );
+    let target = records
+        .iter()
+        .find(|(_, t)| t.name == target_name)
+        .unwrap()
+        .1
+        .clone();
+    let mappings = layout::list_applications(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| (a.id, a.member_map))
+        .collect();
+    let clone = clone_of(&fx, &seat.id).id;
+    MemberRenameFixture {
+        fx,
+        input,
+        target,
+        mappings,
+        seat: seat.id,
+        clone,
+    }
+}
+
+fn edit_member_document(
+    f: &MemberRenameFixture,
+    doc: &crate::templates::document::TemplateDocument,
+) -> OpRow {
+    std::fs::write(&f.input, toml::to_string(doc).unwrap()).unwrap();
+    commit(
+        &f.fx,
+        &format!(
+            "template edit {} --from {}",
+            f.target.name,
+            f.input.display()
+        ),
+    )
+}
+
+fn assert_member_specialization(f: &MemberRenameFixture, name: &str, expected: Option<&[u8]>) {
+    let paths = bound_paths(&view(&f.fx), &f.fx.root, &f.seat, &f.clone)
+        .unwrap()
+        .value;
+    let rel = format!("templates/{}/members/{name}/AGENTS.md", f.target.name);
+    let path = f.fx.root.join(&rel);
+    let refs = paths["templates"].as_array().unwrap();
+    assert_eq!(
+        refs.contains(&json!(path.display().to_string())),
+        expected.is_some(),
+        "{rel}: {refs:?}"
+    );
+    assert_eq!(
+        std::fs::read(&path).ok().as_deref(),
+        expected,
+        "working tree {rel}"
+    );
+    assert_eq!(
+        view(&f.fx)
+            .read_file(&RepoPath::new(&rel).unwrap())
+            .unwrap()
+            .as_deref(),
+        expected,
+        "committed {rel}"
+    );
+    for (id, mapping) in &f.mappings {
+        let loc = layout::locate(&view(&f.fx), &id.to_any()).unwrap().unwrap();
+        let app: crate::model::application::ApplicationRecord =
+            read_toml(&view(&f.fx), &loc.record_path).unwrap().unwrap();
+        assert_eq!(
+            &app.member_map, mapping,
+            "member/seat identity must survive rename and undo"
+        );
+    }
+    let loc = layout::locate(&view(&f.fx), &f.target.id.to_any())
+        .unwrap()
+        .unwrap();
+    let rec: crate::model::template::TemplateRecord =
+        read_toml(&view(&f.fx), &loc.record_path).unwrap().unwrap();
+    assert_eq!(rec.members[0].id, f.target.members[0].id);
+    assert_eq!(rec.members[0].name, name);
+    assert_eq!(seat_rec(&f.fx, "dev").id, f.seat);
+    assert_eq!(clone_of(&f.fx, &f.seat).id, f.clone);
+}
+
+fn undo_member_edit(f: &MemberRenameFixture, row: &OpRow) {
+    let command = format!("undo {}", row.action.as_ref().unwrap());
+    let preview = plan(&f.fx, &command);
+    assert!(
+        preview.plan.repair_required.is_none(),
+        "{:?}",
+        preview.plan.repair_required
+    );
+    commit(&f.fx, &command);
+}
+
+#[test]
+fn member_rename_omission_keeps_live_specialization_and_immediate_undo() {
+    for participating in [false, true] {
+        let f = member_rename_fixture(participating);
+        let old_name = &f.target.members[0].name;
+        assert_member_specialization(&f, old_name, Some(ORIGINAL_SPECIALIZATION.as_bytes()));
+        let mut doc = crate::templates::document::TemplateDocument::from_record(&f.target);
+        doc.members[0].name = "implementor".into();
+        std::fs::write(&f.input, toml::to_string(&doc).unwrap()).unwrap();
+        let preview = plan(
+            &f.fx,
+            &format!(
+                "template edit {} --from {}",
+                f.target.name,
+                f.input.display()
+            ),
+        );
+        let edit = preview
+            .plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "template.edit")
+            .unwrap();
+        assert_eq!(
+            edit.detail["changed_fields"],
+            json!([format!("members.{}.name", f.target.members[0].id)])
+        );
+        let row = edit_member_document(&f, &doc);
+        assert_member_specialization(&f, "implementor", Some(ORIGINAL_SPECIALIZATION.as_bytes()));
+        assert!(
+            !f.fx
+                .root
+                .join(format!(
+                    "templates/{}/members/{old_name}/AGENTS.md",
+                    f.target.name
+                ))
+                .exists()
+        );
+        undo_member_edit(&f, &row);
+        assert_member_specialization(&f, old_name, Some(ORIGINAL_SPECIALIZATION.as_bytes()));
+        assert!(
+            !f.fx
+                .root
+                .join(format!(
+                    "templates/{}/members/implementor/AGENTS.md",
+                    f.target.name
+                ))
+                .exists()
+        );
+    }
+}
+
+#[test]
+fn member_rename_undo_preserves_later_instruction_edits_and_clears() {
+    for participating in [false, true] {
+        for later in [" later specialization\r\nΩ\n", ""] {
+            let f = member_rename_fixture(participating);
+            let mut doc = crate::templates::document::TemplateDocument::from_record(&f.target);
+            doc.members[0].name = "implementor".into();
+            let rename = edit_member_document(&f, &doc);
+            doc.members[0].agents_md = Some(later.into());
+            doc.members[0].responsibility = Some("unrelated later responsibility".into());
+            doc.agents_md = Some("unrelated later root instructions".into());
+            edit_member_document(&f, &doc);
+            let expected = if later.is_empty() {
+                None
+            } else {
+                Some(later.as_bytes())
+            };
+            assert_member_specialization(&f, "implementor", expected);
+            undo_member_edit(&f, &rename);
+            assert_member_specialization(&f, &f.target.members[0].name, expected);
+            let loc = layout::locate(&view(&f.fx), &f.target.id.to_any())
+                .unwrap()
+                .unwrap();
+            let rec: crate::model::template::TemplateRecord =
+                read_toml(&view(&f.fx), &loc.record_path).unwrap().unwrap();
+            assert_eq!(
+                rec.members[0].responsibility.as_deref(),
+                Some("unrelated later responsibility")
+            );
+            assert_eq!(
+                std::fs::read(f.fx.root.join(loc.folder.as_str()).join("AGENTS.md")).unwrap(),
+                b"unrelated later root instructions"
+            );
+        }
+    }
+}
+
+#[test]
+fn member_rename_explicit_clear_undo_restores_original_specialization() {
+    let f = member_rename_fixture(false);
+    let mut doc = crate::templates::document::TemplateDocument::from_record(&f.target);
+    doc.members[0].name = "implementor".into();
+    doc.members[0].agents_md = Some(String::new());
+    let row = edit_member_document(&f, &doc);
+    assert_member_specialization(&f, "implementor", None);
+    assert!(
+        !f.fx
+            .root
+            .join("templates/team/members/dev/AGENTS.md")
+            .exists()
+    );
+    undo_member_edit(&f, &row);
+    assert_member_specialization(&f, "dev", Some(ORIGINAL_SPECIALIZATION.as_bytes()));
 }

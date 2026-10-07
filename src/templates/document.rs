@@ -41,7 +41,8 @@ pub struct DocumentMember {
     pub startup: Startup,
     #[serde(default)]
     pub defaults: MemberDefaults,
-    /// Written to `templates/<slug>/members/<member-slug>/AGENTS.md`; `None` leaves an existing file alone.
+    /// Written to `templates/<slug>/members/<member-slug>/AGENTS.md`; `None` retains the stable
+    /// member's current bytes, including across a rename. An empty string clears the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agents_md: Option<String>,
 }
@@ -72,6 +73,7 @@ impl TemplateDocument {
             return Err("a seat template cannot contain members or relationships".into());
         }
         let mut names = std::collections::BTreeSet::new();
+        let mut instruction_paths = BTreeMap::new();
         let mut ids = std::collections::BTreeSet::new();
         for m in &self.members {
             if m.name.trim().is_empty() {
@@ -79,6 +81,13 @@ impl TemplateDocument {
             }
             if !names.insert(m.name.as_str()) {
                 return Err(format!("duplicate member name {:?}", m.name));
+            }
+            let slug = crate::store::slug::slugify(&m.name);
+            if let Some(other) = instruction_paths.insert(slug.clone(), &m.name) {
+                return Err(format!(
+                    "members {other:?} and {:?} share instruction path members/{slug}/AGENTS.md; rename one member to use a distinct path",
+                    m.name
+                ));
             }
             if let Some(id) = &m.id
                 && !ids.insert(id.clone())

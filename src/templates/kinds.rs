@@ -181,7 +181,20 @@ fn write_agents(
     cx: &mut MutationCx<'_>,
     tpl_dir: &RepoPath,
     doc: &TemplateDocument,
+    old: Option<&TemplateRecord>,
 ) -> Result<(), MutationError> {
+    // Snapshot by identity before touching paths: names can swap, and an inverse rename must
+    // carry today's instructions rather than the text recorded before the original rename.
+    let mut retained = BTreeMap::new();
+    if let Some(old) = old {
+        for m in &old.members {
+            retained.insert(m.id.clone(), agents_md(&cx.tree, tpl_dir, &m.name)?);
+        }
+        for m in &old.members {
+            cx.tree
+                .delete_file(&layout::member_agents_md(tpl_dir, &slugify(&m.name)));
+        }
+    }
     if let Some(text) = &doc.agents_md {
         let path = tpl_dir.join("AGENTS.md")?;
         if text.is_empty() {
@@ -191,13 +204,17 @@ fn write_agents(
         }
     }
     for m in &doc.members {
-        if let Some(text) = &m.agents_md {
-            let path = layout::member_agents_md(tpl_dir, &slugify(&m.name));
-            if text.is_empty() {
-                cx.tree.delete_file(&path);
-            } else {
-                cx.tree.put_file(path, text.as_bytes().to_vec());
-            }
+        let bytes = match &m.agents_md {
+            Some(text) => (!text.is_empty()).then(|| text.as_bytes().to_vec()),
+            None => m.id.as_ref().and_then(|id| retained.remove(id).flatten()),
+        };
+        let path = layout::member_agents_md(tpl_dir, &slugify(&m.name));
+        if let Some(bytes) = bytes {
+            cx.tree.put_file(path, bytes);
+        } else {
+            // A new member or a member with absent instructions cannot inherit stale text
+            // from the previous owner of its destination path.
+            cx.tree.delete_file(&path);
         }
     }
     Ok(())
@@ -525,7 +542,7 @@ impl OrgKind for TemplateCreate {
         let dir = layout::template_dir(&slug);
         cx.tree
             .put_record(layout::template_record(&dir), &mut rec)?;
-        write_agents(cx, &dir, &doc)?;
+        write_agents(cx, &dir, &doc, None)?;
         Ok(Applied {
             summary: format!("create template {}", a.name),
             action: None,
@@ -1084,7 +1101,7 @@ impl OrgKind for TemplateEdit {
 
         // The template itself (the applications below resolve their config against the new record).
         cx.tree.put_record(loc.record_path.clone(), &mut new)?;
-        write_agents(cx, &loc.folder, &a.document)?;
+        write_agents(cx, &loc.folder, &after, Some(&old))?;
 
         let mut acc = Acc::default();
         let mut created: Vec<AnyId> = Vec::new();

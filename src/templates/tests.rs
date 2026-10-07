@@ -2153,3 +2153,151 @@ fn review_added_reusable_member_without_instructions_undoes_immediately() {
     assert!(tpl(&fx, "team").members.is_empty());
     assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Retired);
 }
+
+#[test]
+fn member_rename_swap_preserves_each_identity_and_undo() {
+    let fx = fx();
+    alpha(&fx);
+    let first = MemberId::new();
+    let second = MemberId::new();
+    let mut members = [m(&first, "dev", "active"), m(&second, "reviewer", "active")];
+    members[0].agents = Some("developer specialization");
+    members[1].agents = Some("reviewer specialization");
+    create_template(&fx, "team", &members, &[]);
+    apply_app(&fx, "team", "one");
+    let mapping = app(&fx, "one").member_map;
+    let dir = layout::locate(&view(&fx), &tpl(&fx, "team").id.to_any())
+        .unwrap()
+        .unwrap()
+        .folder;
+    let bytes = |name| {
+        view(&fx)
+            .read_file(&layout::member_agents_md(&dir, name))
+            .unwrap()
+    };
+    let path = write_doc(
+        &fx,
+        &doc_text(
+            "team",
+            &[m(&first, "reviewer", "active"), m(&second, "dev", "active")],
+            &[],
+        ),
+    );
+    let row = commit(&fx, &format!("template edit team --from {path}"));
+    assert_eq!(
+        bytes("dev").as_deref(),
+        Some(b"reviewer specialization".as_slice())
+    );
+    assert_eq!(
+        bytes("reviewer").as_deref(),
+        Some(b"developer specialization".as_slice())
+    );
+    assert_eq!(app(&fx, "one").member_map, mapping);
+    commit(&fx, &format!("undo {}", row.action.unwrap()));
+    assert_eq!(
+        bytes("dev").as_deref(),
+        Some(b"developer specialization".as_slice())
+    );
+    assert_eq!(
+        bytes("reviewer").as_deref(),
+        Some(b"reviewer specialization".as_slice())
+    );
+    assert_eq!(app(&fx, "one").member_map, mapping);
+}
+
+#[test]
+fn member_rename_into_departing_path_does_not_inherit_other_identity_text() {
+    for replacement in [false, true] {
+        let fx = fx();
+        let first = MemberId::new();
+        let second = MemberId::new();
+        let mut members = [
+            m(&first, "dev", "deferred"),
+            m(&second, "reviewer", "deferred"),
+        ];
+        members[1].agents = Some("reviewer specialization");
+        create_template(&fx, "team", &members, &[]);
+        let id = if replacement {
+            MemberId::new()
+        } else {
+            first.clone()
+        };
+        let path = write_doc(
+            &fx,
+            &doc_text("team", &[m(&id, "reviewer", "deferred")], &[]),
+        );
+        let row = commit(&fx, &format!("template edit team --from {path}"));
+        let dir = layout::locate(&view(&fx), &tpl(&fx, "team").id.to_any())
+            .unwrap()
+            .unwrap()
+            .folder;
+        assert_eq!(
+            view(&fx)
+                .read_file(&layout::member_agents_md(&dir, "reviewer"))
+                .unwrap(),
+            None,
+            "an omitted instruction belongs to the stable member, never the destination's previous owner"
+        );
+        commit(&fx, &format!("undo {}", row.action.unwrap()));
+        assert_eq!(
+            view(&fx)
+                .read_file(&layout::member_agents_md(&dir, "reviewer"))
+                .unwrap()
+                .as_deref(),
+            Some(b"reviewer specialization".as_slice())
+        );
+        assert_eq!(
+            view(&fx)
+                .read_file(&layout::member_agents_md(&dir, "dev"))
+                .unwrap(),
+            None
+        );
+    }
+}
+
+#[test]
+fn member_rename_rejects_colliding_instruction_paths_before_writing() {
+    let fx = fx();
+    let first = MemberId::new();
+    let second = MemberId::new();
+    create_template(
+        &fx,
+        "team",
+        &[
+            m(&first, "dev", "deferred"),
+            m(&second, "reviewer", "deferred"),
+        ],
+        &[],
+    );
+    let head = fx.store.head().unwrap();
+    for (left, right) in [("Dev Lead", "dev-lead"), ("DEV", "dev")] {
+        let path = write_doc(
+            &fx,
+            &doc_text(
+                "team",
+                &[m(&first, left, "deferred"), m(&second, right, "deferred")],
+                &[],
+            ),
+        );
+        let err = plan_err(&fx, &format!("template edit team --from {path}"));
+        assert!(
+            err.contains("instruction path") && err.contains("rename"),
+            "{err}"
+        );
+        assert_eq!(fx.store.head().unwrap(), head);
+    }
+    let path = write_doc(
+        &fx,
+        &doc_text(
+            "new",
+            &[
+                m(&first, "Dev Lead", "deferred"),
+                m(&second, "dev-lead", "deferred"),
+            ],
+            &[],
+        ),
+    );
+    let err = plan_err(&fx, &format!("template create new --from {path}"));
+    assert!(err.contains("instruction path"), "{err}");
+    assert_eq!(fx.store.head().unwrap(), head);
+}
