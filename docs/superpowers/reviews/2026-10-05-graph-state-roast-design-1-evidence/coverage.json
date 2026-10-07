@@ -1,0 +1,33 @@
+{
+  "triage": "caller-selected roster; no automatic triage needed",
+  "triageDead": false,
+  "scoutsDispatched": 8,
+  "scoutsDead": 0,
+  "lanes": [
+    "completeness",
+    "feasibility",
+    "filesystem-schema",
+    "identity-lifecycle",
+    "integration-ownership",
+    "transactions-recovery",
+    "transcripts-processing",
+    "instructions-configuration"
+  ],
+  "rawFindings": 7,
+  "dedupedFindings": 6,
+  "panelCount": 2,
+  "spotCount": 4,
+  "promotedCount": 0,
+  "judgesDispatched": 10,
+  "judgesComplete": 10,
+  "judgeCompletionPct": 100,
+  "beyondCap": 0,
+  "beyondPanelCap": 0,
+  "dedupeDead": false,
+  "independence": "same-family (GPT) \u2014 seat-differentiated panel",
+  "profile": "Local internal developer tool. This reviews a descriptive state inventory against current code, not a deployment gate or backup manual. Real data persistence matters, but omissions must be material within the actual summary scope.",
+  "mode": "design",
+  "iteration": "1 of 3",
+  "inputs": "GRAPH_STATE.md (untracked, SHA256 in inputs.json) vs code at 1603214845745174f5036ea79375198c7a44a1dd",
+  "adaptations": "Caller selected eight custom lanes replacing three defaults; code evidence explicitly required. Native GPT agents used because prescribed Claude tiers are unavailable. No prior report."
+}

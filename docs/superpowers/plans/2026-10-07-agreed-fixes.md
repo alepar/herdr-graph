@@ -41,9 +41,9 @@
 
 ### Task 2: Transcript and mutation record paths with compatibility
 
-**Files:** Modify `src/store/{layout,tests}.rs`, `src/transcripts/{mutations,delivery,tests}.rs`, writer/undo/doctor/readers where path construction occurs, model path comments, path-dependent tests. Add focused layout compatibility helper module if needed.
+**Files:** Modify `src/store/{layout,tests}.rs`, `src/transcripts/{mutations,delivery,tests}.rs`, `src/model/transcript.rs`, writer/undo/doctor/readers where path construction occurs, model path comments, path-dependent tests. Add focused layout compatibility helper module if needed.
 
-**Interfaces:** Keep action/operation/request path function arguments stable while returning new destinations. Add transcript registration path helper accepting attribution names/full IDs; enumeration and ID lookup read both legacy and new paths. Existing records update at their located path, so old compensation bytes/paths remain valid. Do not eagerly relocate historical operational records; new records use new layout. Historical transcript grouping is fixed at initial registration; later rename/move/retirement/undo do not move indexes or change attribution.
+**Interfaces:** Keep action/operation/request path function arguments stable while returning new destinations. Add transcript registration path helper accepting attribution names/full IDs; enumeration and ID lookup read both legacy and new paths. Existing records update at their located path, so old compensation bytes/paths remain valid. Do not eagerly relocate historical operational records; new records use new layout. Historical transcript grouping is fixed at initial registration; later rename/move/retirement/undo do not move indexes or change attribution. Persist initial team identity and team/seat display names in new transcript records as optional capture attribution, with legacy absence readable and explicitly unknown rather than inventing past organization from current bindings.
 
 - [ ] Add tests that create legacy records and new records in the same tree and verify ID lookup/enumeration, processing updates, undo of actions recorded before the upgrade, and no duplicate records on rewriting legacy requests/transcripts. Assert new paths, full IDs and safe name slugs.
   ```rust

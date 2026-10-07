@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "claim": "The ownership statement does not qualify where processing-request acknowledgements live when delivery falls back to Notify.",
+      "location": "GRAPH_STATE.md:49",
+      "category": "transcripts-processing",
+      "external": false,
+      "evidence": "The document says, 'Actual thread messages and receipts live in herdr-threads.' For processing requests, Cargo.toml:17-22 enables threads-service-ack but explicitly supports falling back to Notify with older services. The real delivery branch in src/transcripts/delivery.rs:195-200 sends notify and returns no message_id. The recipient runs request ack (src/transcripts/delivery.rs:73-74), which the CLI sends to request.ack (src/cli/request.rs:75-76); Transcripts::cmd_ack commits bookkeeping.request_ack without any threads-port write (src/transcripts/mod.rs:596-604). RequestAck sets delivery.dispatched_at and status Dispatched, then writes requests/<id>.toml (src/transcripts/mutations.rs:544-548; src/store/layout.rs:78-79; TOML serialization is src/store/tree.rs:129-145). src/transcripts/mod.rs:682 states the distinction explicitly: 'fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)'. By contrast, service receipts are polled from herdr-threads and mirrored into request_ack (src/transcripts/liveness.rs:239-260). The document already lists dispatch status at line 42, so this is a qualification gap in the ownership sentence, not evidence that service thread receipts are stored incorrectly. If 'receipts' means only herdr-threads service receipts, the narrow literal claim is accurate; the missing distinction matters for readers trying to find the durable request acknowledgement.",
+      "kind": "GAP"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "claim": "The summary omits that committed refs/heads/main is authoritative and the visible checkout can differ from the graph state the daemon reads.",
+      "location": "GRAPH_STATE.md:3,31,47 (absent authority distinction)",
+      "category": "completeness",
+      "external": false,
+      "evidence": "The document says 'Graph state lives in a dedicated Git repository' and lists 'The Git-tracked state', mentioning only 'checkout status' locally. src/store/git.rs:110-128 resolves head from refs/heads/main and reads record bytes from that commit's tree, never the working tree. Real consumers use that head: src/transcripts/mod.rs:172-176 builds its CommitView from store.head(); src/transcripts/capture.rs:408-409 loads clone/session state through it. The writer likewise starts mutation from store.head() and Overlay::new at src/writer/mod.rs:277-298, then projects the committed tree to disk at src/writer/mod.rs:400-418. src/writer/worktree.rs:110-121 deliberately leaves differing disk files untouched, records dirty paths at :196-220, and writes view_rev at :221. Thus a listed seat.toml can visibly contain user edits while the daemon still uses its committed contents. This is a material ownership/persistence distinction, rather than an omitted field or layout detail.",
+      "kind": "GAP"
+    },
+    {
+      "claim": "The description of .graph-local omits durable session-report ingress and preserved user files, beyond the journal and checkout-status metadata.",
+      "location": "GRAPH_STATE.md:47",
+      "category": "completeness",
+      "external": false,
+      "evidence": "The document describes local state as 'SQLite journal—queued operations, reconciliation effects, retries and notices—along with saved plans, observation baselines, thread intents, daemon locks/socket/logs and checkout status' and specifically calls the journal durable recovery state. When session.report IPC fails, the real CLI producer serializes caller/session args via spool_report at src/cli/session.rs:61-78. src/transcripts/capture.rs:28-62 syncs these reports into .graph-local/session-spool/<ulid>.json; the daemon registers its consumer at src/transcripts/mod.rs:507-509. Ingestion reads them and only then admits occupancy operations at src/transcripts/capture.rs:197-205,254-280, retaining files on transient failure at :302-308 and quarantining rejected input under session-spool/rejected at :455-462. These can therefore be the only durable session identity/transcript-path evidence before journal admission. Separately, the actual post-commit checkout projection (src/writer/mod.rs:409-418) moves remaining user-edited/untracked files out of disappeared tracked directories into .graph-local/orphans/<op-or-recovery>/<old-path>, using rename at src/writer/worktree.rs:138-169. Those files contain preserved user bytes, not merely checkout status. The layout is explicitly rough and the local list says 'includes', so individual filename omissions alone would not justify a finding; the gap is the missing persistence/ownership categories and resulting incomplete picture of what local data may be irreplaceable.",
+      "kind": "GAP"
+    }
+  ]
+}

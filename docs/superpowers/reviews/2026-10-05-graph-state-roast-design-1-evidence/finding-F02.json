@@ -1,0 +1,10 @@
+{
+  "claim": "The description of .graph-local omits durable session-report ingress and preserved user files, beyond the journal and checkout-status metadata.",
+  "location": "GRAPH_STATE.md:47",
+  "category": "completeness",
+  "external": false,
+  "evidence": "The document describes local state as 'SQLite journal\u2014queued operations, reconciliation effects, retries and notices\u2014along with saved plans, observation baselines, thread intents, daemon locks/socket/logs and checkout status' and specifically calls the journal durable recovery state. When session.report IPC fails, the real CLI producer serializes caller/session args via spool_report at src/cli/session.rs:61-78. src/transcripts/capture.rs:28-62 syncs these reports into .graph-local/session-spool/<ulid>.json; the daemon registers its consumer at src/transcripts/mod.rs:507-509. Ingestion reads them and only then admits occupancy operations at src/transcripts/capture.rs:197-205,254-280, retaining files on transient failure at :302-308 and quarantining rejected input under session-spool/rejected at :455-462. These can therefore be the only durable session identity/transcript-path evidence before journal admission. Separately, the actual post-commit checkout projection (src/writer/mod.rs:409-418) moves remaining user-edited/untracked files out of disappeared tracked directories into .graph-local/orphans/<op-or-recovery>/<old-path>, using rename at src/writer/worktree.rs:138-169. Those files contain preserved user bytes, not merely checkout status. The layout is explicitly rough and the local list says 'includes', so individual filename omissions alone would not justify a finding; the gap is the missing persistence/ownership categories and resulting incomplete picture of what local data may be irreplaceable.",
+  "kind": "GAP",
+  "suggestedSeverity": "Nit",
+  "id": "F02"
+}

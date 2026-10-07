@@ -1,0 +1,10 @@
+{
+  "mode": "design",
+  "iteration": 1,
+  "artifact": "GRAPH_STATE.md",
+  "artifactSha256": "d43785c168548035ff7118dc1bb97599f13ca14075fcc4d02b299e4bcd8ee76b",
+  "codeCommit": "1603214845745174f5036ea79375198c7a44a1dd",
+  "roster": "caller-selected: completeness, feasibility, filesystem-schema, identity-lifecycle, integration-ownership, transactions-recovery, transcripts-processing, instructions-configuration",
+  "profile": "Local internal developer tool; this review tests a descriptive storage summary against current code, not a deployment gate or a demand for new product guarantees. Misleading backup/restore advice can affect persistent real data.",
+  "adaptation": "User replaces premortem/failure-mode/YAGNI with selected specialists and explicitly authorizes document-to-code evidence. No PR base/diff requested. Fresh native GPT agents; Claude model tiers unavailable through this harness."
+}

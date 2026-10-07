@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "claim": "The local operational state in `.graph-local/` includes daemon locks/socket/logs.",
+      "location": "GRAPH_STATE.md:47",
+      "category": "filesystem-schema",
+      "external": false,
+      "evidence": "GRAPH_STATE.md:47 places the daemon socket in `.graph-local/`. src/config.rs:177 assigns InstancePaths.socket through socket_path(root), whose implementation at src/config.rs:190-199 returns `<root>/.graph-local/daemon.sock` only when that full path is shorter than 100 bytes; otherwise it returns `/private/tmp/herdr-graph-<uid>/<hash16>.sock`. This is production behavior, not merely a schema/test possibility: src/daemon/mod.rs:46-54 creates the socket's parent directory, explicitly handles a parent outside the instance root, and src/daemon/mod.rs:102 binds the resulting path; src/daemon/client.rs:127-128 computes the same fallback and connects to it. The summary is deliberately rough, so this is a narrow location exception rather than a broader ownership mismatch, but the unqualified directory claim is false for long instance paths and may mislead someone locating a running daemon's socket.",
+      "kind": "ISSUE"
+    }
+  ]
+}

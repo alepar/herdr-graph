@@ -1,0 +1,12 @@
+{
+  "findings": [
+    {
+      "claim": "Processing requests store a fixed input range.",
+      "location": "GRAPH_STATE.md:42",
+      "category": "feasibility",
+      "external": false,
+      "evidence": "The table says \"Fixed input range\". Requests do persist an explicit ByteRange (src/model/request.rs:12), but the range is not fixed for the lifetime of a request. The real producer Transcripts::create_request_for_range reads the transcript and commits bookkeeping.request_create with an explicit range (src/transcripts/mod.rs:286-307). RequestCreate::apply selects overlapping pending requests (src/transcripts/mutations.rs:375-379), preserves the oldest request ID, expands keeper.range to the union, and writes that same requests/<id>.toml again (src/transcripts/mutations.rs:387-404). Thus a pending request for [0,100) can become [0,200) when a later explicit [50,200) request is created; merged peers become unresolved. The delivery consumer subsequently reads the updated rq.range (src/transcripts/delivery.rs:83-103). The range is fixed after delivery because merge candidates are restricted to Pending, so the high-level claim could be made accurate by qualifying that lifecycle boundary.",
+      "kind": "ISSUE"
+    }
+  ]
+}

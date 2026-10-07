@@ -1,4 +1,4 @@
-# Current graph design — 2026-10-02
+# Current graph design — 2026-10-05
 
 Consolidated contract for the authorized implementation. Detailed decisions and their history: [DESIGN-NOTES.md](DESIGN-NOTES.md). Original seed remains verbatim in [archive/HANDOFF.md](archive/HANDOFF.md). Implementation authorized on 2026-10-02 through `super-auto` in the Claude Opus 5.5 `implementor` tab; see [IMPLEMENTATION-HANDOFF.md](IMPLEMENTATION-HANDOFF.md). No memory-observer restart.
 
@@ -26,6 +26,9 @@ Consolidated contract for the authorized implementation. Detailed decisions and 
 
 ## Templates
 
+- Reusable seat templates are shared across team templates; there is no separate profession-role object layer. A seat template supplies reusable instructions/runtime defaults, while a team member references it and adds responsibility, startup, overrides and participation. Separate applications create independent seats unless an actual seat is explicitly reused.
+- Runtime precedence: seat instance override > team member override > seat template default > team template default > graph default > applicable built-in fallback. Load seat-template instructions, member specialization and instance context alongside scoped rules through `/seat`. Concrete reference schemas/loading remain to implement; current code embeds template members and does not yet provide this reuse.
+- Existing summarizer/system/cron/dispatcher markers represent operational duties, not professions. Preserve their approved behavior when replacing role terminology; exact configuration representation remains to specify.
 - Live references: defaults AND structural edits affect current instances immediately through reconciliation, including model/harness changes rather than deferring them to next activation. Requested changes follow the detailed plan/confirm/apply direction; undo handles accidental mass changes. Explicit instance overrides persist across template changes. Named copies (v1/v2) support experiments; no hidden version pinning/upgrade layer. Show required session replacements in the approved plan, preserve history, and resume where the harness supports it. Exact transition mechanics remain implementation design.
 - Instance additions and exclusions persist. Retirement of a template-declared member excludes it locally so it is not recreated; independent additions survive template edits.
 - Template member IDs survive renames and are preserved for corresponding roles in copied templates. Instantiated seat IDs survive renames, retirement/resurrection and explicit template switches. Grouped action records reference created/reused seat IDs for undo, not seat-ID derivation.

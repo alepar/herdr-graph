@@ -1,0 +1,20 @@
+{
+  "findings": [
+    {
+      "claim": "The summary does not identify refs/heads/main as authoritative or explain that the listed files are a derived checkout which can differ from effective graph state.",
+      "location": "GRAPH_STATE.md:3,47 (absent authority distinction)",
+      "category": "transactions-recovery",
+      "external": false,
+      "evidence": "The document says \"Graph state lives in a dedicated Git repository\" and lists \"checkout status\" as local state, but never distinguishes committed state from the visible TOML/Markdown files. src/store/git.rs:110-128 resolves head strictly from refs/heads/main and reads blobs from that commit, never from disk. The real producer src/writer/mod.rs:321-340 creates the changed tree and publishes the main ref before src/writer/mod.rs:387-429 updates SQLite and attempts checkout fast-forward; checkout errors only print a warning and the op still returns Committed at line 438. src/writer/worktree.rs:110-121 preserves differing disk bytes and records dirty paths instead of replacing them. Therefore reading or editing the displayed files does not necessarily read or change effective graph state. A brief authority/derived-view statement is a material ownership clarification, rather than requesting every checkout field.",
+      "kind": "GAP"
+    },
+    {
+      "claim": "The local journal is described as holding queued operations and recovery state, omitting that it owns the complete live operation lifecycle and terminal outcomes; Git operation records are successful-commit summaries.",
+      "location": "GRAPH_STATE.md:43,47",
+      "category": "transactions-recovery",
+      "external": false,
+      "evidence": "The document labels Git actions/operations \"Mutation history\" and local SQLite \"queued operations ... retries and notices\". The real writer src/writer/mod.rs:279-282 and 312-315 finalizes rejection in SQLite and exits before writing a Git operation record; src/writer/mod.rs:259-262 similarly finalizes failures locally. Only the success path calls write_operation_record at line 321, and src/writer/mod.rs:524-533 writes a Committed snapshot with commit=None, rejection=None and superseded_by=None. Journal::cancel at src/journal/mod.rs:394-400 and finish_committed_superseding at lines 324-336 change cancellation/supersession in SQLite; live consumers list_ops and op_detail at src/plan/ops.rs:98-109,134-137 read only the journal. Recovery is not reconstruction of that history from Git: src/writer/mod.rs:624-626 skips Graph-Op trailers with no existing journal row. The existing durable-recovery warning is correct, but naming only queued operations leaves the ownership of rejected/failed/cancelled/superseded outcomes and live status unclear. This is a summary-level ownership omission; it does not assert the document explicitly promises a complete Git audit.",
+      "kind": "GAP"
+    }
+  ]
+}
