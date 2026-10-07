@@ -286,8 +286,38 @@ fn find_file(
     Ok(None)
 }
 
+/// Inspect only `<dir>/<id>.toml` candidates, including every supported legacy/current directory.
+/// A new ID must not depend on parsing unrelated history. Enumeration remains the full integrity read.
+fn find_record_file<R: Record>(
+    tr: &dyn TreeRead,
+    dirs: &[RepoPath],
+    id: &AnyId,
+) -> Result<Option<ObjectLocation>, StoreError> {
+    let mut found: Option<ObjectLocation> = None;
+    for dir in dirs {
+        let path = dir.join(&format!("{id}.toml"))?;
+        let Some(rec) = read_toml::<R>(tr, &path)? else {
+            continue;
+        };
+        if rec.any_id() != *id {
+            return Err(StoreError::Corrupt {
+                path: path.as_str().to_owned(),
+                reason: format!("expected ID {id}, record contains {}", rec.any_id()),
+            });
+        }
+        if let Some(first) = &found {
+            return Err(StoreError::Corrupt {
+                path: path.as_str().to_owned(),
+                reason: format!("duplicate ID {id} also at {}", first.record_path.as_str()),
+            });
+        }
+        found = Some(loc_of(path, dir.clone(), &rec));
+    }
+    Ok(found)
+}
+
 /// Resolve any id to its current location (spec §2.1: paths are never cached as authority).
-/// Operational records scan both current and legacy layouts and reject duplicate IDs.
+/// Operational records inspect ID-named candidates in both layouts and reject corrupt/duplicate matches.
 /// app_ uses its direct path; other standalone objects scan their supported roots.
 /// mem_/ns_/ef_/pl_ → Ok(None) (not standalone objects). `folder` = object dir (folder records) or the file's parent.
 pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
@@ -297,10 +327,22 @@ pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, S
         IdKind::Clone => find_by_id(all_clones(tr), id),
         IdKind::Template => find_by_id(list_templates(tr), id),
         IdKind::Application => find_file(tr, &[p("applications")], id),
-        IdKind::Request => find_by_id(list_requests(tr), id),
-        IdKind::Transcript => find_by_id(list_transcripts(tr), id),
-        IdKind::Action => find_by_id(list_actions(tr), id),
-        IdKind::Operation => find_by_id(list_operations(tr), id),
+        IdKind::Request => find_record_file::<ProcessingRequest>(
+            tr,
+            &[p("requests"), p("mutations/transcript-processing")],
+            id,
+        ),
+        IdKind::Transcript => find_record_file::<TranscriptRecord>(tr, &transcript_dirs(tr)?, id),
+        IdKind::Action => find_record_file::<ActionRecord>(
+            tr,
+            &dated_dirs(tr, "actions", "mutations/undoable-actions")?,
+            id,
+        ),
+        IdKind::Operation => find_record_file::<OperationRecord>(
+            tr,
+            &dated_dirs(tr, "operations", "mutations/graph-changes")?,
+            id,
+        ),
         IdKind::NativeSession | IdKind::Member | IdKind::Effect | IdKind::Plan => Ok(None),
     }
 }

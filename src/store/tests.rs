@@ -1023,3 +1023,168 @@ mod init {
         );
     }
 }
+
+mod targeted_lookup {
+    use super::*;
+    use crate::model::operation::OperationRecord;
+    use crate::ports::store::{DirEntry, ObjectLocation};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn operation(id: &OpId) -> OperationRecord {
+        toml::from_str(&format!("schema = 1\nid = '{id}'\nrev = 1\nkind = 'bookkeeping'\nsummary = 'operation'\nstate = 'committed'\nadmitted_at = '2026-03-09T10:00:00Z'\n[requester]\n")).unwrap()
+    }
+
+    struct CountStore<'a> {
+        inner: &'a GitStore,
+        blobs: AtomicUsize,
+        dirs: AtomicUsize,
+    }
+
+    impl Store for CountStore<'_> {
+        fn head(&self) -> Result<CommitId, StoreError> {
+            self.inner.head()
+        }
+        fn read_file(&self, at: &CommitId, path: &RepoPath) -> Result<Option<Vec<u8>>, StoreError> {
+            let bytes = self.inner.read_file(at, path)?;
+            if bytes.is_some() {
+                self.blobs.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(bytes)
+        }
+        fn blob_hash(
+            &self,
+            at: &CommitId,
+            path: &RepoPath,
+        ) -> Result<Option<crate::model::BlobHash>, StoreError> {
+            self.inner.blob_hash(at, path)
+        }
+        fn list_dir(&self, at: &CommitId, path: &RepoPath) -> Result<Vec<DirEntry>, StoreError> {
+            self.dirs.fetch_add(1, Ordering::Relaxed);
+            self.inner.list_dir(at, path)
+        }
+        fn locate(&self, at: &CommitId, id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
+            layout::locate(
+                &CommitView {
+                    store: self,
+                    at: at.clone(),
+                },
+                id,
+            )
+        }
+    }
+
+    #[test]
+    fn targeted_lookup_fresh_overlay_write_does_not_read_unrelated_operation_blobs() {
+        let (_tmp, store) = new_instance();
+        let mut edits = EditSet::default();
+        for _ in 0..100 {
+            let op = OpId::new();
+            edits.put(
+                rp(&format!("operations/2026-03/{op}.toml")),
+                toml_bytes(&operation(&op)),
+            );
+        }
+        let head = commit_edits(&store, &edits, "valid unrelated history");
+        let counted = CountStore {
+            inner: &store,
+            blobs: AtomicUsize::new(0),
+            dirs: AtomicUsize::new(0),
+        };
+        let mut overlay = Overlay::new(&counted, head);
+        let mut fresh = operation(&OpId::new());
+        overlay
+            .put_record(
+                layout::operation_record(fresh.admitted_at, &fresh.id),
+                &mut fresh,
+            )
+            .unwrap();
+        assert_eq!(fresh.rev, 1);
+        assert_eq!(
+            counted.blobs.load(Ordering::Relaxed),
+            0,
+            "new-record collision checks must not read unrelated history"
+        );
+        assert_eq!(
+            counted.dirs.load(Ordering::Relaxed),
+            2,
+            "only the two month roots need enumeration"
+        );
+    }
+
+    #[test]
+    fn targeted_lookup_unrelated_corruption_does_not_block_fresh_overlay_write() {
+        let (_tmp, store) = new_instance();
+        let old_op = OpId::new();
+        let old_rq = RequestId::new();
+        let old_tr = TranscriptId::new();
+        let old_act = ActionId::new();
+        let broken = [
+            (
+                old_op.to_any(),
+                rp(&format!("operations/2026-03/{old_op}.toml")),
+                OpId::new().to_any(),
+            ),
+            (
+                old_rq.to_any(),
+                rp(&format!("requests/{old_rq}.toml")),
+                RequestId::new().to_any(),
+            ),
+            (
+                old_tr.to_any(),
+                layout::transcript_record(&SeatId::new(), &old_tr),
+                TranscriptId::new().to_any(),
+            ),
+            (
+                old_act.to_any(),
+                rp(&format!("actions/2026-03/{old_act}.toml")),
+                ActionId::new().to_any(),
+            ),
+        ];
+        let mut edits = EditSet::default();
+        for (_, path, _) in &broken {
+            edits.put(path.clone(), b"schema = 1\nbroken = [".to_vec());
+        }
+        let head = commit_edits(&store, &edits, "unrelated corrupt history");
+        let mut overlay = Overlay::new(&store, head.clone());
+        let mut fresh = operation(&OpId::new());
+        let new_path = layout::operation_record(fresh.admitted_at, &fresh.id);
+        overlay
+            .put_record(new_path.clone(), &mut fresh)
+            .expect("unrelated old operation must not block a fresh mutation record");
+        assert_eq!(
+            overlay
+                .read_record::<OperationRecord>(&new_path)
+                .unwrap()
+                .unwrap()
+                .rev,
+            1
+        );
+        let view = store.at(&head);
+        for (id, path, absent) in &broken {
+            assert_eq!(layout::locate(&view, absent).unwrap(), None);
+            assert!(
+                matches!(layout::locate(&view, id), Err(StoreError::Corrupt { path: actual, .. }) if actual == path.as_str())
+            );
+        }
+        assert!(layout::list_operations(&view).is_err());
+        assert!(layout::list_requests(&view).is_err());
+        assert!(layout::list_transcripts(&view).is_err());
+        assert!(layout::list_actions(&view).is_err());
+    }
+
+    #[test]
+    fn targeted_lookup_rejects_candidate_with_different_record_id() {
+        let (_tmp, store) = new_instance();
+        let requested = OpId::new();
+        let other = operation(&OpId::new());
+        let mut edits = EditSet::default();
+        let path = layout::operation_record(other.admitted_at, &requested);
+        edits.put(path.clone(), toml_bytes(&other));
+        let head = commit_edits(&store, &edits, "wrong ID under requested filename");
+        let err = layout::locate(&store.at(&head), &requested.to_any())
+            .expect_err("a candidate with a mismatched record ID is corrupt, not missing");
+        assert!(
+            matches!(err, StoreError::Corrupt { path: actual, reason } if actual == path.as_str() && reason.contains(requested.as_str()) && reason.contains(other.id.as_str()))
+        );
+    }
+}

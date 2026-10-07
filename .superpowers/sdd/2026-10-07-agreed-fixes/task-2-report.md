@@ -37,7 +37,7 @@ During test construction, corrected fixture-only errors (undo registration needs
 - `cargo test --offline --features test-support --test integration_sweep --test daemon_composed --test writer_concurrency --test writer_crash` — **34 passed, 0 failed, 0 ignored** across four suites: daemon_composed **20** (12.74 seconds), integration_sweep **8** (5.77 seconds), writer_concurrency **3** (14.80 seconds), writer_crash **3** (4.71 seconds). Includes action-envelope parsing at the new root, CLI handler coverage, composed session-end/request processing, concurrent reader atomicity, and crash recovery with queued operations/history. Log: `/tmp/herdr-graph-task-2-integration.log`.
 - `cargo test --offline --features private-herdr --test real_agent_smoke --no-run` — compiled successfully, **no agents or test fixture launched**. Log: `/tmp/herdr-graph-task-2-smoke-compile.log`.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
-- All final commands exited zero; final logs contain no compiler warnings. The full library suite ran once after restoring the deliberate regression-check reversions; no production changes followed it.
+- All final commands exited zero; final logs contain no compiler warnings. The initial full library suite ran once after restoring the deliberate regression-check reversions. The review correction below has separate validation.
 
 Self-review traced all production uses of request/transcript destination helpers: only new request creation uses the request helper, and only initial transcript registration constructs the new transcript destination. Request delivery, merge, ACK, unresolved, completion, transcript refresh/coverage, undo-original updates, and operation reassignment all preserve located paths. Native transcript files and local journal storage semantics are untouched.
 
@@ -45,7 +45,7 @@ Self-review traced all production uses of request/transcript destination helpers
 
 - Existing records are intentionally left in their current legacy or historical named folders. Names in new folders reflect registration, not the latest names; registration after a rename captures the names known at that registration time.
 - Legacy attribution is unknown and is not inferred from current bindings. A new registration requires resolvable seat/team records, including archived objects; existing legacy discovery and processing do not require captured names.
-- Duplicate IDs and corrupt records fail reads explicitly; there is no automatic repair or arbitrary winner. ID lookup uses the shared record enumeration for these four kinds, so it validates supported roots and parses their records; large-history performance was not benchmarked.
+- Full enumeration rejects duplicate IDs and corrupt records explicitly. After review fix round 1, targeted lookup inspects only requested-ID filename candidates across supported roots, validates their payloads/IDs, and rejects duplicate matches; unrelated corrupt history does not block a fresh operation insertion. Directory discovery remains proportional to the number of supported month/transcript directories; there is no new index or large-history latency benchmark.
 - Discovery covers the defined one-level legacy/two-level current transcript grouping and one-month-level legacy/current action/operation roots. Arbitrarily nested user-created layouts are not supported.
 - There is no downgrade migration: older binaries that only know old paths cannot discover newly written records. The release documentation must state forward compatibility, historical path retention, and use of the upgraded binary.
 - Move coverage exercises the current production observer move behavior (pane binding/moved-out seat). There is no `seat move` organizational CLI in this repository.
@@ -61,3 +61,24 @@ Self-review traced all production uses of request/transcript destination helpers
 - `src/writer/mod.rs`, `src/writer/tests.rs`
 - `tests/integration_sweep.rs`, `tests/real_agent_smoke.rs`
 - This report
+
+
+## Review correction — round 1
+
+The Important review finding was reproduced: using full record enumeration for a targeted ID lookup made each `Overlay::put_record` collision check deserialize unrelated operation history. This both blocked fresh mutation records on unrelated corrupt history and added one blob read per historical operation.
+
+Changed only `src/store/layout.rs` and `src/store/tests.rs` plus this report. Operational targeted lookup now probes `<requested-id>.toml` in each supported legacy/current directory. It parses matching candidates, verifies the serialized record ID equals the requested filename ID, and rejects duplicate matches with both paths. It continues checking all candidate directories after finding the first match. Full list/enumeration functions retain complete parsing and duplicate-ID integrity checks. No index layer, journal change, historical relocation, or external interaction was introduced.
+
+New production-path regressions use a counting `Store` adapter over a real isolated Git instance and production `Overlay::put_record`, plus corrupt-candidate tests for operation/request/transcript/action lookups:
+
+- RED: `cargo test --offline --lib targeted_lookup` — **0 passed, 3 failed**, expected failures: a fresh insert read **100** unrelated record blobs instead of zero; an unrelated malformed historical operation blocked fresh insertion; a candidate with a different serialized ID incorrectly returned `None`. Log: `/tmp/herdr-graph-task-2-fix1-red.log`.
+- GREEN: `cargo test --offline --lib targeted_lookup` — **3 passed**. Fresh insertion reads **0 existing blobs** and enumerates exactly **2 directory roots** with 100 historical records in one month. A fresh operation record inserts successfully alongside malformed old records. Accessing the corrupt IDs and explicitly enumerating each of the four record kinds still errors; unrelated absent IDs return `None`. A mismatched requested filename/body ID reports corruption naming both IDs. Log: `/tmp/herdr-graph-task-2-fix1-green.log`.
+- Covering tests: `cargo test --offline --lib store::tests::` — **33 passed** (including old/new duplicate detection for all four kinds); `cargo test --offline --lib layout_compat_` — **4 passed** (legacy processing/delivery, fixed attribution, old action compensation undo). Logs: `/tmp/herdr-graph-task-2-fix1-store.log`, `/tmp/herdr-graph-task-2-fix1-compat.log`.
+
+Final fix-round validation:
+
+- `cargo test --offline --lib` — **617 passed, 0 failed, 0 ignored**, 126.39 seconds. Log: `/tmp/herdr-graph-task-2-fix1-lib.log`.
+- `cargo test --offline --features test-support --test integration_sweep --test daemon_composed --test writer_concurrency --test writer_crash` — **34 passed, 0 failed, 0 ignored**: daemon_composed **20** (8.13 seconds), integration_sweep **8** (5.75 seconds), writer_concurrency **3** (11.61 seconds), writer_crash **3** (4.87 seconds). Log: `/tmp/herdr-graph-task-2-fix1-integration.log`.
+- `cargo fmt --all -- --check` and `git diff --check` — passed. Final fix-round compiler/test logs contain no warnings.
+
+Contract: targeted lookups validate only matching filename candidates and reject malformed payloads, body/filename ID mismatches, and duplicate requested-ID matches. An unrelated corrupt historical record does not poison a fresh record collision check. Full enumeration remains the explicit history-wide parsing/duplicate integrity check. No large-history timing claim is made; the regression measures production-path blob reads directly. `Cargo.lock` remains uncommitted for Task 3.
