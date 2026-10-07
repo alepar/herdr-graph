@@ -6,7 +6,7 @@ use crate::daemon::registry::CallerInfo;
 use crate::journal::{Journal, OpRow};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{Invitation, InvitationState, InviteConstraint, ThreadsLink};
-use crate::model::common::{Availability, Binding, Lifecycle, Occupant, Role};
+use crate::model::common::{Availability, Binding, Lifecycle, Occupant, SystemDuty};
 use crate::model::effective::resolve_in;
 use crate::model::harness::Harness;
 use crate::model::native_session::NativeSession;
@@ -1247,7 +1247,18 @@ fn init_with_examples_templates_hydrate() {
         .into_iter()
         .map(|(_, t)| t.name)
         .collect();
-    assert_eq!(tpls, ["feature-team", "project-team", "system-summarizer"]);
+    assert_eq!(
+        tpls,
+        [
+            "designer",
+            "engineer",
+            "feature-team",
+            "project-team",
+            "researcher",
+            "reviewer",
+            "system-summarizer"
+        ]
+    );
 
     commit(&fx, "teamspace create alpha");
     commit(
@@ -1262,7 +1273,7 @@ fn init_with_examples_templates_hydrate() {
     let summarizer = seat_rec(&fx, "summarizer");
     let cfg = resolve_in(&view(&fx), &summarizer).unwrap();
     assert!(!cfg.summaries, "summaries = false for the summarizer");
-    assert_eq!(cfg.role, Some(Role::Summarizer));
+    assert_eq!(cfg.system_duty, Some(SystemDuty::Summarizer));
     assert_eq!(cfg.harness, Harness::Claude);
     assert_eq!(summarizer.lifecycle, Lifecycle::Active, "startup = active");
 
@@ -1345,7 +1356,7 @@ fn shipped_templates_are_self_consistent() {
             format!("templates/{}", crate::store::slug::slugify(&t.name))
         );
     }
-    assert_eq!(ids.len(), 3 + 5);
+    assert_eq!(ids.len(), 7 + 6);
     // A second install would overwrite the instance's own files, so it is refused.
     let err = examples::install_examples(&fx.root).unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
@@ -1408,7 +1419,15 @@ fn show_list_path_read_committed_state() {
             .iter()
             .map(|r| r.name.as_str())
             .collect::<Vec<_>>(),
-        ["feature-team", "project-team", "system-summarizer"]
+        [
+            "designer",
+            "engineer",
+            "feature-team",
+            "project-team",
+            "researcher",
+            "reviewer",
+            "system-summarizer"
+        ]
     );
     assert!(show::list(&v, &fx.root, Some("widgets")).is_err());
 
@@ -1486,4 +1505,159 @@ fn list_and_show_reflect_retirement_without_a_daemon() {
         rows[0].path,
         "ids keep working after archiving"
     );
+}
+
+#[test]
+fn seat_paths_load_live_reusable_member_and_instance_instructions() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    let path = fx.root.parent().unwrap().join("template-input.toml");
+    std::fs::write(
+        &path,
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'reusable instructions'\n",
+    )
+    .unwrap();
+    commit(
+        &fx,
+        &format!("template create engineer --from {}", path.display()),
+    );
+    let shared = layout::list_templates(&view(&fx)).unwrap().remove(0).1;
+    std::fs::write(&path, format!("name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{}'\nresponsibility = 'Own authentication'\nagents_md = 'member specialization'\n", shared.id)).unwrap();
+    commit(
+        &fx,
+        &format!("template create team --from {}", path.display()),
+    );
+    commit(&fx, "application apply team --teamspace alpha --name one");
+    let seat = seat_rec(&fx, "dev");
+    let clone = clone_of(&fx, &seat.id);
+    assert!(
+        file_in(&fx, seat.id.as_str(), "AGENTS.md").is_none(),
+        "reusable member instructions stay live, separate from instance context"
+    );
+    assert_eq!(
+        write(
+            &fx,
+            seat.id.as_str(),
+            "AGENTS.md",
+            b"instance context",
+            None
+        )
+        .state,
+        OpState::Committed
+    );
+    let borrowed_member = crate::model::MemberId::new();
+    std::fs::write(&path, format!("name = 'borrower'\n[[members]]\nid = '{borrowed_member}'\nname = 'peer'\nstartup = 'active'\nseat_template = '{}'\nagents_md = 'borrower specialization'\n", shared.id)).unwrap();
+    commit(
+        &fx,
+        &format!("template create borrower --from {}", path.display()),
+    );
+    commit(
+        &fx,
+        &format!(
+            "application apply borrower --teamspace alpha --name two --reuse {borrowed_member}={}",
+            seat.id
+        ),
+    );
+    let paths = bound_paths(&view(&fx), &fx.root, &seat.id, &clone.id)
+        .unwrap()
+        .value;
+    let refs = paths["templates"].as_array().unwrap();
+    for suffix in [
+        "templates/engineer/template.toml",
+        "templates/engineer/AGENTS.md",
+        "templates/team/template.toml",
+        "templates/team/members/dev/AGENTS.md",
+        "templates/borrower/members/peer/AGENTS.md",
+    ] {
+        assert!(
+            refs.iter().any(|v| v.as_str().unwrap().ends_with(suffix)),
+            "missing {suffix}: {refs:?}"
+        );
+    }
+    assert!(
+        paths["seat_record"]
+            .as_str()
+            .unwrap()
+            .ends_with("/seat.toml")
+    );
+    let member_text = std::fs::read_to_string(
+        refs.iter()
+            .find(|v| {
+                v.as_str()
+                    .unwrap()
+                    .ends_with("templates/team/template.toml")
+            })
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(member_text.contains("Own authentication"));
+    std::fs::write(
+        &path,
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'changed reusable instructions'\n",
+    )
+    .unwrap();
+    commit(
+        &fx,
+        &format!("template edit engineer --from {}", path.display()),
+    );
+    let updated = bound_paths(&view(&fx), &fx.root, &seat.id, &clone.id)
+        .unwrap()
+        .value;
+    assert_eq!(updated["templates"], paths["templates"]);
+    let reusable = refs
+        .iter()
+        .find(|v| {
+            v.as_str()
+                .unwrap()
+                .ends_with("templates/engineer/AGENTS.md")
+        })
+        .unwrap()
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(reusable).unwrap(),
+        "changed reusable instructions"
+    );
+    assert_eq!(
+        std::fs::read_to_string(updated["seat_agents_md"].as_str().unwrap()).unwrap(),
+        "instance context"
+    );
+}
+
+#[test]
+fn template_instruction_content_writes_require_reviewable_template_edit() {
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    for (_, template) in layout::list_templates(&view(&fx)).unwrap() {
+        let rel = if template.name == "engineer" {
+            "AGENTS.md"
+        } else if template.name == "feature-team" {
+            "members/engineer/AGENTS.md"
+        } else {
+            continue;
+        };
+        let row = write(
+            &fx,
+            template.id.as_str(),
+            rel,
+            b"unreviewed replacement",
+            None,
+        );
+        assert_eq!(row.state, OpState::Rejected);
+        assert!(row.rejection.unwrap().explanation.contains("template edit"));
+        assert_eq!(
+            write(
+                &fx,
+                template.id.as_str(),
+                "notes/AGENTS.md",
+                b"opaque notes",
+                None
+            )
+            .state,
+            OpState::Committed
+        );
+    }
 }

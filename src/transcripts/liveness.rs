@@ -9,7 +9,7 @@
 //! * recovery first: an ended session of a `summaries = true` seat whose transcript end no request or coverage
 //!   reaches gets its request re-derived from committed state (the in-memory `SessionEnded` can be lost).
 //!
-//! The summarizer role's own `/loop` scan is a convenience; this scan is the recovery mechanism.
+//! The summarizer system_duty's own `/loop` scan is a convenience; this scan is the recovery mechanism.
 use super::delivery::{DeliverOutcome, Prepared, prepare};
 use super::mutations::{bookkeeping_request, covered_end, is_merged};
 use super::requests::stat_file;

@@ -1,8 +1,8 @@
 //! The TOML document format of a template (`template create/edit --from <file>`; also the shipped
 //! `templates/*/template.toml` content): a `TemplateRecord` without the writer-owned bookkeeping.
-use crate::model::common::Role;
+use crate::model::common::SystemDuty;
 use crate::model::template::{
-    MemberDefaults, Relationship, Startup, TemplateMember, TemplateRecord,
+    MemberDefaults, Relationship, Startup, TemplateKind, TemplateMember, TemplateRecord,
 };
 use crate::model::{MemberId, SCHEMA_VERSION, TemplateId};
 use crate::plan::types::Reserved;
@@ -13,6 +13,11 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TemplateDocument {
     pub name: String,
+    #[serde(default)]
+    pub kind: TemplateKind,
+    /// Reusable instructions, stored as this template folder's AGENTS.md.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_md: Option<String>,
     #[serde(default)]
     pub defaults: MemberDefaults,
     #[serde(default)]
@@ -27,9 +32,12 @@ pub struct DocumentMember {
     pub id: Option<MemberId>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_ref: Option<String>,
+    pub seat_template: Option<TemplateId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<Role>,
+    pub responsibility: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "role")]
+    pub system_duty: Option<SystemDuty>,
     pub startup: Startup,
     #[serde(default)]
     pub defaults: MemberDefaults,
@@ -57,6 +65,11 @@ impl TemplateDocument {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("template name is empty".into());
+        }
+        if self.kind == TemplateKind::Seat
+            && (!self.members.is_empty() || !self.relationships.is_empty())
+        {
+            return Err("a seat template cannot contain members or relationships".into());
         }
         let mut names = std::collections::BTreeSet::new();
         let mut ids = std::collections::BTreeSet::new();
@@ -95,8 +108,9 @@ impl TemplateDocument {
                     .or_else(|| member_ids.get(&m.name).cloned())
                     .unwrap_or_else(|| reserved.get_or_mint(&format!("member:{}", m.name))),
                 name: m.name.clone(),
-                role_ref: m.role_ref.clone(),
-                role: m.role,
+                seat_template: m.seat_template.clone(),
+                responsibility: m.responsibility.clone(),
+                system_duty: m.system_duty,
                 startup: m.startup,
                 defaults: m.defaults.clone(),
             })
@@ -106,6 +120,7 @@ impl TemplateDocument {
             id,
             rev,
             name: self.name.clone(),
+            kind: self.kind,
             name_history: vec![],
             defaults: self.defaults.clone(),
             members,
@@ -117,6 +132,8 @@ impl TemplateDocument {
     pub fn from_record(rec: &TemplateRecord) -> Self {
         Self {
             name: rec.name.clone(),
+            kind: rec.kind,
+            agents_md: None,
             defaults: rec.defaults.clone(),
             members: rec
                 .members
@@ -124,8 +141,9 @@ impl TemplateDocument {
                 .map(|m| DocumentMember {
                     id: Some(m.id.clone()),
                     name: m.name.clone(),
-                    role_ref: m.role_ref.clone(),
-                    role: m.role,
+                    seat_template: m.seat_template.clone(),
+                    responsibility: m.responsibility.clone(),
+                    system_duty: m.system_duty,
                     startup: m.startup,
                     defaults: m.defaults.clone(),
                     agents_md: None,
@@ -150,6 +168,20 @@ impl TemplateDocument {
             Some(json!(old.name)),
             Some(json!(new.name)),
         );
+        field(
+            &mut out,
+            "kind",
+            Some(json!(old.kind)),
+            Some(json!(new.kind)),
+        );
+        if new.agents_md.is_some() {
+            field(
+                &mut out,
+                "agents_md",
+                json_opt(&old.agents_md),
+                json_opt(&new.agents_md),
+            );
+        }
         defaults_diff(&mut out, "defaults", &old.defaults, &new.defaults);
         let key = |m: &DocumentMember| {
             m.id.as_ref()
@@ -172,15 +204,21 @@ impl TemplateDocument {
                     );
                     field(
                         &mut out,
-                        &format!("{p}.role_ref"),
-                        json_opt(&o.role_ref),
-                        json_opt(&n.role_ref),
+                        &format!("{p}.seat_template"),
+                        json_opt(&o.seat_template),
+                        json_opt(&n.seat_template),
                     );
                     field(
                         &mut out,
-                        &format!("{p}.role"),
-                        json_opt(&o.role),
-                        json_opt(&n.role),
+                        &format!("{p}.responsibility"),
+                        json_opt(&o.responsibility),
+                        json_opt(&n.responsibility),
+                    );
+                    field(
+                        &mut out,
+                        &format!("{p}.system_duty"),
+                        json_opt(&o.system_duty),
+                        json_opt(&n.system_duty),
                     );
                     field(
                         &mut out,

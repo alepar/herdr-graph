@@ -1051,7 +1051,7 @@ mod wiring {
 
     // -----------------------------------------------------------------------------------------
 
-    /// summaries default from the role: a summarizer member's own session end creates no request, an
+    /// summaries default from the system_duty: a summarizer member's own session end creates no request, an
     /// ordinary seat's does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sweep_summaries_role_defaults_flow_end_to_end() {
@@ -1079,7 +1079,7 @@ mod wiring {
             "--active",
             "--harness",
             "claude",
-            "--role",
+            "--system-duty",
             "summarizer",
         ])
         .await;
@@ -1089,10 +1089,10 @@ mod wiring {
         .await;
         let (worker_pane, sum_pane) = (d.pane("worker").unwrap(), d.pane("sum").unwrap());
 
-        // Effective config: the role decides the default, no override is stored.
+        // Effective config: the system_duty decides the default, no override is stored.
         assert!(
             !d.resolve("sum").summaries,
-            "role summarizer: summaries default false"
+            "system_duty summarizer: summaries default false"
         );
         assert!(
             d.resolve("worker").summaries,
@@ -1401,7 +1401,7 @@ mod wiring {
             "--active",
             "--harness",
             "shell",
-            "--role",
+            "--system-duty",
             "summarizer",
         ])
         .await;
@@ -1552,7 +1552,7 @@ mod wiring {
             "--active",
             "--harness",
             "claude",
-            "--role",
+            "--system-duty",
             "summarizer",
         ])
         .await;
@@ -1625,7 +1625,7 @@ mod wiring {
     // -----------------------------------------------------------------------------------------
 
     /// `graph.toml` values change behaviour: `defaults.harness/model` decide the launch of a seat that sets
-    /// neither, and `summarizer_seat` is the destination when no seat has the summarizer role.
+    /// neither, and `summarizer_seat` is the destination when no seat has the summarizer system_duty.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sweep_config_values_are_read() {
         let (dir, root) = new_instance();
@@ -1747,7 +1747,7 @@ mod wiring {
         })
         .await;
 
-        // No seat has the summarizer role: the request goes to the configured `summarizer_seat`.
+        // No seat has the summarizer system_duty: the request goes to the configured `summarizer_seat`.
         d.fakes.herdr.set_agent(&worker_pane, None);
         eventually("a delivery to boss's channel", || {
             d.fakes

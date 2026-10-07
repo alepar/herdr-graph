@@ -1,11 +1,11 @@
-//! Effective seat config resolver (seat overrides > template member > template > graph defaults > built-in).
+//! Effective seat config resolver (seat overrides > team member > seat template > team template > graph defaults > built-in).
 //! Owned by hg-zmi.6.
 use crate::model::clone::CloneRecord;
-use crate::model::common::{CloneLifecycle, Role, default_summaries};
+use crate::model::common::{CloneLifecycle, SystemDuty, default_summaries};
 use crate::model::graph::GraphDefaults;
 use crate::model::harness::{Harness, profile};
 use crate::model::seat::{InstructionSection, SeatRecord};
-use crate::model::template::{TemplateMember, TemplateRecord};
+use crate::model::template::{TemplateKind, TemplateMember, TemplateRecord};
 use crate::plan::types::PlanEffect;
 use crate::ports::store::StoreError;
 use crate::store::layout;
@@ -20,26 +20,41 @@ pub struct EffectiveSeatConfig {
     pub model: Option<String>,
     pub args: Vec<String>,
     pub summaries: bool,
-    pub role: Option<Role>,
+    #[serde(alias = "role")]
+    pub system_duty: Option<SystemDuty>,
     pub cwd: Option<PathBuf>,
     pub instructions_sections: Vec<InstructionSection>,
 }
 
 /// Precedence: seat overrides > template-member defaults > template defaults > graph defaults > built-in
-/// (harness `claude`, no model, no args, `summaries = default_summaries(role)`). Role = seat.role, else member.role.
+/// (harness `claude`, no model, no args, `summaries = default_summaries(system_duty)`). SystemDuty = seat.system_duty, else member.system_duty.
 pub fn resolve(
     graph: &GraphDefaults,
     template: Option<&TemplateRecord>,
     member: Option<&TemplateMember>,
     seat: &SeatRecord,
 ) -> EffectiveSeatConfig {
+    resolve_with_seat_template(graph, template, member, None, seat)
+}
+
+pub fn resolve_with_seat_template(
+    graph: &GraphDefaults,
+    template: Option<&TemplateRecord>,
+    member: Option<&TemplateMember>,
+    seat_template: Option<&TemplateRecord>,
+    seat: &SeatRecord,
+) -> EffectiveSeatConfig {
     let o = &seat.overrides;
     let md = member.map(|m| &m.defaults);
     let td = template.map(|t| &t.defaults);
-    let role = seat.role.or_else(|| member.and_then(|m| m.role));
+    let sd = seat_template.map(|t| &t.defaults);
+    let system_duty = seat
+        .system_duty
+        .or_else(|| member.and_then(|m| m.system_duty));
     let harness = o
         .harness
         .or_else(|| md.and_then(|d| d.harness))
+        .or_else(|| sd.and_then(|d| d.harness))
         .or_else(|| td.and_then(|d| d.harness))
         .or(graph.harness)
         .unwrap_or(Harness::Claude);
@@ -47,25 +62,30 @@ pub fn resolve(
         .model
         .clone()
         .or_else(|| md.and_then(|d| d.model.clone()))
+        .or_else(|| sd.and_then(|d| d.model.clone()))
         .or_else(|| td.and_then(|d| d.model.clone()))
         .or_else(|| graph.model.clone());
     let args = o
         .args
         .clone()
         .or_else(|| md.and_then(|d| d.args.clone()))
+        .or_else(|| sd.and_then(|d| d.args.clone()))
         .or_else(|| td.and_then(|d| d.args.clone()))
+        .or_else(|| graph.args.clone())
         .unwrap_or_default();
     let summaries = o
         .summaries
         .or_else(|| md.and_then(|d| d.summaries))
+        .or_else(|| sd.and_then(|d| d.summaries))
         .or_else(|| td.and_then(|d| d.summaries))
-        .unwrap_or_else(|| default_summaries(role));
+        .or(graph.summaries)
+        .unwrap_or_else(|| default_summaries(system_duty));
     EffectiveSeatConfig {
         harness,
         model,
         args,
         summaries,
-        role,
+        system_duty,
         cwd: o.cwd.clone(),
         instructions_sections: o.instructions_sections.clone(),
     }
@@ -89,10 +109,53 @@ pub fn resolve_in(
             .and_then(|t| t.members.iter().find(|m| m.id == r.member).cloned());
         template = rec;
     }
-    Ok(resolve(
+    resolve_member_in(
+        tree,
         &graph.defaults,
         template.as_ref(),
         member.as_ref(),
+        seat,
+    )
+}
+
+/// Resolve a member's typed live reference. An invalid definition must never silently fall back.
+pub fn referenced_seat_template(
+    tree: &dyn TreeRead,
+    member: Option<&TemplateMember>,
+) -> Result<Option<TemplateRecord>, StoreError> {
+    let Some(id) = member.and_then(|m| m.seat_template.as_ref()) else {
+        return Ok(None);
+    };
+    let bad = |reason| StoreError::Corrupt {
+        path: "templates".into(),
+        reason,
+    };
+    let loc = layout::locate(tree, &id.to_any())?
+        .ok_or_else(|| bad(format!("missing seat template {id}")))?;
+    let rec: TemplateRecord = read_toml(tree, &loc.record_path)?
+        .ok_or_else(|| bad(format!("missing seat template {id}")))?;
+    if rec.kind != TemplateKind::Seat {
+        return Err(bad(format!("{id} is not a seat template")));
+    }
+    if !rec.members.is_empty() || !rec.relationships.is_empty() {
+        return Err(bad(format!("seat template {id} contains team structure")));
+    }
+    Ok(Some(rec))
+}
+
+pub fn resolve_member_in(
+    tree: &dyn TreeRead,
+    graph: &GraphDefaults,
+    template: Option<&TemplateRecord>,
+    member: Option<&TemplateMember>,
+    seat: &SeatRecord,
+) -> Result<EffectiveSeatConfig, StoreError> {
+    let shared = referenced_seat_template(tree, member)?;
+    Ok(resolve_with_seat_template(
+        graph,
+        template,
+        member,
+        shared.as_ref(),
         seat,
     ))
 }

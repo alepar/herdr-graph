@@ -2,7 +2,7 @@
 //! members it excluded, mapped through its `member_map`, plus the seats added to it independently.
 use crate::model::application::ApplicationRecord;
 use crate::model::common::{Availability, Lifecycle, Runtime};
-use crate::model::effective::{EffectiveSeatConfig, resolve};
+use crate::model::effective::{EffectiveSeatConfig, resolve_in, resolve_member_in};
 use crate::model::seat::{SeatRecord, TemplateRef};
 use crate::model::template::{Startup, TemplateMember, TemplateRecord};
 use crate::model::{AppId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId, TemplateId};
@@ -87,7 +87,7 @@ pub fn member_seat_record(
             Lifecycle::Dormant
         },
         retired: None,
-        role: None,
+        system_duty: None,
         template_ref: Some(TemplateRef {
             template: tpl.clone(),
             member: member.id.clone(),
@@ -144,7 +144,15 @@ pub fn effective_structure_with(
                 if seat.lifecycle == Lifecycle::Retired {
                     continue;
                 }
-                let config = resolve(&graph.defaults, Some(tpl), Some(m), &seat);
+                let config = if seat
+                    .template_ref
+                    .as_ref()
+                    .is_some_and(|r| r.template == tpl.id && r.member == m.id)
+                {
+                    resolve_member_in(tree, &graph.defaults, Some(tpl), Some(m), &seat)?
+                } else {
+                    resolve_in(tree, &seat)?
+                };
                 seats.push(DesiredSeat {
                     member: Some(m.id.clone()),
                     seat: Some(seat.id.clone()),
@@ -157,7 +165,8 @@ pub fn effective_structure_with(
             None => {
                 let stand_in =
                     member_seat_record(SeatId::new(), &tpl.id, m, &app.teamspace, &app.id);
-                let config = resolve(&graph.defaults, Some(tpl), Some(m), &stand_in);
+                let config =
+                    resolve_member_in(tree, &graph.defaults, Some(tpl), Some(m), &stand_in)?;
                 seats.push(DesiredSeat {
                     member: Some(m.id.clone()),
                     seat: None,
@@ -176,11 +185,7 @@ pub fn effective_structure_with(
         if seat.lifecycle == Lifecycle::Retired {
             continue;
         }
-        let member = seat
-            .template_ref
-            .as_ref()
-            .and_then(|r| tpl.members.iter().find(|m| m.id == r.member));
-        let config = resolve(&graph.defaults, Some(tpl), member, &seat);
+        let config = resolve_in(tree, &seat)?;
         let startup = if seat.lifecycle == Lifecycle::Active {
             Startup::Active
         } else {

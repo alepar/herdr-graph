@@ -1,5 +1,7 @@
 //! `seats/<slug>/seat.toml` (spec §2.4).
-use crate::model::common::{Channel, Lifecycle, NameChange, Retirement, Role, Runtime, is_false};
+use crate::model::common::{
+    Channel, Lifecycle, NameChange, Retirement, Runtime, SystemDuty, is_false,
+};
 use crate::model::harness::Harness;
 use crate::model::ids::{AppId, MemberId, OpId, SeatId, TeamspaceId, TemplateId};
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,8 @@ pub struct SeatRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retired: Option<Retirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<Role>,
+    #[serde(alias = "role")]
+    pub system_duty: Option<SystemDuty>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template_ref: Option<TemplateRef>,
     #[serde(default)]

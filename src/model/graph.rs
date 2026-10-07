@@ -20,4 +20,8 @@ pub struct GraphDefaults {
     pub harness: Option<Harness>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summaries: Option<bool>,
 }

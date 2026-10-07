@@ -106,6 +106,24 @@ impl Mutation for ContentWrite {
                 format!("{object} has no folder of its own"),
             ));
         }
+        // Instruction edits affect live consumers and must carry plan/revision/undo provenance.
+        if object.kind() == IdKind::Template {
+            let template: crate::model::template::TemplateRecord =
+                crate::store::record::read_toml(&cx.tree, &loc.record_path)?
+                    .ok_or_else(|| reject("unknown_object", "template record is missing"))?;
+            let instruction = rel == "AGENTS.md"
+                || template.members.iter().any(|m| {
+                    rel == format!("members/{}/AGENTS.md", crate::store::slug::slugify(&m.name))
+                });
+            if instruction {
+                return Err(reject(
+                    "template_instruction_requires_plan",
+                    format!(
+                        "edit template instructions with plan template edit {object} --from <document.toml>, then apply the reviewed plan; set agents_md on the template or member"
+                    ),
+                ));
+            }
+        }
         let retired = archived(&loc.folder)
             || crate::store::record::read_toml::<toml::Table>(&cx.tree, &loc.record_path)?
                 .and_then(|t| {

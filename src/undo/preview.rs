@@ -568,6 +568,9 @@ fn restore_field(
     let parts: Vec<&str> = path.split('.').collect();
     match parts.as_slice() {
         ["name"] => {}
+        ["agents_md"] => {
+            cur.agents_md = Some(before.and_then(Value::as_str).unwrap_or("").to_owned())
+        }
         ["defaults", f] => patch_json(&mut cur.defaults, f, before)?,
         ["relationships"] => {
             cur.relationships = match before {
@@ -588,11 +591,9 @@ fn restore_field(
             }
         }
         ["members", k, "defaults", f] => patch_json(&mut member_mut(cur, k)?.defaults, f, before)?,
-        // An edit document cannot delete the file: only a previous text is put back.
         ["members", k, "agents_md"] => {
-            if before.is_some() {
-                patch_json(member_mut(cur, k)?, "agents_md", before)?;
-            }
+            member_mut(cur, k)?.agents_md =
+                Some(before.and_then(Value::as_str).unwrap_or("").to_owned());
         }
         ["members", k, f] => patch_json(member_mut(cur, k)?, f, before)?,
         _ => return Err(invalid(format!("cannot undo a change to {path}"))),
@@ -630,12 +631,12 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
         .ok_or_else(|| invalid(format!("action {} names no template", act.id)))?;
     let before = comp_doc(act, "before")?;
     let after = comp_doc(act, "after")?;
-    let Some((_, rec)) = read_template(tree, &tpl)? else {
+    let Some((loc, rec)) = read_template(tree, &tpl)? else {
         return Ok(Inverse::Conflict(format!(
             "template {tpl} no longer exists"
         )));
     };
-    let cur = TemplateDocument::from_record(&rec);
+    let cur = crate::templates::kinds::doc_with_agents(tree, &loc.folder, &rec)?;
     let changes = TemplateDocument::diff(&before, &after);
     let drift: Vec<String> = TemplateDocument::diff(&after, &cur)
         .into_iter()

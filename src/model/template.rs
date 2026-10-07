@@ -1,5 +1,5 @@
 //! Template record (spec §5, §2.4).
-use crate::model::common::{NameChange, Role, Timestamp};
+use crate::model::common::{NameChange, SystemDuty, Timestamp};
 use crate::model::harness::Harness;
 use crate::model::ids::{MemberId, TemplateId};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,8 @@ pub struct TemplateRecord {
     pub id: TemplateId,
     pub rev: u64,
     pub name: String,
+    #[serde(default)]
+    pub kind: TemplateKind,
     #[serde(default)]
     pub name_history: Vec<NameChange>,
     #[serde(default)]
@@ -39,9 +41,12 @@ pub struct TemplateMember {
     pub id: MemberId,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role_ref: Option<String>,
+    pub seat_template: Option<TemplateId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<Role>,
+    pub responsibility: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "role")]
+    pub system_duty: Option<SystemDuty>,
     pub startup: Startup,
     #[serde(default)]
     pub defaults: MemberDefaults,
@@ -79,4 +84,13 @@ pub enum MemberSelector {
 pub struct CopiedFrom {
     pub template: TemplateId,
     pub at: Timestamp,
+}
+
+/// Older records are team compositions. Seat definitions have no members or relationships.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateKind {
+    #[default]
+    Team,
+    Seat,
 }

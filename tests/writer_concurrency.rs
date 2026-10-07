@@ -64,7 +64,7 @@ impl Mutation for Seed {
             teamspace: self.0.clone(),
             lifecycle: Lifecycle::Dormant,
             retired: None,
-            role: None,
+            system_duty: None,
             template_ref: None,
             applications: vec![],
             overrides: Default::default(),

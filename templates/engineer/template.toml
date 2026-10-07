@@ -1,0 +1,8 @@
+schema = 1
+id = "tpl_01KRA9GVDGVFPFJVDPV2MSX543"
+rev = 1
+name = "engineer"
+kind = "seat"
+
+[defaults]
+harness = "claude"

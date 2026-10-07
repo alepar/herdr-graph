@@ -1765,7 +1765,7 @@ fn e2e_summary_lands_in_archived_seat_folder() {
         "--active",
         "--harness",
         "shell",
-        "--role",
+        "--system-duty",
         "summarizer",
     ]);
     rig.wait_until("scribe's tab", WAIT, |r| r.tab_labelled("scribe").is_some());

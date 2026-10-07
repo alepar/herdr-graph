@@ -686,7 +686,7 @@ async fn session_end_flows_to_transcripts() {
         "--active",
         "--harness",
         "claude",
-        "--role",
+        "--system-duty",
         "summarizer",
     ])
     .await;

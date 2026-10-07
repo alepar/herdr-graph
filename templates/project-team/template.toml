@@ -2,6 +2,7 @@ schema = 1
 id = "tpl_01KHS8ZFFCQ84VXR0V2E9ZWGAT"
 rev = 1
 name = "project-team"
+kind = "team"
 
 [defaults]
 harness = "claude"
@@ -14,9 +15,18 @@ startup = "active"
 [[members]]
 id = "mem_01KN508K7TKH4YQ20MN9ZYEDJ2"
 name = "researcher"
+seat_template = "tpl_01KRA9GVDGVFPFJVDPV2MSX545"
+responsibility = "Support the project-team researcher work"
 startup = "deferred"
 
 [[relationships]]
 kind = "thread_participation"
 thread = "team"
 members = "all"
+
+[[members]]
+id = "mem_01KRA9GVDGVFPFJVDPV2MSX547"
+name = "engineer"
+seat_template = "tpl_01KRA9GVDGVFPFJVDPV2MSX543"
+responsibility = "Maintain project-wide implementation"
+startup = "deferred"

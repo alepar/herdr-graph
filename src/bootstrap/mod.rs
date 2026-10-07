@@ -150,16 +150,27 @@ fn bound_paths(
         layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
 
     let mut templates = Vec::new();
+    let mut applications = Vec::new();
     let mut push_template =
         |loc: &ObjectLocation, member: Option<&str>| -> Result<(), StoreError> {
             let rec = abs(root, &loc.record_path);
             if !templates.contains(&rec) {
                 templates.push(rec);
             }
+            let reusable = loc.folder.join("AGENTS.md")?;
+            if tree.read_file(&reusable)?.is_some() {
+                let reference = abs(root, &reusable);
+                if !templates.contains(&reference) {
+                    templates.push(reference);
+                }
+            }
             if let Some(name) = member {
                 let md = layout::member_agents_md(&loc.folder, &slugify(name));
                 if tree.read_file(&md)?.is_some() {
-                    templates.push(abs(root, &md));
+                    let reference = abs(root, &md);
+                    if !templates.contains(&reference) {
+                        templates.push(reference);
+                    }
                 }
             }
             Ok(())
@@ -167,23 +178,43 @@ fn bound_paths(
     if let Some(r) = &seat.template_ref
         && let Some(loc) = layout::locate(tree, &r.template.to_any())?
     {
-        let member = read_toml::<TemplateRecord>(tree, &loc.record_path)?.and_then(|t| {
-            t.members
-                .into_iter()
-                .find(|m| m.id == r.member)
-                .map(|m| m.name)
-        });
-        push_template(&loc, member.as_deref())?;
+        let member = read_toml::<TemplateRecord>(tree, &loc.record_path)?
+            .and_then(|t| t.members.into_iter().find(|m| m.id == r.member));
+        if let Some(shared) =
+            crate::model::effective::referenced_seat_template(tree, member.as_ref())?
+        {
+            let shared_loc =
+                layout::locate(tree, &shared.id.to_any())?.ok_or_else(|| missing(&shared.id))?;
+            push_template(&shared_loc, None)?;
+        }
+        push_template(&loc, member.as_ref().map(|m| m.name.as_str()))?;
     }
     for app in &seat.applications {
         let Some(app_loc) = layout::locate(tree, &app.to_any())? else {
             continue;
         };
+        applications.push(abs(root, &app_loc.record_path));
         let Some(app) = read_toml::<ApplicationRecord>(tree, &app_loc.record_path)? else {
             continue;
         };
         if let Some(loc) = layout::locate(tree, &app.template.to_any())? {
+            let template: TemplateRecord =
+                read_toml(tree, &loc.record_path)?.ok_or_else(|| missing(&app.template))?;
             push_template(&loc, None)?;
+            for member in template
+                .members
+                .iter()
+                .filter(|m| app.member_map.get(&m.id) == Some(seat_id))
+            {
+                if let Some(shared) =
+                    crate::model::effective::referenced_seat_template(tree, Some(member))?
+                {
+                    let shared_loc = layout::locate(tree, &shared.id.to_any())?
+                        .ok_or_else(|| missing(&shared.id))?;
+                    push_template(&shared_loc, None)?;
+                }
+                push_template(&loc, Some(&member.name))?;
+            }
         }
     }
 
@@ -193,12 +224,14 @@ fn bound_paths(
     clone_files.sort();
     let value = json!({
         "templates": templates,
+        "applications": applications,
         "rules": {
             "global": markdown_in(tree, root, &RepoPath::new("rules")?)?,
             "team": markdown_in(tree, root, &ts_loc.folder.join("rules")?)?,
             "seat": markdown_in(tree, root, &seat_loc.folder.join("rules")?)?,
         },
         "seat_agents_md": tree.read_file(&agents)?.is_some().then(|| abs(root, &agents)),
+        "seat_record": abs(root, &seat_loc.record_path),
         "seat_folder": abs(root, &seat_loc.folder),
         "clone_folder": abs(root, &clone_loc.folder),
         "clone_files": clone_files,
@@ -398,11 +431,17 @@ pub fn render_seat(reply: &Value) -> String {
     );
     let p = &reply["paths"];
     list(&mut out, "templates", &p["templates"]);
+    list(&mut out, "application member mappings", &p["applications"]);
     list(&mut out, "global rules", &p["rules"]["global"]);
     list(&mut out, "team rules", &p["rules"]["team"]);
     list(&mut out, "seat rules", &p["rules"]["seat"]);
     if let Some(a) = p["seat_agents_md"].as_str() {
         out.push_str(&format!("seat AGENTS.md: {a}\n"));
+    }
+    if let Some(a) = p["seat_record"].as_str() {
+        out.push_str(&format!(
+            "seat record (instance overrides and context): {a}\n"
+        ));
     }
     if let Some(a) = p["seat_folder"].as_str() {
         out.push_str(&format!("seat folder: {a}\n"));

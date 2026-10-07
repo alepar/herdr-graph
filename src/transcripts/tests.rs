@@ -557,7 +557,9 @@ async fn base(fx: &Fx) -> CloneRecord {
 async fn staffed_summarizer(fx: &Fx, name: &str) -> CloneRecord {
     plan_and_apply(
         fx,
-        &format!("seat create {name} --teamspace alpha --active --harness shell --role summarizer"),
+        &format!(
+            "seat create {name} --teamspace alpha --active --harness shell --system-duty summarizer"
+        ),
     );
     steps(fx, 3).await;
     let c = clone_of(fx, name);
@@ -668,7 +670,7 @@ async fn summaries_false_seat_creates_no_request() {
     plan_and_apply(&fx, "teamspace create alpha");
     plan_and_apply(
         &fx,
-        "seat create cron --teamspace alpha --active --harness shell --role system",
+        "seat create cron --teamspace alpha --active --harness shell --system-duty system",
     );
     steps(&fx, 3).await;
     let c = clone_of(&fx, "cron");
@@ -676,7 +678,7 @@ async fn summaries_false_seat_creates_no_request() {
     finish_session(&fx, &c, "native-1", &path).await;
     assert!(
         all_requests(&fx).is_empty(),
-        "a role seat defaults to summaries = false"
+        "a system_duty seat defaults to summaries = false"
     );
     assert!(all_transcripts(&fx).is_empty());
 }
@@ -722,7 +724,7 @@ async fn recovery_skips_summaries_false_seat() {
     plan_and_apply(&fx, "teamspace create alpha");
     plan_and_apply(
         &fx,
-        "seat create cron --teamspace alpha --active --harness shell --role system",
+        "seat create cron --teamspace alpha --active --harness shell --system-duty system",
     );
     steps(&fx, 3).await;
     let c = clone_of(&fx, "cron");
@@ -1520,11 +1522,11 @@ async fn destination_oldest_summarizer_in_teamspace_else_graph_default() {
     base(&fx).await;
     plan_and_apply(
         &fx,
-        "seat create sum-a --teamspace alpha --active --harness shell --role summarizer",
+        "seat create sum-a --teamspace alpha --active --harness shell --system-duty summarizer",
     );
     plan_and_apply(
         &fx,
-        "seat create sum-b --teamspace alpha --active --harness shell --role summarizer",
+        "seat create sum-b --teamspace alpha --active --harness shell --system-duty summarizer",
     );
     plan_and_apply(&fx, "teamspace create beta");
     plan_and_apply(
@@ -1567,7 +1569,7 @@ async fn retired_summarizer_not_activated_request_pending() {
     let worker = base(&fx).await;
     plan_and_apply(
         &fx,
-        "seat create sum --teamspace alpha --active --harness shell --role summarizer",
+        "seat create sum --teamspace alpha --active --harness shell --system-duty summarizer",
     );
     steps(&fx, 3).await;
     let sum = seat(&fx, "sum").id;
@@ -1620,7 +1622,7 @@ async fn absent_occupant_relaunched_via_reconciler_hook() {
     let worker = base(&fx).await;
     plan_and_apply(
         &fx,
-        "seat create sum --teamspace alpha --active --harness claude --role summarizer",
+        "seat create sum --teamspace alpha --active --harness claude --system-duty summarizer",
     );
     steps(&fx, 3).await;
     let sum_clone = clone_of(&fx, "sum");

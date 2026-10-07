@@ -168,19 +168,19 @@ pub struct NameChange {
     pub source: NameSource,
 }
 
-/// Role marker on seats / template members. Absent = ordinary seat.
+/// SystemDuty marker on seats / template members. Absent = ordinary seat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Role {
+pub enum SystemDuty {
     Summarizer,
     System,
     Cron,
     Dispatcher,
 }
 
-/// Default for the `summaries` seat config key: ordinary seats true; every role marker false (spec §2.4, §8.2).
-pub fn default_summaries(role: Option<Role>) -> bool {
-    role.is_none()
+/// Default for the `summaries` seat config key: ordinary seats true; every system_duty marker false (spec §2.4, §8.2).
+pub fn default_summaries(system_duty: Option<SystemDuty>) -> bool {
+    system_duty.is_none()
 }
 
 /// Managed threads channel reference stored on teamspace and seat records (spec §7.1).

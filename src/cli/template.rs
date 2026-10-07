@@ -15,6 +15,7 @@ pub fn read_document(path: &Path) -> anyhow::Result<TemplateDocument> {
 /// Human-readable template summary (used by `show`).
 pub fn render_template(rec: &TemplateRecord) -> String {
     let mut out = format!("template {} ({}) rev {}\n", rec.name, rec.id, rec.rev);
+    out.push_str(&format!("  kind: {:?}\n", rec.kind).to_lowercase());
     if let Some(c) = &rec.copied_from {
         out.push_str(&format!(
             "  copied from {} at {}\n",
@@ -41,6 +42,15 @@ pub fn render_template(rec: &TemplateRecord) -> String {
             "deferred"
         };
         out.push_str(&format!("    {} {} ({startup})\n", m.id, m.name));
+        if let Some(id) = &m.seat_template {
+            out.push_str(&format!("      seat template: {id}\n"));
+        }
+        if let Some(text) = &m.responsibility {
+            out.push_str(&format!("      responsibility: {text}\n"));
+        }
+        if let Some(duty) = &m.system_duty {
+            out.push_str(&format!("      system duty: {duty:?}\n"));
+        }
     }
     if !rec.relationships.is_empty() {
         out.push_str("  relationships:\n");

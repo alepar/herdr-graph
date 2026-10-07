@@ -8,9 +8,14 @@ use crate::model::application::{ApplicationRecord, CreatedBy, Reuse};
 use crate::model::change::RequestKind;
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, RetireMechanism, Retirement};
-use crate::model::effective::{EffectiveSeatConfig, resolve, session_replacements};
+use crate::model::effective::{
+    EffectiveSeatConfig, referenced_seat_template, resolve_member_in, resolve_with_seat_template,
+    session_replacements,
+};
 use crate::model::seat::{SeatRecord, TemplateRef};
-use crate::model::template::{CopiedFrom, Relationship, Startup, TemplateMember, TemplateRecord};
+use crate::model::template::{
+    CopiedFrom, Relationship, Startup, TemplateKind, TemplateMember, TemplateRecord,
+};
 use crate::model::{
     ActionId, AnyId, AppId, CloneId, MemberId, SCHEMA_VERSION, SeatId, TeamspaceId, TemplateId,
 };
@@ -151,14 +156,23 @@ fn agents_md(
 }
 
 /// `doc` with `agents_md` filled from the template folder (so a diff against an edit is meaningful).
-fn doc_with_agents(
+pub(crate) fn doc_with_agents(
     tree: &dyn TreeRead,
     tpl_dir: &RepoPath,
     rec: &TemplateRecord,
 ) -> Result<TemplateDocument, StoreError> {
     let mut doc = TemplateDocument::from_record(rec);
+    doc.agents_md = Some(
+        tree.read_file(&tpl_dir.join("AGENTS.md")?)?
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default(),
+    );
     for m in &mut doc.members {
-        m.agents_md = agents_md(tree, tpl_dir, &m.name)?.and_then(|b| String::from_utf8(b).ok());
+        m.agents_md = Some(
+            agents_md(tree, tpl_dir, &m.name)?
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default(),
+        );
     }
     Ok(doc)
 }
@@ -168,12 +182,22 @@ fn write_agents(
     tpl_dir: &RepoPath,
     doc: &TemplateDocument,
 ) -> Result<(), MutationError> {
+    if let Some(text) = &doc.agents_md {
+        let path = tpl_dir.join("AGENTS.md")?;
+        if text.is_empty() {
+            cx.tree.delete_file(&path);
+        } else {
+            cx.tree.put_file(path, text.as_bytes().to_vec());
+        }
+    }
     for m in &doc.members {
         if let Some(text) = &m.agents_md {
-            cx.tree.put_file(
-                layout::member_agents_md(tpl_dir, &slugify(&m.name)),
-                text.clone().into_bytes(),
-            );
+            let path = layout::member_agents_md(tpl_dir, &slugify(&m.name));
+            if text.is_empty() {
+                cx.tree.delete_file(&path);
+            } else {
+                cx.tree.put_file(path, text.as_bytes().to_vec());
+            }
         }
     }
     Ok(())
@@ -281,6 +305,7 @@ fn create_effects(
         json!({
             "name": member.name, "teamspace": ts.rec.id, "lifecycle": startup_lifecycle(member.startup),
             "member": member.id, "template": tpl, "application": app,
+            "seat_template": member.seat_template, "responsibility": member.responsibility,
         }),
     )];
     if let Some(clone) = clone {
@@ -385,7 +410,11 @@ fn create_member_seat(
     cx.tree
         .put_record(layout::seat_record(&seat_dir), &mut rec)?;
     created_object(acc, seat_id.to_any(), startup_lifecycle(member.startup));
-    if let Some(bytes) = agents_md(&cx.tree, tpl_dir, &member.name)? {
+    // Legacy inline templates seed an instance file. Reusable definitions retain live member
+    // references so future specialization edits cannot conflict with a stale copied context.
+    if member.seat_template.is_none()
+        && let Some(bytes) = agents_md(&cx.tree, tpl_dir, &member.name)?
+    {
         cx.tree.put_file(seat_dir.join("AGENTS.md")?, bytes);
     }
     Ok(())
@@ -453,6 +482,7 @@ impl OrgKind for TemplateCreate {
         }
         let id: TemplateId = reserved.get_or_mint("template");
         let rec = doc.to_record(id.clone(), 0, &BTreeMap::new(), reserved);
+        let dependencies = template_dependencies(cx.tree, &rec)?;
         let slug = unique_slug(
             &a.name,
             id.suffix6(),
@@ -463,12 +493,13 @@ impl OrgKind for TemplateCreate {
                 "template.create",
                 id,
                 json!({
-                    "name": a.name, "path": layout::template_dir(&slug).as_str(),
+                    "name": a.name, "kind": rec.kind, "path": layout::template_dir(&slug).as_str(),
+                    "seat_templates": dependencies,
                     "members": rec.members.iter().map(|m| json!({ "id": m.id, "name": m.name })).collect::<Vec<_>>(),
                     "relationships": rec.relationships.len(),
                 }),
             )],
-            relied_on: vec![],
+            relied_on: dependencies,
             warnings: vec![],
             repair_required: None,
             summary: format!("create template {}", a.name),
@@ -549,7 +580,8 @@ impl OrgKind for TemplateCopy {
                 "template.copy",
                 id,
                 json!({
-                    "name": a.name, "from": src.id,
+                    "name": a.name, "from": src.id, "kind": src.kind,
+                    "seat_templates": template_dependencies(cx.tree, &src)?,
                     "members": src.members.iter().map(|m| json!({ "id": m.id, "name": m.name })).collect::<Vec<_>>(),
                 }),
             )],
@@ -584,6 +616,9 @@ impl OrgKind for TemplateCopy {
         let dir = layout::template_dir(&slug);
         cx.tree
             .put_record(layout::template_record(&dir), &mut rec)?;
+        if let Some(bytes) = cx.tree.read_file(&src_loc.folder.join("AGENTS.md")?)? {
+            cx.tree.put_file(dir.join("AGENTS.md")?, bytes);
+        }
         for m in &src.members {
             if let Some(bytes) = agents_md(&cx.tree, &src_loc.folder, &m.name)? {
                 cx.tree
@@ -648,6 +683,7 @@ struct EditPlan {
     apps: Vec<AppEdit>,
     /// `session.replace` effects, once per clone.
     replacements: Vec<PlanEffect>,
+    dependencies: Vec<crate::model::change::ReliedOn>,
     warnings: Vec<String>,
     repair_required: Option<String>,
 }
@@ -684,6 +720,9 @@ fn compute_edit(
     new: &TemplateRecord,
     ids: &mut Ids<'_>,
 ) -> Result<EditPlan, PlanError> {
+    if old.kind == TemplateKind::Seat {
+        return compute_seat_edit(tree, old, new);
+    }
     let graph = layout::read_graph(tree)?;
     let mut apps = Vec::new();
     let mut warnings = Vec::new();
@@ -828,18 +867,20 @@ fn compute_edit(
             if seat.lifecycle == Lifecycle::Retired || r.template != old.id {
                 continue;
             }
-            let old_cfg = resolve(
+            let old_cfg = resolve_member_in(
+                tree,
                 &graph.defaults,
                 Some(old),
                 old.members.iter().find(|m| m.id == r.member),
                 &seat,
-            );
-            let new_cfg = resolve(
+            )?;
+            let new_cfg = resolve_member_in(
+                tree,
                 &graph.defaults,
                 Some(new),
                 new.members.iter().find(|m| m.id == r.member),
                 &seat,
-            );
+            )?;
             let clones: Vec<CloneRecord> = layout::list_clones(tree, &loc.folder)?
                 .into_iter()
                 .map(|(_, c)| c)
@@ -857,6 +898,7 @@ fn compute_edit(
     Ok(EditPlan {
         apps,
         replacements,
+        dependencies: vec![],
         warnings,
         repair_required,
     })
@@ -868,6 +910,11 @@ fn build_new_record(
     reserved: &mut Reserved,
 ) -> Result<TemplateRecord, PlanError> {
     doc.validate().map_err(invalid)?;
+    if doc.kind != old.kind {
+        return Err(PlanError::Invalid(
+            "template edit cannot change kind".into(),
+        ));
+    }
     if doc.name != old.name {
         return Err(PlanError::Invalid(format!(
             "template edit cannot rename {:?} to {:?}; the document must keep the template's name",
@@ -924,13 +971,34 @@ impl OrgKind for TemplateEdit {
         let mut effects = vec![PlanEffect::new(
             "template.edit",
             old.id.clone(),
-            json!({ "name": old.name, "changed_fields": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>() }),
+            json!({ "name": old.name, "changed_fields": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
+                "changes": changes.iter().map(|c| json!({ "path": c.path, "before": c.before, "after": c.after })).collect::<Vec<_>>() }),
         )];
         let mut relied_on = vec![rev_of(old.id.clone(), old.rev)];
+        relied_on.extend(template_dependencies(cx.tree, &new)?);
+        relied_on.extend(edit.dependencies.clone());
         let graph = layout::read_graph(cx.tree)?;
         let mut activated = BTreeSet::new();
         for ae in &edit.apps {
             relied_on.push(rev_of(ae.app.id.clone(), ae.app.rev));
+            if let Some((_, tpl)) = read_template(cx.tree, &ae.app.template)? {
+                relied_on.push(rev_of(tpl.id.clone(), tpl.rev));
+                relied_on.extend(template_dependencies(cx.tree, &tpl)?);
+            }
+            for id in membership(&ae.app) {
+                if let Some((loc, seat)) = read_seat_rec(cx.tree, &id)? {
+                    relied_on.push(rev_of(seat.id.clone(), seat.rev));
+                    if let Some(reference) = &seat.template_ref
+                        && let Some((_, owner)) = read_template(cx.tree, &reference.template)?
+                    {
+                        relied_on.push(rev_of(owner.id.clone(), owner.rev));
+                        relied_on.extend(template_dependencies(cx.tree, &owner)?);
+                    }
+                    for (_, clone) in layout::list_clones(cx.tree, &loc.folder)? {
+                        relied_on.push(rev_of(clone.id.clone(), clone.rev));
+                    }
+                }
+            }
             effects.push(PlanEffect::new(
                 "application.update",
                 ae.app.id.clone(),
@@ -971,7 +1039,13 @@ impl OrgKind for TemplateEdit {
                             &ae.app.teamspace,
                             &ae.app.id,
                         );
-                        let cfg = resolve(&graph.defaults, Some(&new), Some(member), &stand_in);
+                        let cfg = resolve_member_in(
+                            cx.tree,
+                            &graph.defaults,
+                            Some(&new),
+                            Some(member),
+                            &stand_in,
+                        )?;
                         effects.extend(create_effects(
                             &new.id,
                             member,
@@ -1027,6 +1101,12 @@ impl OrgKind for TemplateEdit {
                 ));
             }
         }
+        effects[0].detail["template_dependencies"] = json!(
+            relied_on
+                .iter()
+                .filter(|r| r.object.kind() == crate::model::IdKind::Template)
+                .collect::<Vec<_>>()
+        );
         effects.extend(edit.replacements.clone());
         Ok(PlanBody {
             effects,
@@ -1165,6 +1245,7 @@ impl OrgKind for TemplateEdit {
 /// The edited document as stored: ids resolved, `agents_md` kept only where the edit sets it.
 fn merged_after(new: &TemplateRecord, doc: &TemplateDocument) -> TemplateDocument {
     let mut after = TemplateDocument::from_record(new);
+    after.agents_md = doc.agents_md.clone();
     for m in &mut after.members {
         m.agents_md = doc
             .members
@@ -1226,7 +1307,7 @@ fn resurrect_effects(
     if active {
         let mut cfg_seat = f.rec.clone();
         cfg_seat.lifecycle = Lifecycle::Active;
-        let cfg = resolve(&graph.defaults, Some(tpl), Some(member), &cfg_seat);
+        let cfg = resolve_member_in(tree, &graph.defaults, Some(tpl), Some(member), &cfg_seat)?;
         if ts.rec.lifecycle == Lifecycle::Dormant && activated.insert(ts.rec.id.clone()) {
             v.push(
                 PlanEffect::new(
@@ -1320,6 +1401,12 @@ struct HydratePlan {
 
 fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, PlanError> {
     let (loc, tpl) = resolve_template(tree, &a.template)?;
+    if tpl.kind != TemplateKind::Team {
+        return Err(PlanError::Invalid(
+            "application apply requires a team template".into(),
+        ));
+    }
+    template_dependencies(tree, &tpl)?;
     let ts_id = grammar::resolve_teamspace(tree, &a.teamspace, Scope::Live)?;
     let ts = read_ts(tree, &ts_id)?;
     ensure_ts_live(&ts)?;
@@ -1409,12 +1496,14 @@ impl OrgKind for ApplicationApply {
         let mut effects = vec![PlanEffect::new(
             "application.create",
             app.clone(),
-            json!({ "name": a.name, "template": h.tpl.id, "teamspace": h.ts.rec.id }),
+            json!({ "name": a.name, "template": h.tpl.id, "teamspace": h.ts.rec.id,
+                "seat_templates": template_dependencies(cx.tree, &h.tpl)? }),
         )];
         let mut relied_on = vec![
             rev_of(h.tpl.id.clone(), h.tpl.rev),
             rev_of(h.ts.rec.id.clone(), h.ts.rec.rev),
         ];
+        relied_on.extend(template_dependencies(cx.tree, &h.tpl)?);
         let mut activated = BTreeSet::new();
         for m in &h.tpl.members {
             if let Some(f) = h.reused.get(&m.id) {
@@ -1431,7 +1520,8 @@ impl OrgKind for ApplicationApply {
             let clone: Option<CloneId> = (m.startup == Startup::Active)
                 .then(|| reserved.get_or_mint(&format!("clone:{}", m.id)));
             let stand_in = member_seat_record(seat.clone(), &h.tpl.id, m, &h.ts.rec.id, &app);
-            let cfg = resolve(&graph.defaults, Some(&h.tpl), Some(m), &stand_in);
+            let cfg =
+                resolve_member_in(cx.tree, &graph.defaults, Some(&h.tpl), Some(m), &stand_in)?;
             effects.extend(create_effects(
                 &h.tpl.id,
                 m,
@@ -1722,3 +1812,7 @@ impl OrgKind for ApplicationRetire {
         })
     }
 }
+
+#[path = "seat_definitions.rs"]
+mod seat_definitions;
+use seat_definitions::{compute_seat_edit, template_dependencies};

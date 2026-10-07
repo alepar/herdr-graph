@@ -42,7 +42,7 @@ fn seat(name: &str, ts: &TeamspaceId) -> SeatRecord {
         teamspace: ts.clone(),
         lifecycle: Lifecycle::Dormant,
         retired: None,
-        role: None,
+        system_duty: None,
         template_ref: None,
         applications: vec![],
         overrides: Default::default(),
@@ -661,6 +661,7 @@ mod git {
         let at = chrono::Utc.with_ymd_and_hms(2026, 3, 9, 10, 0, 0).unwrap();
         let seat_id = SeatId::new();
         let tpl = TemplateRecord {
+            kind: crate::model::template::TemplateKind::Team,
             schema: 1,
             id: TemplateId::new(),
             rev: 1,

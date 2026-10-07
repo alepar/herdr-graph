@@ -50,6 +50,9 @@ impl Mutation for Patch {
             .map_err(|e| MutationError::Bug(e.to_string()))?;
         let (loc, mut rec) =
             read_seat_rec(&cx.tree, &seat)?.ok_or_else(|| MutationError::Bug("no seat".into()))?;
+        if let Some(v) = a.get("overrides") {
+            rec.overrides = serde_json::from_value(v.clone()).unwrap();
+        }
         if let Some(v) = a.get("seat_wide") {
             rec.participation.seat_wide = serde_json::from_value(v.clone()).unwrap();
         }
@@ -99,6 +102,7 @@ fn fx() -> Fx {
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
@@ -1301,8 +1305,9 @@ fn effective_structure_reflects_exclusions_mapping_and_pending_members() {
     t.members.push(crate::model::template::TemplateMember {
         id: c.clone(),
         name: "qa".into(),
-        role_ref: None,
-        role: None,
+        seat_template: None,
+        responsibility: None,
+        system_duty: None,
         startup: Startup::Deferred,
         defaults: Default::default(),
     });
@@ -1402,8 +1407,9 @@ members = {{ ids = ["{a}"] }}
     new.members.push(DocumentMember {
         id: Some(c.clone()),
         name: "qa".into(),
-        role_ref: None,
-        role: None,
+        seat_template: None,
+        responsibility: None,
+        system_duty: None,
         startup: Startup::Deferred,
         defaults: Default::default(),
         agents_md: None,
@@ -1553,5 +1559,473 @@ fn stale_hydrate_plan_is_rejected_when_membership_changes() {
     assert!(
         layout::list_applications(&view(&fx)).unwrap().is_empty(),
         "nothing was hydrated"
+    );
+}
+
+// Reusable seat definitions are live references, never shared instantiated identities.
+fn create_doc(fx: &Fx, name: &str, text: &str) {
+    let path = write_doc(fx, text);
+    commit(fx, &format!("template create {name} --from {path}"));
+}
+
+#[test]
+fn seat_template_document_kind_and_legacy_duty_compatibility() {
+    let doc = TemplateDocument::parse(
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'Reusable instructions'\n",
+    )
+    .unwrap();
+    let json = serde_json::to_value(&doc).unwrap();
+    assert_eq!(json["kind"], "seat");
+    assert_eq!(json["agents_md"], "Reusable instructions");
+    let legacy = TemplateDocument::parse("name = 'legacy'\n[[members]]\nname = 'worker'\nstartup = 'deferred'\nrole = 'dispatcher'\nrole_ref = 'unused'\n").unwrap();
+    assert_eq!(legacy.members.len(), 1);
+    let json = serde_json::to_value(legacy).unwrap();
+    assert_eq!(json["kind"], "team");
+    assert_eq!(json["members"][0]["system_duty"], "dispatcher");
+    assert!(json["members"][0].get("role_ref").is_none());
+    assert!(
+        TemplateDocument::parse(
+            "name = 'bad'\nkind = 'seat'\n[[members]]\nname = 'nested'\nstartup = 'deferred'\n"
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn seat_template_shared_definition_creates_independent_live_seats() {
+    let fx = fx();
+    alpha(&fx);
+    create_doc(
+        &fx,
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'Reusable engineering instructions'\n[defaults]\nmodel = 'seat-model'\n",
+    );
+    let shared = tpl(&fx, "engineer");
+    for name in ["auth", "billing"] {
+        create_doc(
+            &fx,
+            name,
+            &format!(
+                "name = '{name}'\n[defaults]\nmodel = 'team-model'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{}'\nresponsibility = 'Deliver {name}'\nagents_md = '{name} specialization'\n",
+                shared.id
+            ),
+        );
+        apply_app(&fx, name, name);
+    }
+    let a = app(&fx, "auth").member_map.values().next().unwrap().clone();
+    let b = app(&fx, "billing")
+        .member_map
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    assert_ne!(a, b);
+    for id in [&a, &b] {
+        assert_eq!(
+            crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, id))
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("seat-model")
+        );
+        patch(&fx, json!({"seat": id, "occupy": true}));
+    }
+    let text = "name = 'engineer'\nkind = 'seat'\nagents_md = 'Updated reusable instructions'\n[defaults]\nmodel = 'new-seat-model'\n";
+    let path = write_doc(&fx, text);
+    let p = plan(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(count(&p, "session.replace"), 2);
+    assert_eq!(count(&p, "application.update"), 2);
+    for e in p
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "session.replace")
+    {
+        assert_eq!(e.detail["from"]["model"], "seat-model");
+        assert_eq!(e.detail["to"]["model"], "new-seat-model");
+    }
+    assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
+    assert_eq!(app(&fx, "auth").member_map.values().next(), Some(&a));
+    assert_eq!(app(&fx, "billing").member_map.values().next(), Some(&b));
+    for id in [&a, &b] {
+        assert_eq!(
+            crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, id))
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("new-seat-model")
+        );
+    }
+}
+
+#[test]
+fn seat_template_reference_validation_and_dependency_revisions() {
+    let fx = fx();
+    alpha(&fx);
+    let missing = TemplateId::new();
+    let text = |id: &TemplateId| {
+        format!(
+            "name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{id}'\n"
+        )
+    };
+    let path = write_doc(&fx, &text(&missing));
+    assert!(plan_err(&fx, &format!("template create team --from {path}")).contains("missing"));
+    create_doc(&fx, "wrong", "name = 'wrong'\n");
+    let path = write_doc(&fx, &text(&tpl(&fx, "wrong").id));
+    assert!(
+        plan_err(&fx, &format!("template create team --from {path}")).contains("seat template")
+    );
+    create_doc(
+        &fx,
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'old'\n",
+    );
+    let shared = tpl(&fx, "engineer");
+    create_doc(&fx, "team", &text(&shared.id));
+    let pending = plan(&fx, "application apply team --teamspace alpha --name one");
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'new'\n",
+    );
+    commit(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(apply_plan(&fx, &pending).state, OpState::Rejected);
+    assert!(
+        plan_err(
+            &fx,
+            "application apply engineer --teamspace alpha --name bad"
+        )
+        .contains("team template")
+    );
+}
+
+#[test]
+fn seat_template_copy_and_undo_restore_instructions_and_runtime() {
+    let fx = fx();
+    alpha(&fx);
+    create_doc(
+        &fx,
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'original reusable instructions'\n[defaults]\nmodel = 'old'\n",
+    );
+    commit(&fx, "template copy engineer engineer-copy");
+    let copied = tpl(&fx, "engineer-copy");
+    let v = view(&fx);
+    let loc = layout::locate(&v, &copied.id.to_any()).unwrap().unwrap();
+    assert_eq!(
+        String::from_utf8(
+            v.read_file(&loc.folder.join("AGENTS.md").unwrap())
+                .unwrap()
+                .unwrap()
+        )
+        .unwrap(),
+        "original reusable instructions"
+    );
+    assert_eq!(serde_json::to_value(&copied).unwrap()["kind"], "seat");
+    let shared = tpl(&fx, "engineer");
+    create_doc(
+        &fx,
+        "team",
+        &format!(
+            "name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{}'\n",
+            shared.id
+        ),
+    );
+    apply_app(&fx, "team", "one");
+    let id = app(&fx, "one").member_map.values().next().unwrap().clone();
+    patch(&fx, json!({"seat": id, "occupy": true}));
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'updated instructions'\n[defaults]\nmodel = 'new'\n",
+    );
+    let row = commit(&fx, &format!("template edit engineer --from {path}"));
+    let act = action_of(&fx, &row);
+    let undo = plan(&fx, &format!("undo {}", act.id));
+    assert!(
+        undo.plan.repair_required.is_none(),
+        "{:?}",
+        undo.plan.repair_required
+    );
+    assert_eq!(count(&undo, "session.replace"), 1);
+    assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+    let v = view(&fx);
+    let loc = layout::locate(&v, &shared.id.to_any()).unwrap().unwrap();
+    assert_eq!(
+        String::from_utf8(
+            v.read_file(&loc.folder.join("AGENTS.md").unwrap())
+                .unwrap()
+                .unwrap()
+        )
+        .unwrap(),
+        "original reusable instructions"
+    );
+    assert_eq!(
+        crate::model::effective::resolve_in(&v, &seat_by_id(&fx, &id))
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("old")
+    );
+}
+
+#[test]
+fn seat_template_runtime_precedence_at_every_level() {
+    use crate::model::effective::resolve_with_seat_template;
+    use crate::model::graph::GraphDefaults;
+    use crate::model::template::MemberDefaults;
+    let graph: GraphDefaults =
+        toml::from_str("harness = 'shell'\nmodel = 'graph'\nargs = ['graph']\nsummaries = false\n")
+            .unwrap();
+    let doc =
+        TemplateDocument::parse("name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'deferred'\n")
+            .unwrap();
+    let mut team = doc.to_record(
+        TemplateId::new(),
+        1,
+        &Default::default(),
+        &mut Default::default(),
+    );
+    let mut member = team.members[0].clone();
+    let mut shared = team.clone();
+    shared.kind = crate::model::template::TemplateKind::Seat;
+    shared.members.clear();
+    let mut seat = super::structure::member_seat_record(
+        SeatId::new(),
+        &team.id,
+        &member,
+        &crate::model::TeamspaceId::new(),
+        &crate::model::AppId::new(),
+    );
+    let defaults = |model: &str, harness, summaries| MemberDefaults {
+        model: Some(model.into()),
+        harness: Some(harness),
+        args: Some(vec![model.into()]),
+        summaries: Some(summaries),
+    };
+    for level in 0..6 {
+        let (g, expected, harness, summaries) = match level {
+            0 => (GraphDefaults::default(), None, Harness::Claude, true),
+            1 => (graph.clone(), Some("graph"), Harness::Shell, false),
+            2 => {
+                team.defaults = defaults("team", Harness::Codex, true);
+                (graph.clone(), Some("team"), Harness::Codex, true)
+            }
+            3 => {
+                shared.defaults = defaults("shared", Harness::Claude, false);
+                (graph.clone(), Some("shared"), Harness::Claude, false)
+            }
+            4 => {
+                member.defaults = defaults("member", Harness::Shell, true);
+                (graph.clone(), Some("member"), Harness::Shell, true)
+            }
+            _ => {
+                seat.overrides.model = Some("instance".into());
+                seat.overrides.harness = Some(Harness::Codex);
+                seat.overrides.args = Some(vec!["instance".into()]);
+                seat.overrides.summaries = Some(false);
+                (graph.clone(), Some("instance"), Harness::Codex, false)
+            }
+        };
+        let c = resolve_with_seat_template(&g, Some(&team), Some(&member), Some(&shared), &seat);
+        assert_eq!(
+            (c.model.as_deref(), c.harness, c.summaries),
+            (expected, harness, summaries),
+            "level {level}"
+        );
+        assert_eq!(
+            c.args,
+            expected.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+            "level {level}"
+        );
+    }
+    seat.overrides.args = Some(vec![]);
+    assert!(
+        resolve_with_seat_template(&graph, Some(&team), Some(&member), Some(&shared), &seat)
+            .args
+            .is_empty()
+    );
+}
+
+#[test]
+fn seat_template_live_update_follows_explicit_reuse_after_origin_withdrawal() {
+    let fx = fx();
+    alpha(&fx);
+    create_doc(
+        &fx,
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'old'\n",
+    );
+    let shared = tpl(&fx, "engineer");
+    create_doc(
+        &fx,
+        "auth",
+        &format!(
+            "name = 'auth'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{}'\n",
+            shared.id
+        ),
+    );
+    apply_app(&fx, "auth", "origin");
+    let seat = app(&fx, "origin")
+        .member_map
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let mem = MemberId::new();
+    create_template(&fx, "billing", &[m(&mem, "borrowed", "active")], &[]);
+    commit(
+        &fx,
+        &format!(
+            "application apply billing --teamspace alpha --name consumer --reuse {mem}={seat}"
+        ),
+    );
+    patch(&fx, json!({"seat": seat, "occupy": true}));
+    let structure = effective_structure(&view(&fx), &app(&fx, "consumer")).unwrap();
+    assert_eq!(
+        structure.seats[0].config.model.as_deref(),
+        Some("old"),
+        "reused seats retain their own configuration owner"
+    );
+    commit(&fx, "application retire origin");
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'new'\n",
+    );
+    let p = plan(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(count(&p, "session.replace"), 1);
+    assert_eq!(count(&p, "application.update"), 1);
+    assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
+    assert_eq!(member_seat(&fx, "consumer", &mem), seat);
+    assert_eq!(
+        crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, &seat))
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("new")
+    );
+    commit(&fx, "application retire consumer");
+    assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Active);
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'independent'\n",
+    );
+    let p = plan(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(
+        count(&p, "session.replace"),
+        1,
+        "a retained independent seat still has its live definition"
+    );
+    assert_eq!(count(&p, "application.update"), 0);
+    assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
+}
+
+#[test]
+fn seat_template_instruction_undo_detects_later_clear_and_removes_new_file() {
+    let fx = fx();
+    create_doc(&fx, "engineer", "name = 'engineer'\nkind = 'seat'\n");
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'first'\n",
+    );
+    let row = commit(&fx, &format!("template edit engineer --from {path}"));
+    let first = action_of(&fx, &row);
+    let path = write_doc(&fx, "name = 'engineer'\nkind = 'seat'\nagents_md = ''\n");
+    let row = commit(&fx, &format!("template edit engineer --from {path}"));
+    let clear = action_of(&fx, &row);
+    let p = plan(&fx, &format!("undo {}", first.id));
+    assert!(
+        p.plan.repair_required.is_some(),
+        "later removal conflicts with the earlier text edit"
+    );
+    commit(&fx, &format!("undo {}", clear.id));
+    commit(&fx, &format!("undo {}", first.id));
+    let v = view(&fx);
+    let loc = layout::locate(&v, &tpl(&fx, "engineer").id.to_any())
+        .unwrap()
+        .unwrap();
+    assert!(
+        v.read_file(&loc.folder.join("AGENTS.md").unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn seat_template_edits_preserve_exclusions_overrides_and_copied_member_correspondence() {
+    let fx = fx();
+    alpha(&fx);
+    create_doc(
+        &fx,
+        "engineer",
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'old'\n",
+    );
+    let shared = tpl(&fx, "engineer");
+    create_doc(
+        &fx,
+        "team",
+        &format!(
+            "name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{}'\n",
+            shared.id
+        ),
+    );
+    commit(&fx, "template copy team team-copy");
+    let member = tpl(&fx, "team").members[0].id.clone();
+    assert_eq!(tpl(&fx, "team-copy").members[0].id, member);
+    for (template, name) in [
+        ("team", "excluded"),
+        ("team", "overridden"),
+        ("team-copy", "live"),
+    ] {
+        apply_app(&fx, template, name);
+        patch(
+            &fx,
+            json!({"seat": member_seat(&fx, name, &member), "occupy": true}),
+        );
+    }
+    let excluded = member_seat(&fx, "excluded", &member);
+    let overridden = member_seat(&fx, "overridden", &member);
+    let live = member_seat(&fx, "live", &member);
+    commit(&fx, &format!("seat retire {excluded}"));
+    patch(
+        &fx,
+        json!({"seat": overridden, "overrides": {"model": "local"}}),
+    );
+    let pending = plan(
+        &fx,
+        "application apply team --teamspace alpha --name pending",
+    );
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\nagents_md = 'live instructions'\n[defaults]\nmodel = 'old'\n",
+    );
+    commit(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(
+        apply_plan(&fx, &pending).state,
+        OpState::Rejected,
+        "instruction-only changes invalidate dependent plans"
+    );
+    let path = write_doc(
+        &fx,
+        "name = 'engineer'\nkind = 'seat'\n[defaults]\nmodel = 'new'\n",
+    );
+    let p = plan(&fx, &format!("template edit engineer --from {path}"));
+    assert_eq!(count(&p, "session.replace"), 1);
+    assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
+    assert_eq!(app(&fx, "excluded").exclusions, vec![member.clone()]);
+    assert_eq!(seat_by_id(&fx, &excluded).lifecycle, Lifecycle::Retired);
+    assert_eq!(member_seat(&fx, "overridden", &member), overridden);
+    assert_eq!(member_seat(&fx, "live", &member), live);
+    assert_eq!(
+        crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, &overridden))
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("local")
+    );
+    assert_eq!(
+        crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, &live))
+            .unwrap()
+            .model
+            .as_deref(),
+        Some("new")
     );
 }

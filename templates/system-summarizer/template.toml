@@ -2,6 +2,7 @@ schema = 1
 id = "tpl_01KGJBE9EB84DJ1V80H95GWV8G"
 rev = 1
 name = "system-summarizer"
+kind = "team"
 
 [defaults]
 harness = "claude"
@@ -10,5 +11,5 @@ summaries = false
 [[members]]
 id = "mem_01KPEZVQVM7PGW8WWBJCBPGQXG"
 name = "summarizer"
-role = "summarizer"
+system_duty = "summarizer"
 startup = "active"

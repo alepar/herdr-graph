@@ -1793,7 +1793,7 @@ fn render_lists_effects_warnings_and_repair() {
 mod effective {
     use super::t0;
     use crate::model::clone::CloneRecord;
-    use crate::model::common::{Availability, CloneLifecycle, Occupant, Role, Runtime};
+    use crate::model::common::{Availability, CloneLifecycle, Occupant, Runtime, SystemDuty};
     use crate::model::effective::{EffectiveSeatConfig, resolve, session_replacements};
     use crate::model::graph::GraphDefaults;
     use crate::model::harness::Harness;
@@ -1811,7 +1811,7 @@ mod effective {
             teamspace: TeamspaceId::new(),
             lifecycle: crate::model::common::Lifecycle::Active,
             retired: None,
-            role: None,
+            system_duty: None,
             template_ref: None,
             applications: vec![],
             overrides: Default::default(),
@@ -1826,6 +1826,7 @@ mod effective {
 
     fn template(defaults: MemberDefaults) -> TemplateRecord {
         TemplateRecord {
+            kind: crate::model::template::TemplateKind::Team,
             schema: SCHEMA_VERSION,
             id: TemplateId::new(),
             rev: 1,
@@ -1838,12 +1839,13 @@ mod effective {
         }
     }
 
-    fn member(defaults: MemberDefaults, role: Option<Role>) -> TemplateMember {
+    fn member(defaults: MemberDefaults, system_duty: Option<SystemDuty>) -> TemplateMember {
         TemplateMember {
             id: MemberId::new(),
             name: "m".into(),
-            role_ref: None,
-            role,
+            seat_template: None,
+            responsibility: None,
+            system_duty,
             startup: Startup::Active,
             defaults,
         }
@@ -1866,6 +1868,8 @@ mod effective {
     #[test]
     fn precedence_seat_over_member_over_template_over_graph() {
         let graph = GraphDefaults {
+            args: None,
+            summaries: None,
             harness: Some(Harness::Shell),
             model: Some("graph-model".into()),
         };
@@ -1919,6 +1923,8 @@ mod effective {
     #[test]
     fn graph_defaults_apply_without_template() {
         let graph = GraphDefaults {
+            args: None,
+            summaries: None,
             harness: Some(Harness::Codex),
             model: Some("gm".into()),
         };
@@ -1939,7 +1945,7 @@ mod effective {
                 model: None,
                 args: vec![],
                 summaries: true,
-                role: None,
+                system_duty: None,
                 cwd: None,
                 instructions_sections: vec![],
             }
@@ -1949,21 +1955,24 @@ mod effective {
     #[test]
     fn summaries_default_by_role() {
         let g = GraphDefaults::default();
-        assert!(resolve(&g, None, None, &seat()).summaries, "no role: true");
-        let summarizer = member(MemberDefaults::default(), Some(Role::Summarizer));
+        assert!(
+            resolve(&g, None, None, &seat()).summaries,
+            "no system_duty: true"
+        );
+        let summarizer = member(MemberDefaults::default(), Some(SystemDuty::Summarizer));
         let c = resolve(&g, None, Some(&summarizer), &seat());
         assert_eq!(
-            (c.role, c.summaries),
-            (Some(Role::Summarizer), false),
-            "member role summarizer: false"
+            (c.system_duty, c.summaries),
+            (Some(SystemDuty::Summarizer), false),
+            "member system_duty summarizer: false"
         );
         let mut s = seat();
-        s.role = Some(Role::Cron);
+        s.system_duty = Some(SystemDuty::Cron);
         assert!(!resolve(&g, None, Some(&summarizer), &s).summaries);
         assert_eq!(
-            resolve(&g, None, Some(&summarizer), &s).role,
-            Some(Role::Cron),
-            "seat role beats member role"
+            resolve(&g, None, Some(&summarizer), &s).system_duty,
+            Some(SystemDuty::Cron),
+            "seat system_duty beats member system_duty"
         );
         s.overrides.summaries = Some(true);
         assert!(
@@ -2035,7 +2044,7 @@ mod effective {
             model: model.map(str::to_owned),
             args: args.iter().map(|s| s.to_string()).collect(),
             summaries: true,
-            role: None,
+            system_duty: None,
             cwd: None,
             instructions_sections: vec![],
         }

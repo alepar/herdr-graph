@@ -15,6 +15,42 @@ pub const EXAMPLES_DIR: &str = "templates";
 /// (instance-relative path, content): the template records and their member instructions.
 pub const EXAMPLE_FILES: &[(&str, &str)] = &[
     (
+        "templates/project-team/members/engineer/AGENTS.md",
+        include_str!("../../templates/project-team/members/engineer/AGENTS.md"),
+    ),
+    (
+        "templates/engineer/template.toml",
+        include_str!("../../templates/engineer/template.toml"),
+    ),
+    (
+        "templates/engineer/AGENTS.md",
+        include_str!("../../templates/engineer/AGENTS.md"),
+    ),
+    (
+        "templates/reviewer/template.toml",
+        include_str!("../../templates/reviewer/template.toml"),
+    ),
+    (
+        "templates/reviewer/AGENTS.md",
+        include_str!("../../templates/reviewer/AGENTS.md"),
+    ),
+    (
+        "templates/researcher/template.toml",
+        include_str!("../../templates/researcher/template.toml"),
+    ),
+    (
+        "templates/researcher/AGENTS.md",
+        include_str!("../../templates/researcher/AGENTS.md"),
+    ),
+    (
+        "templates/designer/template.toml",
+        include_str!("../../templates/designer/template.toml"),
+    ),
+    (
+        "templates/designer/AGENTS.md",
+        include_str!("../../templates/designer/AGENTS.md"),
+    ),
+    (
         "templates/system-summarizer/template.toml",
         include_str!("../../templates/system-summarizer/template.toml"),
     ),

@@ -10,7 +10,7 @@ use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{
     Availability, CloneLifecycle, Lifecycle, NameChange, NameSource, RetireMechanism, Retirement,
-    Role, Runtime,
+    Runtime, SystemDuty,
 };
 use crate::model::effective::{EffectiveSeatConfig, resolve_in};
 use crate::model::harness::Harness;
@@ -259,7 +259,7 @@ fn new_seat_record(
             Lifecycle::Dormant
         },
         retired: None,
-        role: a.role,
+        system_duty: a.system_duty,
         template_ref: None,
         applications: vec![],
         overrides: Default::default(),
@@ -898,7 +898,8 @@ struct SeatCreateArgs {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
-    role: Option<Role>,
+    #[serde(alias = "role")]
+    system_duty: Option<SystemDuty>,
 }
 
 #[derive(Deserialize)]
@@ -934,7 +935,7 @@ impl OrgKind for SeatCreate {
     fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
         let usage = || {
             PlanError::Usage(
-                "seat create <name> --teamspace <ts> [--active] [--harness h] [--model m] [--role r]".into(),
+                "seat create <name> --teamspace <ts> [--active] [--harness h] [--model m] [--system-duty r]".into(),
             )
         };
         let name = positional(words, 0).ok_or_else(usage)?;
@@ -942,12 +943,13 @@ impl OrgKind for SeatCreate {
         let harness: Option<Harness> = flag(words, "--harness")
             .map(|h| parse_enum("harness", &h))
             .transpose()?;
-        let role: Option<Role> = flag(words, "--role")
-            .map(|r| parse_enum("role", &r))
+        let system_duty: Option<SystemDuty> = flag(words, "--system-duty")
+            .or_else(|| flag(words, "--role"))
+            .map(|r| parse_enum("system_duty", &r))
             .transpose()?;
         Ok(json!({
             "name": name, "teamspace": ts, "active": has(words, "--active"),
-            "harness": harness, "model": flag(words, "--model"), "role": role,
+            "harness": harness, "model": flag(words, "--model"), "system_duty": system_duty,
         }))
     }
     fn plan(
@@ -972,7 +974,7 @@ impl OrgKind for SeatCreate {
             json!({
                 "name": a.name, "teamspace": ts_id, "path": seat_dir.as_str(),
                 "lifecycle": if a.active { "active" } else { "dormant" },
-                "harness": a.harness, "model": a.model, "role": a.role,
+                "harness": a.harness, "model": a.model, "system_duty": a.system_duty,
             }),
         )];
         if a.active {

@@ -53,7 +53,7 @@ impl Mutation for TestSeed {
                 teamspace: self.0.ts.clone(),
                 lifecycle: Lifecycle::Dormant,
                 retired: None,
-                role: None,
+                system_duty: None,
                 template_ref: None,
                 applications: vec![],
                 overrides: Default::default(),

@@ -159,6 +159,8 @@ fn graph_record_roundtrip() {
         schema_version: 1,
         summarizer_seat: Some(SeatId::new()),
         defaults: GraphDefaults {
+            args: None,
+            summaries: None,
             harness: Some(Harness::Codex),
             model: Some("o3".into()),
         },
@@ -213,7 +215,7 @@ fn seat_record_roundtrip() {
         teamspace: TeamspaceId::new(),
         lifecycle: Lifecycle::Active,
         retired: Some(retirement()),
-        role: Some(Role::Summarizer),
+        system_duty: Some(SystemDuty::Summarizer),
         template_ref: Some(TemplateRef {
             template: TemplateId::new(),
             member: MemberId::new(),
@@ -252,7 +254,7 @@ fn seat_record_roundtrip() {
         teamspace: TeamspaceId::new(),
         lifecycle: Lifecycle::Dormant,
         retired: None,
-        role: None,
+        system_duty: None,
         template_ref: None,
         applications: vec![],
         overrides: SeatOverrides::default(),
@@ -356,6 +358,7 @@ fn full_defaults() -> MemberDefaults {
 fn template_record_roundtrip() {
     let m1 = MemberId::new();
     toml_rt(&TemplateRecord {
+        kind: crate::model::template::TemplateKind::Team,
         schema: 1,
         id: TemplateId::new(),
         rev: 2,
@@ -366,16 +369,18 @@ fn template_record_roundtrip() {
             TemplateMember {
                 id: m1.clone(),
                 name: "boss".into(),
-                role_ref: Some("r".into()),
-                role: Some(Role::Dispatcher),
+                seat_template: None,
+                responsibility: None,
+                system_duty: Some(SystemDuty::Dispatcher),
                 startup: Startup::Deferred,
                 defaults: full_defaults(),
             },
             TemplateMember {
                 id: MemberId::new(),
                 name: "w".into(),
-                role_ref: None,
-                role: None,
+                seat_template: None,
+                responsibility: None,
+                system_duty: None,
                 startup: Startup::Active,
                 defaults: MemberDefaults::default(),
             },
@@ -398,6 +403,7 @@ fn template_record_roundtrip() {
         }),
     });
     toml_rt(&TemplateRecord {
+        kind: crate::model::template::TemplateKind::Team,
         schema: 1,
         id: TemplateId::new(),
         rev: 1,
@@ -888,7 +894,12 @@ fn minimal_seat_toml_is_readable() {
 #[test]
 fn default_summaries_by_role() {
     assert!(default_summaries(None));
-    for r in [Role::Summarizer, Role::System, Role::Cron, Role::Dispatcher] {
+    for r in [
+        SystemDuty::Summarizer,
+        SystemDuty::System,
+        SystemDuty::Cron,
+        SystemDuty::Dispatcher,
+    ] {
         assert!(!default_summaries(Some(r)), "{r:?}");
     }
 }

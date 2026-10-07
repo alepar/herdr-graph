@@ -3,7 +3,7 @@
 use super::coverage::aligned_len;
 use super::mutations::is_merged;
 use crate::model::OpId;
-use crate::model::common::Role;
+use crate::model::common::SystemDuty;
 use crate::model::effective::resolve_in;
 use crate::model::request::{ProcessingRequest, RequestStatus};
 use crate::model::{ByteRange, CloneId, HerdrPaneId, SeatId};
@@ -58,7 +58,7 @@ impl Destination {
     }
 }
 
-/// The teamspace's oldest non-retired seat with effective `role = summarizer` (ties by id), else
+/// The teamspace's oldest non-retired seat with effective `system_duty = summarizer` (ties by id), else
 /// `graph.toml summarizer_seat`. A retired summarizer is never activated (retirement precedence).
 pub(crate) fn resolve_destination(
     g: &Graph,
@@ -76,7 +76,7 @@ pub(crate) fn resolve_destination(
         if seat.lifecycle == crate::model::common::Lifecycle::Retired {
             continue;
         }
-        if resolve_in(tree, seat)?.role == Some(Role::Summarizer) {
+        if resolve_in(tree, seat)?.system_duty == Some(SystemDuty::Summarizer) {
             candidates.push(seat);
         }
     }
