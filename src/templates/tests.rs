@@ -2029,3 +2029,127 @@ fn seat_template_edits_preserve_exclusions_overrides_and_copied_member_correspon
         Some("new")
     );
 }
+
+#[test]
+fn review_retained_seat_reference_switch_and_undo_preview_replacements() {
+    for retire_borrower in [false, true] {
+        let fx = fx();
+        alpha(&fx);
+        for (name, model) in [("definition-a", "a"), ("definition-b", "b")] {
+            create_doc(
+                &fx,
+                name,
+                &format!("name = '{name}'\nkind = 'seat'\n[defaults]\nmodel = '{model}'\n"),
+            );
+        }
+        let a = tpl(&fx, "definition-a").id;
+        let b = tpl(&fx, "definition-b").id;
+        let member = MemberId::new();
+        let doc = |definition: &TemplateId| {
+            format!(
+                "name = 'owner'\n[[members]]\nid = '{member}'\nname = 'dev'\nstartup = 'active'\nseat_template = '{definition}'\n"
+            )
+        };
+        create_doc(&fx, "owner", &doc(&a));
+        apply_app(&fx, "owner", "origin");
+        let seat = member_seat(&fx, "origin", &member);
+        let borrowed_member = MemberId::new();
+        create_template(
+            &fx,
+            "borrower",
+            &[m(&borrowed_member, "peer", "active")],
+            &[],
+        );
+        commit(
+            &fx,
+            &format!(
+                "application apply borrower --teamspace alpha --name consumer --reuse {borrowed_member}={seat}"
+            ),
+        );
+        patch(&fx, json!({"seat": seat, "occupy": true}));
+        commit(&fx, "application retire origin");
+        if retire_borrower {
+            commit(&fx, "application retire consumer");
+        }
+        let path = write_doc(&fx, &doc(&b));
+        let p = plan(&fx, &format!("template edit owner --from {path}"));
+        assert_eq!(
+            count(&p, "session.replace"),
+            1,
+            "retire_borrower={retire_borrower}"
+        );
+        assert_eq!(
+            count(&p, "application.update"),
+            usize::from(!retire_borrower)
+        );
+        let replacement = p
+            .plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "session.replace")
+            .unwrap();
+        assert_eq!(replacement.detail["from"]["model"], "a");
+        assert_eq!(replacement.detail["to"]["model"], "b");
+        let row = apply_plan(&fx, &p);
+        assert_eq!(row.state, OpState::Committed);
+        let action = action_of(&fx, &row);
+        let undo = plan(&fx, &format!("undo {}", action.id));
+        assert!(
+            undo.plan.repair_required.is_none(),
+            "{:?}",
+            undo.plan.repair_required
+        );
+        assert_eq!(count(&undo, "session.replace"), 1);
+        let replacement = undo
+            .plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "session.replace")
+            .unwrap();
+        assert_eq!(replacement.detail["from"]["model"], "b");
+        assert_eq!(replacement.detail["to"]["model"], "a");
+        assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+        assert_eq!(
+            crate::model::effective::resolve_in(&view(&fx), &seat_by_id(&fx, &seat))
+                .unwrap()
+                .model
+                .as_deref(),
+            Some("a")
+        );
+    }
+}
+
+#[test]
+fn review_added_reusable_member_without_instructions_undoes_immediately() {
+    let fx = fx();
+    alpha(&fx);
+    create_doc(&fx, "engineer", "name = 'engineer'\nkind = 'seat'\n");
+    create_doc(&fx, "team", "name = 'team'\n");
+    apply_app(&fx, "team", "one");
+    let shared = tpl(&fx, "engineer").id;
+    let path = write_doc(
+        &fx,
+        &format!(
+            "name = 'team'\n[[members]]\nname = 'dev'\nstartup = 'active'\nseat_template = '{shared}'\n"
+        ),
+    );
+    let row = commit(&fx, &format!("template edit team --from {path}"));
+    let action = action_of(&fx, &row);
+    let seat = app(&fx, "one").member_map.values().next().unwrap().clone();
+    patch(&fx, json!({"seat": seat, "occupy": true}));
+    let undo = plan(&fx, &format!("undo {}", action.id));
+    assert!(
+        undo.plan.repair_required.is_none(),
+        "{:?}",
+        undo.plan.repair_required
+    );
+    assert_eq!(count(&undo, "seat.retire"), 1);
+    assert_eq!(
+        count(&undo, "session.replace"),
+        0,
+        "a withdrawn seat is retired, not replaced"
+    );
+    assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+    assert!(tpl(&fx, "team").members.is_empty());
+    assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Retired);
+}

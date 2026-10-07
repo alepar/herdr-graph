@@ -1150,3 +1150,36 @@ fn seat_resurrect_removes_its_retirements_exclusion() {
     commit(&fx, &format!("seat resurrect {} --active", eng.id));
     assert!(app(&fx, "one").exclusions.is_empty());
 }
+
+#[test]
+fn review_legacy_added_member_compensation_without_agents_undoes() {
+    let fx = fx();
+    create_template(&fx, "legacy", &[]);
+    let member = MemberId::new();
+    let before = "name = 'legacy'\n";
+    let after = format!(
+        "name = 'legacy'\n[[members]]\nid = '{member}'\nname = 'dispatcher'\nstartup = 'deferred'\nrole = 'dispatcher'\nrole_ref = 'unused'\n"
+    );
+    let path = write_doc(&fx, &after);
+    let row = commit(&fx, &format!("template edit legacy --from {path}"));
+    let mut action = action_of(&fx, &row);
+    // Persisted pre-seat-template compensation: no kind, no agents_md, old duty spelling.
+    action.compensation.insert(
+        "before".into(),
+        toml::Value::Table(toml::from_str(before).unwrap()),
+    );
+    action.compensation.insert(
+        "after".into(),
+        toml::Value::Table(toml::from_str(&after).unwrap()),
+    );
+    let inverse = super::preview::template_inverse(&view(&fx), &action).unwrap();
+    let super::preview::Inverse::Ready { template, document } = inverse else {
+        panic!("historical member-add compensation should be undoable: {inverse:?}");
+    };
+    assert!(document.members.is_empty());
+    let path = write_doc(&fx, &toml::to_string(&document).unwrap());
+    let p = plan(&fx, &format!("template edit {template} --from {path}"));
+    assert!(p.plan.repair_required.is_none());
+    assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
+    assert!(tpl(&fx, "legacy").members.is_empty());
+}

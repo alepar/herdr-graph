@@ -723,7 +723,6 @@ fn compute_edit(
     if old.kind == TemplateKind::Seat {
         return compute_seat_edit(tree, old, new);
     }
-    let graph = layout::read_graph(tree)?;
     let mut apps = Vec::new();
     let mut warnings = Vec::new();
     let mut repair_required = None;
@@ -844,61 +843,11 @@ fn compute_edit(
         });
     }
 
-    // Seats staying alive whose effective launch config changes: one `session.replace` per occupied clone.
-    let retiring: BTreeSet<SeatId> = apps
-        .iter()
-        .flat_map(|a| a.withdraw.iter())
-        .filter(|w| matches!(w.outcome, Outcome::Retire))
-        .map(|w| w.seat.clone())
-        .collect();
-    let mut replacements: Vec<PlanEffect> = Vec::new();
-    let mut seen = BTreeSet::new();
-    for ae in &mut apps {
-        for id in membership(&ae.app) {
-            if retiring.contains(&id) {
-                continue;
-            }
-            let Some((loc, seat)) = read_seat_rec(tree, &id)? else {
-                continue;
-            };
-            let Some(r) = &seat.template_ref else {
-                continue;
-            };
-            if seat.lifecycle == Lifecycle::Retired || r.template != old.id {
-                continue;
-            }
-            let old_cfg = resolve_member_in(
-                tree,
-                &graph.defaults,
-                Some(old),
-                old.members.iter().find(|m| m.id == r.member),
-                &seat,
-            )?;
-            let new_cfg = resolve_member_in(
-                tree,
-                &graph.defaults,
-                Some(new),
-                new.members.iter().find(|m| m.id == r.member),
-                &seat,
-            )?;
-            let clones: Vec<CloneRecord> = layout::list_clones(tree, &loc.folder)?
-                .into_iter()
-                .map(|(_, c)| c)
-                .collect();
-            let effects = session_replacements(&seat, &clones, &old_cfg, &new_cfg);
-            if effects.is_empty() {
-                continue;
-            }
-            ae.replaced_seats.push(id.clone());
-            if seen.insert(id) {
-                replacements.extend(effects);
-            }
-        }
-    }
+    let (replacements, dependencies) = compute_team_replacements(tree, old, new, &mut apps)?;
     Ok(EditPlan {
         apps,
         replacements,
-        dependencies: vec![],
+        dependencies,
         warnings,
         repair_required,
     })
@@ -1815,4 +1764,4 @@ impl OrgKind for ApplicationRetire {
 
 #[path = "seat_definitions.rs"]
 mod seat_definitions;
-use seat_definitions::{compute_seat_edit, template_dependencies};
+use seat_definitions::{compute_seat_edit, compute_team_replacements, template_dependencies};

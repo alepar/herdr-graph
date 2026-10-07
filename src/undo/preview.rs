@@ -623,6 +623,33 @@ fn override_set(seat: &SeatRecord, field: &str) -> bool {
     }
 }
 
+/// Compensation documents encode omitted instructions as "do not write", not a file state.
+/// Compare the expected persisted state: retain the before text on omission, or an absent/empty
+/// file for a new member. Normalize a comparison copy only; explicit empty strings remain clears.
+/// This also supports historical documents which omitted kind and instruction fields entirely.
+fn expected_instruction_state(
+    before: &TemplateDocument,
+    after: &TemplateDocument,
+) -> TemplateDocument {
+    let mut expected = after.clone();
+    if expected.agents_md.is_none() {
+        expected.agents_md = Some(before.agents_md.clone().unwrap_or_default());
+    }
+    for member in &mut expected.members {
+        if member.agents_md.is_none() {
+            member.agents_md = Some(
+                before
+                    .members
+                    .iter()
+                    .find(|m| member_key(m) == member_key(member))
+                    .and_then(|m| m.agents_md.clone())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    expected
+}
+
 /// The inverse patch of a template edit: each changed field goes back to its recorded before-value. A later
 /// edit touching the same field, or a seat override now setting it, makes the undo `repair_required`.
 pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inverse, PlanError> {
@@ -638,7 +665,8 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
     };
     let cur = crate::templates::kinds::doc_with_agents(tree, &loc.folder, &rec)?;
     let changes = TemplateDocument::diff(&before, &after);
-    let drift: Vec<String> = TemplateDocument::diff(&after, &cur)
+    let expected = expected_instruction_state(&before, &after);
+    let drift: Vec<String> = TemplateDocument::diff(&expected, &cur)
         .into_iter()
         .map(|c| c.path)
         .collect();
@@ -698,7 +726,8 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             )));
         }
     }
-    let mut doc = cur;
+    // Only instruction fields actually changed by this action become writes in the inverse.
+    let mut doc = TemplateDocument::from_record(&rec);
     for c in &changes {
         restore_field(
             &mut doc,
