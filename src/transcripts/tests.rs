@@ -27,6 +27,7 @@ use crate::ports::threads::*;
 use crate::reconcile::{Reconciler, ReconcilerConfig, RequesterNotifier, StepReport};
 use crate::store::GitStore;
 use crate::store::init::init_instance;
+use crate::store::tree::TreeRead;
 use crate::threads::{FakePaneSeatMap, FakeThreads};
 use crate::writer::{
     Applied, Mutation, MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore,
@@ -239,6 +240,8 @@ fn fx_with(
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::plan::kinds_extra::register_kinds(&mut kinds);
+    crate::templates::register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
@@ -247,6 +250,7 @@ fn fx_with(
     crate::threads::register_mutations(&mut reg);
     crate::observe::register_mutations(&mut reg);
     register_mutations(&mut reg);
+    reg.register("bookkeeping.test_legacy_layout", Arc::new(LegacyLayout));
     reg.register(
         "bookkeeping.test_set_summarizer",
         Arc::new(SetSummarizerSeat),
@@ -2582,4 +2586,341 @@ fn note_identity_reports_a_replaced_file_to_exactly_one_caller() {
             .count()
     });
     assert_eq!(changed, 1);
+}
+
+// Reconstruct pre-upgrade bytes and paths without touching external native transcripts.
+struct LegacyLayout;
+impl Mutation for LegacyLayout {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        for (loc, rec) in layout::list_transcripts(&cx.tree)? {
+            let mut value = toml::Value::try_from(&rec).unwrap();
+            value.as_table_mut().unwrap().remove("capture_attribution");
+            value["source_seat_summaries_enabled_at_capture"] = toml::Value::Boolean(false);
+            cx.tree.delete_file(&loc.record_path);
+            cx.tree.put_file(
+                layout::transcript_record(&rec.seat, &rec.id),
+                toml::to_string(&value).unwrap().into_bytes(),
+            );
+        }
+        for (loc, rec) in layout::list_requests(&cx.tree)? {
+            cx.tree.delete_file(&loc.record_path);
+            cx.tree.put_file(
+                crate::ports::store::RepoPath::new(&format!("requests/{}.toml", rec.id))?,
+                crate::store::record::to_toml_bytes(&rec)?,
+            );
+        }
+        for (loc, rec) in layout::list_actions(&cx.tree)? {
+            let bytes = cx.tree.read_file(&loc.record_path)?.unwrap();
+            cx.tree.delete_file(&loc.record_path);
+            cx.tree.put_file(
+                crate::ports::store::RepoPath::new(&format!(
+                    "actions/{}/{}.toml",
+                    rec.at.format("%Y-%m"),
+                    rec.id
+                ))?,
+                bytes,
+            );
+        }
+        for (loc, rec) in layout::list_operations(&cx.tree)? {
+            let bytes = cx.tree.read_file(&loc.record_path)?.unwrap();
+            cx.tree.delete_file(&loc.record_path);
+            cx.tree.put_file(
+                crate::ports::store::RepoPath::new(&format!(
+                    "operations/{}/{}.toml",
+                    rec.admitted_at.format("%Y-%m"),
+                    rec.id
+                ))?,
+                bytes,
+            );
+        }
+        Ok(Applied {
+            summary: "legacy fixture".into(),
+            action: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn layout_compat_registration_keeps_initial_attribution_through_org_changes() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let team = teamspace(&fx, "alpha");
+    let path = write_transcript(&fx, "history", 5);
+    finish_session(&fx, &worker, "native-history", &path).await;
+    let original = the_transcript(&fx);
+    let loc = layout::locate(&view(&fx), &original.id.to_any())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        loc.record_path.as_str(),
+        format!(
+            "transcripts/alpha-{}/worker-{}/{}.toml",
+            team.id, worker.seat, original.id
+        )
+    );
+    let attribution =
+        json!({"teamspace": team.id, "teamspace_name": "alpha", "seat_name": "worker"});
+    assert_eq!(
+        serde_json::to_value(&original).unwrap()["capture_attribution"],
+        attribution
+    );
+    plan_and_apply(&fx, "seat rename worker renamed");
+    plan_and_apply(&fx, "teamspace rename alpha renamed-team");
+    plan_and_apply(&fx, "teamspace create beta");
+    let mut moved_binding = worker.runtime.bound.clone().unwrap();
+    moved_binding.tab_id = Some(crate::model::HerdrTabId("other-tab".into()));
+    admit(
+        &fx,
+        crate::observe::mutations::move_request(
+            Some(&worker.id),
+            Some(&moved_binding),
+            Some(&worker.seat),
+        ),
+    );
+    plan_and_apply(&fx, "teamspace retire renamed-team");
+    let retire = layout::list_actions(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .filter(|a| a.kind == crate::model::action::ActionKind::Retire)
+        .max_by_key(|a| a.id.clone())
+        .unwrap();
+    plan_and_apply(&fx, &format!("undo {}", retire.id));
+    let rq = the_request(&fx);
+    admit(
+        &fx,
+        bookkeeping_request(
+            "request_complete",
+            json!({"rq": rq.id, "covered": br(0,100), "output_ref": "summary.md", "reported_by": worker.id}),
+        ),
+    );
+    let current = the_transcript(&fx);
+    assert_eq!(current.coverage, vec![br(0, 100)]);
+    assert_eq!(
+        serde_json::to_value(&current).unwrap()["capture_attribution"],
+        attribution
+    );
+    assert_eq!(
+        layout::locate(&view(&fx), &original.id.to_any())
+            .unwrap()
+            .unwrap(),
+        loc
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), LINE.repeat(5));
+}
+
+#[tokio::test]
+async fn layout_compat_legacy_processing_preserves_paths_and_unknown_attribution() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "legacy", 5);
+    let ev = finish_session(&fx, &worker, "native-legacy", &path).await;
+    let old = the_transcript(&fx);
+    let old_rq = the_request(&fx);
+    admit(
+        &fx,
+        bookkeeping_request(
+            "request_create",
+            json!({"clone": worker.id, "ns": ev.ns, "tr": old.id, "path": path, "range": br(140,160), "summaries": true}),
+        ),
+    );
+    admit(&fx, bookkeeping_request("test_legacy_layout", json!({})));
+    let secondary = all_requests(&fx)
+        .into_iter()
+        .find(|r| r.id != old_rq.id)
+        .unwrap();
+    let secondary_loc = layout::locate(&view(&fx), &secondary.id.to_any())
+        .unwrap()
+        .unwrap();
+    let tr_loc = layout::locate(&view(&fx), &old.id.to_any())
+        .unwrap()
+        .unwrap();
+    let rq_loc = layout::locate(&view(&fx), &old_rq.id.to_any())
+        .unwrap()
+        .unwrap();
+    // Existing transcript registration refreshes processing eligibility in place.
+    admit(
+        &fx,
+        bookkeeping_request(
+            "transcript",
+            json!({"clone": worker.id, "ns": ev.ns, "path": path, "summaries": true}),
+        ),
+    );
+    // Merge a pending overlapping range in the old request's original location.
+    admit(
+        &fx,
+        bookkeeping_request(
+            "request_create",
+            json!({"clone": worker.id, "ns": ev.ns, "tr": old.id, "path": path, "size": 160, "range": br(80,160), "summaries": true}),
+        ),
+    );
+    admit(
+        &fx,
+        bookkeeping_request("request_ack", json!({"rq": old_rq.id})),
+    );
+    admit(
+        &fx,
+        bookkeeping_request(
+            "request_complete",
+            json!({"rq": old_rq.id, "covered": br(0,100), "output_ref": "summary.md", "reported_by": worker.id}),
+        ),
+    );
+    let tr = the_transcript(&fx);
+    assert_eq!(tr.coverage, vec![br(0, 100)]);
+    assert_eq!(tr.gaps, vec![br(100, 160)]);
+    assert!(is_merged(&request(&fx, &secondary.id)));
+    assert_eq!(
+        layout::locate(&view(&fx), &secondary.id.to_any())
+            .unwrap()
+            .unwrap(),
+        secondary_loc
+    );
+    assert!(
+        serde_json::to_value(&tr)
+            .unwrap()
+            .get("capture_attribution")
+            .is_none()
+    );
+    assert_eq!(
+        layout::locate(&view(&fx), &tr.id.to_any())
+            .unwrap()
+            .unwrap(),
+        tr_loc
+    );
+    assert_eq!(
+        layout::locate(&view(&fx), &old_rq.id.to_any())
+            .unwrap()
+            .unwrap(),
+        rq_loc
+    );
+    assert_eq!(the_request(&fx).status, RequestStatus::Completed);
+    // New records still use the new layout alongside old ones.
+    let second_path = write_transcript(&fx, "new", 2);
+    finish_session(&fx, &worker, "native-new", &second_path).await;
+    assert_eq!(all_transcripts(&fx).len(), 2);
+    assert_eq!(all_requests(&fx).len(), 3);
+    assert_eq!(
+        requests::list_view(&view(&fx), requests::ListFilter::default())
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        layout::list_requests(&view(&fx))
+            .unwrap()
+            .iter()
+            .any(|(l, _)| l
+                .record_path
+                .as_str()
+                .starts_with("mutations/transcript-processing/"))
+    );
+    let missing = RequestId::new();
+    let op = fx
+        .dw
+        .admit(bookkeeping_request("request_ack", json!({"rq": missing})))
+        .unwrap();
+    assert_eq!(fx.w.status(&op).unwrap(), Some(OpState::Rejected));
+}
+
+#[tokio::test]
+async fn layout_compat_legacy_delivery_and_old_action_undo() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "legacy-delivery", 5);
+    finish_session(&fx, &worker, "native-legacy", &path).await;
+    let request_id = the_request(&fx).id;
+    plan_and_apply(&fx, "seat retire worker");
+    let old_action = layout::list_actions(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == crate::model::action::ActionKind::Retire)
+        .unwrap();
+    let operation = old_action.ops[0].clone();
+    admit(&fx, bookkeeping_request("test_legacy_layout", json!({})));
+    let action_loc = layout::locate(&view(&fx), &old_action.id.to_any())
+        .unwrap()
+        .unwrap();
+    assert!(action_loc.record_path.as_str().starts_with("actions/"));
+    let operation_loc = layout::locate(&view(&fx), &operation.to_any())
+        .unwrap()
+        .unwrap();
+    assert!(
+        operation_loc
+            .record_path
+            .as_str()
+            .starts_with("operations/")
+    );
+    let operation_bytes = fx
+        .store
+        .read_file(&fx.store.head().unwrap(), &operation_loc.record_path)
+        .unwrap()
+        .unwrap();
+    assert!(
+        crate::undo::candidates::list_candidates(&view(&fx), 10)
+            .unwrap()
+            .iter()
+            .any(|a| a.act == old_action.id)
+    );
+    plan_and_apply(&fx, &format!("undo {}", old_action.id));
+    let updated: crate::model::action::ActionRecord =
+        crate::store::record::read_toml(&view(&fx), &action_loc.record_path)
+            .unwrap()
+            .unwrap();
+    assert_eq!(updated.compensation, old_action.compensation);
+    assert_eq!(updated.undone_by.len(), 1);
+    assert_eq!(
+        layout::locate(&view(&fx), &old_action.id.to_any())
+            .unwrap()
+            .unwrap(),
+        action_loc
+    );
+    assert_eq!(
+        fx.store
+            .read_file(&fx.store.head().unwrap(), &operation_loc.record_path)
+            .unwrap()
+            .unwrap(),
+        operation_bytes
+    );
+    plan_and_apply(&fx, "seat rename worker new-name");
+    staffed_summarizer(&fx, "sum").await;
+    steps(&fx, 3).await;
+    fx.tr.process_pending().await;
+    steps(&fx, 2).await;
+    let notices = notifications_to(&fx, &seat_thread(&fx, "sum"));
+    assert!(notices.iter().any(|n| {
+        n.body
+            .contains(&format!("{} (capture name unknown)", worker.seat))
+    }));
+    assert!(
+        notices
+            .iter()
+            .all(|n| !n.body.contains("from seat new-name"))
+    );
+    let rq = request(&fx, &request_id);
+    assert_eq!(rq.status, RequestStatus::Delivered, "{rq:?}");
+    assert_eq!(rq.delivery.attempts.len(), 1);
+    let rq_loc = layout::locate(&view(&fx), &rq.id.to_any())
+        .unwrap()
+        .unwrap();
+    assert!(rq_loc.record_path.as_str().starts_with("requests/"));
+    assert_eq!(all_requests(&fx).len(), 1);
+    assert!(
+        layout::list_actions(&view(&fx))
+            .unwrap()
+            .iter()
+            .any(|(loc, _)| loc
+                .record_path
+                .as_str()
+                .starts_with("mutations/undoable-actions/"))
+    );
+    assert!(
+        layout::list_operations(&view(&fx))
+            .unwrap()
+            .iter()
+            .any(|(loc, _)| loc
+                .record_path
+                .as_str()
+                .starts_with("mutations/graph-changes/"))
+    );
 }

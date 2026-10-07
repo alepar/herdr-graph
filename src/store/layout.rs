@@ -72,17 +72,40 @@ pub fn member_agents_md(tpl_dir: &RepoPath, member_slug: &str) -> RepoPath {
 pub fn application_record(id: &AppId) -> RepoPath {
     p(&format!("applications/{id}.toml"))
 }
+/// Legacy destination, retained for compatibility fixtures and historical records.
+/// New registrations must use `transcript_registration_record`.
 pub fn transcript_record(seat: &SeatId, tr: &TranscriptId) -> RepoPath {
     p(&format!("transcripts/{seat}/{tr}.toml"))
 }
+/// Names are fixed at registration; full stable IDs preserve identity across renames and moves.
+pub fn transcript_registration_record(
+    team_name: &str,
+    team: &TeamspaceId,
+    seat_name: &str,
+    seat: &SeatId,
+    tr: &TranscriptId,
+) -> RepoPath {
+    p(&format!(
+        "transcripts/{}-{team}/{}-{seat}/{tr}.toml",
+        super::slug::slugify(team_name),
+        super::slug::slugify(seat_name),
+    ))
+}
+
 pub fn request_record(rq: &RequestId) -> RepoPath {
-    p(&format!("requests/{rq}.toml"))
+    p(&format!("mutations/transcript-processing/{rq}.toml"))
 }
 pub fn action_record(at: Timestamp, act: &ActionId) -> RepoPath {
-    p(&format!("actions/{}/{act}.toml", at.format("%Y-%m")))
+    p(&format!(
+        "mutations/undoable-actions/{}/{act}.toml",
+        at.format("%Y-%m")
+    ))
 }
 pub fn operation_record(at: Timestamp, op: &OpId) -> RepoPath {
-    p(&format!("operations/{}/{op}.toml", at.format("%Y-%m")))
+    p(&format!(
+        "mutations/graph-changes/{}/{op}.toml",
+        at.format("%Y-%m")
+    ))
 }
 
 type Listed<R> = Result<Vec<(ObjectLocation, R)>, StoreError>;
@@ -141,7 +164,21 @@ fn file_records<R: Record>(tr: &dyn TreeRead, dirs: &[RepoPath]) -> Listed<R> {
         }
     }
     out.sort_by(|a, b| a.0.record_path.cmp(&b.0.record_path));
+    reject_duplicate_ids(&out)?;
     Ok(out)
+}
+
+fn reject_duplicate_ids<R>(records: &[(ObjectLocation, R)]) -> Result<(), StoreError> {
+    let mut seen = std::collections::BTreeMap::new();
+    for (loc, _) in records {
+        if let Some(first) = seen.insert(loc.id.clone(), &loc.record_path) {
+            return Err(StoreError::Corrupt {
+                path: loc.record_path.as_str().to_owned(),
+                reason: format!("duplicate ID {} also at {}", loc.id, first.as_str()),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn list_teamspaces(tr: &dyn TreeRead) -> Listed<TeamspaceRecord> {
@@ -183,17 +220,38 @@ pub fn list_templates(tr: &dyn TreeRead) -> Listed<TemplateRecord> {
 pub fn list_applications(tr: &dyn TreeRead) -> Listed<ApplicationRecord> {
     file_records(tr, &[p("applications")])
 }
+// Both legacy seat directories and the new team/seat directories are index roots.
+fn transcript_dirs(tr: &dyn TreeRead) -> Result<Vec<RepoPath>, StoreError> {
+    let mut dirs = sub_dirs(tr, &p("transcripts"))?;
+    for team in dirs.clone() {
+        dirs.extend(sub_dirs(tr, &team)?);
+    }
+    Ok(dirs)
+}
+
+fn dated_dirs(tr: &dyn TreeRead, legacy: &str, current: &str) -> Result<Vec<RepoPath>, StoreError> {
+    let mut dirs = sub_dirs(tr, &p(legacy))?;
+    dirs.extend(sub_dirs(tr, &p(current))?);
+    Ok(dirs)
+}
+
 pub fn list_transcripts(tr: &dyn TreeRead) -> Listed<TranscriptRecord> {
-    file_records(tr, &sub_dirs(tr, &p("transcripts"))?)
+    file_records(tr, &transcript_dirs(tr)?)
 }
 pub fn list_requests(tr: &dyn TreeRead) -> Listed<ProcessingRequest> {
-    file_records(tr, &[p("requests")])
+    file_records(tr, &[p("requests"), p("mutations/transcript-processing")])
 }
 pub fn list_actions(tr: &dyn TreeRead) -> Listed<ActionRecord> {
-    file_records(tr, &sub_dirs(tr, &p("actions"))?)
+    file_records(
+        tr,
+        &dated_dirs(tr, "actions", "mutations/undoable-actions")?,
+    )
 }
 pub fn list_operations(tr: &dyn TreeRead) -> Listed<OperationRecord> {
-    file_records(tr, &sub_dirs(tr, &p("operations"))?)
+    file_records(
+        tr,
+        &dated_dirs(tr, "operations", "mutations/graph-changes")?,
+    )
 }
 
 pub fn read_graph(tr: &dyn TreeRead) -> Result<GraphRecord, StoreError> {
@@ -229,7 +287,8 @@ fn find_file(
 }
 
 /// Resolve any id to its current location (spec §2.1: paths are never cached as authority).
-/// ts_/st_/cl_/tpl_ → scan; app_/rq_ → direct path; tr_ → transcripts/*/<id>.toml; act_/op_ → */<id>.toml;
+/// Operational records scan both current and legacy layouts and reject duplicate IDs.
+/// app_ uses its direct path; other standalone objects scan their supported roots.
 /// mem_/ns_/ef_/pl_ → Ok(None) (not standalone objects). `folder` = object dir (folder records) or the file's parent.
 pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
     match id.kind() {
@@ -238,10 +297,10 @@ pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, S
         IdKind::Clone => find_by_id(all_clones(tr), id),
         IdKind::Template => find_by_id(list_templates(tr), id),
         IdKind::Application => find_file(tr, &[p("applications")], id),
-        IdKind::Request => find_file(tr, &[p("requests")], id),
-        IdKind::Transcript => find_file(tr, &sub_dirs(tr, &p("transcripts"))?, id),
-        IdKind::Action => find_file(tr, &sub_dirs(tr, &p("actions"))?, id),
-        IdKind::Operation => find_file(tr, &sub_dirs(tr, &p("operations"))?, id),
+        IdKind::Request => find_by_id(list_requests(tr), id),
+        IdKind::Transcript => find_by_id(list_transcripts(tr), id),
+        IdKind::Action => find_by_id(list_actions(tr), id),
+        IdKind::Operation => find_by_id(list_operations(tr), id),
         IdKind::NativeSession | IdKind::Member | IdKind::Effect | IdKind::Plan => Ok(None),
     }
 }

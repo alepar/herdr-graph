@@ -1,4 +1,4 @@
-//! Processing request `requests/<rq-id>.toml` (spec §8).
+//! Processing request `mutations/transcript-processing/<rq-id>.toml` (spec §8).
 use crate::model::common::{ByteRange, Timestamp};
 use crate::model::ids::{AnyId, OpId, RequestId, TranscriptId};
 use serde::{Deserialize, Serialize};

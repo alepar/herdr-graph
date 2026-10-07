@@ -486,6 +486,7 @@ fn transcript_record_roundtrip() {
         native_session: NsId::new(),
         seat: SeatId::new(),
         clone: CloneId::new(),
+        capture_attribution: None,
         source_seat_summaries_enabled_at_capture: true,
         coverage: vec![
             ByteRange { start: 0, end: 100 },
@@ -508,6 +509,7 @@ fn transcript_record_roundtrip() {
         native_session: NsId::new(),
         seat: SeatId::new(),
         clone: CloneId::new(),
+        capture_attribution: None,
         source_seat_summaries_enabled_at_capture: false,
         coverage: vec![],
         gaps: vec![],

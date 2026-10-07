@@ -89,11 +89,11 @@ pub fn prepare(tree: &dyn TreeRead, rq: &ProcessingRequest) -> Result<Prepared, 
         .map(|(_, t)| t)
         .find(|t| t.id == rq.transcript)
         .ok_or(DeliverOutcome::Obsolete)?;
-    let source_seat = g
-        .seats
-        .get(&tr.seat)
-        .map(|s| s.name.clone())
-        .unwrap_or_else(|| tr.seat.to_string());
+    let source_seat = tr
+        .capture_attribution
+        .as_ref()
+        .map(|capture| capture.seat_name.clone())
+        .unwrap_or_else(|| format!("{} (capture name unknown)", tr.seat));
     match resolve_destination(&g, tree, &tr.seat).map_err(read)? {
         Destination::Ready { thread, panes, .. } => Ok(Prepared {
             rq: rq.id.clone(),
@@ -301,10 +301,12 @@ impl EffectExecutor for DeliveryExecutor {
             let Ok(rq_id) = RequestId::parse(e.object.as_str()) else {
                 return ExecOutcome::Failed(format!("{} is not a request id", e.object));
             };
-            let rq = match crate::store::record::read_toml::<ProcessingRequest>(
-                cx.tree,
-                &layout::request_record(&rq_id),
-            ) {
+            let path = match layout::locate(cx.tree, &rq_id.to_any()) {
+                Ok(Some(loc)) => loc.record_path,
+                Ok(None) => return ExecOutcome::Obsolete,
+                Err(err) => return ExecOutcome::Transient(format!("cannot locate {rq_id}: {err}")),
+            };
+            let rq = match crate::store::record::read_toml::<ProcessingRequest>(cx.tree, &path) {
                 Ok(Some(r)) => r,
                 Ok(None) => return ExecOutcome::Obsolete,
                 Err(err) => return ExecOutcome::Transient(format!("cannot read {rq_id}: {err}")),

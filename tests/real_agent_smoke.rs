@@ -360,7 +360,9 @@ fn real_agent_seat_bootstrap_and_summarizer_flow() {
         Duration::from_secs(300),
         || claude_pane_of(&rig, &rt, "summarizer"),
     );
-    let record = rig.instance.join(format!("requests/{rq}.toml"));
+    let record = rig
+        .instance
+        .join(format!("mutations/transcript-processing/{rq}.toml"));
     let acked = wait_until(
         "delivery dispatched (ACK) before completion",
         Duration::from_secs(300),
@@ -386,12 +388,14 @@ fn real_agent_seat_bootstrap_and_summarizer_flow() {
     );
 
     // Coverage: the transcript record's coverage contains the request range.
-    let tr_record = std::fs::read_dir(rig.instance.join("transcripts"))
-        .expect("transcripts dir")
-        .flatten()
-        .map(|d| d.path().join(format!("{transcript}.toml")))
-        .find(|p| p.exists())
+    use herdr_graph::ports::store::Store;
+    let store = herdr_graph::store::GitStore::open(&rig.instance).unwrap();
+    let transcript_id = transcript.parse().unwrap();
+    let loc = store
+        .locate(&store.head().unwrap(), &transcript_id)
+        .unwrap()
         .expect("transcript record");
+    let tr_record = rig.instance.join(loc.record_path.as_str());
     let tr_text = std::fs::read_to_string(&tr_record).unwrap();
     assert!(
         tr_text.contains("coverage"),

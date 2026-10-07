@@ -575,12 +575,12 @@ fn ff_updates_files_and_view_rev() {
     assert!(worktree::read_dirty(&fx.root).is_empty());
     assert!(
         fx.root
-            .join(format!("operations/2026-10/{op}.toml"))
+            .join(format!("mutations/graph-changes/2026-10/{op}.toml"))
             .exists()
     );
     assert!(
         fx.root
-            .join(format!("operations/2026-10/{op2}.toml"))
+            .join(format!("mutations/graph-changes/2026-10/{op2}.toml"))
             .exists()
     );
 }

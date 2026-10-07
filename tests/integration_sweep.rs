@@ -1450,7 +1450,7 @@ mod wiring {
 
         // Action files on disk parse as ActionRecord.
         let mut acts = Vec::new();
-        for month in std::fs::read_dir(root.join("actions"))
+        for month in std::fs::read_dir(root.join("mutations/undoable-actions"))
             .expect("actions dir")
             .flatten()
         {

@@ -1,4 +1,4 @@
-//! Operation record `operations/<yyyy-mm>/<op-id>.toml` (spec §3.4).
+//! Operation record `mutations/graph-changes/<yyyy-mm>/<op-id>.toml` (spec §3.4).
 use crate::model::change::{ReliedOn, RequestKind, Requester};
 use crate::model::common::{CommitId, Timestamp};
 use crate::model::ids::{ActionId, OpId, PlanId};

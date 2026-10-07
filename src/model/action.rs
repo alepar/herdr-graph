@@ -1,4 +1,4 @@
-//! Action-record envelope `actions/<yyyy-mm>/<act-id>.toml`, shared by observer/templates/plan
+//! Action-record envelope `mutations/undoable-actions/<yyyy-mm>/<act-id>.toml`, shared by observer/templates/plan
 //! producers and undo (spec §6).
 use crate::model::common::Timestamp;
 use crate::model::ids::{ActionId, AnyId, OpId};

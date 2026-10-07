@@ -891,7 +891,7 @@ fn hydration_undo_after_later_reuse_keeps_reused_seat() {
 }
 
 #[test]
-fn template_edit_undo_inverse_patch() {
+fn layout_compat_old_template_edit_undo_inverse_patch() {
     let fx = fx();
     let e = MemberId::new();
     create_template(&fx, "solo", &[m(&e, "engineer", "deferred")]);
@@ -912,6 +912,49 @@ fn template_edit_undo_inverse_patch() {
         Some("opus")
     );
 
+    // Recreate an action committed by the old layout. Preserve its compensation bytes exactly.
+    let head = fx.store.head().unwrap();
+    let current = layout::locate(&view(&fx), &act.id.to_any())
+        .unwrap()
+        .unwrap();
+    let old_path =
+        crate::ports::store::RepoPath::new(&format!("actions/2026-10/{}.toml", act.id)).unwrap();
+    let original_bytes = fx
+        .store
+        .read_file(&head, &current.record_path)
+        .unwrap()
+        .unwrap();
+    let mut edits = crate::store::tree::EditSet::default();
+    edits.delete(current.record_path);
+    edits.put(old_path.clone(), original_bytes.clone());
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|repo| {
+            let sig = crate::store::git::graph_signature()?;
+            let parent = repo.find_commit(git2::Oid::from_str(&head.0)?)?;
+            repo.commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "legacy action fixture",
+                &repo.find_tree(tree)?,
+                &[&parent],
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        fx.store
+            .read_file(&fx.store.head().unwrap(), &old_path)
+            .unwrap()
+            .unwrap(),
+        original_bytes
+    );
+    assert!(
+        list_candidates(&view(&fx), 20)
+            .unwrap()
+            .iter()
+            .any(|c| c.act == act.id)
+    );
     let sp = plan(&fx, &format!("undo {}", act.id));
     assert_eq!(
         kinds_of(&sp, "template.edit").len(),
@@ -925,6 +968,16 @@ fn template_edit_undo_inverse_patch() {
         tpl(&fx, "solo").members[0].defaults.model,
         None,
         "the changed field is back to its before-value"
+    );
+    let old_after: ActionRecord = read_toml(&view(&fx), &old_path).unwrap().unwrap();
+    assert_eq!(old_after.compensation, act.compensation);
+    assert_eq!(old_after.undone_by, vec![row.op.clone()]);
+    assert_eq!(
+        layout::locate(&view(&fx), &act.id.to_any())
+            .unwrap()
+            .unwrap()
+            .record_path,
+        old_path
     );
     let undo = action_of(&fx, &row);
     assert_eq!(

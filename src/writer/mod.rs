@@ -506,7 +506,7 @@ impl WriterCore {
         }
     }
 
-    /// Step 6: `operations/<yyyy-mm>/<op>.toml` rides in the same commit as the change.
+    /// Step 6: `mutations/graph-changes/<yyyy-mm>/<op>.toml` rides in the same commit as the change.
     fn write_operation_record(
         &self,
         cx: &mut MutationCx<'_>,

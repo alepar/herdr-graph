@@ -6,7 +6,9 @@ use super::coverage::{gaps, merge_coverage};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::CloneRecord;
 use crate::model::request::{DeliveryAttempt, ProcessingRequest, RequestResult, RequestStatus};
-use crate::model::transcript::TranscriptRecord;
+use crate::model::seat::SeatRecord;
+use crate::model::teamspace::TeamspaceRecord;
+use crate::model::transcript::{CaptureAttribution, TranscriptRecord};
 use crate::model::{
     AnyId, ByteRange, CloneId, NsId, RequestId, SCHEMA_VERSION, SeatId, Timestamp, TranscriptId,
 };
@@ -87,7 +89,7 @@ fn read_request(
     tree: &Overlay<'_>,
     rq: &RequestId,
 ) -> Result<(crate::ports::store::RepoPath, ProcessingRequest), MutationError> {
-    let path = layout::request_record(rq);
+    let path = existing_path(tree, &rq.to_any(), "request_missing")?;
     match tree.read_record::<ProcessingRequest>(&path)? {
         Some(r) => Ok((path, r)),
         None => Err(reject(
@@ -95,6 +97,18 @@ fn read_request(
             format!("{rq} does not exist at the committed head"),
         )),
     }
+}
+
+// Never reconstruct a destination when updating an existing record: older action compensation
+// contains its original paths and bytes, and historical transcript folders must remain fixed.
+fn existing_path(
+    tree: &dyn TreeRead,
+    id: &AnyId,
+    reason: &str,
+) -> Result<crate::ports::store::RepoPath, MutationError> {
+    layout::locate(tree, id)?
+        .map(|loc| loc.record_path)
+        .ok_or_else(|| reject(reason, format!("{id} does not exist at the committed head")))
 }
 
 /// Every request of one transcript.
@@ -153,11 +167,23 @@ fn ensure_transcript(
     {
         if found.source_seat_summaries_enabled_at_capture != s.summaries {
             found.source_seat_summaries_enabled_at_capture = s.summaries;
-            let p = layout::transcript_record(&found.seat, &found.id);
+            let p = existing_path(&cx.tree, &found.id.to_any(), "object_missing")?;
             cx.tree.put_record(p, &mut found)?;
         }
         return Ok(found);
     }
+    let seat_path = existing_path(&cx.tree, &s.seat.to_any(), "object_missing")?;
+    let seat: SeatRecord = cx
+        .tree
+        .read_record(&seat_path)?
+        .ok_or_else(|| reject("object_missing", format!("{} does not exist", s.seat)))?;
+    let team_path = existing_path(&cx.tree, &seat.teamspace.to_any(), "object_missing")?;
+    let team: TeamspaceRecord = cx.tree.read_record(&team_path)?.ok_or_else(|| {
+        reject(
+            "object_missing",
+            format!("{} does not exist", seat.teamspace),
+        )
+    })?;
     let mut rec = TranscriptRecord {
         schema: SCHEMA_VERSION,
         id: TranscriptId::new(),
@@ -166,13 +192,20 @@ fn ensure_transcript(
         native_session: s.ns.clone(),
         seat: s.seat.clone(),
         clone: s.clone.clone(),
+        capture_attribution: Some(CaptureAttribution {
+            teamspace: team.id.clone(),
+            teamspace_name: team.name.clone(),
+            seat_name: seat.name.clone(),
+        }),
         source_seat_summaries_enabled_at_capture: s.summaries,
         coverage: vec![],
         gaps: vec![],
         unresolved: s.unresolved.map(str::to_owned),
     };
-    cx.tree
-        .put_record(layout::transcript_record(s.seat, &rec.id), &mut rec)?;
+    cx.tree.put_record(
+        layout::transcript_registration_record(&team.name, &team.id, &seat.name, &seat.id, &rec.id),
+        &mut rec,
+    )?;
     link_session(cx, s.clone, s.ns, &rec.id)?;
     Ok(rec)
 }
@@ -396,12 +429,13 @@ impl Mutation for RequestCreate {
             let mut o = (*other).clone();
             o.status = RequestStatus::Unresolved;
             o.unresolved = Some(format!("{MERGED_PREFIX}{}", keeper.id));
-            cx.tree.put_record(layout::request_record(&o.id), &mut o)?;
+            let path = existing_path(&cx.tree, &o.id.to_any(), "request_missing")?;
+            cx.tree.put_record(path, &mut o)?;
         }
         keeper.range = ByteRange { start: lo, end: hi };
         let id = keeper.id.clone();
-        cx.tree
-            .put_record(layout::request_record(&id), &mut keeper)?;
+        let path = existing_path(&cx.tree, &id.to_any(), "request_missing")?;
+        cx.tree.put_record(path, &mut keeper)?;
         Ok(noop(format!("request {id} extended to bytes {lo}-{hi}")))
     }
 }
@@ -601,7 +635,7 @@ impl Mutation for RequestComplete {
             .map(|r| r.range)
             .collect();
         tr.gaps = gaps(&requested, &tr.coverage);
-        let tr_path = layout::transcript_record(&tr.seat, &tr.id);
+        let tr_path = existing_path(&cx.tree, &tr.id.to_any(), "object_missing")?;
         cx.tree.put_record(tr_path, &mut tr)?;
         Ok(noop(format!(
             "{} completed covering {}-{}",

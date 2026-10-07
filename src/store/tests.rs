@@ -213,15 +213,15 @@ mod layout_paths {
         );
         assert_eq!(
             layout::request_record(&rq).as_str(),
-            format!("requests/{rq}.toml")
+            format!("mutations/transcript-processing/{rq}.toml")
         );
         assert_eq!(
             layout::action_record(at, &act).as_str(),
-            format!("actions/2026-03/{act}.toml")
+            format!("mutations/undoable-actions/2026-03/{act}.toml")
         );
         assert_eq!(
             layout::operation_record(at, &op).as_str(),
-            format!("operations/2026-03/{op}.toml")
+            format!("mutations/graph-changes/2026-03/{op}.toml")
         );
     }
 
@@ -254,22 +254,22 @@ mod layout_paths {
         assert!(
             layout::action_record(dec, &act)
                 .as_str()
-                .starts_with("actions/2025-12/")
+                .starts_with("mutations/undoable-actions/2025-12/")
         );
         assert!(
             layout::action_record(jan, &act)
                 .as_str()
-                .starts_with("actions/2026-01/")
+                .starts_with("mutations/undoable-actions/2026-01/")
         );
         assert!(
             layout::operation_record(dec, &op)
                 .as_str()
-                .starts_with("operations/2025-12/")
+                .starts_with("mutations/graph-changes/2025-12/")
         );
         assert!(
             layout::operation_record(jan, &op)
                 .as_str()
-                .starts_with("operations/2026-01/")
+                .starts_with("mutations/graph-changes/2026-01/")
         );
     }
 }
@@ -712,6 +712,7 @@ mod git {
             native_session: NsId::new(),
             seat: seat_id.clone(),
             clone: CloneId::new(),
+            capture_attribution: None,
             source_seat_summaries_enabled_at_capture: false,
             coverage: vec![],
             gaps: vec![],
@@ -764,8 +765,86 @@ mod git {
                 .unwrap()
                 .folder
                 .as_str(),
-            "actions/2026-03"
+            "mutations/undoable-actions/2026-03"
         );
+        // Legacy and new records coexist; the ID remains authoritative.
+        let mut legacy_rq = rq.clone();
+        legacy_rq.id = RequestId::new();
+        let old_rq_path = RepoPath::new(&format!("requests/{}.toml", legacy_rq.id)).unwrap();
+        let mut mixed = EditSet::default();
+        mixed.put(old_rq_path.clone(), toml_bytes(&legacy_rq));
+        let mixed_head = commit_edits(&store, &mixed, "legacy request");
+        let mixed_view = store.at(&mixed_head);
+        assert_eq!(layout::list_requests(&mixed_view).unwrap().len(), 2);
+        assert_eq!(
+            layout::locate(&mixed_view, &legacy_rq.id.to_any())
+                .unwrap()
+                .unwrap()
+                .record_path,
+            old_rq_path
+        );
+        let mut duplicate = EditSet::default();
+        duplicate.put(
+            layout::request_record(&legacy_rq.id),
+            toml_bytes(&legacy_rq),
+        );
+        let dup_head = commit_edits(&store, &duplicate, "duplicate ID");
+        let dup_view = store.at(&dup_head);
+        assert!(
+            layout::list_requests(&dup_view).is_err(),
+            "duplicate IDs must be rejected"
+        );
+        assert!(layout::locate(&dup_view, &legacy_rq.id.to_any()).is_err());
+        let new_tr_path = layout::transcript_registration_record(
+            "../Team / Ω",
+            &TeamspaceId::new(),
+            "../../ Seat_!",
+            &seat_id,
+            &tr.id,
+        );
+        assert!(new_tr_path.as_str().starts_with("transcripts/team-ts_"));
+        assert!(new_tr_path.as_str().contains(&format!("/seat-{seat_id}/")));
+        let mut duplicate_tr = Overlay::new(&store, c.clone());
+        duplicate_tr.put_file(new_tr_path, toml_bytes(&tr));
+        assert!(
+            layout::list_transcripts(&duplicate_tr)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate ID")
+        );
+        assert!(layout::locate(&duplicate_tr, &tr.id.to_any()).is_err());
+        let mut duplicate_act = Overlay::new(&store, c.clone());
+        duplicate_act.put_file(
+            rp(&format!("actions/2026-03/{}.toml", act.id)),
+            toml_bytes(&act),
+        );
+        assert!(
+            layout::list_actions(&duplicate_act)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate ID")
+        );
+        assert!(layout::locate(&duplicate_act, &act.id.to_any()).is_err());
+        let op = OpId::new();
+        let op_bytes = format!("schema = 1\nid = '{op}'\nrev = 1\nkind = 'bookkeeping'\nsummary = 'old operation'\nstate = 'committed'\nadmitted_at = '2026-03-09T10:00:00Z'\n[requester]\n").into_bytes();
+        let mut operations = Overlay::new(&store, c.clone());
+        let old_op_path = rp(&format!("operations/2026-03/{op}.toml"));
+        operations.put_file(old_op_path.clone(), op_bytes.clone());
+        assert_eq!(
+            layout::locate(&operations, &op.to_any())
+                .unwrap()
+                .unwrap()
+                .record_path,
+            old_op_path
+        );
+        operations.put_file(layout::operation_record(at, &op), op_bytes);
+        assert!(
+            layout::list_operations(&operations)
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate ID")
+        );
+        assert!(layout::locate(&operations, &op.to_any()).is_err());
         // Absent objects, and kinds that are not standalone objects.
         assert_eq!(store.locate(&c, &OpId::new().to_any()).unwrap(), None);
         assert_eq!(
