@@ -17,6 +17,7 @@ import re
 import shutil
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -367,7 +368,131 @@ def cleanup_owned(registry, owner, tracked=None):
             'reaped': sorted(reaped), 'survivors': survivors}
 
 
-def run_suite(executable, expected, env, directory, timeout, expected_roots=0):
+# Only actual runtime diagnostic destinations. Never walk graph content, Git,
+# transcripts, or plugin packages. The plugin daemon uses the graph log too.
+THREADS_DIAGNOSTIC_NODES = (
+    'threads-state/node',
+    'home/.local/state/herdr/plugins/herdr-threads/node',
+    'home/.local/state/herdr/plugins/herdr-threads/saved-old-node',
+)
+
+
+def open_owned(root_fd, relative, directory=False):
+    """Open every component relative to a pinned owned root, refusing symlinks.
+
+    No resolve/glob/rglob: neither a file nor an intermediate directory can
+    redirect inspection outside that root, including during a rename race.
+    """
+    parts = Path(relative).parts
+    if not parts or Path(relative).is_absolute() or any(p in ('.', '..') for p in parts):
+        raise ValueError(f'invalid relative diagnostic path: {relative}')
+    fd = os.dup(root_fd)
+    try:
+        for index, part in enumerate(parts):
+            is_dir = index < len(parts) - 1 or directory
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            if is_dir:
+                flags |= os.O_DIRECTORY
+            child = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        if not directory and not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f'not a regular diagnostic file: {relative}')
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def inspect_diagnostics(roots, owner, destination, profile=None):
+    """Called only after cleanup/quiescence; archive exact bytes before PASS.
+
+    A missing Herdr log always fails. Graph suites require graph daemon logs;
+    threads suites require all three exercised nodes (including the saved node).
+    Optional destinations are still inspected when present. Existing node
+    directories require their daemon log and at least one startup-attempt log.
+    """
+    destination.mkdir()
+    errors, files, absent = [], [], []
+    nodes = 0
+    plugins = 0
+    for root_name in roots:
+        root = Path(root_name)
+        root_fd = None
+        try:
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            with os.fdopen(open_owned(root_fd, '.matrix-owner')) as marker:
+                if marker.read() != owner:
+                    raise ValueError('root ownership changed before diagnostic inspection')
+
+            def capture(relative, required=True):
+                try:
+                    fd = open_owned(root_fd, relative)
+                    with os.fdopen(fd, 'rb') as source:
+                        data = source.read()
+                    target = destination / root.name / relative
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
+                    panic = re.search(rb"(?:^|\n)\s*thread '[^\r\n]*' (?:\(\d+\) )?panicked at(?:\s|:)", data)
+                    files.append({'root': str(root), 'relative': relative,
+                                  'archive': str(target), 'bytes': len(data),
+                                  'sha256': hashlib.sha256(data).hexdigest(), 'panic': bool(panic)})
+                    if panic:
+                        errors.append(f'Rust panic diagnostic: {root / relative}')
+                except FileNotFoundError as error:
+                    if required:
+                        errors.append(f'required diagnostic missing: {root / relative}: {error}')
+                    else:
+                        absent.append(str(root / relative))
+                except (OSError, ValueError) as error:
+                    errors.append(f'diagnostic inspection failed: {root / relative}: {error}')
+
+            capture('herdr.log')
+            capture('graph/.graph-local/daemon.log', required=profile == 'e2e_private_herdr')
+            try:
+                fd = open_owned(root_fd, 'plugin', directory=True)
+                os.close(fd)
+            except FileNotFoundError:
+                absent.append(str(root / 'plugin-diagnostics.log'))
+            else:
+                plugins += 1
+                capture('plugin-diagnostics.log')
+            for node in THREADS_DIAGNOSTIC_NODES:
+                try:
+                    fd = open_owned(root_fd, node, directory=True)
+                    os.close(fd)
+                except FileNotFoundError:
+                    absent.append(str(root / node))
+                    continue
+                nodes += 1
+                capture(node + '/daemon.log')
+                capture(node + '/daemon.log.1', required=False)
+                logs_fd = open_owned(root_fd, node + '/logs', directory=True)
+                try:
+                    names = sorted(os.listdir(logs_fd))
+                finally:
+                    os.close(logs_fd)
+                startup = [name for name in names if re.fullmatch(r'startup-\d+-[0-9a-f]{8}\.log', name)]
+                if not startup:
+                    errors.append(f'required startup diagnostics missing: {root / node / "logs"}')
+                for name in startup:
+                    capture(node + '/logs/' + name)
+        except (OSError, ValueError) as error:
+            errors.append(f'diagnostic inventory failed: {root}: {error}')
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+    if profile == 'e2e_private_herdr' and plugins != 1:
+        errors.append(f'expected 1 private plugin diagnostic destination, got {plugins}')
+    if profile == 'threads_real' and nodes != 3:
+        errors.append(f'expected 3 runtime threads diagnostic nodes, got {nodes}')
+    return {'clean': not errors, 'errors': errors, 'files': files, 'absent_optional': absent,
+            'threads_nodes': nodes, 'private_plugins': plugins, 'profile': profile,
+            'excluded': ['graph content and Git objects', 'native transcripts', 'plugin package files'],
+            'contract': 'bounded known destinations, no symlinks, exact raw bytes after owned process cleanup'}
+
+
+def run_suite(executable, expected, env, directory, timeout, expected_roots=0, diagnostic_profile=None):
     directory.mkdir(parents=True, exist_ok=False)
     registry = directory / 'roots.jsonl'
     owner = uuid.uuid4().hex
@@ -408,6 +533,15 @@ def run_suite(executable, expected, env, directory, timeout, expected_roots=0):
             result.update(status='FAIL', detail=f'expected {expected_roots} runtime fixture roots, got {len(cleanup["roots"])}')
         if not cleanup['clean']:
             result.update(status='FAIL', detail='cleanup gate failed: ' + '; '.join(cleanup['errors']))
+    try:
+        diagnostics = inspect_diagnostics(cleanup.get('roots', []), owner, directory / 'diagnostics',
+                                          diagnostic_profile)
+    except (OSError, ValueError) as error:
+        diagnostics = {'clean': False, 'errors': [f'diagnostic preservation failed: {error}']}
+    result['diagnostics'] = diagnostics
+    (directory / 'diagnostics.json').write_text(json.dumps(diagnostics, indent=2) + '\n')
+    if not diagnostics['clean']:
+        result.update(status='FAIL', detail='diagnostic gate failed: ' + '; '.join(diagnostics['errors']))
     if result['status'] == 'PASS':
         try:
             for root in cleanup['roots']:
@@ -556,7 +690,7 @@ def main():
                            PATH=str(binary.parent) + os.pathsep + env.get('PATH', '/usr/bin:/bin'))
             for name, expected in SUITES.items():
                 row['suites'][name] = run_suite(executables[name], expected, run_env, directory / name, args.timeout,
-                                                       {'e2e_private_herdr': 30, 'herdr_client': 5, 'threads_real': 3}[name])
+                                                       {'e2e_private_herdr': 30, 'herdr_client': 5, 'threads_real': 3}[name], name)
             if all(result['status'] == 'PASS' for result in row['suites'].values()):
                 row['status'] = 'PASS'
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

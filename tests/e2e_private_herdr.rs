@@ -2312,6 +2312,27 @@ fn e2e_plugin_link_status_action_single_daemon() {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        // Plugin commands are captured by Herdr, not inherited by the harness.
+        // Preserve both decoded streams for the post-quiescence matrix log gate.
+        if std::env::var("HG_HERDR_MATRIX").as_deref() == Ok("1") {
+            use std::io::Write;
+            let mut diagnostic = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(rig.herdr.root.join("plugin-diagnostics.log"))
+                .unwrap();
+            for entry in &found {
+                for stream in ["stdout", "stderr"] {
+                    writeln!(
+                        diagnostic,
+                        "{}",
+                        entry[stream].as_str().expect("plugin log stream")
+                    )
+                    .unwrap();
+                }
+            }
+            diagnostic.sync_all().unwrap();
+        }
         found
     };
     let startup = logs(1)

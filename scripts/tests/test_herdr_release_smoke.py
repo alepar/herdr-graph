@@ -78,6 +78,129 @@ class DriverTests(unittest.TestCase):
         self.assertIn(diagnostic, Path(result['log']).read_text())
         self.assertEqual(json.loads((directory / 'result.json').read_text())['status'], 'FAIL')
 
+    def diagnostic_fixture(self, files, setup=''):
+        private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
+        private.mkdir()
+        self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
+        body = f"""import json, os
+from pathlib import Path
+root = Path({str(private)!r})
+(root / '.matrix-owner').write_text(os.environ['HG_MATRIX_OWNER'])
+for name, data in {files!r}.items():
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data)
+{setup}
+with open(os.environ['HG_MATRIX_REGISTRY'], 'a') as registry:
+    registry.write(json.dumps({{'root': str(root)}}) + '\\n')
+print({self.output()!r})
+"""
+        return private, self.program('diagnostic-fixture', body)
+
+    def run_diagnostic_fixture(self, files, setup=''):
+        private, fake = self.diagnostic_fixture(files, setup)
+        result = self.driver.run_suite(fake, ['core'], dict(os.environ), self.root / 'run', 5, 1)
+        return private, result
+
+    def test_child_log_only_panic_fails_and_retains_raw_evidence(self):
+        panic = "thread 'tokio-runtime-worker' panicked at src/task.rs:1:1:\nfailed worker\n"
+        private, result = self.run_diagnostic_fixture({
+            'herdr.log': '', 'graph/.graph-local/daemon.log': panic})
+        self.assertEqual(result['returncode'], 0)
+        self.assertEqual(result['cases'], {'core': 'PASS'})
+        self.assertTrue(result['cleanup']['clean'])
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertTrue(private.exists())
+        raw = self.root / 'run/diagnostics' / private.name / 'graph/.graph-local/daemon.log'
+        self.assertEqual(raw.read_text(), panic)
+
+    def test_success_preserves_diagnostics_before_removing_owned_root(self):
+        private, result = self.run_diagnostic_fixture({'herdr.log': 'server ready\n'})
+        self.assertEqual(result['status'], 'PASS')
+        self.assertFalse(private.exists())
+        self.assertEqual((self.root / 'run/diagnostics' / private.name / 'herdr.log').read_text(),
+                         'server ready\n')
+        self.assertTrue(result['diagnostics']['clean'])
+
+    def test_missing_required_diagnostic_fails_and_retains_root(self):
+        private, result = self.run_diagnostic_fixture({})
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertTrue(private.exists())
+        self.assertIn('herdr.log', str(result['diagnostics']['errors']))
+
+    def test_log_and_ancestor_symlinks_are_rejected_without_reading_external_data(self):
+        for ancestor in (False, True):
+            with self.subTest(ancestor=ancestor):
+                outside = self.root / ('outside-dir' if ancestor else 'outside.log')
+                if ancestor:
+                    outside.mkdir()
+                    (outside / 'daemon.log').write_text('outside secret')
+                    setup = f"(root / 'graph').mkdir(); (root / 'graph/.graph-local').symlink_to({str(outside)!r})"
+                    files = {'herdr.log': ''}
+                else:
+                    outside.write_text('outside secret')
+                    setup = f"(root / 'herdr.log').symlink_to({str(outside)!r})"
+                    files = {}
+                private, fake = self.diagnostic_fixture(files, setup)
+                directory = self.root / f'run-{ancestor}'
+                result = self.driver.run_suite(fake, ['core'], dict(os.environ), directory, 5, 1)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertTrue(private.exists())
+                self.assertNotIn('outside secret', str(result))
+                self.assertFalse(any(p.is_file() and b'outside secret' in p.read_bytes()
+                                     for p in (directory / 'diagnostics').rglob('*')))
+
+    def test_unreadable_log_fails_and_retains_root(self):
+        private, result = self.run_diagnostic_fixture({'herdr.log': ''},
+                                                     "(root / 'herdr.log').chmod(0)")
+        self.addCleanup(lambda: (private / 'herdr.log').chmod(0o600) if private.exists() else None)
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertTrue(private.exists())
+
+    def test_threads_saved_rotated_and_startup_logs_are_inspected(self):
+        panic = "thread 'worker' (123) panicked at worker.rs:9:2:\nfailure\n"
+        for relative in ('threads-state/node/daemon.log.1',
+                         'home/.local/state/herdr/plugins/herdr-threads/saved-old-node/daemon.log',
+                         'threads-state/node/logs/startup-123-abcd1234.log'):
+            with self.subTest(relative=relative):
+                files = {'herdr.log': '', 'threads-state/node/daemon.log': '', relative: panic}
+                if 'saved-old-node' in relative:
+                    files[relative.replace('daemon.log', 'logs/startup-1-abcd1234.log')] = ''
+                files.setdefault('threads-state/node/logs/startup-1-abcd1234.log', '')
+                private, fake = self.diagnostic_fixture(files)
+                directory = self.root / ('run-' + str(len(list(self.root.glob('run-*')))))
+                result = self.driver.run_suite(fake, ['core'], dict(os.environ), directory, 5, 1)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertTrue(private.exists())
+                self.assertEqual((directory / 'diagnostics' / private.name / relative).read_text(), panic)
+
+    def test_private_plugin_output_is_required_and_checked(self):
+        for data in (None, "thread 'plugin-worker' panicked at plugin.rs:1:1:\n"):
+            with self.subTest(data=data):
+                files = {'herdr.log': ''}
+                if data is not None:
+                    files['plugin-diagnostics.log'] = data
+                private, fake = self.diagnostic_fixture(files, "(root / 'plugin').mkdir()")
+                directory = self.root / ('missing-plugin' if data is None else 'panic-plugin')
+                result = self.driver.run_suite(fake, ['core'], dict(os.environ), directory, 5, 1)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertTrue(private.exists())
+
+    def test_suite_profile_requires_graph_and_threads_destinations(self):
+        for profile in ('e2e_private_herdr', 'threads_real'):
+            with self.subTest(profile=profile):
+                private, fake = self.diagnostic_fixture({'herdr.log': ''})
+                result = self.driver.run_suite(fake, ['core'], dict(os.environ),
+                                               self.root / profile, 5, 1, profile)
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertTrue(private.exists())
+
+    def test_graph_content_is_not_scanned_as_diagnostics(self):
+        private, result = self.run_diagnostic_fixture({
+            'herdr.log': '', 'graph/transcripts/story.log': "thread 'fiction' panicked at a story"})
+        self.assertEqual(result['status'], 'PASS')
+        self.assertFalse(private.exists())
+
     def test_sigterm_sets_cancellation_and_runs_cleanup(self):
         fake = self.program('sleeping-test', 'import time\ntime.sleep(30)\n')
         result_path = self.root / 'interrupted.json'
@@ -210,6 +333,7 @@ Path({str(result_path)!r}).write_text(json.dumps(result))
 from pathlib import Path
 root=Path({str(private)!r})
 (root/'.matrix-owner').write_text(os.environ['HG_MATRIX_OWNER'])
+(root/'herdr.log').write_text('')
 with open(os.environ['HG_MATRIX_REGISTRY'],'a') as registry:
     registry.write(json.dumps({{'root':str(root)}})+'\\n')
 print({self.output()!r})
