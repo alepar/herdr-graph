@@ -40,7 +40,20 @@ assert_ne!(old_node, new_node);
 - [ ] Update isolated real-daemon fixture for current public enrollment/session identity and node layout. Run actual discovery, local pane mapping, ensure/topic, required invite/accept/membership, Notify, exact-ID service ACK/release, busy registration and restart/recovery tests without native models. Threads no longer enrolls a seat merely from check-in; resolve explicitly.
 - [ ] Run cargo check --offline --all-targets --all-features; default library plus relevant integration tests; no-default adapter checks and real threads target with HG_REAL_THREADS=1. Record commands/results/skips/red-green, self-review and commit. Return report and concerns.
 
-### Task 2: Implement checksum-pinned Herdr matrix sweep
+### Task 2: Reviewed fresh-node reconnect for persistent graphs
+
+**Files:** Add focused threads reconnect planning/mutation/recovery module, register with src/daemon/compose.rs and CLI/plan/undo registry; modify affected threads/reconciliation/transcript models/tests only as needed. Update README recovery instructions.
+
+**Interfaces:** Consume Task1 exact namespace binding/discovery fence (consult task-1-report.md for its final functions/paths). Expose `threads reconnect --from <old-node|legacy> --to <new-node>` through existing reviewable plan/apply machinery; canonical CLI spelling may follow repo grammar if documented precisely. This explicitly changes an external namespace boundary, so ordinary undo must refuse with an actionable reverse-reconnect explanation. No live transition is performed by tests or implementation.
+
+- [ ] Add regressions for legacy populated graph and old-node graph reconnect, strict from/to/head validation, fresh graph auto-bind, same-node restart continuation, interruption/retry, and preserved snapshots/history. Use real Git/journal/writer fixtures.
+- [ ] Plan reviews exact old/new binding and changes. Writer preserves a durable migration artifact with old graph channel references, invitations, participation/opt-outs, pending request delivery and exact old operation/effect provenance. Completed requests/native transcripts/history remain untouched.
+- [ ] Reconnect recreates desired managed local channels under namespace-salted ensure/effect keys, invalidates old active membership links, and resets incomplete request delivery state with fresh generation while retaining ID/range/history. Old external participation references/opt-outs remain explicit unresolved historical data; never auto-invite or dispatch to a legacy external ID. Do not silently reconstruct channels not owned by graph.
+- [ ] Retain old pending service intents under the old identity; never move/rewrite/replay them as new-node work. Reconciliation must not consume old completed/pending effect keys as new-node results. Order local binding and committed graph transition recoverably: crash before/after either step must either resume the exact transition or fail closed, never partly dispatch.
+- [ ] Provide exact diagnostics/recovery commands, safety limits and ordinary-undo refusal. Include a fresh-node end-to-end recovery regression when current private fixture supports it; no hidden test-only bypass of production fence.
+- [ ] Run focused red/green tests and covering library/threads/transcript/plan integration suites, self-review and commit. Report commands, results and crash semantics. Do not repeat unrelated feature matrices.
+
+### Task 3: Implement checksum-pinned Herdr matrix sweep
 
 **Files:** Create scripts/herdr-release-smoke, tests/herdr-releases.tsv, scripts/tests/test_herdr_release_smoke.py, docs/validation/herdr-release-matrix.md; add/modify tests/herdr_release_smoke.rs and tests/support/{mod,private_herdr,isolated}.rs only as needed. A .github workflow may be added if it actually runs this repo's established build prerequisites; no unsupported-platform promises.
 
@@ -54,13 +67,13 @@ self.assertNotEqual(classify_case(returncode=1, output='test core ... ok', expec
 Use actual driver function names/signatures defined by implementation rather than a mirror test.
 - [ ] Pin official checksums for all initial releases/platform assets and verify source provenance. Implement explicit stable-semver floor discovery/update/check; no silent omission of unsupported/missing assets or versions. Per-version logs + machine-readable/Markdown reports and nonzero aggregate failure status.
 - [ ] Ensure opt-in real tests actually run and missing Herdr cannot silently skip. Require exact result/case counts. Handle child process groups/deadlines/teardown, retain failure evidence, and verify cleanup. Model launches remain shell/stand-in and explicitly distinct from native model validation.
-- [ ] Run script tests and one selected private release to verify end-to-end driver before the full matrix. Update docs with exact coverage and exclusions. Self-review and commit; full sweep belongs Task3.
+- [ ] Run script tests and one selected private release to verify end-to-end driver before the full matrix. Update docs with exact coverage and exclusions. Self-review and commit; full sweep belongs Task4.
 
-### Task 3: Full release qualification and final docs
+### Task 4: Full release qualification and final docs
 
 **Files:** README.md, docs/verification-matrix.md, docs/validation/herdr-release-matrix.md, current compatibility docs/release notes, test fixes limited to discovered compatibility defects.
 
-**Interfaces:** Consume Task1 node-compatible adapter and Task2 driver; record exact graph tree, upstream threads tag/SHA/protocol, each Herdr binary version/checksum, tests actually run, skips and native-runtime limits. Do not replace historical evidence with current claims.
+**Interfaces:** Consume Tasks1/2 node-compatible adapter/recovery and Task3 driver; record exact graph tree, upstream threads tag/SHA/protocol, each Herdr binary version/checksum, tests actually run, skips and native-runtime limits. Do not replace historical evidence with current claims.
 
 - [ ] Reverify latest official stable threads release/tag/local source and exact source changes; rerun all-consumer compile.
 - [ ] Run default, no-default and test-support suites sequentially; run private Herdr suite with native agents disabled; run the matrix across every pinned recent Herdr release and actual threads2 daemon cells with no credential requirements. Use appropriate escalation for isolated sockets. Do not duplicate a real-daemon suite already covered by the matrix on exactly the same tree without cause.
