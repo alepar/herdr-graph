@@ -34,6 +34,7 @@ use std::sync::Arc;
 
 /// Registers every core kind.
 pub fn register_core_kinds(reg: &mut KindRegistry) {
+    reg.register(Arc::new(crate::threads::reconnect::Reconnect));
     reg.register(Arc::new(TeamspaceCreate));
     reg.register(Arc::new(TeamspaceRetire));
     reg.register(Arc::new(TeamspaceResurrect));

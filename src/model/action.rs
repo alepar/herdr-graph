@@ -39,6 +39,7 @@ pub enum ActionKind {
     Hydrate,
     TemplateEdit,
     ApplicationRetire,
+    ThreadsReconnect,
     Undo,
 }
 

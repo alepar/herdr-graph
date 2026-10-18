@@ -49,6 +49,7 @@ fn threads_outcome(e: ThreadsError) -> DeliverOutcome {
 /// Everything a delivery needs, read from the committed tree before any await.
 #[derive(Debug, Clone)]
 pub struct Prepared {
+    pub epoch: String,
     pub rq: RequestId,
     /// Delivery attempts already recorded; the next attempt's number.
     pub n: usize,
@@ -63,7 +64,10 @@ pub struct Prepared {
 
 impl Prepared {
     pub fn op_key(&self) -> OpKey {
-        OpKey(format!("deliver:{}:{}", self.rq, self.n))
+        OpKey(crate::threads::namespace::salt(
+            &self.epoch,
+            &format!("deliver:{}:{}", self.rq, self.n),
+        ))
     }
 
     /// The fallback notification text.
@@ -96,6 +100,7 @@ pub fn prepare(tree: &dyn TreeRead, rq: &ProcessingRequest) -> Result<Prepared, 
         .unwrap_or_else(|| format!("{} (capture name unknown)", tr.seat));
     match resolve_destination(&g, tree, &tr.seat).map_err(read)? {
         Destination::Ready { thread, panes, .. } => Ok(Prepared {
+            epoch: g.epoch.clone(),
             rq: rq.id.clone(),
             n: rq.delivery.attempts.len(),
             transcript: tr.id,
@@ -127,6 +132,17 @@ impl DeliveryCore {
     /// Deliver one attempt (fresh op key per attempt number) and record it as a bookkeeping write that only
     /// applies while the attempt count is still `p.n`, so a duplicate delivery of the same attempt is a no-op.
     pub async fn deliver(
+        &self,
+        p: &Prepared,
+        writer: &dyn Writer,
+        now: Timestamp,
+        retry: bool,
+    ) -> DeliverOutcome {
+        crate::threads::namespace::EXPECTED_EPOCH
+            .scope(p.epoch.clone(), self.deliver_scoped(p, writer, now, retry))
+            .await
+    }
+    async fn deliver_scoped(
         &self,
         p: &Prepared,
         writer: &dyn Writer,
@@ -259,7 +275,12 @@ impl EffectSource for DeliverySource {
             let n = rq.delivery.attempts.len() as u64;
             out.push(PlannedEffect {
                 record: EffectRecord {
-                    id: EffectRecord::identity(&rq.created_by_op, &object, &kind, n),
+                    id: EffectRecord::identity(
+                        &rq.created_by_op,
+                        &object,
+                        &kind,
+                        crate::threads::effects::epoch_rev(&g.epoch, n),
+                    ),
                     op: rq.created_by_op.clone(),
                     object,
                     kind,
@@ -267,7 +288,7 @@ impl EffectSource for DeliverySource {
                     fencing_rev: n,
                     status: EffectStatus::Pending,
                     predicted: vec![],
-                    nonce_label: None,
+                    nonce_label: crate::threads::effects::epoch_label(&g.epoch),
                     attempts: 0,
                     last_error: None,
                     updated_at: cx.now,
@@ -297,6 +318,13 @@ impl EffectExecutor for DeliveryExecutor {
     }
 
     async fn execute(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+        let epoch = match crate::threads::namespace::epoch(cx.tree) {
+            Ok(e) => e,
+            Err(e) => return ExecOutcome::Failed(e.to_string()),
+        };
+        if e.nonce_label != crate::threads::effects::epoch_label(&epoch) {
+            return ExecOutcome::Obsolete;
+        }
         let prepared = {
             let Ok(rq_id) = RequestId::parse(e.object.as_str()) else {
                 return ExecOutcome::Failed(format!("{} is not a request id", e.object));

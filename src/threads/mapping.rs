@@ -15,8 +15,8 @@ use std::time::Duration;
 
 #[async_trait::async_trait]
 pub trait PaneSeatMap: Send + Sync {
-    /// The threads seat currently mapped to `pane`; `None` while the agent in it has not registered with
-    /// herdr-threads. The real map may allocate a bare seat; it never enrolls an agent binding.
+    /// The threads seat currently mapped to `pane`. `Some` does not imply an enrolled agent.
+    /// The real map may allocate a bare seat; it never enrolls an agent binding.
     async fn seat_for(&self, pane: &HerdrPaneId) -> Result<Option<ThreadsSeatRef>, ThreadsError>;
 }
 

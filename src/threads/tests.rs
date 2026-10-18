@@ -1475,3 +1475,114 @@ fn threads_seat_reference_helpers() {
     );
     let _ = Lifecycle::Active;
 }
+
+#[tokio::test]
+async fn reconnect_recreates_channels_without_replaying_old_effects_or_external_invites() {
+    let fx = fx();
+    let c = base(&fx).await;
+    occupy(&fx, &c, "occupant-seat").await;
+    steps(&fx, 4).await;
+    let old_thread = thread_of_seat(&fx, "foreman");
+    let old_effects = fx.journal.effects_for_object(&c.id.to_any()).unwrap();
+    assert!(!old_effects.is_empty());
+    let old_head = fx.store.head().unwrap();
+    let old_tree = fx.store.at(&old_head);
+    let cache = Arc::new(effects::GraphCache::default());
+    let old_graph = cache.get(&old_tree, &old_head).unwrap();
+    let executor = effects::ThreadsExecutor::new(
+        fx.threads.clone(),
+        fx.map.clone(),
+        fx.journal.clone(),
+        cache.clone(),
+    );
+    plan_and_apply(
+        &fx,
+        "participation join external-old --scope seat --seat foreman",
+    );
+    // Capture an admitted old-node channel write before the boundary; submit it after the reconnect.
+    let mut stale = crate::transcripts::mutations::bookkeeping_request(
+        "channel",
+        json!({"object":seat(&fx,"foreman").id,"thread_id":"late-old-id"}),
+    );
+    namespace::stamp(&mut stale.args, "");
+    let head = fx.store.head().unwrap();
+    plan_and_apply(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            head.0
+        ),
+    );
+    let stale_op = fx.w.admit(stale).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.journal.get(&stale_op).unwrap().unwrap().state,
+        OpState::Rejected
+    );
+    steps(&fx, 6).await;
+    let fresh_thread = thread_of_seat(&fx, "foreman");
+    assert_ne!(fresh_thread, old_thread);
+    let clone = clone_rec(&fx, &c.id);
+    assert!(!clone.invitations.is_empty());
+    assert!(clone.invitations.iter().all(|i| i.thread != "external-old"));
+    let current_epoch = namespace::epoch(&view(&fx)).unwrap();
+    let new_effects = fx.journal.effects_for_object(&c.id.to_any()).unwrap();
+    assert!(
+        new_effects
+            .iter()
+            .any(|e| e.nonce_label == Some(format!("threads-epoch:{current_epoch}")))
+    );
+    for old in old_effects {
+        assert!(new_effects.iter().any(|e| e.id == old.id));
+    }
+    // Warmed old Graph + old effect cannot become target-node work, and a new
+    // effect cannot be executed against the old graph snapshot either.
+    use crate::reconcile::executor::{EffectExecutor, ExecCx, ExecOutcome};
+    let herdr = FakeHerdr::new();
+    let snapshot = crate::ports::herdr::HerdrApi::snapshot(herdr.as_ref())
+        .await
+        .unwrap();
+    let current_head = fx.store.head().unwrap();
+    let current_tree = fx.store.at(&current_head);
+    let cx = ExecCx {
+        tree: &current_tree,
+        head: &current_head,
+        snapshot: &snapshot,
+        herdr: herdr.as_ref(),
+        writer: fx.w.as_ref(),
+        now: fx.clock.now(),
+    };
+    let before_stale = fx.threads.calls().len();
+    let old_effect = new_effects
+        .iter()
+        .find(|e| e.nonce_label.is_none())
+        .unwrap();
+    assert!(!executor.is_implied(&cx, old_effect));
+    assert_eq!(
+        executor.execute(&cx, old_effect).await,
+        ExecOutcome::Obsolete
+    );
+    assert!(old_graph.epoch.is_empty());
+    let old_cx = ExecCx {
+        tree: &old_tree,
+        head: &old_head,
+        ..cx
+    };
+    let new_effect = new_effects
+        .iter()
+        .find(|e| e.nonce_label.is_some())
+        .unwrap();
+    assert_eq!(
+        executor.execute(&old_cx, new_effect).await,
+        ExecOutcome::Obsolete
+    );
+    assert_eq!(fx.threads.calls().len(), before_stale);
+    let fresh_count = fx.threads.calls().len();
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.threads.calls().len(),
+        fresh_count,
+        "settled new namespace must not resend"
+    );
+}

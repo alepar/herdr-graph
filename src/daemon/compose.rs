@@ -107,6 +107,9 @@ pub fn production_threads(
     inputs: DiscoveryInputs,
 ) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
     let endpoint = Arc::new(lazy::Endpoint::from_env(ctx, inputs));
+    // Bind a genuinely unused graph before its first writer commit. Discovery failure remains
+    // a visible per-call error, not a startup failure or permission to adopt legacy records.
+    let _ = endpoint.locate();
     (
         Arc::new(lazy::LazyThreads::new(endpoint.clone())),
         Arc::new(lazy::LazyMap::new(endpoint)),
@@ -588,7 +591,7 @@ mod lazy {
             }
         }
 
-        fn locate(&self) -> Result<Discovered, ThreadsError> {
+        pub(super) fn locate(&self) -> Result<Discovered, ThreadsError> {
             if let Some(d) = self
                 .explicit
                 .as_ref()
@@ -614,6 +617,17 @@ mod lazy {
             })?;
             self.bind(discovered.instance)?;
             Ok(discovered)
+        }
+
+        async fn guard(&self) -> Result<std::fs::File, ThreadsError> {
+            let guard = crate::threads::namespace::call_guard(&self.graph_root)
+                .await
+                .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+            if self.graph_root.join(".git").exists() {
+                crate::threads::namespace::check_call(&self.graph_root)
+                    .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+            }
+            Ok(guard)
         }
 
         fn bind(&self, node: herdr_threads::node::NodeUuid) -> Result<(), ThreadsError> {
@@ -643,15 +657,25 @@ mod lazy {
 
     pub struct LazyThreads {
         endpoint: Arc<Endpoint>,
-        inner: Mutex<Option<(Discovered, Arc<ServiceThreads>)>>,
+        inner: Arc<Mutex<Option<(Discovered, Arc<ServiceThreads>)>>>,
     }
 
     impl LazyThreads {
         pub fn new(endpoint: Arc<Endpoint>) -> Self {
             Self {
                 endpoint,
-                inner: Mutex::new(None),
+                inner: Arc::new(Mutex::new(None)),
             }
+        }
+
+        async fn get_async(&self) -> Result<Arc<ServiceThreads>, ThreadsError> {
+            let me = Self {
+                endpoint: self.endpoint.clone(),
+                inner: self.inner.clone(),
+            };
+            tokio::task::spawn_blocking(move || me.get())
+                .await
+                .map_err(|e| ThreadsError::Disconnected(e.to_string()))?
         }
 
         fn get(&self) -> Result<Arc<ServiceThreads>, ThreadsError> {
@@ -665,7 +689,18 @@ mod lazy {
             *slot = None;
             let t = ServiceThreads::with_system_clock(
                 d.socket.clone(),
-                self.endpoint.intents.clone(),
+                crate::threads::namespace::intent_dir(
+                    &self.endpoint.intents,
+                    &self.endpoint.graph_root,
+                )
+                .or_else(|e| {
+                    if !self.endpoint.graph_root.join(".git").exists() {
+                        Ok(self.endpoint.intents.clone())
+                    } else {
+                        Err(e)
+                    }
+                })
+                .map_err(|e| ThreadsError::Rejected(e.to_string()))?,
                 d.instance,
             )
             .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
@@ -683,7 +718,11 @@ mod lazy {
             topic: &str,
             op_key: &OpKey,
         ) -> Result<ThreadRef, ThreadsError> {
-            self.get()?.ensure_thread(scope, topic, op_key).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .ensure_thread(scope, topic, op_key)
+                .await
         }
         async fn invite(
             &self,
@@ -692,21 +731,30 @@ mod lazy {
             constraint: InviteConstraint,
             op_key: &OpKey,
         ) -> Result<(), ThreadsError> {
-            self.get()?.invite(thread, seat, constraint, op_key).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .invite(thread, seat, constraint, op_key)
+                .await
         }
         async fn membership(
             &self,
             thread: &ThreadRef,
             seat: &ThreadsSeatRef,
         ) -> Result<Option<InvitationState>, ThreadsError> {
-            self.get()?.membership(thread, seat).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.membership(thread, seat).await
         }
         async fn membership_detail(
             &self,
             thread: &ThreadRef,
             seat: &ThreadsSeatRef,
         ) -> Result<Option<MembershipDetail>, ThreadsError> {
-            self.get()?.membership_detail(thread, seat).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .membership_detail(thread, seat)
+                .await
         }
         async fn notify(
             &self,
@@ -715,7 +763,11 @@ mod lazy {
             body: &str,
             op_key: &OpKey,
         ) -> Result<(), ThreadsError> {
-            self.get()?.notify(thread, severity, body, op_key).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .notify(thread, severity, body, op_key)
+                .await
         }
         async fn set_topic(
             &self,
@@ -723,7 +775,11 @@ mod lazy {
             topic: &str,
             op_key: &OpKey,
         ) -> Result<(), ThreadsError> {
-            self.get()?.set_topic(thread, topic, op_key).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .set_topic(thread, topic, op_key)
+                .await
         }
         async fn release_requirement(
             &self,
@@ -731,7 +787,11 @@ mod lazy {
             seat: &ThreadsSeatRef,
             op_key: &OpKey,
         ) -> Result<(), ThreadsError> {
-            self.get()?.release_requirement(thread, seat, op_key).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .release_requirement(thread, seat, op_key)
+                .await
         }
         async fn send_request(
             &self,
@@ -740,7 +800,9 @@ mod lazy {
             body: &str,
             op_key: &OpKey,
         ) -> Result<MessageRef, ThreadsError> {
-            self.get()?
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
                 .send_request(thread, recipients, body, op_key)
                 .await
         }
@@ -748,23 +810,25 @@ mod lazy {
             &self,
             messages: &[MessageRef],
         ) -> Result<Vec<MessageReceipts>, ThreadsError> {
-            self.get()?.receipt_state(messages).await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.receipt_state(messages).await
         }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
-            self.get()?.delivery_capability().await
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.delivery_capability().await
         }
     }
 
     pub struct LazyMap {
         endpoint: Arc<Endpoint>,
-        inner: Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>,
+        inner: Arc<Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>>,
     }
 
     impl LazyMap {
         pub fn new(endpoint: Arc<Endpoint>) -> Self {
             Self {
                 endpoint,
-                inner: Mutex::new(None),
+                inner: Arc::new(Mutex::new(None)),
             }
         }
     }
@@ -775,17 +839,22 @@ mod lazy {
             &self,
             pane: &HerdrPaneId,
         ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
-            let map = {
-                let mut slot = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                let d = self.endpoint.locate()?;
+            let _guard = self.endpoint.guard().await?;
+            let me = Self {
+                endpoint: self.endpoint.clone(),
+                inner: self.inner.clone(),
+            };
+            let map = tokio::task::spawn_blocking(move || {
+                let mut slot = me.inner.lock().unwrap_or_else(|e| e.into_inner());
+                let d = me.endpoint.locate()?;
                 if slot.as_ref().is_none_or(|(cached, _)| cached != &d) {
                     *slot = None;
                     let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
                         Arc::new(herdr_threads::app::SystemClock::new());
                     // RuntimeContext canonicalizes the selected host parent consistently with threads.
                     let context = herdr_threads::daemon::paths::RuntimeContext::explicit(
-                        self.endpoint.graph_root.clone(),
-                        self.endpoint.herdr_socket.clone(),
+                        me.endpoint.graph_root.clone(),
+                        me.endpoint.herdr_socket.clone(),
                         None,
                     )
                     .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
@@ -800,8 +869,10 @@ mod lazy {
                     ));
                     *slot = Some((d, m));
                 }
-                slot.as_ref().unwrap().1.clone()
-            };
+                Ok::<_, ThreadsError>(slot.as_ref().unwrap().1.clone())
+            })
+            .await
+            .map_err(|e| ThreadsError::Disconnected(e.to_string()))??;
             map.seat_for(pane).await
         }
     }
@@ -883,6 +954,18 @@ mod lazy {
                 intents: dir.path().join("graph/.graph-local/threads-intents"),
                 graph_root: dir.path().join("graph"),
             });
+            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
+            let ctx = DaemonCtx {
+                paths: crate::config::InstancePaths::new(&endpoint.graph_root),
+                herdr_socket: endpoint.herdr_socket.clone(),
+                started_at: chrono::Utc::now(),
+                claude_root: dir.path().join("claude"),
+            };
+            let _assembled = production_threads(&ctx, endpoint.inputs.clone());
+            assert!(
+                crate::threads::namespace::binding_path(&endpoint.intents).exists(),
+                "production assembly binds the fresh graph before any first mutation or external call"
+            );
             let lazy = LazyThreads::new(endpoint.clone());
             let first = lazy.get().unwrap();
             assert!(Arc::ptr_eq(&first, &lazy.get().unwrap()));

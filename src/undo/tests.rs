@@ -1236,3 +1236,42 @@ fn review_legacy_added_member_compensation_without_agents_undoes() {
     assert_eq!(apply_plan(&fx, &p).state, OpState::Committed);
     assert!(tpl(&fx, "legacy").members.is_empty());
 }
+
+#[test]
+fn reconnect_undo_refuses_external_boundary_with_reverse_reconnect_guidance() {
+    let fx = fx();
+    let head = fx.store.head().unwrap();
+    let row = commit(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            head.0
+        ),
+    );
+    let err = plan_err(&fx, &format!("undo {}", row.action.unwrap()));
+    assert!(err.contains("external namespace boundary"), "{err}");
+    assert!(err.contains("reverse reconnect"), "{err}");
+}
+
+#[test]
+fn reconnect_prevents_preboundary_retirement_undo_reactivating_old_references() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create old --teamspace alpha --active --harness shell",
+    );
+    let retired = commit(&fx, "seat retire old");
+    let head = fx.store.head().unwrap();
+    commit(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            head.0
+        ),
+    );
+    let err = plan_err(&fx, &format!("undo {}", retired.action.unwrap()));
+    assert!(err.contains("previous threads namespace"), "{err}");
+}

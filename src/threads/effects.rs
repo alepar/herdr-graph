@@ -46,6 +46,8 @@ const INTENT_SCAN: usize = 64;
 /// Every teamspace, seat and clone record of one committed revision.
 #[derive(Default)]
 pub(crate) struct Graph {
+    pub epoch: String,
+    namespace_op: Option<OpId>,
     pub teamspaces: BTreeMap<TeamspaceId, TeamspaceRecord>,
     pub seats: BTreeMap<SeatId, SeatRecord>,
     pub clones: BTreeMap<CloneId, CloneRecord>,
@@ -53,7 +55,12 @@ pub(crate) struct Graph {
 
 impl Graph {
     pub fn load(tree: &dyn TreeRead) -> Result<Self, StoreError> {
-        let mut g = Graph::default();
+        let marker = super::namespace::read(tree)?;
+        let mut g = Graph {
+            epoch: marker.as_ref().map(|t| t.epoch.clone()).unwrap_or_default(),
+            namespace_op: marker.and_then(|t| t.op.parse().ok()),
+            ..Default::default()
+        };
         for (_, t) in layout::list_teamspaces(tree)? {
             g.teamspaces.insert(t.id.clone(), t);
         }
@@ -251,6 +258,7 @@ enum After {
 }
 
 /// The thread id graph derives from an object id (also what the port derives from `ensure:<object>`).
+#[cfg(test)]
 pub(crate) fn derived_thread(object: &AnyId) -> String {
     super::fake::thread_for_ensure_key(&OpKey(format!("ensure:{object}"))).0
 }
@@ -321,7 +329,10 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
             continue;
         }
         let last = journal
-            .meta_get(&format!("{TOPIC_PREFIX}{object}"))
+            .meta_get(&super::namespace::salt(
+                &g.epoch,
+                &format!("{TOPIC_PREFIX}{object}"),
+            ))
             .ok()
             .flatten();
         if last.as_deref() != Some(topic.as_str()) {
@@ -351,10 +362,13 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
             for owner in [seat.id.to_any(), seat.teamspace.to_any()] {
                 if let Some((_, channel, _, _)) = g.channel(&owner) {
                     let ensure = channel.thread_id.is_none().then(|| owner.clone());
-                    let thread = channel
-                        .thread_id
-                        .clone()
-                        .unwrap_or_else(|| derived_thread(&owner));
+                    let thread = channel.thread_id.clone().unwrap_or_else(|| {
+                        super::fake::thread_for_ensure_key(&OpKey(super::namespace::salt(
+                            &g.epoch,
+                            &format!("ensure:{owner}"),
+                        )))
+                        .0
+                    });
                     desired.push((thread, InviteConstraint::Required, ensure));
                 }
             }
@@ -472,7 +486,7 @@ fn reload_wants(g: &Graph, journal: &Journal) -> Vec<Want> {
         flagged.push((c.id.to_any(), c.rev, c.reload_required && g.clone_active(c)));
     }
     for (object, rev, on) in flagged {
-        let key = format!("{RELOAD_PREFIX}{object}");
+        let key = super::namespace::salt(&g.epoch, &format!("{RELOAD_PREFIX}{object}"));
         let notified = journal.meta_get(&key).ok().flatten().is_some();
         if !on {
             if notified {
@@ -585,6 +599,16 @@ impl ThreadsSource {
             .list(&[OpState::Committed], INTENT_SCAN)
             .unwrap_or_default();
         for row in rows {
+            if let Some(op) = &g.namespace_op {
+                if journal
+                    .get(op)
+                    .ok()
+                    .flatten()
+                    .is_none_or(|boundary| row.seq <= boundary.seq)
+                {
+                    continue;
+                }
+            }
             if !matches!(
                 row.request.kind,
                 RequestKind::TeamspaceRename
@@ -719,6 +743,16 @@ impl ThreadsSource {
             .list(&[OpState::Committed], INTENT_SCAN)
             .unwrap_or_default();
         for row in rows {
+            if let Some(op) = &g.namespace_op {
+                if journal
+                    .get(op)
+                    .ok()
+                    .flatten()
+                    .is_none_or(|boundary| row.seq <= boundary.seq)
+                {
+                    continue;
+                }
+            }
             let args = &row.request.args;
             if row.request.kind != RequestKind::Observed
                 || args.get("sub").and_then(|v| v.as_str()) != Some("rename")
@@ -909,10 +943,16 @@ impl EffectSource for ThreadsSource {
             let open = open_rows(cx.journal, &w.object, &w.kind)
                 .into_iter()
                 .find(|r| {
-                    matches!(w.payload, Payload::None)
-                        || payload_of(cx.journal, &r.id).as_ref() == Some(&w.payload)
+                    r.nonce_label == epoch_label(&g.epoch)
+                        && (matches!(w.payload, Payload::None)
+                            || payload_of(cx.journal, &r.id).as_ref() == Some(&w.payload))
                 });
-            let id = EffectRecord::identity(&w.op, &w.object, &w.kind, w.identity_rev());
+            let id = EffectRecord::identity(
+                &w.op,
+                &w.object,
+                &w.kind,
+                epoch_rev(&g.epoch, w.identity_rev()),
+            );
             if w.kind == EffectKind::EnsureThread {
                 ensure_ids.insert(
                     w.object.clone(),
@@ -955,7 +995,7 @@ impl EffectSource for ThreadsSource {
                     fencing_rev: w.fencing_rev,
                     status: EffectStatus::Pending,
                     predicted: vec![],
-                    nonce_label: None,
+                    nonce_label: epoch_label(&g.epoch),
                     attempts: 0,
                     last_error: None,
                     updated_at: cx.now,
@@ -991,7 +1031,8 @@ fn port_outcome(e: ThreadsError) -> ExecOutcome {
     }
 }
 
-fn admit_bookkeeping(cx: &ExecCx<'_>, args: serde_json::Value) -> Result<(), ExecOutcome> {
+fn admit_bookkeeping(cx: &ExecCx<'_>, mut args: serde_json::Value) -> Result<(), ExecOutcome> {
+    super::namespace::scoped_stamp(&mut args);
     let request = ChangeRequest {
         kind: RequestKind::Bookkeeping,
         args,
@@ -1070,7 +1111,10 @@ impl ThreadsExecutor {
         if channel.thread_id.is_some() {
             return ExecOutcome::Done;
         }
-        let key = OpKey(format!("ensure:{}", e.object));
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("ensure:{}", e.object),
+        ));
         match self.threads.ensure_thread(scope, &topic, &key).await {
             Ok(thread) => {
                 if let Err(o) = admit_bookkeeping(
@@ -1079,9 +1123,10 @@ impl ThreadsExecutor {
                 ) {
                     return o;
                 }
-                let _ = self
-                    .journal
-                    .meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
+                let _ = self.journal.meta_set(
+                    &super::namespace::salt(&g.epoch, &format!("{TOPIC_PREFIX}{}", e.object)),
+                    &topic,
+                );
                 ExecOutcome::Done
             }
             Err(err) => port_outcome(err),
@@ -1102,10 +1147,9 @@ impl ThreadsExecutor {
         let Some(thread) = channel.thread_id.clone() else {
             return ExecOutcome::Deferred("channel not created yet".into());
         };
-        let key = OpKey(format!(
-            "topic:{}:{:016x}",
-            e.object,
-            topic_generation(&topic)
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("topic:{}:{:016x}", e.object, topic_generation(&topic)),
         ));
         match self
             .threads
@@ -1113,9 +1157,10 @@ impl ThreadsExecutor {
             .await
         {
             Ok(()) => {
-                let _ = self
-                    .journal
-                    .meta_set(&format!("{TOPIC_PREFIX}{}", e.object), &topic);
+                let _ = self.journal.meta_set(
+                    &super::namespace::salt(&g.epoch, &format!("{TOPIC_PREFIX}{}", e.object)),
+                    &topic,
+                );
                 ExecOutcome::Done
             }
             Err(err) => port_outcome(err),
@@ -1285,9 +1330,10 @@ impl ThreadsExecutor {
         {
             Ok(()) => {
                 if purpose == "reload_required" {
-                    let _ = self
-                        .journal
-                        .meta_set(&format!("{RELOAD_PREFIX}{}", e.object), "1");
+                    let _ = self.journal.meta_set(
+                        &super::namespace::salt(&g.epoch, &format!("{RELOAD_PREFIX}{}", e.object)),
+                        "1",
+                    );
                 }
                 ExecOutcome::Done
             }
@@ -1389,6 +1435,9 @@ impl EffectExecutor for ThreadsExecutor {
 
     fn is_implied(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> bool {
         let Ok(g) = self.graph(cx) else { return true };
+        if e.nonce_label != epoch_label(&g.epoch) {
+            return false;
+        }
         let payload = self.payload(e).unwrap_or(Payload::None);
         match (&e.kind, &payload) {
             (_, Payload::Notify { purpose, .. }) => {
@@ -1420,6 +1469,20 @@ impl EffectExecutor for ThreadsExecutor {
     }
 
     async fn execute(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+        let epoch = match super::namespace::epoch(cx.tree) {
+            Ok(e) => e,
+            Err(e) => return ExecOutcome::Failed(e.to_string()),
+        };
+        if e.nonce_label != epoch_label(&epoch) {
+            return ExecOutcome::Obsolete;
+        }
+        super::namespace::EXPECTED_EPOCH
+            .scope(epoch, self.execute_scoped(cx, e))
+            .await
+    }
+}
+impl ThreadsExecutor {
+    async fn execute_scoped(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
         match (&e.kind, self.payload(e)) {
             (EffectKind::EnsureThread, _) => self.ensure(cx, e).await,
             (EffectKind::SetTopic, _) => self.set_topic(cx, e).await,
@@ -1437,7 +1500,20 @@ impl EffectExecutor for ThreadsExecutor {
                     body,
                     key,
                 }),
-            ) => self.notify(cx, e, &purpose, severity, &body, &key).await,
+            ) => {
+                self.notify(
+                    cx,
+                    e,
+                    &purpose,
+                    severity,
+                    &body,
+                    &super::namespace::salt(
+                        &super::namespace::EXPECTED_EPOCH.with(Clone::clone),
+                        &key,
+                    ),
+                )
+                .await
+            }
             (
                 EffectKind::Custom(_),
                 Some(Payload::Poll {
@@ -1451,4 +1527,21 @@ impl EffectExecutor for ThreadsExecutor {
             }
         }
     }
+}
+
+pub(crate) fn epoch_label(epoch: &str) -> Option<String> {
+    if epoch.is_empty() {
+        None
+    } else {
+        Some(format!("threads-epoch:{epoch}"))
+    }
+}
+pub(crate) fn epoch_rev(epoch: &str, rev: u64) -> u64 {
+    if epoch.is_empty() {
+        return rev;
+    }
+    let mut h = Sha256::new();
+    h.update(epoch.as_bytes());
+    h.update(rev.to_be_bytes());
+    u64::from_be_bytes(h.finalize()[..8].try_into().unwrap())
 }

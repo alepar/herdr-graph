@@ -70,6 +70,32 @@ fn target(
     id: &ActionId,
 ) -> Result<ActionRecord, PlanError> {
     let rec = read_action(tree, id)?.ok_or_else(|| invalid(format!("no action {id}")))?;
+    if rec.kind == ActionKind::ThreadsReconnect {
+        return Err(invalid(format!(
+            "threads reconnect crosses an external namespace boundary; ordinary undo is refused. Review a reverse reconnect: herdr-graph plan threads reconnect --from {} --to {} --head <current-main> (legacy is historical only; choose a canonical node)",
+            rec.compensation["to"].as_str().unwrap_or("<node>"),
+            rec.compensation["from"].as_str().unwrap_or("<node>")
+        )));
+    }
+    if let Some(marker) = crate::threads::namespace::read(tree)? {
+        let path = crate::ports::store::RepoPath::new(&format!(
+            "mutations/threads-reconnect/{}.json",
+            marker.op
+        ))?;
+        let bytes = tree
+            .read_file(&path)?
+            .ok_or_else(|| invalid("missing namespace preservation artifact; undo refused"))?;
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
+        let prior = artifact["prior_actions"]
+            .as_array()
+            .ok_or_else(|| invalid("missing previous-namespace action provenance; undo refused"))?;
+        if prior.iter().any(|a| a.as_str() == Some(id.as_str())) {
+            return Err(invalid(format!(
+                "action {id} belongs to a previous threads namespace; ordinary undo is refused. Use a reviewed reverse reconnect for the namespace, then a new explicit organizational plan to restore desired objects"
+            )));
+        }
+    }
     if !is_undoable(rec.kind) {
         return Err(invalid(format!(
             "action {id} is a {:?} and cannot be undone",
@@ -148,7 +174,7 @@ impl OrgKind for UndoKind {
                     reserved,
                 )?,
             },
-            ActionKind::Resurrect | ActionKind::Undo => {
+            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
                 unreachable!("{:?} is not undoable", orig.kind)
             }
         };
@@ -199,7 +225,7 @@ impl OrgKind for UndoKind {
                     )?;
                 }
             },
-            ActionKind::Resurrect | ActionKind::Undo => {
+            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
                 return Err(MutationError::Bug(format!(
                     "{:?} is not undoable",
                     orig.kind

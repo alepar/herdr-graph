@@ -11,6 +11,7 @@ pub mod effects;
 pub mod fake;
 pub mod mapping;
 pub mod namespace;
+pub mod reconnect;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

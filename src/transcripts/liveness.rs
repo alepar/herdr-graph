@@ -55,6 +55,13 @@ impl Transcripts {
             );
         }
         self.process_pending().await;
+        let epoch =
+            crate::threads::namespace::epoch(&self.view().map_err(internal)?).map_err(internal)?;
+        crate::threads::namespace::EXPECTED_EPOCH
+            .scope(epoch, self.liveness_external())
+            .await
+    }
+    async fn liveness_external(&self) -> Result<(), CommandError> {
         let now = self.clock.now();
         let tuning = self.tuning();
         let actions: Vec<Action> = {
@@ -283,7 +290,10 @@ impl Transcripts {
              request ack {} when you have dispatched it.",
             rq.id, rq.id
         );
-        let key = OpKey(format!("remind:{}:{}", rq.id, rq.delivery.attempts.len()));
+        let key = OpKey(crate::threads::namespace::salt(
+            &p.epoch,
+            &format!("remind:{}:{}", rq.id, rq.delivery.attempts.len()),
+        ));
         if let Err(e) = self
             .threads
             .notify(&thread, Severity::Warn, &body, &key)

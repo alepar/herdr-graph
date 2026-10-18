@@ -28,6 +28,7 @@ pub enum RequestKind {
     TemplateCopy,
     ApplicationApply,
     ApplicationRetire,
+    ThreadsReconnect,
     Undo,
     ContentWrite,
     Observed,

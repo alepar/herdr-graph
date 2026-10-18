@@ -272,9 +272,44 @@ impl WriterCore {
 
     /// Steps 3-9: recheck, mutation, tree build, commit object, CAS of refs/heads/main.
     fn apply_phase(&self, row: &OpRow, now: Timestamp) -> Result<Phase, Fail> {
+        let _calls = if row.request.kind == crate::model::change::RequestKind::ThreadsReconnect {
+            Some(
+                crate::threads::namespace::lock(self.store.root(), "threads-calls.lock", true)
+                    .map_err(|e| Fail::Infra(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let _binding =
+            crate::threads::namespace::lock(self.store.root(), "threads-binding.lock", true)
+                .map_err(|e| Fail::Infra(e.to_string()))?;
         let op = &row.op;
         let req = &row.request;
         let head = self.store.head()?;
+
+        let current_epoch = crate::threads::namespace::epoch(&self.store.at(&head))?;
+        let sub = req.args.get("sub").and_then(|v| v.as_str()).unwrap_or("");
+        let namespace_write = req.kind == crate::model::change::RequestKind::Bookkeeping
+            && matches!(
+                sub,
+                "channel" | "invitation" | "request_delivery" | "request_ack"
+            );
+        if namespace_write
+            && req
+                .args
+                .get("threads_epoch")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                != current_epoch
+        {
+            let reject = Reject {
+                reason: "stale_threads_epoch".into(),
+                explanation: "old namespace bookkeeping cannot modify current threads state".into(),
+                current_revs: vec![],
+            };
+            self.journal.finish_rejected(op, &reject.into(), now)?;
+            return Ok(Phase::Done(StepOutcome::Rejected(op.clone())));
+        }
 
         if let Some(reject) = self.recheck_relied_on(&head, req)? {
             self.journal.finish_rejected(op, &reject.into(), now)?;

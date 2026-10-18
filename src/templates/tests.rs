@@ -2301,3 +2301,55 @@ fn member_rename_rejects_colliding_instruction_paths_before_writing() {
     assert!(err.contains("instruction path"), "{err}");
     assert_eq!(fx.store.head().unwrap(), head);
 }
+
+#[test]
+fn reconnect_preserves_then_clears_template_and_application_external_relationships() {
+    let fx = fx();
+    alpha(&fx);
+    let member = MemberId::new();
+    create_template(
+        &fx,
+        "source",
+        &[m(&member, "worker", "deferred")],
+        &[("external-old", None)],
+    );
+    apply_app(&fx, "source", "applied");
+    let before_tpl = tpl(&fx, "source");
+    let before_apps = layout::list_applications(&view(&fx)).unwrap();
+    let head = fx.store.head().unwrap();
+    let sp = plan(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            head.0
+        ),
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed);
+    let after = tpl(&fx, "source");
+    assert!(after.relationships.is_empty());
+    assert_eq!(after.members, before_tpl.members);
+    let after_apps = layout::list_applications(&view(&fx)).unwrap();
+    assert!(after_apps[0].1.contributions.relationships.is_empty());
+    assert_eq!(after_apps[0].1.member_map, before_apps[0].1.member_map);
+    let artifact = crate::store::tree::TreeRead::read_file(
+        &view(&fx),
+        &crate::ports::store::RepoPath::new(&format!(
+            "mutations/threads-reconnect/{}.json",
+            row.op
+        ))
+        .unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&artifact).unwrap();
+    assert_eq!(
+        value["templates"][0]["relationships"][0]["thread"],
+        "external-old"
+    );
+    assert_eq!(
+        value["applications"][0]["contributions"]["relationships"][0]["thread"],
+        "external-old"
+    );
+}

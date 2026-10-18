@@ -69,6 +69,9 @@ pub enum StoreError {
 
 /// Read-only access to complete committed revisions. Readers never see partial writes.
 pub trait Store: Send + Sync {
+    fn instance_root(&self) -> Option<PathBuf> {
+        None
+    }
     /// Current tip of `refs/heads/main`.
     fn head(&self) -> Result<CommitId, StoreError>;
     /// File bytes at `path` in commit `at`; None if absent.

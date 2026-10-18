@@ -148,6 +148,7 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
             )
         }
         ActionKind::Resurrect => "resurrection".into(),
+        ActionKind::ThreadsReconnect => "threads reconnect (reverse reconnect required)".into(),
         ActionKind::Undo => "undo".into(),
     }
 }

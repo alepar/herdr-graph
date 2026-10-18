@@ -47,6 +47,7 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 
 /// A bookkeeping request of sub-kind `sub` (`args["sub"]` selects the mutation).
 pub fn bookkeeping_request(sub: &str, mut args: serde_json::Value) -> ChangeRequest {
+    crate::threads::namespace::scoped_stamp(&mut args);
     args["sub"] = json!(sub);
     ChangeRequest {
         kind: RequestKind::Bookkeeping,

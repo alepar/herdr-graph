@@ -524,6 +524,7 @@ async fn production_discovery_reaches_real_threads_daemon() {
     let daemon = ThreadsDaemon::start_at(&herdr, threads_binary(), state);
 
     let graph_root = herdr.root.join("graph");
+    herdr_graph::store::init::init_instance(&graph_root).unwrap();
     let ctx = herdr_graph::daemon::DaemonCtx {
         paths: herdr_graph::config::InstancePaths::new(&graph_root),
         herdr_socket: herdr.socket.clone(),
@@ -544,6 +545,16 @@ async fn production_discovery_reaches_real_threads_daemon() {
         .await
         .expect("default discovery reaches the real daemon");
     let old = discover(&daemon.state, &herdr.socket).unwrap();
+    let old_channel = threads
+        .ensure_thread(
+            ChannelScope::Seat,
+            "recovery channel",
+            &OpKey("ensure:recovery".into()),
+        )
+        .await
+        .unwrap();
+    let old_intents = ctx.paths.threads_intents.clone();
+
     ok(
         "stop private threads before fresh store",
         &daemon.cli(None, &["daemon", "stop"]),
@@ -567,4 +578,101 @@ async fn production_discovery_reaches_real_threads_daemon() {
         ),
         "cached endpoint must not register or dispatch against a fresh node"
     );
+    // Exercise the production reviewed writer and endpoint recovery, not a replacement binding fixture.
+    use herdr_graph::{
+        plan::{
+            commands::{PlanDeps, admit_apply, create_plan},
+            store::PlanStore,
+        },
+        ports::store::Store,
+    };
+    let store = Arc::new(herdr_graph::store::GitStore::open(&graph_root).unwrap());
+    let plans = Arc::new(PlanStore::new(graph_root.join(".graph-local/plans")));
+    let (kinds, mutations) = herdr_graph::daemon::compose::mutation_registry(plans.clone());
+    let journal = Arc::new(
+        herdr_graph::journal::Journal::open(&herdr_graph::journal::Journal::path_in(&graph_root))
+            .unwrap(),
+    );
+    let clock = Arc::new(herdr_graph::ports::clock::SystemClock);
+    let writer = herdr_graph::writer::WriterCore::new(
+        store.clone(),
+        journal.clone(),
+        Arc::new(mutations),
+        clock.clone(),
+        Default::default(),
+    );
+    let deps = PlanDeps {
+        kinds,
+        plans: plans.clone(),
+        store: store.clone(),
+        writer: writer.clone(),
+        clock,
+        instance: graph_root.clone(),
+    };
+    let command = format!(
+        "threads reconnect --from {} --to {} --head {}",
+        old.instance,
+        new.instance,
+        store.head().unwrap().0
+    );
+    let response = create_plan(
+        &deps,
+        &Default::default(),
+        command.split_whitespace().map(str::to_owned).collect(),
+    )
+    .unwrap();
+    let id = response["plan_id"].as_str().unwrap();
+    let hash = response["hash"].as_str().unwrap();
+    let op = admit_apply(&deps, &Default::default(), id, Some(hash), "relay").unwrap();
+    writer.drain().unwrap();
+    assert_eq!(
+        journal.get(&op).unwrap().unwrap().state,
+        herdr_graph::model::operation::OpState::Committed
+    );
+    let epoch = herdr_graph::threads::namespace::committed(&graph_root)
+        .unwrap()
+        .unwrap()
+        .epoch;
+    assert!(
+        threads
+            .ensure_thread(
+                ChannelScope::Seat,
+                "recovery channel",
+                &OpKey("ensure:recovery".into())
+            )
+            .await
+            .is_err(),
+        "stale snapshots cannot silently adopt the new binding"
+    );
+    let key = OpKey(format!("{epoch}:ensure:recovery"));
+    let fresh_channel = herdr_graph::threads::namespace::EXPECTED_EPOCH
+        .scope(
+            epoch.clone(),
+            threads.ensure_thread(ChannelScope::Seat, "recovery channel", &key),
+        )
+        .await
+        .unwrap();
+    assert_ne!(old_channel, fresh_channel);
+    assert_eq!(
+        herdr_graph::threads::namespace::bound(&old_intents).unwrap(),
+        Some(new.instance)
+    );
+    assert!(
+        old_intents.is_dir(),
+        "old service intents remain under their original identity"
+    );
+    assert!(
+        herdr_graph::threads::namespace::intent_dir(&old_intents, &graph_root)
+            .unwrap()
+            .is_dir()
+    );
+    let again = herdr_graph::threads::namespace::EXPECTED_EPOCH
+        .scope(
+            epoch,
+            threads.ensure_thread(ChannelScope::Seat, "recovery channel", &key),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again, fresh_channel);
+    assert!(saved.join("herdr-threads.db").is_file());
 }

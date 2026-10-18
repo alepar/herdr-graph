@@ -596,11 +596,11 @@ impl Transcripts {
     async fn cmd_ack(&self, args: serde_json::Value) -> Result<serde_json::Value, CommandError> {
         let rq = Self::request_arg(&args)?;
         let at = self.clock.now();
-        self.commit(bookkeeping_request(
-            "request_ack",
-            json!({ "rq": rq, "at": at }),
-        ))
-        .await?;
+        let epoch =
+            crate::threads::namespace::epoch(&self.view().map_err(internal)?).map_err(internal)?;
+        let mut request = bookkeeping_request("request_ack", json!({ "rq": rq, "at": at }));
+        crate::threads::namespace::stamp(&mut request.args, &epoch);
+        self.commit(request).await?;
         Ok(json!({ "request": rq, "status": "dispatched" }))
     }
 

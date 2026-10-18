@@ -107,6 +107,9 @@ impl GitStore {
 }
 
 impl Store for GitStore {
+    fn instance_root(&self) -> Option<std::path::PathBuf> {
+        Some(self.root().to_owned())
+    }
     fn head(&self) -> Result<CommitId, StoreError> {
         self.with_repo(|r| r.refname_to_id("refs/heads/main"))
             .map(|o| CommitId(o.to_string()))

@@ -2924,3 +2924,47 @@ async fn layout_compat_legacy_delivery_and_old_action_undo() {
                 .starts_with("mutations/graph-changes/"))
     );
 }
+
+#[tokio::test]
+async fn reconnect_redelivers_same_request_with_new_generation_and_refuses_old_ack() {
+    let fx = fx();
+    let (_worker, old, path) = delivered(&fx, 5).await;
+    let bytes = std::fs::read(&path).unwrap();
+    let old_channel = seat_thread(&fx, "sum");
+    let prepared = super::delivery::prepare(&view(&fx), &old).unwrap();
+    let stale_ack = bookkeeping_request("request_ack", json!({"rq":old.id,"at":fx.clock.now()}));
+    let head = fx.store.head().unwrap();
+    plan_and_apply(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            head.0
+        ),
+    );
+    let op = fx.w.admit(stale_ack).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.journal.get(&op).unwrap().unwrap().state,
+        OpState::Rejected
+    );
+    let reset = request(&fx, &old.id);
+    assert_eq!(reset.status, RequestStatus::Pending);
+    assert_eq!(reset.delivery.attempts, old.delivery.attempts);
+    assert_eq!(reset.range, old.range);
+    steps(&fx, 8).await;
+    let delivered = request(&fx, &old.id);
+    assert_eq!(delivered.status, RequestStatus::Delivered);
+    assert_eq!(
+        delivered.delivery.attempts.len(),
+        old.delivery.attempts.len() + 1
+    );
+    assert_ne!(
+        delivered.delivery.attempts.last().unwrap().op_key,
+        prepared.op_key().0
+    );
+    assert_ne!(seat_thread(&fx, "sum"), old_channel);
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+    fx.tr.cmd_ack(json!({"request":old.id})).await.unwrap();
+    assert_eq!(request(&fx, &old.id).status, RequestStatus::Dispatched);
+}

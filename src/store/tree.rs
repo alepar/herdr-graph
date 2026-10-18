@@ -82,6 +82,9 @@ impl<'a> Overlay<'a> {
             base_cache: RefCell::new(HashMap::new()),
         }
     }
+    pub fn instance_root(&self) -> Option<std::path::PathBuf> {
+        self.base.store.instance_root()
+    }
     pub fn base(&self) -> &CommitId {
         &self.base.at
     }

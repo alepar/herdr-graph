@@ -22,7 +22,7 @@ use crate::ports::store::{ObjectLocation, Store};
 use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::store::layout;
-use crate::store::tree::CommitView;
+use crate::store::tree::{CommitView, TreeRead};
 use crate::writer::{MutationCx, MutationError, MutationRegistry, WriterConfig, WriterCore};
 use chrono::TimeZone;
 use serde_json::json;
@@ -2325,4 +2325,385 @@ fn replacement_of_an_applied_stale_plan_is_already_applied() {
     let planned: SeatId = p.plan.reserved.get("seat").unwrap();
     let seats = layout::all_seats(&view(&fx)).unwrap();
     assert_eq!(seats.iter().filter(|(_, s)| s.id == planned).count(), 1);
+}
+
+#[test]
+fn reconnect_legacy_plan_is_reviewed_and_head_fenced() {
+    let fx = fx();
+    let before = fx.store.head().unwrap();
+    let sp = plan(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            before.0
+        ),
+    );
+    assert!(
+        sp.plan
+            .effects
+            .iter()
+            .any(|e| e.kind == "threads.reconnect")
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(
+        view(&fx)
+            .read_file(&crate::ports::store::RepoPath::new("threads-namespace.json").unwrap())
+            .unwrap()
+            .is_some()
+    );
+    let again = apply_plan(&fx, &sp);
+    assert_eq!(again.state, OpState::Rejected);
+}
+
+fn reconnect_seed(fx: &Fx, edits: crate::store::tree::EditSet) {
+    let head = fx.store.head().unwrap();
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|repo| {
+            let oid = crate::writer::commit::create_commit(
+                repo,
+                git2::Oid::from_str(&head.0).unwrap(),
+                tree,
+                "fixture old namespace",
+            )
+            .unwrap();
+            crate::writer::commit::cas_main(
+                repo,
+                git2::Oid::from_str(&head.0).unwrap(),
+                oid,
+                "fixture",
+                &WriterConfig::default(),
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn reconnect_preserves_history_requests_external_refs_and_pending_intents() {
+    use crate::model::{ByteRange, RequestId, TranscriptId, clone::*, request::*};
+    use crate::threads::namespace as ns;
+    let fx = fx();
+    let old = herdr_threads::node::NodeUuid::from_bytes([1; 16]);
+    let new = herdr_threads::node::NodeUuid::from_bytes([2; 16]);
+    let intents = ns::default_intents(&fx.root);
+    ns::ensure(&intents, old, Some(&fx.root)).unwrap();
+    active_seat_with_two_clones(&fx);
+    let (loc, mut s) = seat(&fx, "foreman", Some(Lifecycle::Active));
+    s.channel.thread_id = Some("old-managed".into());
+    s.participation.seat_wide = vec!["external-old".into()];
+    let (cloc, mut c) = clones_of(&fx, &s.id).remove(0);
+    c.opt_outs = vec!["external-optout".into()];
+    c.invitations = vec![Invitation {
+        thread: "external-old".into(),
+        constraint: InviteConstraint::Ordinary,
+        state: InvitationState::Accepted,
+        link: Some(ThreadsLink {
+            seat: "old-seat".into(),
+            occupant: Some("old-occupant".into()),
+            invitation: Some("old-invitation".into()),
+            requirement: None,
+            revision: Some(7),
+        }),
+    }];
+    let rq = ProcessingRequest {
+        schema: 1,
+        id: RequestId::new(),
+        rev: 1,
+        transcript: TranscriptId::new(),
+        range: ByteRange { start: 3, end: 55 },
+        status: RequestStatus::Dispatched,
+        unresolved: None,
+        undeliverable: None,
+        created_by_op: OpId::new(),
+        delivery: Delivery {
+            message_id: Some("old-message".into()),
+            dispatched_at: Some(t0()),
+            attempts: vec![DeliveryAttempt {
+                op_key: "old-delivery-key".into(),
+                message_id: Some("old-message".into()),
+                at: t0(),
+                retry: false,
+            }],
+            reminded_at: Some(t0()),
+        },
+        result: None,
+    };
+    let mut done = rq.clone();
+    done.id = RequestId::new();
+    done.status = RequestStatus::Completed;
+    let mut edits = crate::store::tree::EditSet::default();
+    edits.put(
+        loc.record_path.clone(),
+        toml::to_string(&s).unwrap().into_bytes(),
+    );
+    edits.put(
+        cloc.record_path.clone(),
+        toml::to_string(&c).unwrap().into_bytes(),
+    );
+    edits.put(
+        layout::request_record(&rq.id),
+        toml::to_string(&rq).unwrap().into_bytes(),
+    );
+    let done_bytes = toml::to_string(&done).unwrap().into_bytes();
+    edits.put(layout::request_record(&done.id), done_bytes.clone());
+    let native = fx.root.join("native-history.jsonl");
+    std::fs::write(&native, b"exact native conversation bytes\n").unwrap();
+    reconnect_seed(&fx, edits);
+    std::fs::create_dir_all(&intents).unwrap();
+    std::fs::write(
+        intents.join("pending.json"),
+        b"exact unresolved old service envelope",
+    )
+    .unwrap();
+    fx.w.journal()
+        .meta_set("threads:old-provenance", "old-result")
+        .unwrap();
+    let before = fx.store.head().unwrap();
+    let old_bytes = fx
+        .store
+        .read_file(&before, &loc.record_path)
+        .unwrap()
+        .unwrap();
+    let sp = plan(
+        &fx,
+        &format!(
+            "threads reconnect --from {old} --to {new} --head {}",
+            before.0
+        ),
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    // Commit-first crash point: binding is still old; restoring the exact transition finishes publication.
+    assert_eq!(ns::bound(&intents).unwrap(), Some(old));
+    assert!(ns::ensure(&intents, old, Some(&fx.root)).is_err());
+    ns::ensure(&intents, new, Some(&fx.root)).unwrap();
+    ns::ensure(&intents, new, Some(&fx.root)).unwrap();
+    assert_eq!(ns::bound(&intents).unwrap(), Some(new));
+    // Simulate interrupted publication: seal durable, previous binding still present.
+    let seal = std::fs::read(ns::retired_path(&intents)).unwrap();
+    std::fs::write(
+        ns::binding_path(&intents),
+        serde_json::to_vec(&serde_json::json!({"version":1,"node":old})).unwrap(),
+    )
+    .unwrap();
+    assert!(ns::ensure(&intents, old, None).is_err());
+    ns::ensure(&intents, new, Some(&fx.root)).unwrap();
+    assert_eq!(std::fs::read(ns::retired_path(&intents)).unwrap(), seal);
+    std::fs::write(ns::retired_path(&intents), b"corrupt").unwrap();
+    assert!(ns::ensure(&intents, new, Some(&fx.root)).is_err());
+    std::fs::write(ns::retired_path(&intents), &seal).unwrap();
+    ns::ensure(&intents, new, Some(&fx.root)).unwrap();
+    let current = view(&fx);
+    let s2: SeatRecord = crate::store::record::read_toml(&current, &loc.record_path)
+        .unwrap()
+        .unwrap();
+    assert!(s2.channel.thread_id.is_none() && s2.participation.seat_wide.is_empty());
+    let c2: CloneRecord = crate::store::record::read_toml(&current, &cloc.record_path)
+        .unwrap()
+        .unwrap();
+    assert!(c2.invitations.is_empty() && c2.opt_outs.is_empty());
+    assert_eq!(c2.sessions, c.sessions);
+    let r2: ProcessingRequest =
+        crate::store::record::read_toml(&current, &layout::request_record(&rq.id))
+            .unwrap()
+            .unwrap();
+    assert_eq!(r2.status, RequestStatus::Pending);
+    assert_eq!(r2.delivery.attempts, rq.delivery.attempts);
+    assert_eq!(r2.range, rq.range);
+    assert!(r2.delivery.message_id.is_none());
+    assert_eq!(
+        current
+            .read_file(&layout::request_record(&done.id))
+            .unwrap()
+            .unwrap(),
+        done_bytes
+    );
+    assert_eq!(
+        fx.store
+            .read_file(&before, &loc.record_path)
+            .unwrap()
+            .unwrap(),
+        old_bytes
+    );
+    assert_eq!(
+        std::fs::read(native).unwrap(),
+        b"exact native conversation bytes\n"
+    );
+    assert_eq!(
+        std::fs::read(intents.join("pending.json")).unwrap(),
+        b"exact unresolved old service envelope"
+    );
+    let artifact = current
+        .read_file(
+            &crate::ports::store::RepoPath::new(&format!(
+                "mutations/threads-reconnect/{}.json",
+                row.op
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    let artifact = String::from_utf8(artifact).unwrap();
+    for expected in [
+        "old-managed",
+        "external-old",
+        "external-optout",
+        "old-invitation",
+        "old-delivery-key",
+        "threads:old-provenance",
+    ] {
+        assert!(artifact.contains(expected), "{expected}");
+    }
+    assert!(
+        ns::ensure(&intents, new, None).is_err(),
+        "preserved original journal cannot be reopened under the new graph binding by a low-level caller"
+    );
+    let fresh = ns::intent_dir(&intents, &fx.root).unwrap();
+    assert_ne!(fresh, intents);
+    assert!(!fresh.exists());
+    let epoch = ns::epoch(&current).unwrap();
+    assert_ne!(ns::salt(&epoch, "deliver:request:1"), "deliver:request:1");
+    let action = action_of(&fx, &row);
+    assert_eq!(
+        action.kind,
+        crate::model::action::ActionKind::ThreadsReconnect
+    );
+}
+
+#[test]
+fn reconnect_rejects_wrong_from_same_node_noncanonical_nodes_and_stale_head() {
+    use crate::threads::namespace as ns;
+    let fx = fx();
+    let old = herdr_threads::node::NodeUuid::from_bytes([1; 16]);
+    let new = herdr_threads::node::NodeUuid::from_bytes([2; 16]);
+    ns::ensure(&ns::default_intents(&fx.root), old, Some(&fx.root)).unwrap();
+    let head = fx.store.head().unwrap();
+    for cmd in [
+        format!(
+            "threads reconnect --from legacy --to {new} --head {}",
+            head.0
+        ),
+        format!(
+            "threads reconnect --from {old} --to {old} --head {}",
+            head.0
+        ),
+        format!("threads reconnect --from {old} --to BAD --head {}", head.0),
+        format!(
+            "threads reconnect --from {old} --to {new} --head {} --to {new}",
+            head.0
+        ),
+    ] {
+        assert!(
+            create_plan(&fx.deps, &CallerInfo::default(), words(&cmd)).is_err(),
+            "{cmd}"
+        );
+    }
+    let sp = plan(
+        &fx,
+        &format!(
+            "threads reconnect --from {old} --to {new} --head {}",
+            head.0
+        ),
+    );
+    alpha(&fx);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Rejected);
+    assert!(ns::read(&view(&fx)).unwrap().is_none());
+    assert_eq!(
+        ns::bound(&ns::default_intents(&fx.root)).unwrap(),
+        Some(old)
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn reconnect_interrupted_before_and_after_commit_resumes_exact_transition() {
+    use crate::threads::namespace as ns;
+    for point in ["writer.after_tree_build", "writer.after_cas_before_journal"] {
+        let fx = fx();
+        let old = herdr_threads::node::NodeUuid::from_bytes([1; 16]);
+        let new = herdr_threads::node::NodeUuid::from_bytes([2; 16]);
+        let intents = ns::default_intents(&fx.root);
+        ns::ensure(&intents, old, Some(&fx.root)).unwrap();
+        let head = fx.store.head().unwrap();
+        let sp = plan(
+            &fx,
+            &format!(
+                "threads reconnect --from {old} --to {new} --head {}",
+                head.0
+            ),
+        );
+        let op = admit_apply(
+            &fx.deps,
+            &Default::default(),
+            sp.plan.id.as_str(),
+            Some(&sp.hash),
+            "relay",
+        )
+        .unwrap();
+        crate::failpoint::arm(point, crate::failpoint::FailAction::Panic);
+        let interrupted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fx.w.step()));
+        crate::failpoint::disarm(point);
+        assert!(interrupted.is_err());
+        assert_eq!(ns::bound(&intents).unwrap(), Some(old));
+        if point == "writer.after_tree_build" {
+            assert_eq!(fx.store.head().unwrap(), head);
+            assert!(ns::ensure(&intents, new, Some(&fx.root)).is_err());
+        }
+        fx.w.recover().unwrap();
+        fx.w.drain().unwrap();
+        assert_eq!(
+            fx.w.journal().get(&op).unwrap().unwrap().state,
+            OpState::Committed
+        );
+        ns::ensure(&intents, new, Some(&fx.root)).unwrap();
+        let marker = ns::committed(&fx.root).unwrap().unwrap();
+        assert_eq!(marker.epoch, sp.plan.reserved.0["namespace_epoch"]);
+        assert_eq!(marker.op, op.to_string());
+    }
+}
+
+#[test]
+fn reconnect_first_binding_serializes_with_first_graph_commit() {
+    let fx = fx();
+    let intents = crate::threads::namespace::default_intents(&fx.root);
+    let guard = crate::threads::namespace::lock(&fx.root, "threads-binding.lock", true).unwrap();
+    let root = fx.root.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let caller = std::thread::spawn(move || {
+        tx.send(crate::threads::namespace::ensure(
+            &intents,
+            herdr_threads::node::NodeUuid::from_bytes([3; 16]),
+            Some(&root),
+        ))
+        .unwrap();
+    });
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_millis(100))
+            .is_err(),
+        "binding may not publish while a writer owns the transaction boundary"
+    );
+    let mut edits = crate::store::tree::EditSet::default();
+    edits.put(
+        crate::ports::store::RepoPath::new("historical.toml").unwrap(),
+        b"thread_id='old'".to_vec(),
+    );
+    reconnect_seed(&fx, edits);
+    drop(guard);
+    assert!(
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .is_err()
+    );
+    caller.join().unwrap();
+    assert!(
+        !crate::threads::namespace::binding_path(&crate::threads::namespace::default_intents(
+            &fx.root
+        ))
+        .exists()
+    );
 }

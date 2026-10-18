@@ -127,7 +127,11 @@ pub struct ThreadsNotifier {
 }
 
 impl ThreadsNotifier {
-    fn thread_for(&self, op: &OpId, affected: Option<&crate::model::AnyId>) -> Option<ThreadRef> {
+    fn thread_for(
+        &self,
+        op: &OpId,
+        affected: Option<&crate::model::AnyId>,
+    ) -> Option<(ThreadRef, String)> {
         let head = self.store.head().ok()?;
         let tree = CommitView {
             store: &*self.store,
@@ -176,6 +180,7 @@ impl ThreadsNotifier {
         requester
             .and_then(|seat| channel(&seat.to_any()))
             .or_else(|| affected.and_then(channel))
+            .zip(crate::threads::namespace::epoch(&tree).ok())
     }
 }
 
@@ -192,12 +197,13 @@ impl RequesterNotifier for ThreadsNotifier {
         text: &str,
         key: &OpKey,
     ) -> Result<bool, String> {
-        let Some(thread) = self.thread_for(op, None) else {
+        let Some((thread, epoch)) = self.thread_for(op, None) else {
             eprintln!("herdr-graph: reconcile: {text}");
             return Err("notice destination channel is unavailable".into());
         };
-        self.threads
-            .notify(&thread, severity, text, key)
+        let key = OpKey(crate::threads::namespace::salt(&epoch, &key.0));
+        crate::threads::namespace::EXPECTED_EPOCH
+            .scope(epoch, self.threads.notify(&thread, severity, text, &key))
             .await
             .map_err(|e| e.to_string())?;
         Ok(true)
@@ -210,11 +216,12 @@ impl RequesterNotifier for ThreadsNotifier {
         text: &str,
         key: &OpKey,
     ) -> Result<bool, String> {
-        let thread = self
+        let (thread, epoch) = self
             .thread_for(&effect.op, Some(&effect.object))
             .ok_or_else(|| "notice destination channel is unavailable".to_owned())?;
-        self.threads
-            .notify(&thread, severity, text, key)
+        let key = OpKey(crate::threads::namespace::salt(&epoch, &key.0));
+        crate::threads::namespace::EXPECTED_EPOCH
+            .scope(epoch, self.threads.notify(&thread, severity, text, &key))
             .await
             .map_err(|e| e.to_string())?;
         Ok(true)

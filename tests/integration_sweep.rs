@@ -1003,6 +1003,7 @@ mod wiring {
             K::TemplateCopy,
             K::ApplicationApply,
             K::ApplicationRetire,
+            K::ThreadsReconnect,
             K::Undo,
             K::ContentWrite,
             K::Observed,
@@ -1032,6 +1033,7 @@ mod wiring {
                 | K::TemplateCopy
                 | K::ApplicationApply
                 | K::ApplicationRetire
+                | K::ThreadsReconnect
                 | K::Undo => {}
                 K::ContentWrite | K::Observed | K::Bookkeeping => {}
             }
@@ -1428,10 +1430,23 @@ mod wiring {
             .expect("the foreman tab")
             .id
             .clone();
+        // A retirement needs a same-incarnation diff. Dropping the event subscription here would
+        // deliberately force a rebind, where absence is not evidence of a user retirement.
+        eventually("foreman in the persisted observer baseline", || {
+            herdr_graph::observe::baseline::load(&InstancePaths::new(&root).baseline).is_some_and(
+                |b| {
+                    b.incarnation == snap.incarnation
+                        && b.snapshot
+                            .workspaces
+                            .iter()
+                            .flat_map(|w| &w.tabs)
+                            .flat_map(|t| &t.panes)
+                            .any(|p| p.id == pane)
+                },
+            )
+        })
+        .await;
         d.fakes.herdr.user_close_tab(&tab);
-        // Events are hints: one emitted while the observer is between subscriptions is only recovered by the
-        // next periodic snapshot diff (60 s). Dropping the stream makes the observer resync now.
-        d.fakes.herdr.disconnect_subscribers();
         eventually("the foreman seat to retire", || {
             d.seat("foreman").lifecycle == herdr_graph::model::Lifecycle::Retired
         })
