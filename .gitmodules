@@ -1,0 +1,3 @@
+[submodule "herdr-threads"]
+	path = third_party/herdr-threads
+	url = https://github.com/alepar/herdr-threads.git

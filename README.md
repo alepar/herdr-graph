@@ -77,7 +77,7 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 
 
 herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. ACK delivery also requires `messages.send_time_receipts_v1`. If a compatible daemon definitively lacks either capability, graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
 
-The verified dependency target is herdr-threads **2.0.3**, release commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3` (`v2.0.3`), source checkout pinned for this qualification to `b4d5f9628d17f869ab5b139b7f4ae3c933d02841`, using wire protocol **9**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v2.0.3). Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane resolution uses the public host-qualified `ResolveSeat` operation for graph-managed panes. It may allocate a bare local seat before an agent enrolls; it never checks in, accepts invitations or ACKs. Each call uses a fresh operation key so a later pane rebind cannot replay an old resolution. A lost response may leave a bare seat; repeating resolution returns the current unique owner for that host and pane. Restore holds remain authoritative. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
+The verified dependency target is herdr-threads **2.0.3**, release commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3` (`v2.0.3`), dependency submodule pinned to that exact official release commit, using wire protocol **9**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v2.0.3). Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane resolution uses the public host-qualified `ResolveSeat` operation for graph-managed panes. It may allocate a bare local seat before an agent enrolls; it never checks in, accepts invitations or ACKs. Each call uses a fresh operation key so a later pane rebind cannot replay an old resolution. A lost response may leave a bare seat; repeating resolution returns the current unique owner for that host and pane. Restore holds remain authoritative. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
 
 ### herdr-threads discovery
 
@@ -116,13 +116,16 @@ Every plan reviewed before reconnect must be planned and reviewed again, includi
 
 Ordinary undo refuses reconnect actions and actions predating the current namespace boundary. Reversing the namespace requires another reviewed reconnect with current `--from`, the previous canonical node as `--to`, and current `--head`; `legacy` is never a target. Reconnect does not restore the old node's memberships or replay its dormant intents. Restore desired organization through new explicit plans after assessing the preserved artifact. If threads is unavailable until after a new graph has committed records, use the explicit `legacy` reconnect workflow; graph does not infer those records are safe. Historical first-binding checks scan all main-branch ancestry, so first connection to a long-lived unbound repository can take longer.
 
-### Re-pointing `third_party/herdr-threads`
+### Initializing the pinned threads dependency
 
-The repository currently tracks an absolute symlink to an external checkout. Source builds require that checkout or an equivalent local checkout at the qualification source revision above; point the symlink at it before building. Release packaging/dependency setup belongs to the release owner.
+The repository pins `third_party/herdr-threads` as a Git submodule at the exact official v2.0.3 release commit. Initialize it before building; this does not change any separate local threads checkout:
 
 ```sh
-ln -sfn <path-to-herdr-threads-b4d5f9628-checkout> third_party/herdr-threads
+git submodule update --init --recursive
+cargo check --locked --offline --all-targets --all-features
 ```
+
+The Cargo command requires its locked registry dependencies to be cached. A source clone can initialize submodules during cloning with `git clone --recurse-submodules <graph-repository-url>`. Dependency upgrades require an explicit reviewed gitlink and lockfile update, followed by qualification; a moving external checkout is no longer the build input.
 
 ## Test tiers
 
