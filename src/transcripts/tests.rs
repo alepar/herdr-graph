@@ -2968,3 +2968,47 @@ async fn reconnect_redelivers_same_request_with_new_generation_and_refuses_old_a
     fx.tr.cmd_ack(json!({"request":old.id})).await.unwrap();
     assert_eq!(request(&fx, &old.id).status, RequestStatus::Dispatched);
 }
+
+#[tokio::test]
+async fn reconnect_background_pending_becomes_undeliverable_then_routable() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let path = write_transcript(&fx, "s1", 3);
+    finish_session(&fx, &worker, "native-1", &path).await;
+    let old = the_request(&fx);
+    assert_eq!(old.undeliverable.as_deref(), Some("no_destination"));
+    plan_and_apply(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            fx.store.head().unwrap().0
+        ),
+    );
+    fx.threads.enforce_namespace(fx.deps.instance.clone());
+    steps(&fx, 4).await;
+    fx.tr.process_pending().await;
+    let rq = request(&fx, &old.id);
+    assert_eq!(rq.undeliverable.as_deref(), Some("no_destination"));
+    let thread = ThreadRef(teamspace(&fx, "alpha").channel.thread_id.unwrap());
+    let notes = notifications_to(&fx, &thread);
+    assert_eq!(notes.len(), 1);
+    let epoch = crate::threads::namespace::epoch(&view(&fx)).unwrap();
+    assert_eq!(
+        notes[0].op_key.0,
+        crate::threads::namespace::salt(&epoch, &format!("undeliverable:{}", rq.id))
+    );
+    let marker = crate::threads::namespace::salt(
+        &epoch,
+        &format!("transcripts:undeliverable_notified:{}", rq.id),
+    );
+    assert_eq!(fx.journal.meta_get(&marker).unwrap().as_deref(), Some("1"));
+    fx.tr.process_pending().await;
+    assert_eq!(notifications_to(&fx, &thread).len(), 1);
+    staffed_summarizer(&fx, "sum").await;
+    steps(&fx, 3).await;
+    fx.tr.process_pending().await;
+    let rq = request(&fx, &rq.id);
+    assert_eq!(rq.undeliverable, None);
+    assert_eq!(rq.status, RequestStatus::Delivered);
+}

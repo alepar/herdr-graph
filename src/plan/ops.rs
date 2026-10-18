@@ -131,12 +131,19 @@ pub fn pending_for(
 }
 
 /// `ops.get` payload: the summary plus journal detail and the reminder state.
-pub fn op_detail(journal: &Journal, op: &OpId) -> Result<Value, OpsError> {
+pub fn op_detail(journal: &Journal, store: &dyn Store, op: &OpId) -> Result<Value, OpsError> {
     let row = journal
         .get(op)?
         .ok_or_else(|| OpsError::Invalid(format!("unknown operation {op}")))?;
+    let epoch = crate::threads::namespace::epoch(&CommitView {
+        store,
+        at: store.head()?,
+    })?;
     let sent = journal
-        .meta_get(&reminder_count_key(op))?
+        .meta_get(&crate::threads::namespace::salt(
+            &epoch,
+            &reminder_count_key(op),
+        ))?
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
     Ok(json!({
@@ -289,7 +296,14 @@ pub fn reassign(
             return Err(OpsError::Invalid(format!("unknown operation {op}")));
         }
     }
-    journal.meta_delete(&reminder_count_key(op))?;
+    let epoch = crate::threads::namespace::epoch(&CommitView {
+        store,
+        at: store.head()?,
+    })?;
+    journal.meta_delete(&crate::threads::namespace::salt(
+        &epoch,
+        &reminder_count_key(op),
+    ))?;
     Ok(())
 }
 
@@ -455,7 +469,9 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
     let d = deps.clone();
     reg.command("ops.get", move |_cx: CommandCtx, args: Value| {
         let d = d.clone();
-        async move { op_detail(&d.journal, &id_arg::<OpId>(&args, "op")?).map_err(err) }
+        async move {
+            op_detail(&d.journal, d.store.as_ref(), &id_arg::<OpId>(&args, "op")?).map_err(err)
+        }
     });
     let d = deps.clone();
     reg.command("ops.cancel", move |_cx: CommandCtx, args: Value| {

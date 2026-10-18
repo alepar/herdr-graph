@@ -343,6 +343,7 @@ impl Transcripts {
 
     async fn process_pending_inner(&self) -> Result<(), CommandError> {
         struct Work {
+            epoch: String,
             rq: ProcessingRequest,
             dest: Destination,
             teamspace_thread: Option<ThreadRef>,
@@ -372,6 +373,7 @@ impl Transcripts {
                     .and_then(|t| t.channel.thread_id.clone())
                     .map(ThreadRef);
                 out.push(Work {
+                    epoch: g.epoch.clone(),
                     rq,
                     dest,
                     teamspace_thread,
@@ -380,48 +382,57 @@ impl Transcripts {
             out
         };
         for w in work {
-            match &w.dest {
-                Destination::Ready { .. } | Destination::Relaunch { .. } => {
-                    if w.rq.undeliverable.is_some() {
-                        self.commit(bookkeeping_request(
-                            "request_delivery",
-                            json!({ "rq": w.rq.id, "clear_undeliverable": true }),
-                        ))
-                        .await?;
+            crate::threads::namespace::EXPECTED_EPOCH
+                .scope(w.epoch.clone(), async {
+                    match &w.dest {
+                        Destination::Ready { .. } | Destination::Relaunch { .. } => {
+                            if w.rq.undeliverable.is_some() {
+                                self.commit(bookkeeping_request(
+                                    "request_delivery",
+                                    json!({ "rq": w.rq.id, "clear_undeliverable": true }),
+                                ))
+                                .await?;
+                            }
+                            if let Destination::Relaunch {
+                                clone, authority, ..
+                            } = &w.dest
+                                && let Err(e) = self.reconciler.request_relaunch(clone, authority)
+                            {
+                                eprintln!(
+                                    "herdr-graph: transcripts: cannot relaunch summarizer clone {clone}: {e:#}"
+                                );
+                            }
+                        }
+                        Destination::Undeliverable { reason, .. } => {
+                            if w.rq.undeliverable.as_deref() != Some(*reason) {
+                                self.commit(bookkeeping_request(
+                                    "request_delivery",
+                                    json!({ "rq": w.rq.id, "undeliverable": reason }),
+                                ))
+                                .await?;
+                            }
+                            self.notify_undeliverable_once(&w.epoch, &w.rq.id, reason, w.teamspace_thread.as_ref())
+                                .await;
+                        }
                     }
-                    if let Destination::Relaunch {
-                        clone, authority, ..
-                    } = &w.dest
-                        && let Err(e) = self.reconciler.request_relaunch(clone, authority)
-                    {
-                        eprintln!(
-                            "herdr-graph: transcripts: cannot relaunch summarizer clone {clone}: {e:#}"
-                        );
-                    }
-                }
-                Destination::Undeliverable { reason, .. } => {
-                    if w.rq.undeliverable.as_deref() != Some(*reason) {
-                        self.commit(bookkeeping_request(
-                            "request_delivery",
-                            json!({ "rq": w.rq.id, "undeliverable": reason }),
-                        ))
-                        .await?;
-                    }
-                    self.notify_undeliverable_once(&w.rq.id, reason, w.teamspace_thread.as_ref())
-                        .await;
-                }
-            }
+                    Ok::<_, CommandError>(())
+                })
+                .await?;
         }
         Ok(())
     }
 
     async fn notify_undeliverable_once(
         &self,
+        epoch: &str,
         rq: &RequestId,
         reason: &str,
         thread: Option<&ThreadRef>,
     ) {
-        let key = format!("transcripts:undeliverable_notified:{rq}");
+        let key = crate::threads::namespace::salt(
+            epoch,
+            &format!("transcripts:undeliverable_notified:{rq}"),
+        );
         if self.journal.meta_get(&key).ok().flatten().is_some() {
             return;
         }
@@ -429,7 +440,10 @@ impl Transcripts {
         let body = format!(
             "transcript request {rq} is undeliverable ({reason}); it stays pending until a summarizer is available."
         );
-        let op_key = OpKey(format!("undeliverable:{rq}"));
+        let op_key = OpKey(crate::threads::namespace::salt(
+            epoch,
+            &format!("undeliverable:{rq}"),
+        ));
         match self
             .threads
             .notify(thread, Severity::Warn, &body, &op_key)

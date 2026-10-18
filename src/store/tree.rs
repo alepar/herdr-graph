@@ -85,6 +85,12 @@ impl<'a> Overlay<'a> {
     pub fn instance_root(&self) -> Option<std::path::PathBuf> {
         self.base.store.instance_root()
     }
+    pub fn at(&self, at: CommitId) -> CommitView<'_> {
+        CommitView {
+            store: self.base.store,
+            at,
+        }
+    }
     pub fn base(&self) -> &CommitId {
         &self.base.at
     }

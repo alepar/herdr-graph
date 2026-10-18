@@ -113,6 +113,20 @@ impl Mutation for OrgMutation {
             }
         }
 
+        // Effect equivalence cannot prove that a reviewed external ID belongs to a
+        // new namespace. Preserve old plans for inspection, but require fresh review.
+        let reviewed_epoch =
+            crate::threads::namespace::epoch(&cx.tree.at(stored.plan.committed_rev.clone()))?;
+        let current_epoch = crate::threads::namespace::epoch(&cx.tree)?;
+        if reviewed_epoch != current_epoch {
+            return Err(reject(
+                "stale_namespace_plan",
+                format!(
+                    "plan {plan_id} predates the current threads namespace; create and review a new plan after reconnect"
+                ),
+            ));
+        }
+
         // 3. recompute against the committed revision this apply runs on
         let at = cx.tree.base().clone();
         let pcx = PlanCx {

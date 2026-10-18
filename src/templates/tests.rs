@@ -2353,3 +2353,40 @@ fn reconnect_preserves_then_clears_template_and_application_external_relationshi
         "external-old"
     );
 }
+
+#[test]
+fn reconnect_rejects_preboundary_template_and_application_plans() {
+    let fx = fx();
+    alpha(&fx);
+    let member = MemberId::new();
+    let members = [m(&member, "worker", "deferred")];
+    create_template(&fx, "source", &members, &[("external-old", None)]);
+    let create_path = write_doc(&fx, &doc_text("other", &members, &[("external-old", None)]));
+    let plans = [
+        plan(&fx, &format!("template create other --from {create_path}")),
+        edit_plan(&fx, "source", &members, &[("external-edited", None)]),
+        plan(
+            &fx,
+            "application apply source --teamspace alpha --name applied",
+        ),
+    ];
+    commit(
+        &fx,
+        &format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            fx.store.head().unwrap().0
+        ),
+    );
+    for sp in plans {
+        let row = apply_plan(&fx, &sp);
+        assert_eq!(row.state, OpState::Rejected);
+        assert_eq!(row.rejection.unwrap().reason, "stale_namespace_plan");
+        assert_eq!(
+            fx.deps.plans.get(&sp.plan.id).unwrap().unwrap().hash,
+            sp.hash
+        );
+    }
+    assert!(tpl(&fx, "source").relationships.is_empty());
+    assert!(layout::list_applications(&view(&fx)).unwrap().is_empty());
+}

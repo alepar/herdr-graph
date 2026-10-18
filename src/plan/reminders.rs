@@ -38,6 +38,7 @@ pub struct ReminderScheduler {
 
 /// A notice the sync pass decided to send.
 struct Due {
+    epoch: String,
     op: OpId,
     index: u32,
     thread: ThreadRef,
@@ -64,7 +65,7 @@ fn notice_body(row: &OpRow) -> String {
 
 impl ReminderScheduler {
     /// The requester's channel thread: its seat must exist, be live, and have a managed channel.
-    fn thread_of(&self, row: &OpRow) -> Option<ThreadRef> {
+    fn thread_of(&self, row: &OpRow) -> Option<(ThreadRef, String)> {
         let seat = row.request.requester.seat.as_ref()?;
         let head = self.store.head().ok()?;
         let view = CommitView {
@@ -76,12 +77,16 @@ impl ReminderScheduler {
         if rec.lifecycle == Lifecycle::Retired {
             return None;
         }
-        rec.channel.thread_id.map(ThreadRef)
+        let epoch = crate::threads::namespace::epoch(&view).ok()?;
+        rec.channel.thread_id.map(|id| (ThreadRef(id), epoch))
     }
 
-    fn sent_count(&self, op: &OpId) -> u32 {
+    fn sent_count(&self, op: &OpId, epoch: &str) -> u32 {
         self.journal
-            .meta_get(&reminder_count_key(op))
+            .meta_get(&crate::threads::namespace::salt(
+                epoch,
+                &reminder_count_key(op),
+            ))
             .ok()
             .flatten()
             .and_then(|s| s.parse().ok())
@@ -107,7 +112,10 @@ impl ReminderScheduler {
             {
                 continue;
             }
-            let sent = self.sent_count(&row.op);
+            let Some((thread, epoch)) = self.thread_of(&row) else {
+                continue;
+            };
+            let sent = self.sent_count(&row.op, &epoch);
             let elapsed = now - row.updated_at;
             let due_count = SCHEDULE_HOURS
                 .iter()
@@ -116,10 +124,8 @@ impl ReminderScheduler {
             if due_count <= sent {
                 continue;
             }
-            let Some(thread) = self.thread_of(&row) else {
-                continue;
-            };
             out.push(Due {
+                epoch,
                 op: row.op.clone(),
                 index: due_count - 1,
                 thread,
@@ -134,19 +140,25 @@ impl ReminderScheduler {
     pub async fn tick(&self) -> Vec<ReminderSent> {
         let mut sent = Vec::new();
         for due in self.due(self.clock.now()) {
-            let key = OpKey(format!("rem:{}:{}", due.op, due.index));
-            if let Err(e) = self
-                .threads
-                .notify(&due.thread, Severity::Warn, &due.body, &key)
+            let key = OpKey(crate::threads::namespace::salt(
+                &due.epoch,
+                &format!("rem:{}:{}", due.op, due.index),
+            ));
+            if let Err(e) = crate::threads::namespace::EXPECTED_EPOCH
+                .scope(
+                    due.epoch.clone(),
+                    self.threads
+                        .notify(&due.thread, Severity::Warn, &due.body, &key),
+                )
                 .await
             {
                 eprintln!("herdr-graph: reminder for {} not delivered: {e}", due.op);
                 continue;
             }
-            if let Err(e) = self
-                .journal
-                .meta_set(&reminder_count_key(&due.op), &(due.index + 1).to_string())
-            {
+            if let Err(e) = self.journal.meta_set(
+                &crate::threads::namespace::salt(&due.epoch, &reminder_count_key(&due.op)),
+                &(due.index + 1).to_string(),
+            ) {
                 eprintln!("herdr-graph: could not record reminder for {}: {e}", due.op);
             }
             sent.push(ReminderSent {
@@ -187,6 +199,7 @@ pub(crate) mod stub {
     pub struct RecordingThreads {
         notes: Mutex<Vec<(ThreadRef, Severity, String, OpKey)>>,
         pub fail: Mutex<bool>,
+        pub namespace_root: Mutex<Option<std::path::PathBuf>>,
     }
 
     impl RecordingThreads {
@@ -228,6 +241,15 @@ pub(crate) mod stub {
             body: &str,
             op_key: &OpKey,
         ) -> Result<(), ThreadsError> {
+            let root = self.namespace_root.lock().unwrap().clone();
+            let _guard = match root {
+                Some(root) => Some(
+                    crate::threads::namespace::guard(&root)
+                        .await
+                        .map_err(|e| ThreadsError::Rejected(e.to_string()))?,
+                ),
+                None => None,
+            };
             if *self.fail.lock().unwrap() {
                 return Err(ThreadsError::ServiceBusy);
             }
@@ -538,5 +560,86 @@ mod tests {
             .expect("loop stops")
             .unwrap()
             .unwrap();
+    }
+    #[tokio::test]
+    async fn reconnect_new_rejection_initial_and_scheduled_notices_use_current_epoch() {
+        let r = rig();
+        assert_eq!(r.sched.tick().await.len(), 1);
+        cancel(r.fx.w.journal(), &r.op, r.fx.clock_now()).unwrap();
+        commit(
+            &r.fx,
+            &format!(
+                "threads reconnect --from legacy --to {} --head {}",
+                "02".repeat(16),
+                r.fx.store.head().unwrap().0
+            ),
+        );
+        set_channel(&r.fx, &seat(&r.fx, "one").id, "new-channel");
+        let row = rejected_op(&r.fx, requester_of(&seat(&r.fx, "one")));
+        *r.threads.namespace_root.lock().unwrap() = Some(r.fx.deps.instance.clone());
+        let epoch = crate::threads::namespace::epoch(&crate::store::tree::CommitView {
+            store: r.fx.store.as_ref(),
+            at: r.fx.store.head().unwrap(),
+        })
+        .unwrap();
+        for index in [0, 1] {
+            let sent = r.sched.tick().await;
+            assert_eq!(
+                sent.len(),
+                1,
+                "current-node reminder must pass the production call guard"
+            );
+            assert_eq!((sent[0].op.clone(), sent[0].index), (row.op.clone(), index));
+            let note = r.threads.sent().last().unwrap().clone();
+            assert_eq!(note.0, ThreadRef("new-channel".into()));
+            assert_eq!(
+                note.3.0,
+                crate::threads::namespace::salt(&epoch, &format!("rem:{}:{index}", row.op))
+            );
+            advance(&r, Span::hours(1));
+        }
+        assert_eq!(
+            r.fx.w
+                .journal()
+                .meta_get(&crate::threads::namespace::salt(
+                    &epoch,
+                    &reminder_count_key(&row.op)
+                ))
+                .unwrap()
+                .as_deref(),
+            Some("2")
+        );
+        assert!(
+            r.fx.w
+                .journal()
+                .meta_get(&reminder_count_key(&row.op))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            crate::plan::ops::op_detail(r.fx.w.journal(), r.fx.store.as_ref(), &row.op).unwrap()["reminders"]
+                ["sent"],
+            2
+        );
+        set_channel(&r.fx, &seat(&r.fx, "two").id, "new-other-channel");
+        reassign(
+            r.fx.w.journal(),
+            r.fx.store.as_ref(),
+            &row.op,
+            &seat(&r.fx, "two").id,
+            r.fx.clock_now(),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::plan::ops::op_detail(r.fx.w.journal(), r.fx.store.as_ref(), &row.op).unwrap()["reminders"]
+                ["sent"],
+            0
+        );
+        let sent = r.sched.tick().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            (sent[0].index, sent[0].thread.clone()),
+            (0, ThreadRef("new-other-channel".into()))
+        );
     }
 }

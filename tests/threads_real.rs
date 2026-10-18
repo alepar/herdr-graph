@@ -675,4 +675,31 @@ async fn production_discovery_reaches_real_threads_daemon() {
         .unwrap();
     assert_eq!(again, fresh_channel);
     assert!(saved.join("herdr-threads.db").is_file());
+
+    // Exercise the installed background probe, not a manually scoped direct call.
+    let mut registry = herdr_graph::daemon::registry::Registry::default();
+    herdr_graph::daemon::compose::register_threads_connection(
+        &mut registry,
+        threads.clone(),
+        graph_root.clone(),
+    );
+    let (stop, shutdown) = herdr_graph::daemon::registry::shutdown_channel();
+    let (_, run) = registry.take_loops().pop().unwrap();
+    let handle = tokio::spawn(run(shutdown));
+    for _ in 0..200 {
+        if registry.status_components()["threads"]
+            .get("note")
+            .is_none()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let component = registry.status_components()["threads"].clone();
+    stop.send(true).unwrap();
+    handle.await.unwrap().unwrap();
+    assert_eq!(
+        component["connected"], true,
+        "normal post-reconnect component probe: {component}"
+    );
 }

@@ -314,7 +314,7 @@ pub async fn compose_with(
         clock: clock.clone(),
     });
     crate::plan::reminders::register_loop(reg, sched, reminder_period);
-    register_threads_connection(reg, threads.clone());
+    register_threads_connection(reg, threads.clone(), paths.root.clone());
     register_status(reg, &journal);
     startup.step("loops")?;
     Ok(())
@@ -375,7 +375,11 @@ fn register_commands(
 
 /// Registers the threads connection: a loop that keeps the service registration warm and records what the
 /// connection supports, shown by `status` as `components.threads`.
-fn register_threads_connection(reg: &mut Registry, threads: Arc<dyn ThreadsPort>) {
+pub fn register_threads_connection(
+    reg: &mut Registry,
+    threads: Arc<dyn ThreadsPort>,
+    root: PathBuf,
+) {
     let state = Arc::new(Mutex::new(
         json!({ "connected": false, "note": "not probed yet" }),
     ));
@@ -386,7 +390,20 @@ fn register_threads_connection(reg: &mut Registry, threads: Arc<dyn ThreadsPort>
     );
     reg.background("threads.connection", move |mut sd| async move {
         loop {
-            let v = match threads.delivery_capability().await {
+            // This probe carries no reference-bearing payload; capture the current epoch.
+            // The production call guard rejects any transition that races this capture.
+            let result = match crate::threads::namespace::committed(&root) {
+                Ok(marker) => {
+                    crate::threads::namespace::EXPECTED_EPOCH
+                        .scope(
+                            marker.map(|m| m.epoch).unwrap_or_default(),
+                            threads.delivery_capability(),
+                        )
+                        .await
+                }
+                Err(e) => Err(crate::ports::threads::ThreadsError::Rejected(e.to_string())),
+            };
+            let v = match result {
                 Ok(c) => json!({ "connected": true, "capability": c }),
                 Err(e) => json!({ "connected": false, "error": e.to_string() }),
             };
@@ -620,14 +637,9 @@ mod lazy {
         }
 
         async fn guard(&self) -> Result<std::fs::File, ThreadsError> {
-            let guard = crate::threads::namespace::call_guard(&self.graph_root)
+            crate::threads::namespace::guard(&self.graph_root)
                 .await
-                .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
-            if self.graph_root.join(".git").exists() {
-                crate::threads::namespace::check_call(&self.graph_root)
-                    .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
-            }
-            Ok(guard)
+                .map_err(|e| ThreadsError::Rejected(e.to_string()))
         }
 
         fn bind(&self, node: herdr_threads::node::NodeUuid) -> Result<(), ThreadsError> {
@@ -657,7 +669,7 @@ mod lazy {
 
     pub struct LazyThreads {
         endpoint: Arc<Endpoint>,
-        inner: Arc<Mutex<Option<(Discovered, Arc<ServiceThreads>)>>>,
+        inner: Arc<Mutex<Option<(Discovered, PathBuf, Arc<ServiceThreads>)>>>,
     }
 
     impl LazyThreads {
@@ -681,31 +693,31 @@ mod lazy {
         fn get(&self) -> Result<Arc<ServiceThreads>, ThreadsError> {
             let mut slot = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let d = self.endpoint.locate()?;
-            if let Some((cached, t)) = &*slot {
-                if cached == &d {
+            let intents = crate::threads::namespace::intent_dir(
+                &self.endpoint.intents,
+                &self.endpoint.graph_root,
+            )
+            .or_else(|e| {
+                if !self.endpoint.graph_root.join(".git").exists() {
+                    Ok(self.endpoint.intents.clone())
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+            if let Some((cached, journal, t)) = &*slot {
+                if cached == &d && journal == &intents {
                     return Ok(t.clone());
                 }
             }
             *slot = None;
-            let t = ServiceThreads::with_system_clock(
-                d.socket.clone(),
-                crate::threads::namespace::intent_dir(
-                    &self.endpoint.intents,
-                    &self.endpoint.graph_root,
-                )
-                .or_else(|e| {
-                    if !self.endpoint.graph_root.join(".git").exists() {
-                        Ok(self.endpoint.intents.clone())
-                    } else {
-                        Err(e)
-                    }
-                })
-                .map_err(|e| ThreadsError::Rejected(e.to_string()))?,
-                d.instance,
-            )
-            .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
+            let t =
+                ServiceThreads::with_system_clock(d.socket.clone(), intents.clone(), d.instance)
+                    .map_err(|e| {
+                        ThreadsError::Disconnected(format!("threads intent journal: {e}"))
+                    })?;
             let t = Arc::new(t);
-            *slot = Some((d, t.clone()));
+            *slot = Some((d, intents, t.clone()));
             Ok(t)
         }
     }
@@ -904,6 +916,41 @@ mod lazy {
         }
 
         #[tokio::test]
+        async fn reconnect_background_connection_probe_reports_healthy() {
+            use crate::plan::kinds_extra::testkit::{commit, fx};
+            use crate::ports::store::Store;
+            let fx = fx();
+            commit(
+                &fx,
+                &format!(
+                    "threads reconnect --from legacy --to {} --head {}",
+                    "02".repeat(16),
+                    fx.store.head().unwrap().0
+                ),
+            );
+            let threads = Arc::new(crate::threads::FakeThreads::new());
+            threads.enforce_namespace(fx.deps.instance.clone());
+            let mut registry = Registry::default();
+            register_threads_connection(&mut registry, threads, fx.deps.instance.clone());
+            let (stop, shutdown) = crate::daemon::registry::shutdown_channel();
+            let (_, run) = registry.take_loops().pop().unwrap();
+            let handle = tokio::spawn(run(shutdown));
+            for _ in 0..100 {
+                if registry.status_components()["threads"]
+                    .get("note")
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let component = registry.status_components()["threads"].clone();
+            stop.send(true).unwrap();
+            handle.await.unwrap().unwrap();
+            assert_eq!(component["connected"], true, "{component}");
+        }
+
+        #[tokio::test]
         async fn cached_client_rediscovers_and_refuses_a_fresh_node_at_same_socket() {
             use herdr_threads::daemon::paths::NodePaths;
             use herdr_threads::node::NodeUuid;
@@ -967,6 +1014,25 @@ mod lazy {
                 "production assembly binds the fresh graph before any first mutation or external call"
             );
             let lazy = LazyThreads::new(endpoint.clone());
+            // A valid unresolved A envelope is loaded into the first client's pending list.
+            use sha2::{Digest, Sha256};
+            let old_journal =
+                herdr_threads::client::service::ServiceIntentJournal::open(&endpoint.intents)
+                    .unwrap();
+            let pending_path = endpoint
+                .intents
+                .join(format!("{:x}.intent", Sha256::digest(b"oldpending")));
+            let pending_bytes = serde_json::to_vec(&json!({
+                "author":"graph", "request": {
+                    "version":herdr_threads::protocol::wire::PROTOCOL_VERSION,
+                    "request_id":"oldpending", "expected_instance":NodeUuid::from_bytes([1;16]).to_string(),
+                    "service":{"kind":"operation","args":{"kind":"ensure_thread","args":{
+                        "thread":"old-channel", "topic":"old", "goal":"old", "operation":"oldpending"
+                    }}}
+                }
+            })).unwrap();
+            std::fs::write(&pending_path, &pending_bytes).unwrap();
+            assert_eq!(old_journal.pending().unwrap().len(), 1);
             let first = lazy.get().unwrap();
             assert!(Arc::ptr_eq(&first, &lazy.get().unwrap()));
             let binding =
@@ -991,6 +1057,64 @@ mod lazy {
             assert_eq!(
                 std::fs::read(crate::threads::namespace::binding_path(&endpoint.intents)).unwrap(),
                 binding
+            );
+            let transition = |from: NodeUuid, to: NodeUuid, previous: &str, epoch: &str| {
+                let repo = git2::Repository::open(&endpoint.graph_root).unwrap();
+                let parent = repo.head().unwrap().peel_to_commit().unwrap();
+                let marker = crate::threads::namespace::Transition {
+                    version: 1,
+                    node: to,
+                    from: from.to_string(),
+                    previous_epoch: previous.into(),
+                    epoch: epoch.into(),
+                    base_head: parent.id().to_string(),
+                    op: epoch.into(),
+                };
+                let blob = repo.blob(&serde_json::to_vec(&marker).unwrap()).unwrap();
+                let mut builder = repo.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+                builder
+                    .insert(crate::threads::namespace::MARKER, blob, 0o100644)
+                    .unwrap();
+                let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+                let sig = git2::Signature::now("test", "test@example.invalid").unwrap();
+                repo.commit(Some("HEAD"), &sig, &sig, epoch, &tree, &[&parent])
+                    .unwrap();
+            };
+            let a = NodeUuid::from_bytes([1; 16]);
+            let b = NodeUuid::from_bytes([2; 16]);
+            transition(a, b, "", "epoch_b");
+            // Mapping publishes B before its query waits on this fixture's idle socket.
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                crate::threads::namespace::EXPECTED_EPOCH.scope(
+                    "epoch_b".into(),
+                    lazy_map.seat_for(&HerdrPaneId("w1:p1".into())),
+                ),
+            )
+            .await;
+            assert_eq!(
+                crate::threads::namespace::bound(&endpoint.intents).unwrap(),
+                Some(b)
+            );
+            transition(b, a, "epoch_b", "epoch_a_return");
+            publish(a);
+            let returned = lazy.get().unwrap();
+            assert!(
+                !Arc::ptr_eq(&first, &returned),
+                "returning to A must not reuse its retired journal/client"
+            );
+            assert!(Arc::ptr_eq(&returned, &lazy.get().unwrap()));
+            assert_eq!(std::fs::read(pending_path).unwrap(), pending_bytes);
+            assert_eq!(old_journal.pending().unwrap().len(), 1);
+            let current_dir =
+                crate::threads::namespace::intent_dir(&endpoint.intents, &endpoint.graph_root)
+                    .unwrap();
+            assert!(
+                herdr_threads::client::service::ServiceIntentJournal::open(current_dir)
+                    .unwrap()
+                    .pending()
+                    .unwrap()
+                    .is_empty()
             );
         }
     }

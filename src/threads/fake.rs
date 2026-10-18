@@ -52,11 +52,27 @@ pub fn thread_for_ensure_key(op_key: &OpKey) -> ThreadRef {
 #[derive(Default)]
 pub struct FakeThreads {
     state: Mutex<State>,
+    namespace_root: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl FakeThreads {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Apply the same external-call guard used by production wrappers in contract tests.
+    pub fn enforce_namespace(&self, root: std::path::PathBuf) {
+        *self.namespace_root.lock().unwrap() = Some(root);
+    }
+    async fn namespace_guard(&self) -> Result<Option<std::fs::File>, ThreadsError> {
+        let root = self.namespace_root.lock().unwrap().clone();
+        match root {
+            Some(root) => crate::threads::namespace::guard(&root)
+                .await
+                .map(Some)
+                .map_err(|e| ThreadsError::Rejected(e.to_string())),
+            None => Ok(None),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -176,6 +192,7 @@ impl ThreadsPort for FakeThreads {
         topic: &str,
         op_key: &OpKey,
     ) -> Result<ThreadRef, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let mut st = self.lock();
         Self::gate(&st)?;
         let thread = thread_for_ensure_key(op_key);
@@ -197,6 +214,7 @@ impl ThreadsPort for FakeThreads {
         constraint: InviteConstraint,
         op_key: &OpKey,
     ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let mut st = self.lock();
         Self::gate(&st)?;
         require_thread(&st, thread)?;
@@ -250,6 +268,7 @@ impl ThreadsPort for FakeThreads {
         thread: &ThreadRef,
         seat: &ThreadsSeatRef,
     ) -> Result<Option<InvitationState>, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         Ok(self.membership_detail(thread, seat).await?.map(|d| d.state))
     }
 
@@ -258,6 +277,7 @@ impl ThreadsPort for FakeThreads {
         thread: &ThreadRef,
         seat: &ThreadsSeatRef,
     ) -> Result<Option<MembershipDetail>, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let st = self.lock();
         Self::gate(&st)?;
         Ok(st
@@ -278,6 +298,7 @@ impl ThreadsPort for FakeThreads {
         body: &str,
         op_key: &OpKey,
     ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let mut st = self.lock();
         Self::gate(&st)?;
         require_thread(&st, thread)?;
@@ -299,6 +320,7 @@ impl ThreadsPort for FakeThreads {
         topic: &str,
         op_key: &OpKey,
     ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let mut st = self.lock();
         Self::gate(&st)?;
         require_thread(&st, thread)?;
@@ -316,6 +338,7 @@ impl ThreadsPort for FakeThreads {
         seat: &ThreadsSeatRef,
         op_key: &OpKey,
     ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let mut st = self.lock();
         Self::gate(&st)?;
         st.calls.push("release_requirement".into());
@@ -339,6 +362,7 @@ impl ThreadsPort for FakeThreads {
         _body: &str,
         _op_key: &OpKey,
     ) -> Result<MessageRef, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         Err(ThreadsError::Unsupported)
     }
 
@@ -346,10 +370,12 @@ impl ThreadsPort for FakeThreads {
         &self,
         _messages: &[MessageRef],
     ) -> Result<Vec<MessageReceipts>, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         Err(ThreadsError::Unsupported)
     }
 
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
         let st = self.lock();
         Self::gate(&st)?;
         Ok(st.capability.unwrap_or(DeliveryCapability::NotifyFallback))

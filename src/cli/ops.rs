@@ -160,7 +160,8 @@ fn show(id: &str) -> anyhow::Result<ExitCode> {
         let journal = d
             .journal()?
             .ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
-        Ok(ops::op_detail(&journal, &op)?)
+        let store = crate::store::GitStore::open(&d.paths.root)?;
+        Ok(ops::op_detail(&journal, &store, &op)?)
     })?;
     print!("{}", render_op(&reply["op"]));
     println!("  requester: {}", reply["op"]["requester"]);

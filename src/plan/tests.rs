@@ -46,6 +46,7 @@ fn fx() -> Fx {
     init_instance(&root).unwrap();
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
+    super::kinds_extra::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
@@ -2706,4 +2707,75 @@ fn reconnect_first_binding_serializes_with_first_graph_commit() {
         ))
         .exists()
     );
+}
+
+#[test]
+fn reconnect_rejects_stored_and_already_queued_preboundary_plans() {
+    for queued in [false, true] {
+        let fx = fx();
+        alpha(&fx);
+        commit(&fx, "seat create foreman --teamspace alpha");
+        let old = plan(
+            &fx,
+            "participation join external-old --scope seat --seat foreman",
+        );
+        let change = format!(
+            "threads reconnect --from legacy --to {} --head {}",
+            "02".repeat(16),
+            fx.store.head().unwrap().0
+        );
+        let reconnect = plan(&fx, &change);
+        let admit = |sp: &StoredPlan| {
+            admit_apply(
+                &fx.deps,
+                &CallerInfo::default(),
+                sp.plan.id.as_str(),
+                Some(&sp.hash),
+                "relay",
+            )
+            .unwrap()
+        };
+        if queued {
+            let boundary = admit(&reconnect);
+            let stale = admit(&old);
+            fx.w.drain().unwrap();
+            assert_eq!(
+                fx.w.journal().get(&boundary).unwrap().unwrap().state,
+                OpState::Committed
+            );
+            let row = fx.w.journal().get(&stale).unwrap().unwrap();
+            assert_eq!(
+                row.state,
+                OpState::Rejected,
+                "queued old plan: {:?}",
+                row.rejection
+            );
+            assert_eq!(row.rejection.unwrap().reason, "stale_namespace_plan");
+        } else {
+            assert_eq!(apply_plan(&fx, &reconnect).state, OpState::Committed);
+            let row = apply_plan(&fx, &old);
+            assert_eq!(
+                row.state,
+                OpState::Rejected,
+                "stored old plan: {:?}",
+                row.rejection
+            );
+            assert_eq!(row.rejection.unwrap().reason, "stale_namespace_plan");
+        }
+        assert_eq!(
+            fx.deps.plans.get(&old.plan.id).unwrap().unwrap().hash,
+            old.hash
+        );
+        assert!(
+            seat(&fx, "foreman", None)
+                .1
+                .participation
+                .seat_wide
+                .is_empty()
+        );
+        commit(
+            &fx,
+            "participation join external-new --scope seat --seat foreman",
+        );
+    }
 }

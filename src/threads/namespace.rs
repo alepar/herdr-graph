@@ -124,6 +124,14 @@ pub async fn call_guard(root: &Path) -> io::Result<std::fs::File> {
         .await
         .map_err(io::Error::other)?
 }
+/// Shared production call boundary; the guard must cover the external call only.
+pub async fn guard(root: &Path) -> io::Result<std::fs::File> {
+    let guard = call_guard(root).await?;
+    if root.join(".git").exists() {
+        check_call(root)?;
+    }
+    Ok(guard)
+}
 tokio::task_local! { pub static EXPECTED_EPOCH: String; }
 pub fn check_call(root: &Path) -> io::Result<()> {
     let current = committed(root)?.map(|t| t.epoch).unwrap_or_default();

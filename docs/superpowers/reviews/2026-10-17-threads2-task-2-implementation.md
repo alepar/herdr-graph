@@ -85,3 +85,50 @@ Eager binding remains conservative: if threads is absent until a new graph alrea
 - Cargo/test commands were sequential. Process/socket and isolated Git fixture commands used approved escalation. External `third_party/herdr-threads` status remains clean; no upstream source or dependency changes.
 
 Task 2 is ready for independent review. The Herdr version matrix and full final combined task validation remain assigned to later tasks; this report deliberately distinguishes earlier covering runs from final production-code focused/private runs.
+
+
+# Task 2 review fixes, round 1
+
+Base: `f9bbb1b0916649d9b1197a397a85c5bd2047a0c5`. Independent review identified 0 Critical / 3 Important / 0 Minor findings. This round addresses all three; no live state, upstream source or native-agent work is authorized or performed.
+
+## F1: confirmed plans crossing a namespace boundary
+
+- Reproduced an old template-create plan committing after reconnect (`/private/tmp/hg-task2-f1-red.log`). The participation fixture initially omitted its seat; after correcting that fixture, the stored participation plan also committed incorrectly (`/private/tmp/hg-task2-f1-plan-red.log`).
+- `OrgMutation` now compares the namespace at the stored plan's existing `committed_rev` with the writer's current committed overlay before recomputation/mutation. A mismatch returns `stale_namespace_plan` and directs the operator to create/review a new plan. This uses the original committed tree, not a current epoch assigned to an old request, and applies under the existing publication lock.
+- The policy intentionally rejects **all** pre-boundary organizational plans, including equivalent/unrelated changes and already-admitted plans queued behind reconnect. Old plan files, IDs, hashes and serialization remain unchanged/readable. README states the review cost explicitly.
+- `cargo test --offline --lib reconnect_rejects_ -- --test-threads=1`: **3 passed**, `/private/tmp/hg-task2-f1-green.log` (1.18 s). Includes stored and already-queued participation plans, fresh new-namespace participation acceptance, template create/edit and application apply rejection, plus preserved old plan hashes.
+
+## F2: cached client identity after A → B → A
+
+- Reproduced reuse of the retired A service client after B was published solely through the mapping path (`/private/tmp/hg-task2-f2-red.log`). The isolated fixture loads a valid pending service envelope into A's original client, publishes B with a guarded mapping call while keeping that service cache untouched, and returns to A at the same endpoint.
+- Cache reuse now requires both the discovered endpoint/node and the resolved epoch journal directory. Returning to a node in a fresh epoch constructs a fresh client rather than retaining a retired journal/pending list.
+- `cargo test --offline --lib cached_client_rediscovers -- --test-threads=1`: **1 passed**, `/private/tmp/hg-task2-f2-green.log` (1.13 s). Checks distinct return-A client, stable reuse within that epoch, old pending envelope byte preservation and count, and empty new pending journal. The fixture's socket is intentionally idle; the mapping call publishes B before query cancellation. This checks the actual production cache/publication path without claiming server-side mutation behavior.
+
+## F3: normal background caller epoch propagation
+
+- Red run: `cargo test --offline --lib reconnect_ -- --test-threads=1`, `/private/tmp/hg-task2-f3-red.log`: **11 passed / 3 failed**, reproducing exactly the unscoped connection probe, initial rejected-op reminder, and pending-request undeliverable writeback failures. Tests invoke normal background/scheduler/routing entrypoints without manually setting task-local scope.
+- Extracted `namespace::guard`, the exact quiescence-lock + epoch-check helper used by production `Endpoint::guard`. Recording/fake ports can opt into this same helper for contract tests; no copied or weaker check substitutes for production. Default fake behavior remains unchanged.
+- Background connection probe explicitly captures the current committed epoch (it has no reference-bearing payload) and scopes its capability call. The ordinary guard still rejects any transition racing that capture.
+- Reminder destination and epoch come from one committed view and travel together in `Due`; both initial and scheduled notifications scope that captured epoch. Service operation keys and reminder-count state are epoch-salted. Operation detail and reassignment read/reset the current-epoch count, including daemon-less CLI reads.
+- Pending routing work carries the epoch loaded with its graph/destination snapshot. Both undeliverable and clear-undeliverable writes run inside that scope; notifications and their once-state keys are salted by the same captured epoch. A successful old notification can only mark old-epoch state.
+- New hybrid tests use the production guard with recording/fake services for healthy probe status, current-node initial/scheduled reminders, operation-detail/reassignment counts, and an old pending request becoming undeliverable after reconnect and later routable/delivered. Private real-daemon fixture also invokes the installed background connection loop after reconnect, without manual scope around that loop.
+
+- `cargo test --offline --lib reconnect_ -- --test-threads=1`: **14 passed, 0 failed/ignored**, `/private/tmp/hg-task2-f3-green.log` (10.17 s), including the ops-detail count and reassignment reset assertions. A compile-only iteration referenced `root()` on an erased Store trait; corrected the assembly call to use its existing `paths.root` before this successful run.
+
+## Round-1 covering evidence
+
+- `cargo test --offline --lib --test daemon_composed -- --test-threads=1`: **645 library + 14 daemon_composed passed, 0 failed/ignored**, `/private/tmp/hg-task2-fix-covering.log` (397.43 s + 14.33 s). Covers all default plan/reminder/template/threads/transcript/ops/undo behavior and composed-daemon registration/CLI/runtime behavior. The only source edit after this build was whitespace formatting inside the new routing scope; no semantics changed.
+- Runtime/source target for private threads remains the clean external checkout at **`b4d5f9628d17f869ab5b139b7f4ae3c933d02841`**, described by Git as `v2.0.3-2-gb4d5f9628`. This is not a claim of exact-release-tag qualification; later qualification owns that distinction. No source/dependency updates were made here.
+- Both formerly tracked scratch reports were moved into `docs/superpowers/reviews/2026-10-17-threads2-task-{1,2}-implementation.md` at controller request. Task 1 content was moved byte-for-byte. Ignored scratch copies remain for review; Task 2 canonical and scratch copies are synchronized after report updates.
+
+- `HG_REAL_THREADS=1 cargo test --offline --features private-herdr --test threads_real -- --test-threads=1 --nocapture`: **2 passed, 0 failed/ignored**, `/private/tmp/hg-task2-fix-real.log` (10.56 s). The recovery fixture now invokes the actual registered background connection loop after reconnect and checks `components.threads.connected=true`, without manually scoping that loop. The ordinary production wrapper, discovery/binding and real private service remain in the path. This validates the component consumed by doctor; it is not an end-to-end CLI doctor invocation.
+- `cargo test --offline --features test-support --lib reconnect_interrupted_before_and_after_commit -- --test-threads=1`: **1 passed, 0 failed/ignored**, `/private/tmp/hg-task2-fix-crash.log` (0.32 s). Confirms the central reviewed-plan guard preserves exact transition recovery before/after Git CAS.
+
+- `cargo check --offline --all-targets --all-features`: **passed**, `/private/tmp/hg-task2-fix-check.log` (3.89 s), final source/test tree.
+- `cargo fmt --all --check` and `git diff --check`: **passed**; formatting log `/private/tmp/hg-task2-fix-fmt.log` is empty. Canonical/scratch report copies match; the external threads checkout remains clean.
+
+## Round-1 self-review and remaining qualification limits
+
+All three Important findings are addressed and ready for scoped independent rereview. No stale guard was relaxed: pre-boundary reviewed plans reject centrally; service caches include journal identity; background callers explicitly propagate snapshot epochs and namespace their notification state. Cancellation/supersession remains global operator intent, while reminder delivery counts are per epoch.
+
+The reminder/routing regressions are hybrid tests: real Git/journal/writer and the exact production quiescence/epoch guard wrap recording/fake service behavior. Real-daemon evidence separately covers production reconnect, normal background connection status, invitation membership and synthetic ACK. No native model/summarizer-agent, remote continuity, full Herdr matrix, or exact upstream release-tag runtime claim is added. Those remain later-task qualification boundaries. Cargo commands were sequential; no upstream/live-state modifications occurred.
