@@ -113,7 +113,13 @@ impl PrivateHerdr {
             std::fs::create_dir_all(root.join(d))?;
         }
         super::isolated::register_matrix_root(&root, None);
-        std::fs::write(root.join("config/herdr.toml"), "")?;
+        // Private compatibility fixtures must not start network update workers
+        // whose curl children can outlive the server during teardown. These
+        // public settings are supported by every pinned Herdr release.
+        std::fs::write(
+            root.join("config/herdr.toml"),
+            "[update]\nversion_check = false\nmanifest_check = false\n",
+        )?;
         herdr_graph::herdr::isolation::arm();
         let mut env = scrubbed_env(&root);
         if !include_api_keys {

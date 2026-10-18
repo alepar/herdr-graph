@@ -407,7 +407,7 @@ def open_owned(root_fd, relative, directory=False):
 def inspect_diagnostics(roots, owner, destination, profile=None):
     """Called only after cleanup/quiescence; archive exact bytes before PASS.
 
-    A missing Herdr log always fails. Graph suites require graph daemon logs;
+    Missing Herdr stderr or internal server logs always fail. Graph suites require graph daemon logs;
     threads suites require all three exercised nodes (including the saved node).
     Optional destinations are still inspected when present. Existing node
     directories require their daemon log and at least one startup-attempt log.
@@ -448,6 +448,18 @@ def inspect_diagnostics(roots, owner, destination, profile=None):
                     errors.append(f'diagnostic inspection failed: {root / relative}: {error}')
 
             capture('herdr.log')
+            capture('config/herdr/herdr-server.log')
+            # Herdr's tracing writer uses this fixed directory and numeric
+            # rotations, separately from the server's captured stdout/stderr.
+            logs_fd = open_owned(root_fd, 'config/herdr', directory=True)
+            try:
+                names = sorted(os.listdir(logs_fd))
+            finally:
+                os.close(logs_fd)
+            for name in names:
+                if (name != 'herdr-server.log' and
+                        re.fullmatch(r'herdr(?:-server|-client)?\.log(?:\.[1-9]\d*)?', name)):
+                    capture('config/herdr/' + name)
             capture('graph/.graph-local/daemon.log', required=profile == 'e2e_private_herdr')
             try:
                 fd = open_owned(root_fd, 'plugin', directory=True)

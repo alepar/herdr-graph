@@ -238,6 +238,28 @@ fn panicking_test_leaves_no_process_behind() {
     assert_helper_left_nothing(&out, &report, &["daemon_pid", "child_pid"]);
 }
 
+/// Private services must not launch background network update children.
+#[cfg(feature = "private-herdr")]
+#[test]
+fn private_herdr_disables_background_updates() {
+    if support::herdr_binary().is_none() {
+        support::skip("herdr is not installed");
+        return;
+    }
+    let mut herdr = support::private_herdr::PrivateHerdr::start_without_credentials()
+        .expect("private Herdr starts");
+    let log = herdr.root.join("config/herdr/herdr-server.log");
+    wait_until("server startup", 15, || {
+        std::fs::read_to_string(&log).is_ok_and(|text| text.contains("event=\"app.startup\""))
+    });
+    // Restart quiesces the first server and flushes its diagnostics; the same
+    // private configuration must also apply to the replacement server.
+    herdr.restart().expect("private Herdr restarts");
+    let text = std::fs::read_to_string(log).unwrap();
+    assert!(text.contains("event=\"app.shutdown\""), "{text}");
+    assert!(!text.contains("event=\"update.check.start\""), "{text}");
+}
+
 /// Re-executed by `panicking_test_leaves_no_private_herdr_behind`.
 #[cfg(feature = "private-herdr")]
 #[test]

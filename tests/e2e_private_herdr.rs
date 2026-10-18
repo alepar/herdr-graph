@@ -2128,6 +2128,11 @@ fn e2e_resurrect_retired_seat() {
     });
     rig.wait_settled();
     let archived = rig.row("seats", "foreman", "retired").unwrap().path;
+    // The writer publishes its commit before materializing the worktree.
+    // Settled effects and a retired Git row do not imply this path exists yet.
+    rig.wait_until("the retired seat archive to materialize", WAIT, |_| {
+        archived.exists()
+    });
     assert!(archived.exists());
 
     rig.plan_apply(&["seat", "resurrect", "foreman", "--active"]);

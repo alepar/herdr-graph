@@ -79,6 +79,7 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(json.loads((directory / 'result.json').read_text())['status'], 'FAIL')
 
     def diagnostic_fixture(self, files, setup=''):
+        files = {'config/herdr/herdr-server.log': '', **files}
         private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
         private.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
@@ -173,6 +174,28 @@ print({self.output()!r})
                 self.assertEqual(result['status'], 'FAIL')
                 self.assertTrue(private.exists())
                 self.assertEqual((directory / 'diagnostics' / private.name / relative).read_text(), panic)
+
+    def test_herdr_internal_current_and_rotated_logs_are_inspected(self):
+        panic = "thread 'server-worker' panicked at server.rs:1:2:\nfailed\n"
+        for name in ('herdr-server.log', 'herdr-server.log.1', 'herdr.log',
+                     'herdr-client.log.2'):
+            with self.subTest(name=name):
+                relative = 'config/herdr/' + name
+                private, fake = self.diagnostic_fixture({'herdr.log': '', relative: panic})
+                directory = self.root / name
+                result = self.driver.run_suite(fake, ['core'], dict(os.environ), directory, 5, 1)
+                self.assertEqual(result['returncode'], 0)
+                self.assertTrue(result['cleanup']['clean'])
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertTrue(private.exists())
+                self.assertEqual((directory / 'diagnostics' / private.name / relative).read_text(), panic)
+
+    def test_missing_herdr_internal_server_log_fails(self):
+        private, result = self.run_diagnostic_fixture({'herdr.log': ''},
+            "(root / 'config/herdr/herdr-server.log').unlink()")
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertTrue(private.exists())
+        self.assertIn('herdr-server.log', str(result['diagnostics']['errors']))
 
     def test_private_plugin_output_is_required_and_checked(self):
         for data in (None, "thread 'plugin-worker' panicked at plugin.rs:1:1:\n"):
@@ -334,6 +357,8 @@ from pathlib import Path
 root=Path({str(private)!r})
 (root/'.matrix-owner').write_text(os.environ['HG_MATRIX_OWNER'])
 (root/'herdr.log').write_text('')
+(root/'config/herdr').mkdir(parents=True)
+(root/'config/herdr/herdr-server.log').write_text('')
 with open(os.environ['HG_MATRIX_REGISTRY'],'a') as registry:
     registry.write(json.dumps({{'root':str(root)}})+'\\n')
 print({self.output()!r})
