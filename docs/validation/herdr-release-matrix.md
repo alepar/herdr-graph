@@ -77,21 +77,27 @@ and the runtime driver refuses other operating systems.
 
 ## Dependency/build prerequisites
 
-Use the ordinary Rust toolchain and this repository's lockfile. The currently
-qualified threads source is `b4d5f9628d17f869ab5b139b7f4ae3c933d02841` from
-[alepar/herdr-threads](https://github.com/alepar/herdr-threads), two commits after
-the `v2.0.3` release commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`.
-This is a checkout qualification, not exact-tag runtime evidence.
+Use the ordinary Rust toolchain and the repository lockfiles. The dependency is
+an official Git submodule, currently pinned to herdr-threads **v2.0.4**, exact
+commit `b83d032a64cb9f665f49806b744f7cc730626819`, wire protocol **9**.
+It supersedes the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
+v2.0.4 became latest stable during replacement qualification, and its tag and
+unchanged consumed public API were reverified before updating the gitlink/lock.
 
-The tracked `third_party/herdr-threads` is an absolute local symlink. It is not a
-portable CI dependency declaration. No workflow is added that would pretend this
-symlink works on another machine. In a **fresh disposable graph checkout**, replace
-only that symlink with a clone of the official threads repository, check out the
-exact commit above, and verify the threads worktree is clean. Populate both Cargo
-dependency caches first (`cargo fetch --locked` against each manifest); the sweep
-then builds offline. Do not replace or modify an existing user's upstream checkout.
-See also the dependency setup in the graph README. A future CI workflow must
-materialize this exact source and its locked dependencies before invoking the sweep.
+```sh
+git submodule update --init --recursive
+git -C third_party/herdr-threads rev-parse HEAD
+cargo fetch --locked
+cargo fetch --locked --manifest-path third_party/herdr-threads/Cargo.toml
+```
+
+The reported submodule HEAD must equal the exact official commit above. Populate
+both locked dependency caches before running the sweep; all sweep builds use
+`--locked --offline`. In a prepopulated environment no fetch is needed. A fresh
+clone can use `git clone --recurse-submodules <graph-repository-url>`. Source
+archives must explicitly include the pinned submodule contents. This setup never
+requires editing a separate external threads checkout. The old absolute-symlink
+and post-tag account remains only in the dated Task 3 report.
 
 ## Runtime coverage
 
@@ -177,8 +183,26 @@ is used. Matrix mode disables the ordinary cross-run orphan reaper.
 
 A surviving process, failed inspection, invalid ownership registry, isolation
 violation, teardown error, or emergency reaping after the suite returns makes
-qualification fail. Successful runs remove only their token-verified fixture
-roots. Failure roots, logs, and PID evidence remain for inspection. An external
+qualification fail. After process cleanup, the driver inspects known owned
+runtime destinations and retains exact raw bytes, lengths and SHA-256 values in
+`diagnostics/` plus `diagnostics.json`. It requires `herdr.log` and `config/herdr/herdr-server.log` in every root,
+inspects the known `herdr.log`/`herdr-client.log`/`herdr-server.log` tracing files
+and numeric `.N` rotations under that config directory when present, and requires
+`graph/.graph-local/daemon.log` in every graph E2E root, one private plugin's
+captured startup/action stdout and stderr (`plugin-diagnostics.log`) per graph
+suite, and all three threads nodes exercised by the threads suite. Threads
+inspection includes `daemon.log`, optional `daemon.log.1`, and the existing
+`logs/startup-<pid>-<nonce>.log` files in the direct state node, default HOME node,
+and preserved `saved-old-node`. Existing nodes require a daemon log and startup
+log. The plugin daemon itself uses the graph daemon log.
+
+Every path component is opened relative to the owned root with symlink refusal;
+only those destinations are inspected, with no recursive content/Git/transcript
+scan. Missing/unreadable required logs, inventory failures, preservation errors,
+or Rust panic diagnostics make qualification fail and retain roots. Optional
+absences and deliberate content exclusions are recorded. Successful runs remove
+only their token-verified fixture roots after raw diagnostics have been preserved.
+Failure roots, logs, and PID evidence remain for inspection. An external
 SIGKILL of the driver cannot execute cleanup; use retained root/token/PID evidence
 for explicit guarded recovery. A protected process that escapes both observed
 ancestry and root-marker visibility cannot be safely identified by guessing;
@@ -186,17 +210,41 @@ this is not a claim of kernel-level process containment.
 
 The driver removes API credentials from itself and strips inherited live
 Herdr/threads/Claude seat routing from children. Fixture HOME, config, sockets,
-state and Claude configuration are private. All graph seats are shell or explicit
+state and Claude configuration are private. The private Herdr config disables
+both supported background version and manifest update checks so network updater
+children do not outlive fixture teardown. The strict emergency-reaping gate remains unchanged. All graph seats are shell or explicit
 stand-ins. Native session hooks/transcripts are synthetic; summary completion is
 played through the CLI. This matrix does not validate native model inference,
 model authentication, remote threads continuity, real restore holds, a live user
 session, or model/summarizer quality. Reconnect/epoch unit and hybrid tests remain
 separate evidence, rather than being relabeled as real-service matrix cases.
 
-## Qualification status — 2026-10-17
+## Replacement qualification — 2026-10-18
 
-The complete **0.9.1–0.9.5** matrix passed on **macOS aarch64** at graph `d9a50590c6ca3dccc558664d4ed608eb2153605d` with the initialized official threads v2.0.3 submodule `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, protocol 9. Each version passed all **30 graph + 5 API + 2 actual threads = 37 cases**: **185 total**. All 15 suite cleanup gates were clean, all 190 owned roots were removed, and no emergency reaping, survivors, ignored/filtered/skipped cases, panic diagnostics, timeouts or cancellations occurred. Actual reported binary versions and SHA-256 values matched the official pins.
+The stronger replacement matrix uses frozen graph `1005d04657a260dc89a55d3b1d37ce6b6f7cdb7e` and official threads
+v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819`, protocol 9, on macOS aarch64.
+All five Herdr releases **0.9.1–0.9.5 passed 37/37 cases each** (30 graph + 5 API + 2 actual threads): **185 total**. All **15 cleanup gates and 15 diagnostic gates passed**, with **190 owned roots removed**, zero emergency reaping/survivors, and **570 raw diagnostic files (1,686,907 bytes)** retained. Actual binary versions and SHA-256 values matched the official pins. There were no skipped/ignored/filtered matrix cases, Rust panic diagnostics in the inspected streams, timeouts or cancellations.
 
-[The integration handoff](../releases/2026-10-17-threads2-herdr-qualification.md) records exact commands, source distinctions, checksums, preserved failed trials, native exclusions and migration limits. [The evidence bundle](2026-10-17-threads2-qualification/README.md) retains all case/cleanup observations and raw logs. `--check-upstream` passed against the five official stable releases and all 20 platform digests. Runtime support is limited to this tested macOS architecture; Linux/Intel digests alone do not imply qualification.
+[The integration handoff](../releases/2026-10-17-threads2-herdr-qualification.md)
+records exact source, commands, native exclusions, migration limits and rulings.
+[The replacement evidence bundle](2026-10-18-threads2-log-qualification/README.md)
+retains raw inspected diagnostics as well as every case/cleanup/log gate result.
+Runtime support is limited to this tested macOS architecture; Linux/Intel digests
+alone do not imply qualification. Scoped final rereview/integration remain
+controller gates; this is not a merge or publication claim.
 
-Historical Task 3 evidence qualified only 0.9.5 against the clean post-tag external checkout. Its failed/cancelled trials and [implementation report](../superpowers/reviews/2026-10-17-threads2-task-3-implementation.md) remain preserved. The final exact-tag sweep above supersedes its pending full-matrix status. Task 4's independent review and whole-branch integration remain controller work; this is not a merge or publication claim.
+## Historical qualification and its limit — 2026-10-17
+
+At graph `d9a50590c6ca3dccc558664d4ed608eb2153605d` with official threads v2.0.3
+`ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, all five releases produced 37 successful
+case results each (185 total), exact inventories and 15 clean cleanup records.
+The earlier panic gate inspected harness output only. Private daemon logs were
+removed with the 190 roots, so that evidence cannot establish absence of daemon
+panics. The original [Task 4 bundle](2026-10-17-threads2-qualification/README.md)
+and retained clone remain unchanged historical evidence; the stronger result
+above replaces the runtime qualification claim.
+
+Historical Task 3 evidence qualified only 0.9.5 against the clean post-tag
+external checkout. Its failed/cancelled trials and
+[implementation report](../superpowers/reviews/2026-10-17-threads2-task-3-implementation.md)
+remain preserved.

@@ -1,0 +1,14 @@
+{
+  "base": "ded34fa971c18cef81ea1b597097a8ff7cd91eb3",
+  "target": "b83d032a64cb9f665f49806b744f7cc730626819",
+  "paths": [
+    "src/protocol",
+    "src/service",
+    "src/node",
+    "src/daemon/paths.rs",
+    "src/daemon/discovery.rs"
+  ],
+  "diff": "",
+  "protocol": 9,
+  "verified_at": "2026-10-18T07:06:25.874193+00:00"
+}

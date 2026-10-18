@@ -3,9 +3,17 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
-## Threads 2.0.3 qualification (2026-10-17)
+## Replacement threads 2.0.4 qualification (2026-10-18)
 
-Current source qualification uses graph `d9a50590c6ca3dccc558664d4ed608eb2153605d`, official threads v2.0.3 commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, protocol **9**, and macOS aarch64. The dependency is an exact-release Git submodule; no moving external source checkout is used. Final docs add no executable-source changes. Older dated evidence below remains historical.
+Frozen graph `1005d04657a260dc89a55d3b1d37ce6b6f7cdb7e` uses official threads v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819`, protocol 9, macOS aarch64. The replacement matrix adds post-cleanup inspection and retention of Herdr, graph, threads and private plugin diagnostic logs. The earlier matrix below checked only harness output for panics and removed daemon logs; it cannot establish absence of private-daemon panics.
+
+All five Herdr releases **0.9.1–0.9.5 passed 37/37 cases each** (30 graph + 5 API + 2 actual threads): **185 total**. All **15 cleanup gates and 15 diagnostic gates passed**, with **190 owned roots removed**, zero emergency reaping/survivors, and **570 raw diagnostic files (1,686,907 bytes)** retained. Actual binary versions and SHA-256 values matched the official pins. There were no skipped/ignored/filtered matrix cases, Rust panic diagnostics in the inspected streams, timeouts or cancellations.
+
+Focused v2.0.4 validation and exact source/command/count details are recorded in [the current handoff](releases/2026-10-17-threads2-herdr-qualification.md) and [replacement evidence](validation/2026-10-18-threads2-log-qualification/README.md). All-consumer, adapter/reconnect, isolation and driver checks cover the latest exact dependency. Broad Rust feature suites below remain evidence for their recorded v2.0.3 source; no result is relabeled. Native, remote and live-session exclusions remain unchanged.
+
+## Historical threads 2.0.3 qualification (2026-10-17)
+
+Historical Task 4 qualification used graph `d9a50590c6ca3dccc558664d4ed608eb2153605d`, official threads v2.0.3 commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, protocol **9**, and macOS aarch64. The dependency is an exact-release Git submodule; no moving external source checkout is used. Final docs add no executable-source changes. Older dated evidence below remains historical.
 
 | Check | Result |
 |---|---|

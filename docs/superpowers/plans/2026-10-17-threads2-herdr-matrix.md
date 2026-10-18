@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Target official herdr-threads v2.0.3 commit ded34fa971c18cef81ea1b597097a8ff7cd91eb3 (or explicitly reverify a newer stable release before changing target); protocol9, node-level storage and NodeUuid. External checkout is read-only.
+- Target official herdr-threads v2.0.4 commit b83d032a64cb9f665f49806b744f7cc730626819 (or explicitly reverify a newer stable release before changing target); protocol9, node-level storage and NodeUuid. External checkout is read-only. The official 2.0.4 tag was reverified on October 18 after publication during qualification; consumed public service/protocol/node APIs are unchanged from 2.0.3.
 - Keep graph-managed service channels local; cross-node graph orchestration is outside this scope. Remote seats must not be mistaken for local panes.
 - Preserve persistent graph data, native transcript bytes, historical channel/receipt references and undo history. Never replay an old-node intent against a new node, silently drop unresolved work, purge legacy threads data or guess recipient identity.
 - Matrix initial official Herdr versions0.9.1,0.9.2,0.9.3,0.9.4,0.9.5; support maintainable upstream check/update. Verify exact checksum and reported version on every selected cached binary.

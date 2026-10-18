@@ -1,0 +1,11 @@
+{
+  "root": "/private/tmp/hg-final-log-qualification-htb_4uwf",
+  "graph_head": "fcad880184341a7d6d7fa009b46a34144cb93728",
+  "artifact": {
+    "sha256": "bbc9a7bf8de817cb3dcccfae2e5300de5cb7daac8700b40622ddc64c5971621c",
+    "bytes": 13624672,
+    "mtime_ns": 1791406789918340787
+  },
+  "external_head": "c57c80bda01246d897b3ab63aa1ae3272d95ab94",
+  "external_status": ""
+}

@@ -1,0 +1,25 @@
+{
+  "failed_attempt": "/private/tmp/hg-final-log-qualification-htb_4uwf/matrix/matrix.json",
+  "archive_failure": {
+    "root": "/private/tmp/hg-01m56y1n0j3r5w442ys6nv05yr",
+    "head": "3746c358537f3245b6ef8335f92f35efaa23f52c",
+    "view_rev": "454649ca3186a02089ca9954f5112c176b64e541",
+    "cause": "writer.finish_commit CAS/journal publication precedes worktree fast_forward and view_rev; retired Git state and settled effects do not imply archived path materialization. Assertion failure then teardown interrupted materialization.",
+    "fix": "existing WAIT-bounded wait for archived path, preserving original assertions and no production change",
+    "forensics": "/private/tmp/hg-final-log-qualification-htb_4uwf/failed-archive-state"
+  },
+  "curl_failure": {
+    "root": "/private/tmp/hg-01m56y35s6p4xb245cwr72zbat",
+    "server_pid": 99276,
+    "curl_pid": 99371,
+    "curl_pgid": 99276,
+    "cause": "default background updater starts curl, outlives terminated parent; protected process loses visible root ancestry. Driver retained identity and emergency-reaped it, correctly failing qualification.",
+    "fix": "supported private [update] version_check=false and manifest_check=false, all five official tags verified; no cleanup gate change"
+  },
+  "internal_diagnostics": {
+    "server": "config/herdr/herdr-server.log",
+    "additional": "config/herdr/herdr.log, herdr-client.log and numeric .N rotations if present",
+    "upstream_retention": "5 MiB, zero retained rotated files by default on all five versions; numeric files inspected if present",
+    "panic_route": "named exact server bootstrap/logging code installs tracing only; client hook calls original_hook(info), retaining standard Rust stderr diagnostics. First three exact tags full src panic:: grep retained; last two exact bootstrap/main/logging/client files retained."
+  }
+}
