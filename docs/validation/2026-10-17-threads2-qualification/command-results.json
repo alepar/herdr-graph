@@ -1,0 +1,124 @@
+[
+  {
+    "name": "default",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--no-fail-fast"
+    ],
+    "exit_code": 0,
+    "seconds": 172.441,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/default.log",
+    "graph_head": "33be69ee02a1684fad6c411e7035a4e800ef33ab",
+    "coverage_note": "Final delta is isolated to cfg(test,test-support); original default/no-default passing evidence retained by controller ruling."
+  },
+  {
+    "name": "no-default",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--no-default-features",
+      "--no-fail-fast"
+    ],
+    "exit_code": 0,
+    "seconds": 205.015,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/no-default.log",
+    "graph_head": "33be69ee02a1684fad6c411e7035a4e800ef33ab",
+    "coverage_note": "Final delta is isolated to cfg(test,test-support); original default/no-default passing evidence retained by controller ruling."
+  },
+  {
+    "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+    "name": "all-consumers",
+    "command": [
+      "cargo",
+      "check",
+      "--locked",
+      "--offline",
+      "--all-targets",
+      "--all-features"
+    ],
+    "exit_code": 0,
+    "seconds": 1.829,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/all-consumers.log"
+  },
+  {
+    "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+    "name": "test-support",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--features",
+      "test-support",
+      "--no-fail-fast"
+    ],
+    "exit_code": 0,
+    "seconds": 209.505,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/test-support.log"
+  },
+  {
+    "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+    "name": "config-isolation",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "--features",
+      "private-herdr",
+      "--test",
+      "config_smoke",
+      "--test",
+      "test_isolation",
+      "--",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "seconds": 28.147,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/config-isolation.log"
+  },
+  {
+    "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+    "name": "driver-tests",
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "scripts/tests",
+      "-v"
+    ],
+    "exit_code": 0,
+    "seconds": 9.563,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/driver-tests.log"
+  },
+  {
+    "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+    "name": "matrix",
+    "command": [
+      "scripts/herdr-release-smoke",
+      "--versions",
+      "0.9.1",
+      "0.9.2",
+      "0.9.3",
+      "0.9.4",
+      "0.9.5",
+      "--jobs",
+      "2",
+      "--cache",
+      "/private/tmp/hg-task4-qualification-534cd4f_/herdr-cache",
+      "--report",
+      "/private/tmp/hg-task4-qualification-534cd4f_/matrix"
+    ],
+    "exit_code": 0,
+    "seconds": 496.352,
+    "log": "/private/tmp/hg-task4-qualification-534cd4f_/logs/matrix.log"
+  }
+]

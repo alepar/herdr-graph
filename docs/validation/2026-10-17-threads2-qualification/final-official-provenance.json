@@ -1,0 +1,18 @@
+{
+  "retrieved_at_utc": "2026-10-18T06:42:19.028638+00:00",
+  "releases": {
+    "alepar/herdr-threads": {
+      "url": "https://api.github.com/repos/alepar/herdr-threads/releases/latest",
+      "tag_name": "v2.0.3",
+      "published_at": "2026-10-18T01:19:50Z",
+      "html_url": "https://github.com/alepar/herdr-threads/releases/tag/v2.0.3"
+    },
+    "herdrdev/herdr": {
+      "url": "https://api.github.com/repos/herdrdev/herdr/releases/latest",
+      "tag_name": "v0.9.5",
+      "published_at": "2026-10-14T16:07:28Z",
+      "html_url": "https://github.com/herdrdev/herdr/releases/tag/v0.9.5"
+    }
+  },
+  "threads_tag_refs": "72bcfb5dd9410b2d2d7511297b1b175f22bd628d\trefs/tags/v2.0.3\nded34fa971c18cef81ea1b597097a8ff7cd91eb3\trefs/tags/v2.0.3^{}\n"
+}

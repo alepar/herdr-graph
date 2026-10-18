@@ -1,0 +1,2141 @@
+{
+  "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+  "known_differences": "Concurrent Markdown updates only; all code/build/test entries equal",
+  "files": [
+    {
+      "path": ".beads/.gitignore",
+      "sha256_or_gitlink": "73c971029f0461fbc24aa1d10fa489e461874f9736376ba832523705a2f13c42",
+      "equal": true
+    },
+    {
+      "path": ".beads/README.md",
+      "sha256_or_gitlink": "cae1648db67c27f1d86f92ed110119445356e23bb18a5df57e73a7f476619267",
+      "equal": true
+    },
+    {
+      "path": ".beads/config.yaml",
+      "sha256_or_gitlink": "6fcb85f47f6e9c3bc194df5aac99e73091ff9777f24ebd91d4343d04bd774073",
+      "equal": true
+    },
+    {
+      "path": ".beads/metadata.json",
+      "sha256_or_gitlink": "56f8003a035a565399d090196858321f3a3b410aaba0e55062f064545122975c",
+      "equal": true
+    },
+    {
+      "path": ".claude/skills/herdr/SKILL.md",
+      "sha256_or_gitlink": "03855a7a1f9d0aa1ba6444fed2e4971adf796e91e73001d8f2472f5f9e5f659f",
+      "equal": true
+    },
+    {
+      "path": ".gitignore",
+      "sha256_or_gitlink": "c2a0e9bfc07e228015549a024ec914768595acdfae572ab9f556ef59c1dc3eea",
+      "equal": true
+    },
+    {
+      "path": ".gitmodules",
+      "sha256_or_gitlink": "c9cfd4d043b32c2d38a93f8aed856242475a2d1f144b93c27506e40c749d5001",
+      "equal": true
+    },
+    {
+      "path": "AGREED-FIXES-HANDOFF.md",
+      "sha256_or_gitlink": "2211d43010cbc46ea101a2027951a7d6dadac77de67f542f462f2e530c31f8c8",
+      "equal": true
+    },
+    {
+      "path": "CREATING_NEW_GRAPH.md",
+      "sha256_or_gitlink": "fb7b98a4717be15a8b96affa76fa1efe725e1977c360c18b851164afbbc36554",
+      "equal": true
+    },
+    {
+      "path": "CURRENT-DESIGN.md",
+      "sha256_or_gitlink": "8898a4ae49287bb70340e449fea2af39777990908793d348b631eb42a1ec0dde",
+      "equal": false
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256_or_gitlink": "ad1bc2c4a65b6421ef6655d93278192b5544b2e4aede56d772320afbc893683d",
+      "equal": true
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256_or_gitlink": "c68cfeb116be5ae51b473f9d21ee9e7f61dd62747dc2a9c7a2060d3268b0820c",
+      "equal": true
+    },
+    {
+      "path": "DESIGN-NOTES.md",
+      "sha256_or_gitlink": "7d667617977abc0ecb5c053c3284b3667db1fb959e5edcceb4206cac8d7d7c1a",
+      "equal": true
+    },
+    {
+      "path": "GRAPH_STATE.md",
+      "sha256_or_gitlink": "d2ddaa1a9294232268d4c765fc349cf1ee974eec7a0cbc0be4fed7f52ba0fe42",
+      "equal": false
+    },
+    {
+      "path": "HERDR-GRAPH-VISION.md",
+      "sha256_or_gitlink": "6b5e71983a159f57e8b4a5456453e549c06bfb286d3ac7a51eb20d64198d4823",
+      "equal": true
+    },
+    {
+      "path": "IMPLEMENTATION-HANDOFF.md",
+      "sha256_or_gitlink": "5f3d082801e551131d3dae8521e14c5a888612890104975683e13affd3a2a68f",
+      "equal": true
+    },
+    {
+      "path": "LICENSE-APACHE",
+      "sha256_or_gitlink": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "equal": true
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256_or_gitlink": "c6c1a726ada0caaa36f1dbe63d1c68c7a9acca7a24100b2c01274d8b0afe78a9",
+      "equal": true
+    },
+    {
+      "path": "README.md",
+      "sha256_or_gitlink": "fc6eed4de37f7c4317cfcd409aec52593152d6e8062eccb121e2db27d6cb1c00",
+      "equal": false
+    },
+    {
+      "path": "SOFTWARE-FACTORY-VISION.md",
+      "sha256_or_gitlink": "92b1fb0d0724499e56c57a74de609251c806294adf6b4ad16237b925eca77f61",
+      "equal": true
+    },
+    {
+      "path": "archive/DESIGN-ROAST-2026-09-27.md",
+      "sha256_or_gitlink": "59d99657cb130dde2d13f562a7f9e6cd7f4bfb4b0aefa1b8caaba784ebb2f79d",
+      "equal": true
+    },
+    {
+      "path": "archive/HANDOFF.md",
+      "sha256_or_gitlink": "c9f02940b1a68b777b337e7ab8dd3045bcda5e885fddff191ffbc5309100f415",
+      "equal": true
+    },
+    {
+      "path": "archive/HERDR-IDENTITY-CHECK.md",
+      "sha256_or_gitlink": "31e1827518523cd3a732f2b9aa5b9a5c5a6612eb3a7fb1a8ab355cf798b3eb13",
+      "equal": true
+    },
+    {
+      "path": "archive/RESUME.md",
+      "sha256_or_gitlink": "14b840811c39d798d76a1d2f86bfa5a7f1bca4d5f400c325d60d4c477dcf1d0c",
+      "equal": true
+    },
+    {
+      "path": "archive/THREADS-IDENTITY-DESIGN-RUN.md",
+      "sha256_or_gitlink": "c040ffffc85042762a1880fcdd3178845cffc8ff5f6a45527ab9b5739b54d633",
+      "equal": true
+    },
+    {
+      "path": "archive/THREADS-SYSTEM-IDENTITY-DRAFT.md",
+      "sha256_or_gitlink": "cb4209fea9c23e1b3fcfd3c93ed0ea6f3ac4f97792eb2227ade1ca7eb566947d",
+      "equal": true
+    },
+    {
+      "path": "docs/herdr-spikes.md",
+      "sha256_or_gitlink": "0ce6320dc5b507fb13f62f8463cf8d0c7a435dd665bc49e88491364f8933717f",
+      "equal": true
+    },
+    {
+      "path": "docs/releases/2026-10-07-agreed-fixes-handoff.md",
+      "sha256_or_gitlink": "d1f556a650b65a1eb5065e07c8b537deeeacb7c19b8f18e4d3566348e67918ec",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-07-agreed-fixes.md",
+      "sha256_or_gitlink": "7edc85864ec965f73e2a5df2daeee8928e741b0c964b6e88d2cf8ae15b0fee05",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-17-threads2-herdr-matrix.md",
+      "sha256_or_gitlink": "d056882da28651466a5a36aee1c55805a3eae62a2d7fb1289d370deec3cb67e7",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-competitors.md",
+      "sha256_or_gitlink": "5a5844d14770582514fbe202355ef6453183893699c4acf5a44cf78f0465eaed",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-coverage.json",
+      "sha256_or_gitlink": "fc9f3ee716e8cf0ea8e40ff12c7e3f5801deef26ff51d8b7c8b3324047843efc",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/brainstormer-consultation.txt",
+      "sha256_or_gitlink": "2085b7093ab9c4aece50ea7e6e4bb07b19cb78bdade3349c605433753cce3c32",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/competitors.json",
+      "sha256_or_gitlink": "af781917efd06304bc24929ebfe7860acaac9955c370e7ecba16c23e4bff50d8",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/completeness.json",
+      "sha256_or_gitlink": "60d1bb40f6788e8c9358c067886755d878e27f6f0715e979660713750483a629",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/deduped.json",
+      "sha256_or_gitlink": "55576f773e14792d54ead6a017ba3a9cd89ec63b8948759f6b94c694d08df7df",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/distributed.json",
+      "sha256_or_gitlink": "c1901bd8d04e95f27263adc7bbd94f6cce6470adb482d75444ba913ade75bd7c",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/expected-metrics.json",
+      "sha256_or_gitlink": "4b8fc489b1e1d5e3618d544fe77c497fc2044a40b6c3f0fb3e67ce6d94ad507f",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/failure-mode.json",
+      "sha256_or_gitlink": "6f1c177fae9db3598dc7ccd27c6d05f485a2d870bf1bbf3c60350efdc6409df9",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/feasibility.json",
+      "sha256_or_gitlink": "98376424b6acaa0782f5d0e87efaca3bced5d4395c224b86c2d097c84fff9dfe",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/input-hashes.json",
+      "sha256_or_gitlink": "dbf464d6688ba59c92c31b2da91b74b6b8afd221d5fa213401d099f256ef07cb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/integration.json",
+      "sha256_or_gitlink": "24336d32c8c58dec3850917f64936ac744a10db2cd2e6481f7237451d35cf160",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/judge-context.md",
+      "sha256_or_gitlink": "fa8e9e082893d7f8fece6d00f843c34d5ee5b46485d19e53704cba2740c77702",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/packets.json",
+      "sha256_or_gitlink": "ea703d9289e391015647a23bb847107cae4dd9f10f7754ae0a6053407d58393e",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/pooled.json",
+      "sha256_or_gitlink": "f8ba1ba426dbecb4378e5cac64c9dcdbc070f0cafb2e88244ef4c4145c569374",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/premortem.json",
+      "sha256_or_gitlink": "51eaf093bc87f386173c513f12de1ab60ca11c25426ef163ae46ddd2cff2feb0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/reporter-result.json",
+      "sha256_or_gitlink": "3c538e4ab3440a6295835f5ec02ca87d5f515bc4d697c71aa363ec5a0894c2a0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/review-context.md",
+      "sha256_or_gitlink": "8f21f732cf47dc3588eaeb4340e47d9a26c9823d1b6f98937d5cf040746abc02",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/scout-counts.json",
+      "sha256_or_gitlink": "90936fdea46964abbb986371acb678286372df13f8e58383644cfc8ce758ff1d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F01-ground.json",
+      "sha256_or_gitlink": "51dc6214e1fab89c1043c0f595fd55c9b9058d45833278c93d84a00e8ef79abb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F01-refute.json",
+      "sha256_or_gitlink": "96f85ed1181fe537bdf856fe8c2edc50238d4415f7d491e35dc9b40ce2dd3986",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F01-reproduce.json",
+      "sha256_or_gitlink": "09f7b20ed41638f2b13599d4c1db2f0d86d5fae076a2a75a62960f97d782e9fe",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F02-ground.json",
+      "sha256_or_gitlink": "08f1280ffeb0dc720f357bc51bb340da8c0d0ba76be6c0277ed14814fda4d18e",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F02-refute.json",
+      "sha256_or_gitlink": "310ad0cb9441e279625b7008f7632381464043ee2113b765659b1d33975c2917",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F02-reproduce.json",
+      "sha256_or_gitlink": "8d71361585a32878c2607d824d7a91f0fe07041ec1bad76e847fa89f4da0f615",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F03-ground.json",
+      "sha256_or_gitlink": "51fb7c8f8eeff1531060ad698584cea25cbb837224efe430fe5f62e602b1bb54",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F03-refute.json",
+      "sha256_or_gitlink": "296a25a6ea922ffe4c39fa26e124bf033a6b033b04acbc8bf4330d0cb6f2e78b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F03-reproduce.json",
+      "sha256_or_gitlink": "b2b1aeb54b1c730d9540e195a63cfe2153ff7c044494f0aa3dbb33835865d472",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F04-ground.json",
+      "sha256_or_gitlink": "def9f0e963983f35d3559a8eb6d94bc505d278751dc31ef15318c3ad1eb895f7",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F04-refute.json",
+      "sha256_or_gitlink": "7d81899e2e67e6819ca9ba2c45373bfe0ae3379cef32f37bcc0bc24cf642220b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F04-reproduce.json",
+      "sha256_or_gitlink": "16c316046ecebcf02d722bf465ac6a467a543f2f6fa2f1568a13690402088a63",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F05-ground.json",
+      "sha256_or_gitlink": "e661cdbaba9f247d51e3198b3c7a13c288202fa3605d1bd0d41e544e0b729200",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F05-refute.json",
+      "sha256_or_gitlink": "0d4d21457f4d35d453689d760a5f67b9693b8003d6fabfcb96da25db9fabd9b4",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F05-reproduce.json",
+      "sha256_or_gitlink": "498499cce7a8422035ae2731032b8d5ff20abf4238346498aa9b36b265e7e2f2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F06-ground.json",
+      "sha256_or_gitlink": "4ac0154315079c77bbfc4c513098f290b4683ed9a8c1f79e30e68298d913b989",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F06-refute.json",
+      "sha256_or_gitlink": "2e1ecaa9ae4a192609657bd3d9ce34d5df7fafaec927376aed5b555691b0b7d2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F06-reproduce.json",
+      "sha256_or_gitlink": "658a36d3c46f31491a4fcdcdfef7a610015964e8244fdd4e54d07bb6db63bb53",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F07-ground.json",
+      "sha256_or_gitlink": "1671c6b04e75b8cc423a00c72182e8bdab57df8257affc74db3571a13906bec4",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F07-refute.json",
+      "sha256_or_gitlink": "7e6f060c1b544e3996a624387704b516686a4bd738513d283ca8f604a078597a",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F07-reproduce.json",
+      "sha256_or_gitlink": "0c5db8ac2599c94fa5edce83eb586e699ee63ee8705a854d57e97e9cada482f3",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F08-ground.json",
+      "sha256_or_gitlink": "b27895f366a74e66caa51a8b89ecc29fc5789be67159b761a1a31f1c366eb8f0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F08-refute.json",
+      "sha256_or_gitlink": "816db6a2b31544fcda6b73f42f2921a5e173ad45a06ae7967ff4730ad85cf18e",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F08-reproduce.json",
+      "sha256_or_gitlink": "152060e6b3fb0675b8890f29bfd21700dc251394514b778907c7ed7a585ca065",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F09-ground.json",
+      "sha256_or_gitlink": "f365b7c6c66fd663bff4551bf61a041a1646aef7b38a473e67ea00c4a9fea608",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F09-refute.json",
+      "sha256_or_gitlink": "1c0ccaba3a0cd70c324f71572a35c8664e2527e407b3cc37c7c784efa8971088",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F09-reproduce.json",
+      "sha256_or_gitlink": "63f45c6cad01457dbcf7a391f36b376dec253a4f5749323e15b3e03ae455c9b4",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F10-ground.json",
+      "sha256_or_gitlink": "ed27bdae9636320ebfc696c84215ad3c031e28e104e9ca747710d74267d36e9b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F10-refute.json",
+      "sha256_or_gitlink": "b16c103e1f91084342a8d9a944e03426a221b886366d1966940881f9c81909d2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F10-reproduce.json",
+      "sha256_or_gitlink": "b32687f009124684e8629340193e66c0e5ed4cfdf6931fc7f84d9450feb1180c",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F11-ground.json",
+      "sha256_or_gitlink": "7c1ca5199779b29b15effd5211c1b134c00e12fe86ae8d31b3df2e5e3d100a23",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F11-refute.json",
+      "sha256_or_gitlink": "cf9f54e2ea6dffb04674613b28d3ff6503035f8269c1b34374534954414b8703",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F11-reproduce.json",
+      "sha256_or_gitlink": "374fbe6fe29b8732073c999168f0b58ac7c047107d2765879f94215c7016b5e8",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F12-ground.json",
+      "sha256_or_gitlink": "6e87a6375f09577a7f4ad5af0df49bab13cf063a484edc7d615c61c28aa7faec",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F12-refute.json",
+      "sha256_or_gitlink": "70a38253619c9e4cd71fd4a81905fbb0cf3820fbb0889a63144690285f17bf30",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F12-reproduce.json",
+      "sha256_or_gitlink": "a6227e05f1da1b6d010c5c1544b13786a75da7b3c3382c19474c50a70a23c58a",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F13-ground.json",
+      "sha256_or_gitlink": "6c619219af62e55ed84cd785d325d8e6f886c803f1fdaba2d8898092e1198f82",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F13-refute.json",
+      "sha256_or_gitlink": "d2e14b67a38cd49cc88ca6b47a3b472f3f34f4a8edd502a51f105c0bb2f40e4f",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F13-reproduce.json",
+      "sha256_or_gitlink": "661559bc072ef8d048859761bccba3db3d544117d58916531dd6ad068a6ee874",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F14-ground.json",
+      "sha256_or_gitlink": "2bc1d801a341778f6313e5d6c89a80273ccb1d34f8bd4f437ce3618ffa561d54",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F14-refute-panel.json",
+      "sha256_or_gitlink": "c100dc9482a388ad69f84dbb4eebc949fbdda0c3daac7419eb1724172f5041ff",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F14-refute.json",
+      "sha256_or_gitlink": "1145f78298e3ca619ae9b58070a050976fb7790a6190d1f5aae3f82a209268d8",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F14-reproduce.json",
+      "sha256_or_gitlink": "5a3dcbd00c26bd67f365781bb9eefd011ce2188a25e6005e8d11f4d4bf99c9ae",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F15-ground.json",
+      "sha256_or_gitlink": "0e4bed80a87214db0db775fa63368a6297938cb85a5cb86b2737882838ae7b30",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F15-refute.json",
+      "sha256_or_gitlink": "970c42a24336f5dc61ce38070597b7516637b4d5001953906faa5730f0d838cb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F15-reproduce.json",
+      "sha256_or_gitlink": "00d6aada32307c3416b30ec8825a757a510272a78879a141f1e9997f6bce6bb4",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F16-ground.json",
+      "sha256_or_gitlink": "c0902251a8f87dfa475ccd187394957a0f85b1642f76635c0f81dfb963ed95ca",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F16-refute.json",
+      "sha256_or_gitlink": "817c015c8299ed2336bdf875409f88add7544e7e7dd51d78550bdf96ef0be130",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F16-reproduce.json",
+      "sha256_or_gitlink": "6833eaa228ef7b6d734fcbf01bb4c903cd9f06be3be10997d2c56e8f99be498d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F17-ground.json",
+      "sha256_or_gitlink": "e7981323b6fcc08d3a065744f84aad1c231bfb3295f503917a3b45103fcca344",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F17-refute.json",
+      "sha256_or_gitlink": "76ee8632ed3c6eecbaf1eb6139707602ec2882ca373fed4dc443ce1173f34c4a",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F17-reproduce.json",
+      "sha256_or_gitlink": "16d97cd57781413cc723c8be66f708c6a3e8e2af5f2028bfc90faa61385de155",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F18-ground.json",
+      "sha256_or_gitlink": "9ffb2308101543057599abbd5167ffe1aa54cb9dc61567a6db1df908eabe79eb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F18-refute.json",
+      "sha256_or_gitlink": "b588d2fbb4f550cd2c5e9db6cdf9e889fdf0cacf5b6606f6eb753c99c58fc7c5",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F18-reproduce.json",
+      "sha256_or_gitlink": "9d1538980f8e5ff545da8b91eff6c78e278db283ec30926f0ffa74653d605142",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F19-ground.json",
+      "sha256_or_gitlink": "b28c97700f66dfe0d75b9ac2b8709d54e883690102cc4e25f44aa700644de1b6",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F19-refute.json",
+      "sha256_or_gitlink": "806d30b09f1ee07007ee8ee498eae2b5a418f4f82793568162d502946a881cf2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F19-reproduce.json",
+      "sha256_or_gitlink": "f00b50d28ffd9231ddb9462fa697109b02971be7107bb8ca438529050a101113",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F20-ground.json",
+      "sha256_or_gitlink": "3c0fac9e573ffff2dae872d6b6a504dadd59e8a7bff530f5640245fadaf883bc",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F20-refute.json",
+      "sha256_or_gitlink": "45b63b2e146dbf02630396f7785a92dffdec2541975067084f29ecf8bc33d205",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F20-reproduce.json",
+      "sha256_or_gitlink": "6cd92b23e2365724bf3c9aa5e5b28683eb22d727db1d96105e5c8e05c91b68a0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F21-refute.json",
+      "sha256_or_gitlink": "157f19f101ccd8caefe1eb24750988c3f5ec29f24e1eebbe435d33d6b8abeb62",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F22-refute.json",
+      "sha256_or_gitlink": "7e42a8f4d70e5b83d97dccfcbd85ac1b49f6449e7d9400deced12b2f22e30cf0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F23-ground.json",
+      "sha256_or_gitlink": "4d005b8617d76b16e64990c9fa23c229ef01a82e0695564a42af995957ebbe38",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F23-refute.json",
+      "sha256_or_gitlink": "4c2e64864c72087f688eeb7ab61f758d87cda301d6ff47d3b298634344e95646",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F23-reproduce.json",
+      "sha256_or_gitlink": "4e935317724291749722f3e092e08c33428606419f43459f5bdd0197211650cd",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F24-ground.json",
+      "sha256_or_gitlink": "f66f4cb41e6cce232d9cd83ada2fd715c951624c237a9a1a231814aeba933010",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F24-refute.json",
+      "sha256_or_gitlink": "f97fe229cb3da38b95310cc40b8d3117c4b185e70408e324f70f9b91db0ab429",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F24-reproduce.json",
+      "sha256_or_gitlink": "7a2c0013ebecc24861959814b9e2809e0d8c91a1129ff1a6f8e662eccc722480",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F25-ground.json",
+      "sha256_or_gitlink": "0f2d958420b979ff24052b4eca3bd4650ba1e41895f3b739b540b80e7d4a7d45",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F25-refute.json",
+      "sha256_or_gitlink": "1b522b53c4e2a4cf897855b94f369237c0f6d5cceda11d6381ab64b5212c7029",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F25-reproduce.json",
+      "sha256_or_gitlink": "d444d06d53e29b3a9c1771eef67faf934f78be65ea2d0a0bc11ce4768b26f219",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F26-ground.json",
+      "sha256_or_gitlink": "de08b6a8eb52b58bff1a34be41a424724caf022a4b1f1a667cc1ae5f7a490964",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F26-refute.json",
+      "sha256_or_gitlink": "a39015337574a5b7e59b9b7dfd8a68eecf113c39b7398e9e2a4026230de3c91f",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F26-reproduce.json",
+      "sha256_or_gitlink": "0cabb0ae734114fe99c363c377981db41bf2b686454156838bd83e305172637b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F27-ground.json",
+      "sha256_or_gitlink": "3fc680cd78e65a0683aba37afac105beec959852e5f16f0fc2f182f1c7923963",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F27-refute.json",
+      "sha256_or_gitlink": "0fde2ee1fafae4d4993114d1d71b611408f0b2e7230500c0f6ff840bd606a2e6",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F27-reproduce.json",
+      "sha256_or_gitlink": "3620ceea222eb016c29abb34443b696c7fd990ee8f6ddc508c8e13d4026d896d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F28-ground.json",
+      "sha256_or_gitlink": "1e4985f060df93f39ee1e15462e95f41d1326a65ceefff181665a62f32e91a49",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F28-refute.json",
+      "sha256_or_gitlink": "ac68b65fa036530ef9a360ee99d558d99d72f299f7bbf243fb40a9ccfb01e002",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F28-reproduce.json",
+      "sha256_or_gitlink": "0dac1edd50e5569ba50cbcc303279fbfa98a7e7677e63685abf16d1bfa7c734d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F29-refute.json",
+      "sha256_or_gitlink": "fb935dc411a8cab6ec02130a679ba7fb4ac67e4bb8e2dd3ad42918e3c8cdd45f",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/votes/F30-refute.json",
+      "sha256_or_gitlink": "183f172a9c24c2f27a057e0058dcfae052e018dd4d2828becbca070dbcef8290",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1-evidence/yagni.json",
+      "sha256_or_gitlink": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-01-vision-alignment-roast-design-1.md",
+      "sha256_or_gitlink": "e98c8cf7c399238fde2e7e6192d78044fc20c9f92264f1141ab8a23dba0ee9f8",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/coverage.json",
+      "sha256_or_gitlink": "51565647cfd25faf2131157bb94f729b99de7e7b7447c6a4e4eacc30acc9400b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/deduped.json",
+      "sha256_or_gitlink": "1e9efa772e7a97287bb222e1ba4fea3f37c9a248128149f45b63aeffcb4a5abc",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F01.json",
+      "sha256_or_gitlink": "5617efa0eb63b33abe34096945982c98ddf79650d91d415785ea5eba441b79cb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F02.json",
+      "sha256_or_gitlink": "cc5251141f47903ef1711b227e9a1d9d7838c3b4e5d17d3b629403179a56923d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F03.json",
+      "sha256_or_gitlink": "609013658dfe1294674046f5f5bf3ab529ab545e8c6e19789b127579d66652b9",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F04.json",
+      "sha256_or_gitlink": "e5cdbe95e782b34e6b0f262e6588caf50d86f346975461fa7fe674a4ec6e0183",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F05.json",
+      "sha256_or_gitlink": "2525a793fb56ef8f8c1ed5c12928d8ee20f73945911c4872d5e23e85932a4536",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/finding-F06.json",
+      "sha256_or_gitlink": "64fc3b8e5775e01b8a2eebeb6082eb74e1dc8444330223d84d7e51464912d820",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/inputs.json",
+      "sha256_or_gitlink": "4047c9d96bf4e7a5f2c2d014f8c6406df1031ecdcdab624b02cdf586b9f3b493",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/packets.json",
+      "sha256_or_gitlink": "65de6147ebe2b988ab2dfb7951a67f0d96b3c4ce8a2636ca722fe85c89e82004",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/raw.json",
+      "sha256_or_gitlink": "d0289845db5036cc64a0a9d690c10f55f96579229dbdd3f3fb5985bc9e615c06",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/reporter.json",
+      "sha256_or_gitlink": "4265032b5b6948af2da9e9c853e2b99efa8869f2036a1af7601967b1f96c01b6",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-completeness.json",
+      "sha256_or_gitlink": "2b8b6f71a4a66854fb1848b244d0ddcc452aaeb1ff75e533602d2ecd4d87dfe9",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-feasibility.json",
+      "sha256_or_gitlink": "e10142ee7510a286240ec28a0969679db49a3abdf3ed308f054e389b5ec77fa0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-filesystem-schema.json",
+      "sha256_or_gitlink": "2d7f2f0925adcb98c03be21e142c1f19f29c4ba3a3633dffa940b7f3c1b3a6a4",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-identity-lifecycle.json",
+      "sha256_or_gitlink": "9ba8071ce819632d6b70ddc2d9e13da3b5d20201af51595badc4aaf1647bd878",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-instructions-configuration.json",
+      "sha256_or_gitlink": "9ba8071ce819632d6b70ddc2d9e13da3b5d20201af51595badc4aaf1647bd878",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-integration-ownership.json",
+      "sha256_or_gitlink": "9ba8071ce819632d6b70ddc2d9e13da3b5d20201af51595badc4aaf1647bd878",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-transactions-recovery.json",
+      "sha256_or_gitlink": "04d7f8a4225a850b4dd0536ac5b38a3dd0e1f242214dad601c37bff1158e8d1a",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/scout-transcripts-processing.json",
+      "sha256_or_gitlink": "1199b3d63d3ef07ebba05ce582152dc1ca1ac768754f361ee538025c406dc0b2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F01-ground.json",
+      "sha256_or_gitlink": "55aa56b6fa8b9e6882fc459e01867609f81606bdb1a360fada7133e8edf54c28",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F01-refute.json",
+      "sha256_or_gitlink": "82906a0304f3724c09f0a331172e9b9606170a1becab348d73fe347a48f463ae",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F01-reproduce.json",
+      "sha256_or_gitlink": "4060194f676b4c35db8afcfabea693811de28af11646c23842d96db3d40df401",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F02-refute.json",
+      "sha256_or_gitlink": "469b7a5e8ee3997740eaafbcd93f523e717d95e310f941b55feab1fe8d8bd297",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F03-refute.json",
+      "sha256_or_gitlink": "0d11d496e557ac7b8c491a4ea5a57a126781d40ac64eb215a10920d82147c806",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F04-refute.json",
+      "sha256_or_gitlink": "d06f79eb0ccee413598f5f9addb2b9f2d9925838f3f2ef1a60085411d6687cb5",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F05-ground.json",
+      "sha256_or_gitlink": "25f022b382a7bd676a680863f7fec18f4f4348d8aa42a00b107a70501e7ae668",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F05-refute.json",
+      "sha256_or_gitlink": "58c59ab4989180ccc333c58cf4dad1b620e79864935040b88f7ed52d49f5cacf",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F05-reproduce.json",
+      "sha256_or_gitlink": "8f5d0bfc179a063e5a435023a18e04e36125092702711696bf69be1b3bf4e9f6",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1-evidence/vote-F06-refute.json",
+      "sha256_or_gitlink": "af6be4e62bdf8ef453835d10054812e372aaabce7f8a129ac6d8b56971dc9808",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-05-graph-state-roast-design-1.md",
+      "sha256_or_gitlink": "714ac9784fff1da8f6dc14e4c9b1340f44de3427637f4a86c198fe6a0288cdcb",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-final-fix-implementation.md",
+      "sha256_or_gitlink": "7f481aae6681a4c05a74e32774ad3ae175d9c47b3216cbeaab43b0830c29e040",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-final-rereview.md",
+      "sha256_or_gitlink": "64cb74e7cb630cfaa843b07e9042817a6fcdc529f1be94537cf0ca59da36f92d",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-final-review.md",
+      "sha256_or_gitlink": "2fe312f51afabe330c3eb090bd30f9ad9748a9d3b32f9579c7aa2e36d02894fa",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-1-implementation.md",
+      "sha256_or_gitlink": "98aca32e9dbc1387ed43dad7ade43deb41c8d4ee4ac1c0b9881ab8123dbadd89",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-1-rereview-1.md",
+      "sha256_or_gitlink": "fb058584d80b6706ace034b4efbe33d339974112457ca6634dbe822c760e8c67",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-1-review.md",
+      "sha256_or_gitlink": "3c500b0b2dbf0523dd0fe6e870d381e28785ad9117b28c10add93c0e349e3ce1",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-2-implementation.md",
+      "sha256_or_gitlink": "7c1f00bd3a4e501c9cca9da5fc1fed6d2925f65ad58595a027f8a860dec570ce",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-2-rereview-1.md",
+      "sha256_or_gitlink": "a0347d06eb9a3e07df50b6e4c9b639b9a39fe730e7dfbbc27b538df502b693c9",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-2-review.md",
+      "sha256_or_gitlink": "144aba31296b02543aadd346ea250c574fc26b56952696ca64070e9d7ea61633",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-3-implementation.md",
+      "sha256_or_gitlink": "d2d4fc5f0f3e1b1945bd93b82d61dae295c5565549dc94e87fc6d3bb1e0e2e62",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-07-agreed-fixes-task-3-review.md",
+      "sha256_or_gitlink": "bd26d775896f12173ea34d7f97baf11c47edbdf42fa0968deca50ee19b92f293",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-17-threads2-task-1-implementation.md",
+      "sha256_or_gitlink": "f34cbafc9efe1ebcf33bd05ad1f8db9f37ed1c99bb3c29b99c7418f387cf48e7",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-17-threads2-task-2-implementation.md",
+      "sha256_or_gitlink": "8b3a47979e625a785c4efafb46c4c6732e3da2bb7b77f4f0d2fb8fe41f820e6b",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/reviews/2026-10-17-threads2-task-3-implementation.md",
+      "sha256_or_gitlink": "5e5d1f723fcc5285b5bd9a07349d0e8abac38dc241591b87051233a8f4f70479",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-design.md",
+      "sha256_or_gitlink": "42046d1af73327ee1cb861d3f206063c4cd3b2ff44b1ef82cbdb9b9409ef7ccf",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1-step-back.md",
+      "sha256_or_gitlink": "1db63e15ded3b50655fbe30d3f9bd03d362b0ffd950de716b4609f85a6413ed2",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-1.md",
+      "sha256_or_gitlink": "4f8b0ec3b94ad3c21d7a053636cbc3fa1e0694556ecc7e3da084424a175bf6d0",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-design-2.md",
+      "sha256_or_gitlink": "1a376be359f1e804a09f6c4409e80827ffe4afc3200193fa9b3bab59abbe4bb3",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-pr-1-step-back.md",
+      "sha256_or_gitlink": "ebce9c03a3b5c0acb360a90e993aa9d9522f68055491dc7fb79ecbf06ca0a5ad",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-pr-1.md",
+      "sha256_or_gitlink": "dba85eba1a83e29b3c7ed033c61476c45e9cb9970a6cd3ea26e8160812b70dc6",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-roast-pr-2.md",
+      "sha256_or_gitlink": "d9347801d6ea34cd0ec00a472002d35a4f39d64d0a56d919b17ccf35c42c45dd",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-findings-round-1.md",
+      "sha256_or_gitlink": "13c9c2e02e9f6f3e60c4acb9ca4d8a39a58cf317d3f58538f7751d65fc869096",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-findings-round-2.md",
+      "sha256_or_gitlink": "83ad23469103edc609a4600e788e71e0716aff73a90b172a9a6292b98bdd2c31",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-ledger.md",
+      "sha256_or_gitlink": "8836e5d949cdb6939c1daff6dd4feb65819c7545346f82d9d68d345dc4d95f38",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-round-1-requirements.md",
+      "sha256_or_gitlink": "7dbb6ffaf5277eb0c51bd6e5c9546fe391549368ac59884d5ca420511cf22d77",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-round-1-review-1.md",
+      "sha256_or_gitlink": "231543ca1c815a4441c21950f86499fbcc72367be8415d7c8d68f1784c8986fc",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/coverage-round-1-review-2.md",
+      "sha256_or_gitlink": "bfed226fcbae1ced00fdca7dd6374492ae64db45041dbf08a7e92d17afac9e49",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/design-tree-snapshot.md",
+      "sha256_or_gitlink": "8ecb461becec16dbf84158ac2abb182f6c4dfe1f2aeda058ab4172eb956cabbc",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/followup-verification.json",
+      "sha256_or_gitlink": "dfb52445042e1a4ddcca7d4902f0db993d0dcbd66c2fc3138b6baaec54bc6616",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/friction.md",
+      "sha256_or_gitlink": "4ce0cd8d687ffbc9253c619dde8a84fcd108e078031f6ef54974298f9719b1a5",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/integration-sweep.md",
+      "sha256_or_gitlink": "a6686516da30141cadf98054c5d72d8a07becbf67d96d461ed6aaab31013d30e",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/report.md",
+      "sha256_or_gitlink": "abc154e0a6161bf50a5f00e29d542268fa6ca034c6b999f7582716ca11f58f7a",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/run.md",
+      "sha256_or_gitlink": "38026a825532aa21eed99e19fc94a44af30792b31bc2ba1f1f1f761fbe697590",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/threads-amendment-reply.md",
+      "sha256_or_gitlink": "49947ba7851752591ba6d595a32d3f438557e987f065753e902549840345de27",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/threads-amendment-request.md",
+      "sha256_or_gitlink": "9f9fdfc7ba0626c89ca1d1e66fbd00ce7bb8e78213fd5d0631ea57103d6e1310",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/upstream-feedback-draft.md",
+      "sha256_or_gitlink": "72e8fc1984cddbab86cce71a657cfe0d9328688e623c16353dca25cb19b2ee61",
+      "equal": true
+    },
+    {
+      "path": "docs/superpowers/specs/INDEX.md",
+      "sha256_or_gitlink": "df0a7cc01aa8030bc80fdcd4c948b741c63f8f99b18ff7c3ba6fd65ed4c394f0",
+      "equal": true
+    },
+    {
+      "path": "docs/validation/herdr-release-matrix.md",
+      "sha256_or_gitlink": "8f9a21bc4feee03eb7e2bfcfdfd8923f24579c537a6af69ff4893ba451f82c28",
+      "equal": true
+    },
+    {
+      "path": "docs/verification-matrix.md",
+      "sha256_or_gitlink": "5011e2aac3dd5216d141ca551b0ebf434bdb0f811e1a8c31c48a4c97c3cc6823",
+      "equal": true
+    },
+    {
+      "path": "herdr-plugin.toml",
+      "sha256_or_gitlink": "753eb5c338d9cb5242f196be46b65d8622577787f215f432a2b94cd93c4f16b7",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/COMPARISON-pdf-text.txt",
+      "sha256_or_gitlink": "5d20041550d0347fc09557ce6cc87462c2a9c5230c050ebf7434d9c6eb581a8b",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/COMPARISON.html",
+      "sha256_or_gitlink": "4b1f8772e4b287ed55a77550128e820ef1f7b25f467596ee7c5620a6da6fa11c",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/COMPARISON.md",
+      "sha256_or_gitlink": "f475b3032028bbbfb3ed425a65873102ed77b66ef9298ef2910ca9f2219cc11c",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/COMPARISON.pdf",
+      "sha256_or_gitlink": "43c5f761e0030e90270fb6c9f4eab7e59f952ba776f4bb55c4765cdba3193328",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/SENTIMENT-pdf-text.txt",
+      "sha256_or_gitlink": "9de4f72e6985a95a7fee48e828d2c77e86bfcf7bdbe7369b7042f023a2daf5f4",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/SENTIMENT.html",
+      "sha256_or_gitlink": "8621c906e86ab67423b4c88028c4c03190890212904919985729c4acdd3afa18",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/SENTIMENT.md",
+      "sha256_or_gitlink": "60fa7f5ab3bfddc1942aace663f1765f7d4deee794303e9a4059fd9a15579cf9",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/SENTIMENT.pdf",
+      "sha256_or_gitlink": "6b0277a82d93efa1817f53dd760809aaa33486c1f488aaa3d1c1e8b5db1dffb0",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/code-evidence.md",
+      "sha256_or_gitlink": "e32fcaae2341c19ee51270cdd4420d31731be90db5909649eeef7d5742dd5240",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/sentiment-validation-validate_report.txt",
+      "sha256_or_gitlink": "ddc99772c0909bbf0ca4073e7d3d5bdc9f690b76d5ca9764ec72e88d0fbf754f",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/sentiment-validation-verify_citations.txt",
+      "sha256_or_gitlink": "c7ea5c354b57f08f75d72b520a46f2adbaa3d61d1015b94813c559dc0d4d12d3",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-citations.txt",
+      "sha256_or_gitlink": "dd4225ef0d2c000641446fba49ed9548e6548db02589f0d67f3ae2c7b10a7701",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-comparison-html.txt",
+      "sha256_or_gitlink": "3678e978f477c61a7b1325de016c35ef4e25b24d464b24b06419bde83fbc6674",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-comparison-structure.txt",
+      "sha256_or_gitlink": "9f838c21ae7a4e25fcc959361a651a1ac633b63b05ad3a2d2a8f47a5a3847d59",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-html.txt",
+      "sha256_or_gitlink": "3678e978f477c61a7b1325de016c35ef4e25b24d464b24b06419bde83fbc6674",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-sentiment-html.txt",
+      "sha256_or_gitlink": "1ab9d35712187728ac2ac5e189f020f58fe1306d64f20710c5bc53e440f6775a",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-sentiment-structure.txt",
+      "sha256_or_gitlink": "ddc99772c0909bbf0ca4073e7d3d5bdc9f690b76d5ca9764ec72e88d0fbf754f",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/validation-structure.txt",
+      "sha256_or_gitlink": "d2ba26feddc11f2b1c920d5fa0d36ad1a268916df111be8731ff78caa920729c",
+      "equal": true
+    },
+    {
+      "path": "research/firstmate-20260928/vision-evidence.md",
+      "sha256_or_gitlink": "4f4e8a4ed9cd4998cfbcd1cbf4a15e718df1069a1e55614eba137067aebd0135",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/RESEARCH-pdf-text.txt",
+      "sha256_or_gitlink": "73515fcf276dc1f0649d7c2e58cbe96742157cc59e42aa046bfb27367da26a15",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/RESEARCH.html",
+      "sha256_or_gitlink": "4784c70b2dd8ef265ad993d6cd299bbf58836d96fd08a497981fcbdec052c6ed",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/RESEARCH.md",
+      "sha256_or_gitlink": "bd2a665590e4d0a9ece40fb19085bc441f100ef40d0e4c96bdcc47590af2db51",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/RESEARCH.pdf",
+      "sha256_or_gitlink": "fbdc361ec804553760695273f5e81c7d8ce6e684fffbf6b16341d01f16cd142a",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/completion-audit.md",
+      "sha256_or_gitlink": "6ef9037b722a2ef21a0c73f766817310fc7330c139e221eaefeef49d76b8577b",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/designer-consultation.md",
+      "sha256_or_gitlink": "63f3cdb2eb929b1bc1d11738c829e957708cc34a8f91edee60b33527a0f81937",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/landscape-evidence.md",
+      "sha256_or_gitlink": "3361f6bcbf98b76012efb92c9c1321f0b11998c122c6b8270b69035b0f35165c",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/sentiment-evidence.md",
+      "sha256_or_gitlink": "95ac4fa908e4ea395476dc64412226108fca589f3f8db3dd169a3d8571a17626",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/validation-citations.txt",
+      "sha256_or_gitlink": "925aee7e869747ff0f806638cf72700d88d1982b8ba0332941f0a360eae700d5",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/validation-html.txt",
+      "sha256_or_gitlink": "94a5020b7d227c4c4d0af785be8d20b7697c47b2de0e6aab4d3cae0bceea7997",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/validation-local-links.txt",
+      "sha256_or_gitlink": "8a961741885e390f2279f234153dc3564f867de37eb6ec31af5ce61c52dc168d",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/validation-review.md",
+      "sha256_or_gitlink": "2df7f6064052034b50c3cd1005a758f17dcc5a904931e841b121ddb272942c50",
+      "equal": true
+    },
+    {
+      "path": "research/software-factories-20260928/validation-structure.txt",
+      "sha256_or_gitlink": "ef4d2be13da13caee3fd06a9375c5072bfee7ac5ab493a6bddfbb348498a8faf",
+      "equal": true
+    },
+    {
+      "path": "scripts/build.sh",
+      "sha256_or_gitlink": "62cb9ae8956c7ef02f12d947c112f2fc775e3b8a93c73160fe40a8ed106fbb8f",
+      "equal": true
+    },
+    {
+      "path": "scripts/herdr-release-smoke",
+      "sha256_or_gitlink": "8263d765b0fe7f9e6945a04db7aa500a7665f87304da9789d03917aa37eb94a2",
+      "equal": true
+    },
+    {
+      "path": "scripts/tests/test_herdr_release_smoke.py",
+      "sha256_or_gitlink": "202fdf7e70171234ce97c7e532c3e8b37ffd724f36a4dcfb777f559fd440fd89",
+      "equal": true
+    },
+    {
+      "path": "skills/graph/SKILL.md",
+      "sha256_or_gitlink": "d0a718672e4eb193ac8ee7f522fa8028c03b0fa744975450bd35cde9b8d035a1",
+      "equal": true
+    },
+    {
+      "path": "skills/seat/SKILL.md",
+      "sha256_or_gitlink": "dc28f99d2ac2a57197926da2eb77badc89bc0a206db816276e29ad0f7b287fe5",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/content.rs",
+      "sha256_or_gitlink": "d38d937fdd7c727a804e3d484371c08d37934beb99a61014a6d50271619e0d40",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/examples.rs",
+      "sha256_or_gitlink": "315366f16f27f4d644695335573b08d3bbdfe0f46358347ba616b38aab63af5d",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/mod.rs",
+      "sha256_or_gitlink": "3b457264ed3d7385ee6e0ae1b9f31e2344695104f42d35067af4624619112a1b",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/resolve.rs",
+      "sha256_or_gitlink": "369509e1093ec7a97c2617862a65adb8ea408c449a060dd2e23edaa031778bd1",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/setup_claude.rs",
+      "sha256_or_gitlink": "7503215e2db6f12ca1d5cea9e80cb53177c4ec9bc496140809939e451222703a",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/show.rs",
+      "sha256_or_gitlink": "f654563facc587b922c54df040ce087287f0bf173ae3ddc02aef400f6fa8bc50",
+      "equal": true
+    },
+    {
+      "path": "src/bootstrap/tests.rs",
+      "sha256_or_gitlink": "f77f4b7b773249cb303eebb3e47e0e2c98f3a1d6367bc871e861267db3301876",
+      "equal": true
+    },
+    {
+      "path": "src/cli/content.rs",
+      "sha256_or_gitlink": "ce94564743baa2a3bc90453a6b8520e9b7abce27be67bde1c35c5d70e87ada4c",
+      "equal": true
+    },
+    {
+      "path": "src/cli/daemon.rs",
+      "sha256_or_gitlink": "5aff363d6f3c2117e71ad838333a5fa6ed1809feea2f37955c2e0bcdc69ce083",
+      "equal": true
+    },
+    {
+      "path": "src/cli/init.rs",
+      "sha256_or_gitlink": "06102cfa6b7daa2f3d3e13e22ea3b232df811ea5a4caf783257b8b1454daaca1",
+      "equal": true
+    },
+    {
+      "path": "src/cli/mod.rs",
+      "sha256_or_gitlink": "617be60e830e7e28fede9b0ed4d425ffe3d8aed35c28e229404766449b6b1621",
+      "equal": true
+    },
+    {
+      "path": "src/cli/ops.rs",
+      "sha256_or_gitlink": "ba85bf3cca77b4748f0a023eebddd5d15d1ea63318574a2b65d61faf7749604e",
+      "equal": true
+    },
+    {
+      "path": "src/cli/plan.rs",
+      "sha256_or_gitlink": "2647a9abc6fb5771ba7b03911521e5f61758f8f2eeabf0e01d4bb63bc776067b",
+      "equal": true
+    },
+    {
+      "path": "src/cli/request.rs",
+      "sha256_or_gitlink": "6e36d70c99aa64583964e264a8d049472337421249e821aa2722c80a88d73630",
+      "equal": true
+    },
+    {
+      "path": "src/cli/seat.rs",
+      "sha256_or_gitlink": "6757392d07023a365cd028888f700c300ca67af2131270056b26258c18d0fb69",
+      "equal": true
+    },
+    {
+      "path": "src/cli/session.rs",
+      "sha256_or_gitlink": "e43816324fedf5afcecb39ece98b60b653f8375f7bcf2f0c9ac930b617da51f0",
+      "equal": true
+    },
+    {
+      "path": "src/cli/setup.rs",
+      "sha256_or_gitlink": "673d5c1c33bc5fff24d566094804b8f1ce7126adbe854591d2b382cfc4235b93",
+      "equal": true
+    },
+    {
+      "path": "src/cli/show.rs",
+      "sha256_or_gitlink": "112dd7707a38c4576df11713583fff04d1f92b90dad0f45d2ef7c044c186de41",
+      "equal": true
+    },
+    {
+      "path": "src/cli/status.rs",
+      "sha256_or_gitlink": "e89e0ac6cf0002fc7503ead74a7181d19f94e7def609e88e75d5c3706a682ec6",
+      "equal": true
+    },
+    {
+      "path": "src/cli/template.rs",
+      "sha256_or_gitlink": "7993651345f03b444e39e7d83007b90e50ed4a44119d1cc17b6a4afc9ad31d82",
+      "equal": true
+    },
+    {
+      "path": "src/cli/undo.rs",
+      "sha256_or_gitlink": "0a55ae9c6f2d4e7fd51fdb8431d6706c6465c52488c1f29f035b7b5a5d3bd0a4",
+      "equal": true
+    },
+    {
+      "path": "src/cli/who.rs",
+      "sha256_or_gitlink": "2a79cc38e7a17e0993fe8c9b4e4b26b2c36924cfada7b97bfc3efdc6f75c116c",
+      "equal": true
+    },
+    {
+      "path": "src/config.rs",
+      "sha256_or_gitlink": "16a041ee12aca75d28c6cc9005906a1618f0da763e38ec7cf0c75d0ad31fbbc4",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/budget.rs",
+      "sha256_or_gitlink": "1415fd8de5a23ef8d35510674bec6d6c7845c06a19c3555664f824073ca11841",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/client.rs",
+      "sha256_or_gitlink": "2a6ad256d3808005775403bdb0595879f92e2aff607b2b81b169607394f1961b",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/compose.rs",
+      "sha256_or_gitlink": "f3c6c21d3d677016d1378135386cd9203e4912873603e8105ca66f201058eadf",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/doctor.rs",
+      "sha256_or_gitlink": "b59e0c912766321c25bcde3eaa4edae98cbc131d57216053b187ead8ab299063",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/ensure.rs",
+      "sha256_or_gitlink": "317cf5779ead667d704562d4413ec3619103bcd2f64143f1fc79f0babec4f824",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/lock.rs",
+      "sha256_or_gitlink": "6a3926d10d28f7b774bf23af6cc3cec8c4c8c6c3ad8a67afe91c9033448049ed",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/mod.rs",
+      "sha256_or_gitlink": "f718910886475fb86320d0979d1433b11e582cc67ae223cea9c3f19cdfa47a8e",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/registry.rs",
+      "sha256_or_gitlink": "4e3e7386e96152ec0323396c4734b66e385d97999f58d8d3cda8a9022aa6c648",
+      "equal": true
+    },
+    {
+      "path": "src/daemon/server.rs",
+      "sha256_or_gitlink": "667bda8095785213debb9020f5bc3e5d0295ff0f2d2c4f96dbf0300ff7e1283a",
+      "equal": true
+    },
+    {
+      "path": "src/failpoint.rs",
+      "sha256_or_gitlink": "8d3d5f97bc27aac33622f917d5170ec2ff5df79ba07e796b23424ce505402f78",
+      "equal": true
+    },
+    {
+      "path": "src/fsutil.rs",
+      "sha256_or_gitlink": "ff2e9a5572846628994040a9b0b57a8c4ca95557cfda51dbbd2c2ec756704b36",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/client.rs",
+      "sha256_or_gitlink": "8319eaa6da249f0da566a8ce1e22ade99a3f56b3aa4e1c6d7d6ae294b9a3dea8",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/fake.rs",
+      "sha256_or_gitlink": "a6ca5fef66ea30450c5ccb1bdc64b46c5b33b8f50e59f0df631a0229a60e256b",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/incarnation.rs",
+      "sha256_or_gitlink": "72aa187d802f7101f49888143c33210689417abb77fb244641e54801352571d0",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/isolation.rs",
+      "sha256_or_gitlink": "d4fd1da6d3f07136996e9846b640a4ce171e5e55bbf786796f6e2aff64a012b3",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/mod.rs",
+      "sha256_or_gitlink": "0cefa3d6d519e70cdc030329b0f3c0fc3f4eba8cfbab4e13b95f59d79702d2d9",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/tests.rs",
+      "sha256_or_gitlink": "7846d81915bb33ae2064fe48d4840905f7c0ab58d9c98c43d30dabe07d08d6fd",
+      "equal": true
+    },
+    {
+      "path": "src/herdr/wire.rs",
+      "sha256_or_gitlink": "79b7768eaa64de106a5c01f9bef101062647dc8d60baf3c53c0dca5f5ea09a08",
+      "equal": true
+    },
+    {
+      "path": "src/ipc.rs",
+      "sha256_or_gitlink": "7149acf5f51b6561d74547ddf33bbcf0e8a5bdd19d2b41b8cacdb7e6e8ee4e57",
+      "equal": true
+    },
+    {
+      "path": "src/journal/mod.rs",
+      "sha256_or_gitlink": "c53e0c24d4f7738a8064b9150647188acbb300d3886b01b90fcac93c245d23d5",
+      "equal": true
+    },
+    {
+      "path": "src/journal/tests.rs",
+      "sha256_or_gitlink": "06d0ca7d3b84cec35e2b0e3ba4b8258fc779240b29987ccca55223226efe28ce",
+      "equal": true
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256_or_gitlink": "994680b714f295e41db7c6aa5c4b42c317ba91baaf525b566d7f17bc96bd5be9",
+      "equal": true
+    },
+    {
+      "path": "src/main.rs",
+      "sha256_or_gitlink": "730827e0fc09067ed0a5d5ca53a69172686f47d84688240794f082e82a75b0a9",
+      "equal": true
+    },
+    {
+      "path": "src/model/action.rs",
+      "sha256_or_gitlink": "d3450d6cf93bffc3926f99a661483ea2348f12f409bcd4b1940f49826ccef589",
+      "equal": true
+    },
+    {
+      "path": "src/model/application.rs",
+      "sha256_or_gitlink": "2fb390b65bc4c07bc8817d9d2ada259d52d8648e5b3ceb6b68c6379d59359fde",
+      "equal": true
+    },
+    {
+      "path": "src/model/change.rs",
+      "sha256_or_gitlink": "19df3f92a5ec8178819a35a53a90c873925b490b8b47033c8bff32853e83ed14",
+      "equal": true
+    },
+    {
+      "path": "src/model/clone.rs",
+      "sha256_or_gitlink": "dc11c1be887071a02655f750feeac83acfcc87f808f497a5ad910ce0cfeb9d28",
+      "equal": true
+    },
+    {
+      "path": "src/model/common.rs",
+      "sha256_or_gitlink": "01aed4f9cc41ae2010bdef5c8375fc31305f334d26064030392e7b2241ac59eb",
+      "equal": true
+    },
+    {
+      "path": "src/model/effect.rs",
+      "sha256_or_gitlink": "0653ed9a46963f2d68280ba400c90ef726e501ed3aca137c7f8ca34c1dab1c03",
+      "equal": true
+    },
+    {
+      "path": "src/model/effective.rs",
+      "sha256_or_gitlink": "c919d5c73be23d7e33ac9a0ab0e370f2303f72cf10241c015f2f87087ac726ac",
+      "equal": true
+    },
+    {
+      "path": "src/model/graph.rs",
+      "sha256_or_gitlink": "ef586724289d09144d9a10b078f97f95274d60538b8edf72d37d49f29eec9acb",
+      "equal": true
+    },
+    {
+      "path": "src/model/harness.rs",
+      "sha256_or_gitlink": "1c7cfd99d0d8766935785e9a60d4e99fcc8b739bd468c37cf522317da9b13725",
+      "equal": true
+    },
+    {
+      "path": "src/model/ids.rs",
+      "sha256_or_gitlink": "fac0d0eaa645663bb19aaf00e84a77794caf823b8f495ba1c903353660ca534f",
+      "equal": true
+    },
+    {
+      "path": "src/model/launch.rs",
+      "sha256_or_gitlink": "f357e53406da55eaff8cd0af33bb74c0442e7b7d8990eac3555592a2733a0a0b",
+      "equal": true
+    },
+    {
+      "path": "src/model/mod.rs",
+      "sha256_or_gitlink": "e039b47bc0880062bac6daeedd536506144d9628ad93b2051682266475067460",
+      "equal": true
+    },
+    {
+      "path": "src/model/native_session.rs",
+      "sha256_or_gitlink": "1907c814e46929f782b1a214e286ad34a8fecf688d487b6619d3c89a93ed2585",
+      "equal": true
+    },
+    {
+      "path": "src/model/operation.rs",
+      "sha256_or_gitlink": "96113d2ffd62616a93b28556ae1385bfba8c3b153ec7d8c29c225c0dc2108222",
+      "equal": true
+    },
+    {
+      "path": "src/model/request.rs",
+      "sha256_or_gitlink": "685c5bec746687a806d661230fca2e312b6721db8920f72eb4567e95e4255ada",
+      "equal": true
+    },
+    {
+      "path": "src/model/seat.rs",
+      "sha256_or_gitlink": "72abb3f06cacbf3c648a6e8537b5b6ab52486e85c0124ea7179f17ec6eae7efc",
+      "equal": true
+    },
+    {
+      "path": "src/model/teamspace.rs",
+      "sha256_or_gitlink": "cb093e150e1df9680468615ceb5d7e6d8f4f165f02ec77cdea8c9f29e55928d5",
+      "equal": true
+    },
+    {
+      "path": "src/model/template.rs",
+      "sha256_or_gitlink": "88b05b0419023cc1267ad7107cb6f84d3c13983e6e28674d8b60d863bdee274b",
+      "equal": true
+    },
+    {
+      "path": "src/model/tests.rs",
+      "sha256_or_gitlink": "132e83cc8bb6b603bce164c7e1315745fe73b44b736a25971dcdb406d6fcbe07",
+      "equal": true
+    },
+    {
+      "path": "src/model/transcript.rs",
+      "sha256_or_gitlink": "90189d3b280ef7acd031b4313e000e60d1ac0b9806ab59c3545b61d77c182a1b",
+      "equal": true
+    },
+    {
+      "path": "src/observe/baseline.rs",
+      "sha256_or_gitlink": "33d1e005b792c7adbb750bd9123dcfa8c99d466fc6c36eb064d0cb845adc082e",
+      "equal": true
+    },
+    {
+      "path": "src/observe/classify.rs",
+      "sha256_or_gitlink": "3ad0c8973b49285847022eeafe44c69d9ef7b78ed476146b8871408c4a22913b",
+      "equal": true
+    },
+    {
+      "path": "src/observe/diff.rs",
+      "sha256_or_gitlink": "9a9df05ac6c7ea3f673787d328b9f478921d8d47e7821ed1e1df1d95193046a1",
+      "equal": true
+    },
+    {
+      "path": "src/observe/matcher.rs",
+      "sha256_or_gitlink": "3a2cba889ea5f8a9244f5a1070b333666a0b261744ad5e12456b838c0b0c6d31",
+      "equal": true
+    },
+    {
+      "path": "src/observe/mod.rs",
+      "sha256_or_gitlink": "162682a48cb6f8ce443ffc83e0c69aa9dff24bd28cf9c4d59e5a6b7d5c166186",
+      "equal": true
+    },
+    {
+      "path": "src/observe/mutations.rs",
+      "sha256_or_gitlink": "b8b3bc813218c8126aa3d3314e0b1a77d940c03e46724da0cf9fdd188a8296cc",
+      "equal": true
+    },
+    {
+      "path": "src/observe/sessions.rs",
+      "sha256_or_gitlink": "6d4ada6f0c5b40bbe27d61435bdf348a5324091ec52302832e3e4fb976de5588",
+      "equal": true
+    },
+    {
+      "path": "src/observe/step.rs",
+      "sha256_or_gitlink": "9fb63cd7d0c5fb00275fecee6d84923f7c782c926bb3eec386cc27eada6e6b28",
+      "equal": true
+    },
+    {
+      "path": "src/observe/tests.rs",
+      "sha256_or_gitlink": "913307f6a2b3d6753106b8ab1a6ddcf41bfd1a98eceb8335e8e024b32dbab3f3",
+      "equal": true
+    },
+    {
+      "path": "src/plan/apply.rs",
+      "sha256_or_gitlink": "19473560cb88b48dabf393faee00c47a63bcce9d95f879eb7c6ada107659237d",
+      "equal": true
+    },
+    {
+      "path": "src/plan/commands.rs",
+      "sha256_or_gitlink": "569aa67b09a7b4f1a91231e303ded06055e494c11c9ca00365beade274d643d9",
+      "equal": true
+    },
+    {
+      "path": "src/plan/core_kinds.rs",
+      "sha256_or_gitlink": "4832c091421d6b8f21829dc129fde8ac7ff43fcb2d3e89c1022f6687bd1b0fee",
+      "equal": true
+    },
+    {
+      "path": "src/plan/grammar.rs",
+      "sha256_or_gitlink": "f9c171058534a6e3dcb22b12370b000ca411fc79ea49f1b7864a485fce5d5aeb",
+      "equal": true
+    },
+    {
+      "path": "src/plan/hash.rs",
+      "sha256_or_gitlink": "c745e3092acf728f302ff1b128099dd1885ae5480afdc5dd5cd69b24b14a5d29",
+      "equal": true
+    },
+    {
+      "path": "src/plan/kind.rs",
+      "sha256_or_gitlink": "5334f37c34e3b5ddebd67bd77b237bc457ec1a147036cf8328b05ca3ec887002",
+      "equal": true
+    },
+    {
+      "path": "src/plan/kinds_extra.rs",
+      "sha256_or_gitlink": "46650acb94ba5dc5a3413da6f6fbff65d8dd797b905f5c62d6b4f2ee617ab003",
+      "equal": true
+    },
+    {
+      "path": "src/plan/mod.rs",
+      "sha256_or_gitlink": "358d03147eb25fe2a4d2f71c3ea37652c44384bfbdc0829caf7e01a6ef91f35e",
+      "equal": true
+    },
+    {
+      "path": "src/plan/ops.rs",
+      "sha256_or_gitlink": "fc4b0e336ee60c8fb9b6f02da3be68cb17b189f1f6cdaa26b62decc00c219c96",
+      "equal": true
+    },
+    {
+      "path": "src/plan/reminders.rs",
+      "sha256_or_gitlink": "00cd466d66ae4e05717295a7217bb80d0d0a621b71396612f7ac11c869552dd9",
+      "equal": true
+    },
+    {
+      "path": "src/plan/store.rs",
+      "sha256_or_gitlink": "8300d5ff2414b2d78730bfa489810768fdb81ce25f04ea0972f2e4be2caf2cf8",
+      "equal": true
+    },
+    {
+      "path": "src/plan/tests.rs",
+      "sha256_or_gitlink": "a7a30a2ca1a8237d3e2ff9b2ae8b571d229e6c6b62ca26b551d7635d49f59005",
+      "equal": true
+    },
+    {
+      "path": "src/plan/types.rs",
+      "sha256_or_gitlink": "3f7cbb39ca73e040fcb2e2ba8c3003b0f5715a930cb6cb873d329ee8092051b7",
+      "equal": true
+    },
+    {
+      "path": "src/ports/clock.rs",
+      "sha256_or_gitlink": "4a50af14d84a1197aee1263f366477b9225a8182ff83ddb172b290e79a520460",
+      "equal": true
+    },
+    {
+      "path": "src/ports/herdr.rs",
+      "sha256_or_gitlink": "76ea6d78ae2fdd8b4e2dea8319ebc3d61b16eaa17916c12d8a6ea3e30ba4e4c3",
+      "equal": true
+    },
+    {
+      "path": "src/ports/mod.rs",
+      "sha256_or_gitlink": "f897fcb0385f14354c1c7281c7526664577c67c57dc231591884eefdf2fc39c1",
+      "equal": true
+    },
+    {
+      "path": "src/ports/store.rs",
+      "sha256_or_gitlink": "7b9b05da909c0aa1584d988abf26dbed667074b1bf999f16c6eacb325b0a6cf3",
+      "equal": true
+    },
+    {
+      "path": "src/ports/threads.rs",
+      "sha256_or_gitlink": "f8b1326e169d08851c35dca399a0031d2fcab25d50c57bae2ad329905975686d",
+      "equal": true
+    },
+    {
+      "path": "src/ports/writer.rs",
+      "sha256_or_gitlink": "6e5668de92a4a1908c523083f9895dc3461b8584ae79229c66acbb3782119f8b",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/backoff.rs",
+      "sha256_or_gitlink": "8ccfe3d044367c59eb11b3b56a8552c695563cee5e7a985db0897744d1d88f53",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/bookkeeping.rs",
+      "sha256_or_gitlink": "5d5db639725804096851f73dc06bcfdf2ecd89d719af5d999489a73dbfcc83a0",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/desired.rs",
+      "sha256_or_gitlink": "6d8c3626ed73b919a1c2eada5d30e189db9d8ccfd3f4f37cdc335511a3de0806",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/executor.rs",
+      "sha256_or_gitlink": "86265959e6cd5324e2c55949c097c71230609b802696f01a97f8cafb08e01f5b",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/herdr_exec.rs",
+      "sha256_or_gitlink": "b51f6303c56c36d73f2e28dfc5c893ac4f8c9c2954ed93c9f24b5628ffe11029",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/mod.rs",
+      "sha256_or_gitlink": "449b5ecfc1636bdc2873c2f079ec6a6285443989cbbb7cd01175a5feb7616383",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/planner.rs",
+      "sha256_or_gitlink": "4924b48373b8c4ede4bd004d7d525e009fdf4a0387cad8c09584b1eb132c2d52",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/session.rs",
+      "sha256_or_gitlink": "c58aa028993256ce7a3ea4dc7563c0fc8ae03e11718e85853599cdd292d16049",
+      "equal": true
+    },
+    {
+      "path": "src/reconcile/tests.rs",
+      "sha256_or_gitlink": "9db6fbe378090604ac5d74abf2b0d1f6ca97c45ec31f7a35ba0735ebc6c4b652",
+      "equal": true
+    },
+    {
+      "path": "src/store/git.rs",
+      "sha256_or_gitlink": "ada0ddb6548844d310fee597489258b9ad6dd82fe3c7d2b7a0117f644597b97a",
+      "equal": true
+    },
+    {
+      "path": "src/store/init.rs",
+      "sha256_or_gitlink": "2994fb38d9b009ed07c58382590259bb8347830b2e474db74e8072c01a1a396c",
+      "equal": true
+    },
+    {
+      "path": "src/store/layout.rs",
+      "sha256_or_gitlink": "15296be539e8aa0360695499029323ec191f864a74d5f918b3eff150f4adaa95",
+      "equal": true
+    },
+    {
+      "path": "src/store/mod.rs",
+      "sha256_or_gitlink": "70a2924826fe9808d3a4db6c84edf37aff6a641356c45a4c4fd9655d31c3c2e0",
+      "equal": true
+    },
+    {
+      "path": "src/store/record.rs",
+      "sha256_or_gitlink": "c7aade5126aab376e820564f3ef97cc77d38766c467b644bc182320a850d3ff5",
+      "equal": true
+    },
+    {
+      "path": "src/store/slug.rs",
+      "sha256_or_gitlink": "99fe4a442890c25d37cda0cb5b29d832ed78b6fc54d46d112007b265158cb4ce",
+      "equal": true
+    },
+    {
+      "path": "src/store/tests.rs",
+      "sha256_or_gitlink": "685e8855bc744f69e288896908daec7d191cf4e2c0a360bd19956ab1a0a38ff8",
+      "equal": true
+    },
+    {
+      "path": "src/store/tree.rs",
+      "sha256_or_gitlink": "9fdaa5e66c9abea69ec29375b3bb59fc9789eb9e23eb6cb8cc849795656600bd",
+      "equal": true
+    },
+    {
+      "path": "src/templates/document.rs",
+      "sha256_or_gitlink": "63d359ce06e09e69e69d2ba67ea9cf3878022f2a28ceccf901bec2339e143f04",
+      "equal": true
+    },
+    {
+      "path": "src/templates/kinds.rs",
+      "sha256_or_gitlink": "8282b6b0019b33692d65e75b16d3b5ca89d4688568965c705252febd4fbecf63",
+      "equal": true
+    },
+    {
+      "path": "src/templates/mod.rs",
+      "sha256_or_gitlink": "bb6a80a3db2e290a69ce207e37c7872e58e89e38fab95aa52e3dc3904199ee34",
+      "equal": true
+    },
+    {
+      "path": "src/templates/seat_definitions.rs",
+      "sha256_or_gitlink": "4e7145f3607bae05001511cf14e90b25a3cc70d065b0bd7fd30a2f926de12d50",
+      "equal": true
+    },
+    {
+      "path": "src/templates/structure.rs",
+      "sha256_or_gitlink": "280d289f22bf0aeac410ad6820ca1f37083a4ecef0687d276b4a933e528aa70f",
+      "equal": true
+    },
+    {
+      "path": "src/templates/tests.rs",
+      "sha256_or_gitlink": "5b4ac185e34a5c26f15783405601e88464931bff3d2947d3fb7eb048c2819fa7",
+      "equal": true
+    },
+    {
+      "path": "src/templates/withdrawal.rs",
+      "sha256_or_gitlink": "ad638c324f0060184b0723824b622b3747580ac3c9e725a251f684e4432a6f20",
+      "equal": true
+    },
+    {
+      "path": "src/threads/adapter.rs",
+      "sha256_or_gitlink": "a77a4cab5da3c485b6ba366e5226718983b61bf824ed0cb4c947f949a3e84a8f",
+      "equal": true
+    },
+    {
+      "path": "src/threads/discovery.rs",
+      "sha256_or_gitlink": "14cf3f40ed7b0568ac47b9819f7694d62af5c6f635129d2db4aed43747ea12b6",
+      "equal": true
+    },
+    {
+      "path": "src/threads/effects.rs",
+      "sha256_or_gitlink": "4e083539297ceaaa4386a2a101dc411d3413aad10450905a9ed18a1a86c51fdc",
+      "equal": true
+    },
+    {
+      "path": "src/threads/fake.rs",
+      "sha256_or_gitlink": "a264e98c0ed75dd3d5b930f468016115af55171975b40412170a4fe0062b57e9",
+      "equal": true
+    },
+    {
+      "path": "src/threads/mapping.rs",
+      "sha256_or_gitlink": "4c32a91c08d7298fe0efff202a6f633939faa4a9cdb95c59e46c8a938019dabd",
+      "equal": true
+    },
+    {
+      "path": "src/threads/mod.rs",
+      "sha256_or_gitlink": "17d285a988a1a7468d0bb838042c59b4c14f23daaf56dc11a7bd036cb5d9cd04",
+      "equal": true
+    },
+    {
+      "path": "src/threads/namespace.rs",
+      "sha256_or_gitlink": "11168abc36c5332ce52a6df3efae269f192d4688ecccaddabb88a40764215a45",
+      "equal": true
+    },
+    {
+      "path": "src/threads/reconnect.rs",
+      "sha256_or_gitlink": "68d6778d825ca8fb7dc9a6cf3a058367ea2c58bff493e5173b1dc2be0ee0c6d6",
+      "equal": true
+    },
+    {
+      "path": "src/threads/service_tests.rs",
+      "sha256_or_gitlink": "d98ab9950156bc54ee0d1f26dbfed4512bb0b8215138ff1113d6993a4499b5b3",
+      "equal": true
+    },
+    {
+      "path": "src/threads/tests.rs",
+      "sha256_or_gitlink": "00555f3ba534b4ea31d8854e0e550bac0aad512686cab8ecc8ec672bd2f7450e",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/capture.rs",
+      "sha256_or_gitlink": "e5e22fe0469fcf65535dbabb097db673261f35848a6c5f034b3961753f237b1b",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/coverage.rs",
+      "sha256_or_gitlink": "0578bc020db4a1af34543e3d912760bf2a597cca412f753872aafd0f117aadf6",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/delivery.rs",
+      "sha256_or_gitlink": "70f8bbdd7ab7694a346abbcf55dff1f58c8809405574520129470eadf406a753",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/liveness.rs",
+      "sha256_or_gitlink": "1459f903bab5f6d298a2a1dc1d4d4e55f4480dc2ab54bff3c8da3316311f76bc",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/mod.rs",
+      "sha256_or_gitlink": "fa6f751bc5eb524ca09396a7de99fe696564d6b16d663d28f0443b2fff0bdcd1",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/mutations.rs",
+      "sha256_or_gitlink": "ea27d71c42dfacf01f017ca427195a60a3693f26764ba80900f521c462899864",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/requests.rs",
+      "sha256_or_gitlink": "ad3e937e07ddf02c86fc4e1f4410dbe06b4f601ad13f707a41f2e2e97841adb7",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/tests.rs",
+      "sha256_or_gitlink": "6603466c28ab6b1bc84fb8adcdf67f6039b2e8bb1fff2832e7d3f09eaf06827c",
+      "equal": true
+    },
+    {
+      "path": "src/transcripts/watcher.rs",
+      "sha256_or_gitlink": "22b63b6e9d4ec2056d6c8e045d19ef616530a9f865bc2a005fd3169aed11d911",
+      "equal": true
+    },
+    {
+      "path": "src/undo/adopt.rs",
+      "sha256_or_gitlink": "e8117883dbe18b084082f412b23923bb0f584786db05b800069e16c0e664cb90",
+      "equal": true
+    },
+    {
+      "path": "src/undo/candidates.rs",
+      "sha256_or_gitlink": "3ac1b04a88a5a360135f548828606687cac4a58acbc51ccd8eb7c90248cb94c7",
+      "equal": true
+    },
+    {
+      "path": "src/undo/commands.rs",
+      "sha256_or_gitlink": "f11296869f2c237473ac5dfafac8b833e042d2ecfe8f018933fdf74f1227a118",
+      "equal": true
+    },
+    {
+      "path": "src/undo/compensate.rs",
+      "sha256_or_gitlink": "088880b0693d04f3ee82d41655cc3202de905d1fcf3f54794d685ae2569ee412",
+      "equal": true
+    },
+    {
+      "path": "src/undo/mod.rs",
+      "sha256_or_gitlink": "8c19ec68fbf12796402bca58b0db68b9ed8d06c5a061923a6c030e9fa6a4127a",
+      "equal": true
+    },
+    {
+      "path": "src/undo/preview.rs",
+      "sha256_or_gitlink": "7466d2d8ba4e4dd8bb9fd2703d02a8e8ece6d6ec19c1e143cbaefb91a3f1f7df",
+      "equal": true
+    },
+    {
+      "path": "src/undo/tests.rs",
+      "sha256_or_gitlink": "7bf939f5635971b84824894d679701b2d9df2b1ea06288a2d6075c6e6eb1b05e",
+      "equal": true
+    },
+    {
+      "path": "src/writer/commit.rs",
+      "sha256_or_gitlink": "0692f7f03e73f0adc5ec56c2d4048f40279430528ecafcb8eb9d6a282fced902",
+      "equal": true
+    },
+    {
+      "path": "src/writer/mod.rs",
+      "sha256_or_gitlink": "941dc0fc316b9962e86d45ababfe37ebd0e7e78b1ec613dce3f12becaef03dd2",
+      "equal": true
+    },
+    {
+      "path": "src/writer/mutation.rs",
+      "sha256_or_gitlink": "2d07bc8960522bd84f40a937a0b971994769955d3c4543ea8752cf272514eaad",
+      "equal": true
+    },
+    {
+      "path": "src/writer/recovery.rs",
+      "sha256_or_gitlink": "e98c764d5c7e2a70924e7aed2253f3df6f83e35b192206a6feeff12b0196c623",
+      "equal": true
+    },
+    {
+      "path": "src/writer/tests.rs",
+      "sha256_or_gitlink": "3a410b87387c51c20cfd0fda9ca0e853ad063562e0e3f4b708f88f90cc664ea7",
+      "equal": true
+    },
+    {
+      "path": "src/writer/worktree.rs",
+      "sha256_or_gitlink": "85252a4a7325f0b70a2cd12a8b18baf14723ff89f11bfd78cc3cc90313e6234e",
+      "equal": true
+    },
+    {
+      "path": "templates/designer/AGENTS.md",
+      "sha256_or_gitlink": "44b6aece70ce31ad9f674aaf8d85cddc4c7f00e5eea531c26739abba0aac348c",
+      "equal": true
+    },
+    {
+      "path": "templates/designer/template.toml",
+      "sha256_or_gitlink": "5984f9365b290cdc526ab6bd01de8af47d467f90d0b4e416ed68c7c6cbfc6c71",
+      "equal": true
+    },
+    {
+      "path": "templates/engineer/AGENTS.md",
+      "sha256_or_gitlink": "3d44b9cc427593854863679b21d9b7b9564cccae2efdd54b1aad96bfd8e6e529",
+      "equal": true
+    },
+    {
+      "path": "templates/engineer/template.toml",
+      "sha256_or_gitlink": "ba9958943223b1c086df64f2d7d830ae18cf9c529e22390bed9244afcdcd60d6",
+      "equal": true
+    },
+    {
+      "path": "templates/feature-team/members/engineer/AGENTS.md",
+      "sha256_or_gitlink": "a7189043839fbef276edf75a7640b32bfe8a4dc33d056a4a6a6c5efe0d59e003",
+      "equal": true
+    },
+    {
+      "path": "templates/feature-team/members/reviewer/AGENTS.md",
+      "sha256_or_gitlink": "141698ff3f1291bbb3a632f54c37f5ae6c954272ac02e2507bdc21e5bf9ebbed",
+      "equal": true
+    },
+    {
+      "path": "templates/feature-team/template.toml",
+      "sha256_or_gitlink": "fa284705f3770655fbdba118f59e245d3a04a721cfa50ae785634e282acc5635",
+      "equal": true
+    },
+    {
+      "path": "templates/project-team/members/engineer/AGENTS.md",
+      "sha256_or_gitlink": "c7ad2b45fb45857fbcc5f31385cf316e5c33c8f9ab303d225e9e769d085e9cb0",
+      "equal": true
+    },
+    {
+      "path": "templates/project-team/members/foreman/AGENTS.md",
+      "sha256_or_gitlink": "2bc4f26884c22b70512ecb6a250a1de1126693bf50eb70d6f8e1fb6d3f1f7a88",
+      "equal": true
+    },
+    {
+      "path": "templates/project-team/members/researcher/AGENTS.md",
+      "sha256_or_gitlink": "a819e4251a3b910f92f4655b8b9a5bff4bc5a945362512b138ea07431b91305f",
+      "equal": true
+    },
+    {
+      "path": "templates/project-team/template.toml",
+      "sha256_or_gitlink": "24ab5cf286277fdb5c0032162999089979ea7918e2e1d47ea630b745aa7a0f0f",
+      "equal": true
+    },
+    {
+      "path": "templates/researcher/AGENTS.md",
+      "sha256_or_gitlink": "56a7e07030927830b935e1e06fa1d0cd6043e1cf52f1d8bce638336b36c1b20b",
+      "equal": true
+    },
+    {
+      "path": "templates/researcher/template.toml",
+      "sha256_or_gitlink": "e1785eecdc2115d3f15b12f9fed8a5636910dbec97eceb1c33b223a12dc4e97d",
+      "equal": true
+    },
+    {
+      "path": "templates/reviewer/AGENTS.md",
+      "sha256_or_gitlink": "1384843ee591d14c9aa7554dc21cf6af7dfbe0574c18d8026712832057396f70",
+      "equal": true
+    },
+    {
+      "path": "templates/reviewer/template.toml",
+      "sha256_or_gitlink": "dbc18de064176b856471d7cfceadea4531ea876a8fee6a837782678c6f9fe892",
+      "equal": true
+    },
+    {
+      "path": "templates/system-summarizer/members/summarizer/AGENTS.md",
+      "sha256_or_gitlink": "61e55aa8ac1501a3ce497ef0206e3da9137283212750502da80c4ad453fc53c2",
+      "equal": true
+    },
+    {
+      "path": "templates/system-summarizer/template.toml",
+      "sha256_or_gitlink": "9708c2eed0416fdb0cc4d0da5f168e7b26c12286ca69fbada90e4ba392f5b847",
+      "equal": true
+    },
+    {
+      "path": "tests/config_smoke.rs",
+      "sha256_or_gitlink": "4e49b8943542b37d36603cf9cade410f8673f33568205f29a29199177977691a",
+      "equal": true
+    },
+    {
+      "path": "tests/daemon_composed.rs",
+      "sha256_or_gitlink": "950f37c814ac2dc9fc94b277ca9637e6075700c9e2eca3db9d59a7c6bf8ee878",
+      "equal": true
+    },
+    {
+      "path": "tests/daemon_ipc.rs",
+      "sha256_or_gitlink": "459e1e127b8079eef3bbdd5e23435a0f6ea4dc98a06c56934a72d86e15a0e753",
+      "equal": true
+    },
+    {
+      "path": "tests/e2e_private_herdr.rs",
+      "sha256_or_gitlink": "8e53d8995c7d7f267adacc2910a6232dead5aac7fc89cc026cd60cb466a2397c",
+      "equal": true
+    },
+    {
+      "path": "tests/herdr-releases.tsv",
+      "sha256_or_gitlink": "9221328203fcdbbdc72ca21043c4251090559052aed9e9b16e7f92ba7004b544",
+      "equal": true
+    },
+    {
+      "path": "tests/herdr_client.rs",
+      "sha256_or_gitlink": "f1f521e5fc4245f22c13bc0d133d8cdfddc824d66cc06526e15eef5fc4da17c7",
+      "equal": true
+    },
+    {
+      "path": "tests/herdr_spikes.rs",
+      "sha256_or_gitlink": "45950bda5f799ac7ce3e827463622c003c1494ca9a58d28dd71719b71bd4fb29",
+      "equal": true
+    },
+    {
+      "path": "tests/integration_sweep.rs",
+      "sha256_or_gitlink": "51dfa6ce9a21a13371c1986944eac0f4cfb66079fa8689f41d8c7476bbac9e9e",
+      "equal": true
+    },
+    {
+      "path": "tests/packaging.rs",
+      "sha256_or_gitlink": "128b0aca71cb4fe5726c518a7787583bfef8eced605a5275d6b42fb6985b778c",
+      "equal": true
+    },
+    {
+      "path": "tests/real_agent_smoke.rs",
+      "sha256_or_gitlink": "d9d76affbe5f42b154ea23eb48372f81a9bb757d3a3964b6411fb8ffe5f91459",
+      "equal": true
+    },
+    {
+      "path": "tests/support/isolated.rs",
+      "sha256_or_gitlink": "e9e58df3e7ca587ed058cb0a198499c0e83c99289f45821e82d112c9e10f6e0d",
+      "equal": true
+    },
+    {
+      "path": "tests/support/mod.rs",
+      "sha256_or_gitlink": "8db57551c38f2e9ae3adb1b71fb4d54fadbae57133b7bb750f3376b06cc17b13",
+      "equal": true
+    },
+    {
+      "path": "tests/support/private_herdr.rs",
+      "sha256_or_gitlink": "110ba699519199f2b1afca8ae71c2f939820317868edaa099e8a8195b58414f5",
+      "equal": true
+    },
+    {
+      "path": "tests/test_isolation.rs",
+      "sha256_or_gitlink": "f5c1e484f6956de059a79236fc3c09f304b71d20174f6c4d1cb6ce386142c59f",
+      "equal": true
+    },
+    {
+      "path": "tests/threads_real.rs",
+      "sha256_or_gitlink": "b50df7a4d2eac9484ced1934c097c6566a893d450243ab82dc74791178c4ce3b",
+      "equal": true
+    },
+    {
+      "path": "tests/writer_concurrency.rs",
+      "sha256_or_gitlink": "c62cb06a5865bc91e8e69021e98e866ba2eec46e6b7a0eb1f17dc93969434039",
+      "equal": true
+    },
+    {
+      "path": "tests/writer_crash.rs",
+      "sha256_or_gitlink": "73721494884141b5f416693003493ce2c01ff42247789c70ec0927e287177d71",
+      "equal": true
+    },
+    {
+      "path": "third_party/herdr-threads",
+      "sha256_or_gitlink": "ded34fa971c18cef81ea1b597097a8ff7cd91eb3",
+      "equal": true
+    }
+  ]
+}

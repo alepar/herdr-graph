@@ -3,6 +3,28 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## Threads 2.0.3 qualification (2026-10-17)
+
+Current source qualification uses graph `d9a50590c6ca3dccc558664d4ed608eb2153605d`, official threads v2.0.3 commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, protocol **9**, and macOS aarch64. The dependency is an exact-release Git submodule; no moving external source checkout is used. Final docs add no executable-source changes. Older dated evidence below remains historical.
+
+| Check | Result |
+|---|---|
+| all-consumer locked/offline check | pass, exit 0 |
+| default | 694 passed, 0 failed, 1 explicit packaging-build ignored |
+| no-default | 691 passed, 0 failed, 1 explicit packaging-build ignored |
+| test-support, ordinary parallel harness | 710 passed, 0 failed, 1 explicit packaging-build ignored |
+| remaining private config/isolation | 16 harness passes: 12 isolation, shell, summary printer, 2 native early returns |
+| driver behavioral regressions | 24 passed, 0 errors/skips |
+| Herdr 0.9.1 / 0.9.2 / 0.9.3 / 0.9.4 / 0.9.5 | each 30 graph + 5 API + 2 actual threads = 37 passed; 185 total |
+| matrix cleanup | all 15 gates clean; 190 owned roots removed; no emergency reaping/survivors |
+| fmt / whitespace | pass |
+
+Default/no-default ran at `33be69e`; the controller retained those unaffected passes after the narrowly gated test-only `test-support` subprocess-fixture fix in `d9a5059`. Final all-consumer/test-support/matrix checks cover that final source. The first default and parallel test-support failures remain FAIL in the evidence; the fixes and red/green checks are documented, without relaxing any matrix gate.
+
+Native agents were disabled (`HG_REAL_AGENTS=0`): Claude/Codex config early returns are not launch/resume evidence. The 37-case matrix has no skipped/ignored/filtered cases and does not repeat those native opt-ins. It uses shells, synthetic hooks/transcripts and cooperative CLI acceptance/ACK, with summary completion played through the CLI. Real native bootstrap/root-agent/summarizer inference, credentials, remote continuity, actual restore holds and live-session handoff remain unverified. Restore/epoch fake and hybrid evidence is not relabeled as real remote behavior.
+
+See [the exact commands, per-version checksums, migration limits and rulings](releases/2026-10-17-threads2-herdr-qualification.md), [the 37-case contract](validation/herdr-release-matrix.md), and [the durable evidence bundle](validation/2026-10-17-threads2-qualification/README.md). Graph rebuild/operator restart is required to load protocol-9 code; no source plugin binary was replaced and no live restart was performed. Independent Task 4/whole-branch review and integration remain controller gates.
+
 ## Agreed fixes and herdr-threads 0.2.9 (2026-10-07)
 
 Current integration uses herdr-threads **0.2.9**, commit `223b61a88625d7f442d22d9b8728dc4b2282b15f`, annotated tag `v0.2.9`, wire protocol **6**, and private Herdr **0.9.1**. The local checkout and official remote tag match; release metadata and source/API inspection are recorded in [the release handoff](releases/2026-10-07-agreed-fixes-handoff.md). That handoff also records the exact sequential validation commands/counts for reusable templates, dual-layout storage and service integration. Older tables/claims below retain their original dates and evidence.

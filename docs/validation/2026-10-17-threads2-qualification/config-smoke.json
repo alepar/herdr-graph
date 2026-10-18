@@ -1,0 +1,16 @@
+[
+  {
+    "config": "claude",
+    "reason": "HG_REAL_AGENTS=1 not set",
+    "status": "SKIPPED"
+  },
+  {
+    "config": "codex",
+    "reason": "HG_REAL_AGENTS=1 not set",
+    "status": "SKIPPED"
+  },
+  {
+    "config": "shell",
+    "status": "VERIFIED"
+  }
+]

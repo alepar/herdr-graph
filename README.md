@@ -125,7 +125,7 @@ git submodule update --init --recursive
 cargo check --locked --offline --all-targets --all-features
 ```
 
-The Cargo command requires its locked registry dependencies to be cached. A source clone can initialize submodules during cloning with `git clone --recurse-submodules <graph-repository-url>`. Dependency upgrades require an explicit reviewed gitlink and lockfile update, followed by qualification; a moving external checkout is no longer the build input.
+The Cargo command requires its locked registry dependencies to be cached. A source clone can initialize submodules during cloning with `git clone --recurse-submodules <graph-repository-url>`. GitHub source archives omit submodule contents; a buildable source bundle must include the pinned dependency tree explicitly. Dependency upgrades require an explicit reviewed gitlink and lockfile update, followed by qualification; a moving external checkout is no longer the build input.
 
 ## Test tiers
 
@@ -143,7 +143,7 @@ Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) go
 
 ## Verification matrix
 
-[docs/verification-matrix.md](docs/verification-matrix.md) records the October 7 integration and dated historical evidence (private Herdr 0.9.1, macOS aarch64). The [release handoff](docs/releases/2026-10-07-agreed-fixes-handoff.md) contains the current sequential validation counts and compatibility limits.
+[docs/verification-matrix.md](docs/verification-matrix.md) records the October 17 exact threads 2.0.3 qualification on macOS aarch64: Herdr **0.9.1–0.9.5 each passed all 37 private graph/API/threads cases** (185 total), with clean teardown. The [qualification handoff](docs/releases/2026-10-17-threads2-herdr-qualification.md) records exact source revisions, feature-suite counts, checksums, preserved failures, recovery limits and review/integration gates. October 5/7 evidence remains historical and unchanged.
 
 `verified-real` means exercised against private Herdr or an isolated herdr-threads daemon. `verified-fake` means covered with fakes or a real Git store and journal. `assumed` marks behavior that remains unexercised or skipped.
 

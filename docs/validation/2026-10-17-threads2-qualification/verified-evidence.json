@@ -1,0 +1,628 @@
+{
+  "config_matrix": [
+    {
+      "config": "claude",
+      "reason": "HG_REAL_AGENTS=1 not set",
+      "status": "SKIPPED"
+    },
+    {
+      "config": "codex",
+      "reason": "HG_REAL_AGENTS=1 not set",
+      "status": "SKIPPED"
+    },
+    {
+      "config": "shell",
+      "status": "VERIFIED"
+    }
+  ],
+  "prebuilt_executables": {
+    "herdr_client": {
+      "path": "/private/tmp/hg-task4-qualification-534cd4f_/graph/target/debug/deps/herdr_client-fc553e60bf8a939e",
+      "sha256": "eb153b57d11abf21874be37985ed712519972b8d3c32eeba7337fd5f0faa107c"
+    },
+    "threads_real": {
+      "path": "/private/tmp/hg-task4-qualification-534cd4f_/graph/target/debug/deps/threads_real-a2777aab10a8a2ba",
+      "sha256": "0231ae93f9c6919cc1883d7c12c77ec73c48e8160e12aca52b18e10abcbbdcdb"
+    },
+    "e2e_private_herdr": {
+      "path": "/private/tmp/hg-task4-qualification-534cd4f_/graph/target/debug/deps/e2e_private_herdr-9bdd78f0157b5eef",
+      "sha256": "40404c59ca089d1f5609224ae7fd5912eefe5234654153dd71b9b72911391b0e"
+    },
+    "graph": {
+      "path": "/private/tmp/hg-task4-qualification-534cd4f_/graph/target/debug/herdr-graph",
+      "sha256": "c2ad8b596d2066b06a79c8cef9268de996703db0c5a4247110034102a9d982ea"
+    },
+    "threads": {
+      "path": "/private/tmp/hg-task4-qualification-534cd4f_/graph/target/threads-bin/debug/herdr-threads",
+      "sha256": "cf417bae28635933768b7e0457a6c8987094967cad246f0135975802ed59ff49"
+    }
+  },
+  "graph_head": "d9a50590c6ca3dccc558664d4ed608eb2153605d",
+  "threads_head": "ded34fa971c18cef81ea1b597097a8ff7cd91eb3",
+  "protocol": 9,
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "commands": {
+    "default": {
+      "summaries": [
+        [
+          645,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          14,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          12,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          7,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          10,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "passed": 694,
+      "failed": 0,
+      "ignored": 1,
+      "skip_diagnostics": 0
+    },
+    "no-default": {
+      "summaries": [
+        [
+          642,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          14,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          12,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          7,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          10,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "passed": 691,
+      "failed": 0,
+      "ignored": 1,
+      "skip_diagnostics": 0
+    },
+    "all-consumers": {
+      "summaries": [],
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "skip_diagnostics": 0
+    },
+    "test-support": {
+      "summaries": [
+        [
+          648,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          20,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          15,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          8,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          10,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          3,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "passed": 710,
+      "failed": 0,
+      "ignored": 1,
+      "skip_diagnostics": 0
+    },
+    "config-isolation": {
+      "summaries": [
+        [
+          4,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          12,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "skip_diagnostics": 2
+    },
+    "driver-tests": {
+      "summaries": [],
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "skip_diagnostics": 0
+    },
+    "matrix": {
+      "summaries": [],
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "skip_diagnostics": 0
+    }
+  },
+  "versions": [
+    {
+      "version": "0.9.1",
+      "actual_version": "herdr 0.9.1",
+      "actual_version_exit_code": 0,
+      "asset": "herdr-macos-aarch64",
+      "sha256": "5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de",
+      "suites": {
+        "e2e_private_herdr": {
+          "passed": 30,
+          "seconds": 134.674,
+          "roots": 30,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "herdr_client": {
+          "passed": 5,
+          "seconds": 3.107,
+          "roots": 5,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "threads_real": {
+          "passed": 2,
+          "seconds": 7.42,
+          "roots": 3,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        }
+      }
+    },
+    {
+      "version": "0.9.2",
+      "actual_version": "herdr 0.9.2",
+      "actual_version_exit_code": 0,
+      "asset": "herdr-macos-aarch64",
+      "sha256": "e5dae9c7d93010968897de10c6e9ea2aacb14965f7b9e3b3d061dba82d2a1944",
+      "suites": {
+        "e2e_private_herdr": {
+          "passed": 30,
+          "seconds": 139.016,
+          "roots": 30,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "herdr_client": {
+          "passed": 5,
+          "seconds": 3.044,
+          "roots": 5,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "threads_real": {
+          "passed": 2,
+          "seconds": 5.333,
+          "roots": 3,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        }
+      }
+    },
+    {
+      "version": "0.9.3",
+      "actual_version": "herdr 0.9.3",
+      "actual_version_exit_code": 0,
+      "asset": "herdr-macos-aarch64",
+      "sha256": "5173a3e0ae42d5d1ab7ebfa5d5e6329f7c3d23f8e1a3677c7ce3231da2884157",
+      "suites": {
+        "e2e_private_herdr": {
+          "passed": 30,
+          "seconds": 137.874,
+          "roots": 30,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "herdr_client": {
+          "passed": 5,
+          "seconds": 3.181,
+          "roots": 5,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "threads_real": {
+          "passed": 2,
+          "seconds": 5.676,
+          "roots": 3,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        }
+      }
+    },
+    {
+      "version": "0.9.4",
+      "actual_version": "herdr 0.9.4",
+      "actual_version_exit_code": 0,
+      "asset": "herdr-macos-aarch64",
+      "sha256": "ea20bfff9cb8c83a996081c926e6ff9370de8e543baa859bca48d19175d895ff",
+      "suites": {
+        "e2e_private_herdr": {
+          "passed": 30,
+          "seconds": 134.324,
+          "roots": 30,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "herdr_client": {
+          "passed": 5,
+          "seconds": 3.703,
+          "roots": 5,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "threads_real": {
+          "passed": 2,
+          "seconds": 5.64,
+          "roots": 3,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        }
+      }
+    },
+    {
+      "version": "0.9.5",
+      "actual_version": "herdr 0.9.5",
+      "actual_version_exit_code": 0,
+      "asset": "herdr-macos-aarch64",
+      "sha256": "fb77c2232a05a8035421382c894392f4174e4e38a18e48af3dd0290157c3a7e2",
+      "suites": {
+        "e2e_private_herdr": {
+          "passed": 30,
+          "seconds": 130.27,
+          "roots": 30,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "herdr_client": {
+          "passed": 5,
+          "seconds": 3.463,
+          "roots": 5,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        },
+        "threads_real": {
+          "passed": 2,
+          "seconds": 5.59,
+          "roots": 3,
+          "cleanup_clean": true,
+          "emergency_reaped": 0,
+          "survivors": 0
+        }
+      }
+    }
+  ],
+  "runtime_cases": 185,
+  "fixture_roots_removed": 190,
+  "code_build_test_entries_equal": 175,
+  "original_tracked_docs_changed": [
+    "CURRENT-DESIGN.md",
+    "GRAPH_STATE.md",
+    "README.md",
+    "docs/validation/herdr-release-matrix.md",
+    "docs/verification-matrix.md"
+  ],
+  "root_bin_unchanged": true,
+  "external_checkout_unchanged_clean": true
+}

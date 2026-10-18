@@ -1,0 +1,11 @@
+{
+  "path": "/Users/alepar/AleCode/herdr-graph/bin/herdr-graph",
+  "size": 13624672,
+  "mtime_ns": 1791406789918340787,
+  "sha256": "bbc9a7bf8de817cb3dcccfae2e5300de5cb7daac8700b40622ddc64c5971621c",
+  "external_path": "/Users/alepar/AleCode/herdr-threads",
+  "external_head_at_start": "b83d032a64cb9f665f49806b744f7cc730626819",
+  "original_tracked_symlink": "/Users/alepar/AleCode/herdr-threads",
+  "current_dependency_type": "gitlink",
+  "current_dependency_commit": "ded34fa971c18cef81ea1b597097a8ff7cd91eb3"
+}

@@ -1,4 +1,4 @@
-# Current graph design — updated 2026-10-07
+# Current graph design — updated 2026-10-17
 
 Consolidated contract for the authorized implementation. Detailed decisions and their history: [DESIGN-NOTES.md](DESIGN-NOTES.md). Original seed remains verbatim in [archive/HANDOFF.md](archive/HANDOFF.md). Implementation authorized on 2026-10-02 through `super-auto` in the Claude Opus 5.5 `implementor` tab; see [IMPLEMENTATION-HANDOFF.md](IMPLEMENTATION-HANDOFF.md). No memory-observer restart.
 
@@ -85,3 +85,11 @@ Transcript indexes now group by safe registration-time team/seat names and full 
 Threads 0.2.9 integration is verified at `223b61a88625d7f442d22d9b8728dc4b2282b15f` with unchanged consumed service contracts and wire protocol 6. The real-daemon tests use synthetic public-hook registration and cooperative CLI acceptance/ACK; native agent launch/bootstrap/root-agent/summarizer execution remains unexercised. Compatibility retains old compensation paths and duty fields but supplies no eager migration or old-binary discovery of new records. Supported directory depths, directory-scaling limits, saved-plan re-planning and existing harness resume limits remain explicit.
 
 [The release handoff](docs/releases/2026-10-07-agreed-fixes-handoff.md) records changes, exact tests and skip accounting, migration limits, the four controller rulings and approved scoped reviews. Broad branch review and merge/push remain pending. Mod owns first-release version/packaging after exact pushed-SHA verification; the absolute dependency symlink still requires source-build setup. Original design chronology and October 5 evidence remain preserved.
+
+## Threads 2 node identity and reviewed recovery — 2026-10-17
+
+The current adapter uses threads 2.0.3's canonical node identity and wire protocol 9, with graph-managed panes resolved through the public host-qualified `ResolveSeat`. Resolution may allocate a bare local seat and never enrolls a native occupant or fabricates acceptance/ACK. Service-ACK also requires the send-time-receipts capability; definitive unsupported capability selects Notify fallback, while transient errors remain errors.
+
+Graph binds service journals and reference-bearing calls to the exact node and committed namespace epoch. A different node or populated unbound legacy graph fails closed until the exact original store is restored or an explicit `threads reconnect --from ... --to ... --head ...` plan is reviewed and applied. Git commits the target epoch and preserved recovery artifact before local binding publication; per-epoch journals preserve the old intent bytes. External participation requires explicit new plans. Stale snapshots/writebacks fail closed, and all pre-boundary plans require fresh review. Ordinary undo cannot cross that boundary.
+
+The source dependency is now an official-URL Git submodule pinned at `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, rather than a moving absolute checkout. [Graph state](GRAPH_STATE.md#threads-node-boundaries) and [README recovery guidance](README.md#threads-node-identity-and-recovery) describe committed artifacts, local seals, preservation and operator limits. The October 7 sections above retain dated historical claims; current exact-tag/runtime evidence is recorded in [the qualification handoff](docs/releases/2026-10-17-threads2-herdr-qualification.md).

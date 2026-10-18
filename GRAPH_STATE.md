@@ -7,6 +7,7 @@ New records use this layout:
 ```text
 <graph-instance>/
 ├── graph.toml
+├── threads-namespace.json         # committed node/epoch after explicit reconnect
 ├── teamspaces/<team-name>/
 │   ├── teamspace.toml
 │   ├── rules/
@@ -25,7 +26,8 @@ New records use this layout:
 ├── mutations/
 │   ├── transcript-processing/<request-id>.toml
 │   ├── undoable-actions/<yyyy-mm>/<action-id>.toml
-│   └── graph-changes/<yyyy-mm>/<operation-id>.toml
+│   ├── graph-changes/<yyyy-mm>/<operation-id>.toml
+│   └── threads-reconnect/<operation-id>.json
 ├── rules/
 └── .graph-local/                 # Git-ignored
 ```
@@ -61,3 +63,13 @@ Targeted ID lookup parses only matching ID filenames across supported locations 
 Templates with omitted `kind` remain team templates. Legacy `role` fields read as `system_duty`, including old undo documents; unused `role_ref` is ignored and no longer written. Instructions remain readable, but edits to reusable template or actual member `AGENTS.md` must use reviewed `template edit` so revisions, runtime effects and undo remain consistent.
 
 Keep using the upgraded binary for these instances. Older binaries cannot discover new-layout records, and no downgrade migration is supplied. Git graph-change summaries contain committed mutations; the SQLite journal remains authoritative for live, rejected, failed and cancelled operation lifecycle. Preserve both the Git repository and local journal when backing up or moving an instance.
+
+## Threads node boundaries
+
+Threads identities belong to a canonical node, and graph-managed pane resolution also names the exact Herdr host. The local `threads-intents.node.json` binding and committed `threads-namespace.json` prevent references or pending service envelopes from being replayed against another node. A fresh empty graph can bind automatically; a populated or historically populated unbound graph requires an explicit reviewed `threads reconnect` plan. Same-node restart keeps the existing epoch.
+
+Reconnect commits its target node and fresh epoch together with `mutations/threads-reconnect/<operation-id>.json`. The artifact preserves original graph records, channels, invitations, external participation, opt-outs, prior undo action IDs, request attempts and a consistent snapshot of graph journal operations/effects/meta/notices. It clears owned channel references and resets incomplete delivery state for the new namespace while preserving completed work and native transcripts. External threads require explicit reassessment and participation plans on the target node.
+
+Local publication follows the authoritative Git commit. The old service journal is sealed with the exact committed transition in its sibling `threads-intents[-<previous-epoch>].retired.json`; original intent bytes remain preserved. New service work uses `.graph-local/threads-intents-<epoch>` with its own node binding. Restart recovery completes interrupted publication, and corrupt or unexpected bindings/seals fail closed. Preserve the Git repository, `.graph-local` and original threads store together when assessing recovery.
+
+Plans reviewed before the boundary must be planned and reviewed again. Ordinary undo refuses reconnect and pre-boundary actions; returning to a previous node requires another reviewed reconnect using current `--from`, target `--to` and exact main `--head`. It does not restore old external memberships or replay dormant intents. See [the recovery commands and limits](README.md#threads-node-identity-and-recovery).

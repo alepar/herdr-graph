@@ -1,0 +1,27 @@
+[
+  {
+    "source": ".superpowers/sdd/2026-10-17-threads2-herdr-matrix/task-1-review.md",
+    "destination": "docs/superpowers/reviews/2026-10-17-threads2-task-1-review.md",
+    "sha256": "cc53154d76f78420f73aba5da44cbd88aca22d3b4edeac38eff92e9a508e3524"
+  },
+  {
+    "source": ".superpowers/sdd/2026-10-17-threads2-herdr-matrix/task-2-review.md",
+    "destination": "docs/superpowers/reviews/2026-10-17-threads2-task-2-review.md",
+    "sha256": "78aa9779e532cc2f09c8921b51bb5f21af706fe061d0a525dc4a98346cd97cf8"
+  },
+  {
+    "source": ".superpowers/sdd/2026-10-17-threads2-herdr-matrix/task-2-rereview-1.md",
+    "destination": "docs/superpowers/reviews/2026-10-17-threads2-task-2-rereview-1.md",
+    "sha256": "f10cdc85d8c9393a6d257d7087c2d2813319e7b3e5708eba7819bd4ff17a6efc"
+  },
+  {
+    "source": ".superpowers/sdd/2026-10-17-threads2-herdr-matrix/task-3-review.md",
+    "destination": "docs/superpowers/reviews/2026-10-17-threads2-task-3-review.md",
+    "sha256": "8c10f17545d5b2c1525a5d5aaeeeb4cfd784b47c9c008d238409a0b35871e0bc"
+  },
+  {
+    "source": ".superpowers/sdd/2026-10-17-threads2-herdr-matrix/task-3-rereview-1.md",
+    "destination": "docs/superpowers/reviews/2026-10-17-threads2-task-3-rereview-1.md",
+    "sha256": "b3e1f2f8b18e2468b4afff0787b08e104f7427ffe3119336d8f06c7941b9221c"
+  }
+]

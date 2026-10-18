@@ -193,10 +193,10 @@ model authentication, remote threads continuity, real restore holds, a live user
 session, or model/summarizer quality. Reconnect/epoch unit and hybrid tests remain
 separate evidence, rather than being relabeled as real-service matrix cases.
 
-## Qualification status
+## Qualification status — 2026-10-17
 
-Task 3 validated **0.9.5 on macOS aarch64: 37 passed, clean cleanup, no emergency
-reaping**. The complete
-0.9.1–0.9.5 sweep and the final support claim belong to the separate qualification
-task. See the [implementation report](../superpowers/reviews/2026-10-17-threads2-task-3-implementation.md)
-for exact local evidence and limitations.
+The complete **0.9.1–0.9.5** matrix passed on **macOS aarch64** at graph `d9a50590c6ca3dccc558664d4ed608eb2153605d` with the initialized official threads v2.0.3 submodule `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`, protocol 9. Each version passed all **30 graph + 5 API + 2 actual threads = 37 cases**: **185 total**. All 15 suite cleanup gates were clean, all 190 owned roots were removed, and no emergency reaping, survivors, ignored/filtered/skipped cases, panic diagnostics, timeouts or cancellations occurred. Actual reported binary versions and SHA-256 values matched the official pins.
+
+[The integration handoff](../releases/2026-10-17-threads2-herdr-qualification.md) records exact commands, source distinctions, checksums, preserved failed trials, native exclusions and migration limits. [The evidence bundle](2026-10-17-threads2-qualification/README.md) retains all case/cleanup observations and raw logs. `--check-upstream` passed against the five official stable releases and all 20 platform digests. Runtime support is limited to this tested macOS architecture; Linux/Intel digests alone do not imply qualification.
+
+Historical Task 3 evidence qualified only 0.9.5 against the clean post-tag external checkout. Its failed/cancelled trials and [implementation report](../superpowers/reviews/2026-10-17-threads2-task-3-implementation.md) remain preserved. The final exact-tag sweep above supersedes its pending full-matrix status. Task 4's independent review and whole-branch integration remain controller work; this is not a merge or publication claim.
