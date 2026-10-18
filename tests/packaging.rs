@@ -147,5 +147,5 @@ fn readme_has_required_sections() {
         );
     }
     assert!(readme.contains("ht-5nb"));
-    assert!(readme.contains("ln -sfn"));
+    assert!(readme.contains("git submodule update --init --recursive"));
 }
