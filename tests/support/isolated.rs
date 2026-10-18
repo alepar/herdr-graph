@@ -27,7 +27,9 @@ pub struct TestRoot {
 impl TestRoot {
     /// A fresh root `/private/tmp/hgt-<ulid lowercase>` (short: the `sockaddr_un` limit).
     pub fn new() -> Self {
-        reap_orphans();
+        if std::env::var_os("HG_MATRIX_REGISTRY").is_none() {
+            reap_orphans();
+        }
         let root = PathBuf::from(format!(
             "/private/tmp/hgt-{}",
             ulid::Ulid::new().to_string().to_lowercase()
@@ -46,6 +48,7 @@ impl TestRoot {
         ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
+        register_matrix_root(&root, None);
         std::fs::write(root.join("config/herdr.toml"), "").unwrap();
         let guard = IsolationGuard::new(&root);
         for (k, v) in scrubbed_env(&root) {
@@ -98,6 +101,7 @@ impl TestRoot {
         let child = cmd
             .spawn()
             .unwrap_or_else(|e| panic!("spawn {:?}: {e}", cmd.get_program()));
+        register_matrix_root(&self.root, Some(child.id()));
         let pgid = child.id() as i32;
         ChildGuard {
             child: Some(child),
@@ -228,7 +232,7 @@ impl Drop for ChildGuard {
 /// `(pid, line)` of every process in `ps eww -ax` (argv followed by the environment) that is not this one.
 fn ps_lines() -> Vec<(u32, String)> {
     let out = Command::new("/bin/ps")
-        .args(["eww", "-ax", "-o", "pid=,command="])
+        .args(["eww", "-ax", "-o", "pid=,ppid=,stat=,lstart=,command="])
         .env_clear()
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -277,7 +281,7 @@ fn signal_all(pids: &[u32], sig: i32) {
     }
 }
 
-fn sweep(find: impl Fn() -> Vec<u32>) {
+fn sweep(mut find: impl FnMut() -> Vec<u32>) {
     let began = Instant::now();
     let mut killed = false;
     let mut termed = false;
@@ -300,7 +304,47 @@ fn sweep(find: impl Fn() -> Vec<u32>) {
 /// SIGTERM, then after 3 s SIGKILL, every other process whose environment carries `HG_TEST_ROOT=<root>`;
 /// repeated until none remain or 10 s pass.
 pub fn reap_root(root: &Path) {
-    sweep(|| processes_under(root));
+    use std::collections::{BTreeMap, BTreeSet};
+    let root = root.to_string_lossy();
+    // Retain proven child identities when killing their marked parent reparents
+    // them. macOS ps hides the environment of protected /bin/sh and /bin/sleep.
+    let mut known: BTreeMap<u32, String> = BTreeMap::new();
+    sweep(|| {
+        let snapshot: BTreeMap<_, _> = ps_lines()
+            .into_iter()
+            .filter_map(|(pid, line)| {
+                let mut fields = line.split_whitespace();
+                let parent: u32 = fields.next()?.parse().ok()?;
+                let state = fields.next()?;
+                if state.contains('Z') {
+                    return None;
+                } // Reaped by the owning Child/wait, never signaled.
+                let started = fields.by_ref().take(5).collect::<Vec<_>>().join(" ");
+                Some((pid, (parent, started, line)))
+            })
+            .collect();
+        let mut owned: BTreeSet<u32> = snapshot
+            .iter()
+            .filter_map(|(&pid, (_, start, line))| {
+                (markers(line).contains(&root.as_ref()) || known.get(&pid) == Some(start))
+                    .then_some(pid)
+            })
+            .collect();
+        loop {
+            let children: BTreeSet<_> = snapshot
+                .iter()
+                .filter_map(|(&pid, (parent, _, _))| owned.contains(parent).then_some(pid))
+                .collect();
+            if children.is_subset(&owned) {
+                break;
+            }
+            owned.extend(children);
+        }
+        for pid in &owned {
+            known.insert(*pid, snapshot[pid].1.clone());
+        }
+        owned.into_iter().collect()
+    });
 }
 
 /// Same, for processes whose `HG_TEST_ROOT` names a test root that no longer exists (a SIGKILLed run left them).
@@ -316,4 +360,55 @@ pub fn reap_orphans() {
             .map(|(p, _)| p)
             .collect()
     });
+}
+
+/// Register before any spawn; the controller can still reap marked forks if killed
+/// between spawn and PID publication. Registries are scoped to one matrix suite.
+pub fn register_matrix_root(root: &Path, pid: Option<u32>) {
+    use std::io::Write;
+    let Some(registry) = std::env::var_os("HG_MATRIX_REGISTRY") else {
+        return;
+    };
+    let owner = std::env::var("HG_MATRIX_OWNER").expect("matrix owner required");
+    let registry = PathBuf::from(registry);
+    assert!(registry.is_absolute(), "matrix registry must be absolute");
+    let marker = root.join(".matrix-owner");
+    if let Ok(existing) = std::fs::read_to_string(&marker) {
+        assert_eq!(existing, owner, "matrix root belongs to another run");
+    } else {
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&marker)
+            .expect("matrix ownership marker");
+        file.write_all(owner.as_bytes())
+            .expect("write matrix owner");
+        file.sync_all().expect("sync matrix owner");
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(registry)
+        .expect("matrix registry");
+    let started = pid.map(|pid| {
+        let output = Command::new("/bin/ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .output()
+            .expect("matrix process start identity");
+        assert!(
+            output.status.success(),
+            "matrix cannot inspect PID start identity"
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    });
+    let event = format!(
+        "{}\n",
+        serde_json::json!({"root": root, "pid": pid, "started": started})
+    );
+    file.write_all(event.as_bytes())
+        .expect("register matrix root/PID");
+    file.sync_all().expect("sync matrix registry");
 }

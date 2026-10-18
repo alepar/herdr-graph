@@ -55,9 +55,11 @@ fn stderr(o: &Output) -> String {
 
 /// The test binary or the plugin's `bin/herdr-graph`, running `daemon`: a pid is signalled only when its
 /// command line says so.
-fn is_graph_daemon(cmdline: &str) -> bool {
+fn is_graph_daemon(cmdline: &str, root: &Path) -> bool {
     let plugin_bin = format!("{}/bin/herdr-graph", env!("CARGO_MANIFEST_DIR"));
-    (cmdline.contains(BIN) || cmdline.contains(&plugin_bin)) && cmdline.contains(" daemon")
+    let private_plugin = format!("{}/plugin/bin/herdr-graph", root.display());
+    (cmdline.contains(BIN) || cmdline.contains(&plugin_bin) || cmdline.contains(&private_plugin))
+        && cmdline.contains(" daemon")
 }
 
 fn pane_infos(snap: &HerdrSnapshot) -> Vec<PaneInfo> {
@@ -511,7 +513,7 @@ impl E2e {
             .unwrap();
         let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
         assert!(
-            is_graph_daemon(&cmdline),
+            is_graph_daemon(&cmdline, &self.herdr.root),
             "pid {pid} is not our daemon: {cmdline}"
         );
         // SAFETY: the pid was verified above to be this rig's daemon.
@@ -557,7 +559,7 @@ impl Drop for E2e {
                 .output()
                 .unwrap();
             let cmdline = String::from_utf8_lossy(&ps.stdout).into_owned();
-            if is_graph_daemon(&cmdline) {
+            if is_graph_daemon(&cmdline, &self.herdr.root) {
                 // SAFETY: argv-verified as this rig's daemon; CONT first so a stopped process can take the KILL.
                 unsafe {
                     libc::kill(pid as i32, libc::SIGCONT);
@@ -2161,16 +2163,35 @@ fn e2e_plugin_link_status_action_single_daemon() {
     let Some(mut rig) = E2e::start_without_daemon() else {
         return;
     };
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let build = Command::new(repo.join("scripts/build.sh")) // isolation-ok: cargo build of this crate
-        .current_dir(repo)
-        .output()
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo = if std::env::var("HG_HERDR_MATRIX").as_deref() == Ok("1") {
+        // Use the already-built CARGO_BIN_EXE in a wholly private plugin package.
+        // Each release links its own immutable copy; source bin/ is a user artifact.
+        let package = rig.herdr.root.join("plugin");
+        for dir in ["bin", "scripts"] {
+            std::fs::create_dir_all(package.join(dir)).unwrap();
+        }
+        for asset in ["herdr-plugin.toml", "scripts/build.sh"] {
+            std::fs::copy(source.join(asset), package.join(asset)).unwrap();
+        }
+        std::fs::copy(
+            support::validated_binary(PathBuf::from(BIN)),
+            package.join("bin/herdr-graph"),
+        )
         .unwrap();
-    assert!(
-        build.status.success(),
-        "scripts/build.sh: {}",
-        stderr(&build)
-    );
+        package
+    } else {
+        let build = Command::new(source.join("scripts/build.sh")) // isolation-ok: normal test builds this crate
+            .current_dir(source)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "scripts/build.sh: {}",
+            stderr(&build)
+        );
+        source.to_path_buf()
+    };
     let bin = repo.join("bin/herdr-graph");
     assert!(bin.is_file(), "{} was not built", bin.display());
 
@@ -2258,15 +2279,20 @@ fn e2e_plugin_link_status_action_single_daemon() {
         .args(["-axo", "pid=,command="])
         .output()
         .unwrap();
-    let daemons = stdout(&all)
+    let wanted = format!("{}/bin/herdr-graph daemon", repo.display());
+    let process_list = stdout(&all);
+    let daemons: Vec<_> = process_list
         .lines()
-        .filter(|l| l.contains(&format!("{}/bin/herdr-graph daemon", repo.display())))
-        .count();
+        .filter(|line| {
+            line.trim_start()
+                .split_once(char::is_whitespace)
+                .is_some_and(|(_, command)| command.trim() == wanted)
+        })
+        .collect();
     assert_eq!(
-        daemons,
+        daemons.len(),
         1,
-        "exactly one daemon runs for this instance:\n{}",
-        stdout(&all)
+        "exactly one serving daemon for this instance: {daemons:?}"
     );
 
     // The startup command's own log says it started that daemon, and the status action reports it.

@@ -274,6 +274,51 @@ fn panicking_test_leaves_no_private_herdr_behind() {
     assert_helper_left_nothing(&out, &report, &["herdr_pid"]);
 }
 
+/// A Rust anchor with a protected system child whose environment macOS ps hides.
+#[test]
+fn helper_owned_protected_child() {
+    use std::os::unix::process::CommandExt;
+    let Some(report) = std::env::var_os("HG_PROTECTED_HELPER") else {
+        return;
+    };
+    let mut child = std::process::Command::new("/bin/sh")
+        .env_clear()
+        .args(["-c", "trap '' HUP TERM; exec /bin/sleep 600"])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    std::fs::write(report, child.id().to_string()).unwrap();
+    let _ = child.wait();
+}
+
+#[test]
+fn root_reaper_reaps_protected_descendant() {
+    let root = TestRoot::new();
+    let report = root.path().join("protected.pid");
+    let mut anchor = root.spawn(
+        root.command(std::env::current_exe().unwrap())
+            .args(["--exact", "helper_owned_protected_child", "--nocapture"])
+            .env("HG_PROTECTED_HELPER", &report),
+    );
+    wait_until("protected child report", 5, || report.exists());
+    let pid: u32 = std::fs::read_to_string(report).unwrap().parse().unwrap();
+    // Ensure the shell has exec'd sleep and installed its ignored TERM/HUP dispositions.
+    std::thread::sleep(Duration::from_millis(200));
+    support::isolated::reap_root(root.path());
+    let survived = !dead(pid);
+    if survived {
+        // Explicit cleanup of the exact child this helper reported, never a name scan.
+        unsafe {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
+    assert!(anchor.wait_timeout(Duration::from_secs(3)).is_some());
+    assert!(
+        !survived,
+        "root reaper left protected descendant {pid} alive"
+    );
+}
+
 // ------------------------------------------------------------------------------------------ static scan
 
 /// `(1-based line, rule)` for every line of test code that spawns outside the isolated helpers or reads the

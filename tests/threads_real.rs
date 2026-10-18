@@ -32,6 +32,13 @@ fn crate_root() -> PathBuf {
 
 /// The herdr-threads binary built from the symlinked checkout, into this worktree's target directory.
 fn threads_binary() -> PathBuf {
+    if let Some(path) = std::env::var_os("HG_TEST_THREADS_BINARY") {
+        return support::validated_binary(PathBuf::from(path));
+    }
+    assert!(
+        std::env::var("HG_HERDR_MATRIX").as_deref() != Ok("1"),
+        "matrix requires a prebuilt HG_TEST_THREADS_BINARY; nested Cargo is forbidden"
+    );
     let target = crate_root().join("target/threads-bin");
     let bin = target.join("debug/herdr-threads");
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())) // isolation-ok: cargo build of the threads checkout

@@ -59,6 +59,7 @@ fn spawn_server(herdr: &Path, root: &Path, env: &[(String, String)]) -> anyhow::
         .stderr(log)
         .process_group(0)
         .spawn()?;
+    super::isolated::register_matrix_root(root, Some(child.id()));
     Ok(child)
 }
 
@@ -111,6 +112,7 @@ impl PrivateHerdr {
         ] {
             std::fs::create_dir_all(root.join(d))?;
         }
+        super::isolated::register_matrix_root(&root, None);
         std::fs::write(root.join("config/herdr.toml"), "")?;
         herdr_graph::herdr::isolation::arm();
         let mut env = scrubbed_env(&root);
