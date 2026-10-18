@@ -567,33 +567,34 @@ mod lazy {
 
     pub struct Endpoint {
         inputs: DiscoveryInputs,
-        explicit: Option<Discovered>,
+        explicit: Result<Option<Discovered>, String>,
         herdr_socket: PathBuf,
         intents: PathBuf,
+        graph_root: PathBuf,
     }
 
     impl Endpoint {
         pub fn from_env(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> Self {
-            let var = |n: &str| std::env::var_os(n).filter(|v| !v.is_empty());
-            let explicit = var("HERDR_GRAPH_THREADS_SOCKET")
-                .zip(var("HERDR_GRAPH_THREADS_INSTANCE"))
-                .and_then(|(s, i)| {
-                    let instance = i.to_str()?.parse().ok()?;
-                    Some(Discovered {
-                        socket: PathBuf::from(s),
-                        instance,
-                    })
-                });
+            let explicit = parse_explicit(
+                std::env::var_os("HERDR_GRAPH_THREADS_SOCKET"),
+                std::env::var_os("HERDR_GRAPH_THREADS_INSTANCE"),
+            );
             Self {
                 inputs,
                 explicit,
                 herdr_socket: ctx.herdr_socket.clone(),
                 intents: ctx.paths.threads_intents.clone(),
+                graph_root: ctx.paths.root.clone(),
             }
         }
 
         fn locate(&self) -> Result<Discovered, ThreadsError> {
-            if let Some(d) = &self.explicit {
+            if let Some(d) = self
+                .explicit
+                .as_ref()
+                .map_err(|e| ThreadsError::Rejected(e.clone()))?
+            {
+                self.bind(d.instance)?;
                 return Ok(d.clone());
             }
             let found = resolve_state_dir(&self.inputs).map_err(ThreadsError::Disconnected)?;
@@ -605,18 +606,44 @@ mod lazy {
                         .into(),
                 ));
             };
-            crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
+            let discovered = crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
                 ThreadsError::Disconnected(format!(
                     "herdr-threads is not running (state dir {} from {source}): {e}",
                     dir.display()
                 ))
-            })
+            })?;
+            self.bind(discovered.instance)?;
+            Ok(discovered)
+        }
+
+        fn bind(&self, node: herdr_threads::node::NodeUuid) -> Result<(), ThreadsError> {
+            crate::threads::namespace::ensure(&self.intents, node, Some(&self.graph_root))
+                .map_err(|e| ThreadsError::Rejected(e.to_string()))
+        }
+    }
+
+    fn parse_explicit(
+        socket: Option<std::ffi::OsString>,
+        node: Option<std::ffi::OsString>,
+    ) -> Result<Option<Discovered>, String> {
+        match (socket, node) {
+            (None, None) => Ok(None),
+            (Some(socket), Some(node)) => {
+                let path = PathBuf::from(socket);
+                if !path.is_absolute() {
+                    return Err("HERDR_GRAPH_THREADS_SOCKET must be an absolute socket path".into());
+                }
+                let instance = node.to_str().ok_or("HERDR_GRAPH_THREADS_INSTANCE must be UTF-8")?
+                    .parse().map_err(|e| format!("invalid HERDR_GRAPH_THREADS_INSTANCE: {e}"))?;
+                Ok(Some(Discovered { socket: path, instance }))
+            }
+            _ => Err("HERDR_GRAPH_THREADS_SOCKET and HERDR_GRAPH_THREADS_INSTANCE must be configured together".into()),
         }
     }
 
     pub struct LazyThreads {
         endpoint: Arc<Endpoint>,
-        inner: Mutex<Option<Arc<ServiceThreads>>>,
+        inner: Mutex<Option<(Discovered, Arc<ServiceThreads>)>>,
     }
 
     impl LazyThreads {
@@ -629,18 +656,21 @@ mod lazy {
 
         fn get(&self) -> Result<Arc<ServiceThreads>, ThreadsError> {
             let mut slot = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(t) = &*slot {
-                return Ok(t.clone());
-            }
             let d = self.endpoint.locate()?;
+            if let Some((cached, t)) = &*slot {
+                if cached == &d {
+                    return Ok(t.clone());
+                }
+            }
+            *slot = None;
             let t = ServiceThreads::with_system_clock(
-                d.socket,
+                d.socket.clone(),
                 self.endpoint.intents.clone(),
                 d.instance,
             )
             .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
             let t = Arc::new(t);
-            *slot = Some(t.clone());
+            *slot = Some((d, t.clone()));
             Ok(t)
         }
     }
@@ -727,7 +757,7 @@ mod lazy {
 
     pub struct LazyMap {
         endpoint: Arc<Endpoint>,
-        inner: Mutex<Option<Arc<ThreadsSeatMap>>>,
+        inner: Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>,
     }
 
     impl LazyMap {
@@ -747,19 +777,138 @@ mod lazy {
         ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
             let map = {
                 let mut slot = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                match &*slot {
-                    Some(m) => m.clone(),
-                    None => {
-                        let d = self.endpoint.locate()?;
-                        let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
-                            Arc::new(herdr_threads::app::SystemClock::new());
-                        let m = Arc::new(ThreadsSeatMap::new(d.socket, d.instance, clock));
-                        *slot = Some(m.clone());
-                        m
-                    }
+                let d = self.endpoint.locate()?;
+                if slot.as_ref().is_none_or(|(cached, _)| cached != &d) {
+                    *slot = None;
+                    let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
+                        Arc::new(herdr_threads::app::SystemClock::new());
+                    // RuntimeContext canonicalizes the selected host parent consistently with threads.
+                    let context = herdr_threads::daemon::paths::RuntimeContext::explicit(
+                        self.endpoint.graph_root.clone(),
+                        self.endpoint.herdr_socket.clone(),
+                        None,
+                    )
+                    .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+                    let host = context
+                        .claim_host()
+                        .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+                    let m = Arc::new(ThreadsSeatMap::new(
+                        d.socket.clone(),
+                        d.instance,
+                        clock,
+                        host,
+                    ));
+                    *slot = Some((d, m));
                 }
+                slot.as_ref().unwrap().1.clone()
             };
             map.seat_for(pane).await
+        }
+    }
+    #[cfg(test)]
+    mod namespace_tests {
+        use super::*;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        #[test]
+        fn explicit_node_override_is_canonical_and_never_silently_falls_back() {
+            assert!(parse_explicit(None, None).unwrap().is_none());
+            for node in [
+                "",
+                "123e4567-e89b-12d3-a456-426614174001",
+                "ABCDEF1234567890abcdef1234567890",
+                "not-a-node",
+            ] {
+                assert!(parse_explicit(Some("/threads.sock".into()), Some(node.into())).is_err());
+            }
+            assert!(parse_explicit(Some("/threads.sock".into()), None).is_err());
+            assert!(parse_explicit(None, Some("a".repeat(32).into())).is_err());
+            assert!(
+                parse_explicit(Some("relative.sock".into()), Some("a".repeat(32).into())).is_err()
+            );
+            let d = parse_explicit(Some("/threads.sock".into()), Some("a".repeat(32).into()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(d.instance.to_string(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        }
+
+        #[tokio::test]
+        async fn cached_client_rediscovers_and_refuses_a_fresh_node_at_same_socket() {
+            use herdr_threads::daemon::paths::NodePaths;
+            use herdr_threads::node::NodeUuid;
+            let dir = tempfile::tempdir().unwrap();
+            let state = dir.path().join("state");
+            std::fs::create_dir_all(&state).unwrap();
+            let state = state.canonicalize().unwrap();
+            let paths = NodePaths::resolve(&state).unwrap();
+            paths.prepare_node_dir().unwrap();
+            let _socket = std::os::unix::net::UnixListener::bind(&paths.socket_path).unwrap();
+            let meta = std::fs::metadata(&paths.socket_path).unwrap();
+            let publish =
+                |node: NodeUuid| {
+                    std::fs::write(&paths.node_json_path, serde_json::to_vec(&json!({
+                    "format": 1, "node_uuid": node, "tag": "abc", "tag_k": 0, "created_at": 1
+                })).unwrap()).unwrap();
+                    std::fs::write(
+                        &paths.descriptor_path,
+                        serde_json::to_vec(&herdr_threads::daemon::ownership::EndpointDescriptor {
+                            software_version: "2.0.3".into(),
+                            protocol_version: herdr_threads::protocol::wire::PROTOCOL_VERSION,
+                            node_uuid: node,
+                            boot_id: uuid::Uuid::new_v4(),
+                            endpoint: paths.socket_path.clone(),
+                            pid: std::process::id(),
+                            socket_device: meta.dev(),
+                            socket_inode: meta.ino(),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap();
+                };
+            publish(NodeUuid::from_bytes([1; 16]));
+            for path in [
+                &paths.node_json_path,
+                &paths.descriptor_path,
+                &paths.socket_path,
+            ] {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            let endpoint = Arc::new(Endpoint {
+                inputs: DiscoveryInputs {
+                    env_state_dir: Some(state),
+                    ..Default::default()
+                },
+                explicit: Ok(None),
+                herdr_socket: dir.path().join("host.sock"),
+                intents: dir.path().join("graph/.graph-local/threads-intents"),
+                graph_root: dir.path().join("graph"),
+            });
+            let lazy = LazyThreads::new(endpoint.clone());
+            let first = lazy.get().unwrap();
+            assert!(Arc::ptr_eq(&first, &lazy.get().unwrap()));
+            let binding =
+                std::fs::read(crate::threads::namespace::binding_path(&endpoint.intents)).unwrap();
+            let lazy_map = LazyMap::new(endpoint.clone());
+            let found = endpoint.locate().unwrap();
+            *lazy_map.inner.lock().unwrap() = Some((
+                found.clone(),
+                Arc::new(ThreadsSeatMap::new(
+                    found.socket,
+                    found.instance,
+                    Arc::new(herdr_threads::app::SystemClock::new()),
+                    herdr_threads::protocol::ids::HostLocator::parse("/host.sock").unwrap(),
+                )),
+            ));
+            publish(NodeUuid::from_bytes([2; 16]));
+            assert!(matches!(lazy.get(), Err(ThreadsError::Rejected(_))));
+            assert!(matches!(
+                lazy_map.seat_for(&HerdrPaneId("w1:p1".into())).await,
+                Err(ThreadsError::Rejected(_))
+            ));
+            assert_eq!(
+                std::fs::read(crate::threads::namespace::binding_path(&endpoint.intents)).unwrap(),
+                binding
+            );
         }
     }
 }

@@ -10,6 +10,7 @@ pub mod discovery;
 pub mod effects;
 pub mod fake;
 pub mod mapping;
+pub mod namespace;
 #[cfg(test)]
 mod service_tests;
 #[cfg(test)]

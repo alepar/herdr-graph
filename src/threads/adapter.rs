@@ -112,11 +112,11 @@ fn detail_of(m: &ServiceMembership) -> Option<MembershipDetail> {
 }
 
 /// Where a running herdr-threads daemon for one state directory and Herdr host endpoint listens, and the
-/// instance UUID its frames must name (read from the daemon's published descriptor, never guessed).
+/// node identity its frames must name (read from the daemon's published descriptor, never guessed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Discovered {
     pub socket: PathBuf,
-    pub instance: uuid::Uuid,
+    pub instance: herdr_threads::node::NodeUuid,
 }
 
 /// Read the published endpoint of the daemon that serves `state_dir` for the Herdr at `host_endpoint`.
@@ -128,8 +128,8 @@ pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Disco
         host_endpoint.to_path_buf(),
         None,
     )?;
-    let paths = paths::InstancePaths::resolve(&ctx)?;
-    let instance = ownership::read_existing_namespace(&paths)?.ok_or_else(|| {
+    let paths = paths::NodePaths::resolve_read_only(&ctx.state_dir)?;
+    let instance = ownership::read_node_uuid_hint(&paths)?.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "no herdr-threads daemon has run for this state",
@@ -138,7 +138,7 @@ pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Disco
     let d = ownership::read_descriptor(&paths, instance)?;
     Ok(Discovered {
         socket: d.endpoint,
-        instance: d.instance_uuid,
+        instance: d.node_uuid,
     })
 }
 
@@ -148,33 +148,42 @@ pub struct ServiceThreads {
     timeout: Duration,
     /// Mutations whose outcome is unknown: replayed (same envelope) after the next registration.
     pending: tokio::sync::Mutex<Vec<OperationId>>,
-    #[cfg_attr(not(feature = "threads-service-ack"), allow(dead_code))]
-    capability: tokio::sync::Mutex<Option<DeliveryCapability>>,
+    #[cfg(feature = "threads-service-ack")]
+    probe: herdr_threads::client::local::LocalSocketClient,
 }
 
 impl ServiceThreads {
     /// `socket`: the herdr-threads daemon socket (configuration; never the user's live default when testing).
     /// `intents_dir`: `.graph-local/threads-intents` (private to this instance's author).
-    /// `instance`: the threads instance UUID of the daemon (see [`discover`]); intents saved under one instance
+    /// `instance`: the threads node identity of the daemon (see [`discover`]); intents saved under one instance
     /// are only replayed under the same one.
     pub fn new(
         socket: PathBuf,
         intents_dir: PathBuf,
-        instance: uuid::Uuid,
+        instance: herdr_threads::node::NodeUuid,
         clock: Arc<dyn ThreadsClock>,
     ) -> std::io::Result<Self> {
+        super::namespace::ensure(&intents_dir, instance, None)?;
         if let Some(parent) = intents_dir.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let journal = ServiceIntentJournal::open(&intents_dir)?;
         let pending = journal.pending()?;
+        #[cfg(feature = "threads-service-ack")]
+        let probe = herdr_threads::client::local::LocalSocketClient::new(
+            socket.clone(),
+            clock.clone(),
+            instance,
+            None,
+        );
         let client = PersistentServiceClient::new(socket, clock.clone(), instance, None, journal);
         Ok(Self {
             client,
             clock,
             timeout: Duration::from_secs(10),
             pending: tokio::sync::Mutex::new(pending),
-            capability: tokio::sync::Mutex::new(None),
+            #[cfg(feature = "threads-service-ack")]
+            probe,
         })
     }
 
@@ -182,7 +191,7 @@ impl ServiceThreads {
     pub fn with_system_clock(
         socket: PathBuf,
         intents_dir: PathBuf,
-        instance: uuid::Uuid,
+        instance: herdr_threads::node::NodeUuid,
     ) -> std::io::Result<Self> {
         Self::new(
             socket,
@@ -543,22 +552,43 @@ impl ThreadsPort for ServiceThreads {
         Ok(DeliveryCapability::NotifyFallback)
     }
 
-    /// The client registers `service_session_v2` (herdr-threads ht-5nb), so a registered session can Send and
-    /// read Receipts. A service older than the amendment refuses that registration as unsupported: that, and
-    /// only that, selects the Notify fallback. Connection trouble is returned for the caller to retry.
+    /// ACK delivery requires both `service_session_v2` and `messages.send_time_receipts_v1`.
+    /// Only definitive lack of support selects Notify fallback; transport trouble stays retryable.
     #[cfg(feature = "threads-service-ack")]
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
-        let mut cached = self.capability.lock().await;
-        if let Some(c) = *cached {
-            return Ok(c);
-        }
-        let c = match self.ready().await {
-            Ok(()) => DeliveryCapability::ServiceAck,
-            Err(ThreadsError::Unsupported) => DeliveryCapability::NotifyFallback,
+        match self.ready().await {
+            Ok(()) => {}
+            Err(ThreadsError::Unsupported) => return Ok(DeliveryCapability::NotifyFallback),
             Err(e) => return Err(e),
-        };
-        *cached = Some(c);
-        Ok(c)
+        }
+        // A definitive unsupported response (or absent advertised capability) can
+        // select fallback. A transport failure must remain retryable, not downgrade.
+        // Probe afresh: a reconnect/daemon restart can change its capabilities.
+        match self
+            .probe
+            .call_async(
+                herdr_threads::protocol::commands::Command::Capabilities,
+                &self.budget(),
+            )
+            .await
+        {
+            Ok(herdr_threads::protocol::results::CommandResult::Capabilities(list)) => Ok(
+                if list
+                    .capabilities
+                    .iter()
+                    .any(|c| c == herdr_threads::protocol::capabilities::SEND_TIME_RECEIPTS_V1)
+                {
+                    DeliveryCapability::ServiceAck
+                } else {
+                    DeliveryCapability::NotifyFallback
+                },
+            ),
+            Ok(_) => Err(rejected("delivery capability", "unexpected result")),
+            Err(e) => match api_error(e) {
+                ThreadsError::Unsupported => Ok(DeliveryCapability::NotifyFallback),
+                other => Err(other),
+            },
+        }
     }
 }
 

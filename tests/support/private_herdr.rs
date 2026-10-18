@@ -82,6 +82,15 @@ fn wait_for_socket(child: &mut Child, socket: &Path) -> anyhow::Result<()> {
 impl PrivateHerdr {
     /// root = /private/tmp/hg-<ulid lower>. Errors when `herdr` is not installed.
     pub fn start() -> anyhow::Result<Self> {
+        Self::start_with_credentials(true)
+    }
+
+    /// Service/API-only qualification never needs native model credentials.
+    pub fn start_without_credentials() -> anyhow::Result<Self> {
+        Self::start_with_credentials(false)
+    }
+
+    fn start_with_credentials(include_api_keys: bool) -> anyhow::Result<Self> {
         let herdr =
             super::herdr_binary().ok_or_else(|| anyhow::anyhow!("herdr is not installed"))?;
         let root = PathBuf::from(format!(
@@ -104,7 +113,12 @@ impl PrivateHerdr {
         }
         std::fs::write(root.join("config/herdr.toml"), "")?;
         herdr_graph::herdr::isolation::arm();
-        let env = scrubbed_env(&root);
+        let mut env = scrubbed_env(&root);
+        if !include_api_keys {
+            env.retain(|(name, _)| {
+                !matches!(name.as_str(), "ANTHROPIC_API_KEY" | "OPENAI_API_KEY")
+            });
+        }
         let guard = IsolationGuard::new(&root);
         for (k, v) in &env {
             if PATH_VARS.contains(&k.as_str()) {

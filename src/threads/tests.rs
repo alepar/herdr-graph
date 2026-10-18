@@ -1427,7 +1427,7 @@ async fn delivery_capability_fallback_without_feature() {
     let t = ServiceThreads::with_system_clock(
         dir.path().join("none.sock"),
         dir.path().join("state/intents"),
-        uuid::Uuid::new_v4(),
+        herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
     )
     .unwrap();
     assert_eq!(

@@ -75,9 +75,9 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 
 
 ## Threads integration and amendment status
 
-herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. If a compatible daemon refuses v2 registration as unsupported, graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
+herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. ACK delivery also requires `messages.send_time_receipts_v1`. If a compatible daemon definitively lacks either capability, graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
 
-The verified dependency is herdr-threads **0.2.9**, release commit `223b61a88625d7f442d22d9b8728dc4b2282b15f` (`v0.2.9`), using wire protocol **6**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v0.2.9). Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane lookup excludes retired threads seats. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
+The verified dependency target is herdr-threads **2.0.3**, release commit `ded34fa971c18cef81ea1b597097a8ff7cd91eb3` (`v2.0.3`), source checkout pinned for this qualification to `b4d5f9628d17f869ab5b139b7f4ae3c933d02841`, using wire protocol **9**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v2.0.3). Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane resolution uses the public host-qualified `ResolveSeat` operation for graph-managed panes. It may allocate a bare local seat before an agent enrolls; it never checks in, accepts invitations or ACKs. Each call uses a fresh operation key so a later pane rebind cannot replay an old resolution. A lost response may leave a bare seat; repeating resolution returns the current unique owner for that host and pane. Restore holds remain authoritative. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
 
 ### herdr-threads discovery
 
@@ -89,16 +89,22 @@ The daemon finds the herdr-threads state directory on every call (threads may be
 4. `$XDG_STATE_HOME/herdr/plugins/herdr-threads`, if it exists.
 5. `~/.local/state/herdr/plugins/herdr-threads`, if it exists.
 
-If both 4 and 5 exist and differ, discovery refuses to guess: set `threads_state_dir`. Relative paths are ignored. The daemon socket and instance inside the state directory are derived from the Herdr socket, as herdr-threads does. To skip discovery entirely, set `HERDR_GRAPH_THREADS_SOCKET` and `HERDR_GRAPH_THREADS_INSTANCE` (the daemon socket and the instance UUID).
+If both 4 and 5 exist and differ, discovery refuses to guess: set `threads_state_dir`. Relative paths are ignored. Discovery reads the node identity hint and published socket descriptor under `<state>/node`; one node can serve several Herdr hosts. Pane resolution always names graph’s configured Herdr socket explicitly. To skip discovery entirely, set `HERDR_GRAPH_THREADS_SOCKET` and `HERDR_GRAPH_THREADS_INSTANCE` (an absolute daemon socket path and its canonical 32-lowercase-hex node identity). Incomplete or malformed pairs are reported as errors instead of silently falling back.
 
 `herdr-graph doctor` prints a `threads` line: `state dir <path> (<where it was found>)` or `not found (<reason>)`, followed by whether the running daemon is connected to threads (its capability, or the error). A missing herdr-threads install is reported as `[WARN]` and does not fail doctor: graph works without threads, degraded (no channels, notifications or summarizer delivery). The check fails when the state dir is found but the running daemon reports it is not connected, or when discovery is ambiguous.
 
+### Threads node identity and recovery
+
+The first connection binds an empty graph and service journal to the exact node in `.graph-local/threads-intents.node.json`. Graph rechecks discovery and this binding before every service or pane-resolution call, including calls using a cached client. Restarting the same threads node preserves the binding and replays its unresolved service envelopes under their original operation IDs. A different node, a nonempty legacy journal, a populated unbound graph, or a malformed binding stops threads operations with a recovery diagnostic. Graph history, channel references, processing requests, and old intent files remain intact; old receipts are never reinterpreted against the new store.
+
+At this boundary, restore the original threads node together with its matching store and key to resume the original work. Preserve the old graph repository, `.graph-local` directory and threads state before recovery. Do not remove or edit the binding, delete intents, or overwrite channel IDs to bypass the fence. An explicit graph reconnection procedure that preserves historical references and recreates channels is a required follow-on change; this branch does not yet expose a `threads reconnect` command.
+
 ### Re-pointing `third_party/herdr-threads`
 
-The repository currently tracks an absolute symlink to an external checkout. Source builds require that checkout or an equivalent local checkout at the verified release commit; point the symlink at it before building. Release packaging/dependency setup belongs to the release owner.
+The repository currently tracks an absolute symlink to an external checkout. Source builds require that checkout or an equivalent local checkout at the qualification source revision above; point the symlink at it before building. Release packaging/dependency setup belongs to the release owner.
 
 ```sh
-ln -sfn <path-to-herdr-threads-v0.2.9-checkout> third_party/herdr-threads
+ln -sfn <path-to-herdr-threads-b4d5f9628-checkout> third_party/herdr-threads
 ```
 
 ## Test tiers
@@ -123,7 +129,7 @@ Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) go
 
 Run tier 3 serially: `cargo test --features private-herdr -- --test-threads=1`. The seat-rename and undo-adoption regressions wait for the derived view and pane token respectively. Historical defects D1–D3 have been fixed; their regressions run in the normal suite.
 
-Real-agent launch/resume, SessionStart bootstrap, and the agent summarizer flow still require the opt-in tier and credentials. Service-ACK delivery is exercised against an isolated 0.2.9 threads daemon with synthetic public-hook registration and cooperative CLI acceptance/ACK; real summarizer-agent delivery is separate. Herdr live handoff remains untested.
+Real-agent launch/resume, SessionStart bootstrap, and the agent summarizer flow still require the opt-in tier and credentials. Service-ACK delivery is exercised against an isolated 2.0.3 threads daemon with synthetic public-hook registration and cooperative CLI acceptance/ACK; real summarizer-agent delivery is separate. Herdr live handoff remains untested.
 
 Run feature tiers sequentially: another Cargo feature build can replace `target/debug/herdr-graph` while subprocess tests are using it.
 

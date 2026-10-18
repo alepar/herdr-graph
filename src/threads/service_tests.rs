@@ -25,6 +25,8 @@ const BOOT: &str = "123e4567-e89b-12d3-a456-426614174001";
 #[derive(Default)]
 struct Service {
     busy: AtomicBool,
+    no_send_time_receipts: AtomicBool,
+    drop_capability_probe: AtomicBool,
     /// Close the connection on the next mutation without answering (an unknown outcome).
     drop_next_mutation: AtomicBool,
     registers: AtomicUsize,
@@ -186,6 +188,37 @@ async fn serve(listener: tokio::net::UnixListener, svc: Arc<Service>) {
         let svc = svc.clone();
         tokio::spawn(async move {
             while let Ok(bytes) = read_frame(&mut stream).await {
+                if let Ok(request) =
+                    serde_json::from_slice::<herdr_threads::protocol::wire::WireRequest>(&bytes)
+                {
+                    assert!(matches!(
+                        request.command,
+                        herdr_threads::protocol::commands::Command::Capabilities
+                    ));
+                    if svc.drop_capability_probe.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    let capabilities = if svc.no_send_time_receipts.load(Ordering::SeqCst) {
+                        vec![]
+                    } else {
+                        vec!["messages.send_time_receipts_v1".into()]
+                    };
+                    let response = herdr_threads::protocol::wire::WireResponse {
+                        version: PROTOCOL_VERSION,
+                        request_id: request.request_id,
+                        instance: request.expected_instance,
+                        daemon_boot: BOOT.into(),
+                        result: Ok(
+                            herdr_threads::protocol::results::CommandResult::Capabilities(
+                                herdr_threads::protocol::results::CapabilityList { capabilities },
+                            ),
+                        ),
+                    };
+                    write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                        .await
+                        .unwrap();
+                    return;
+                }
                 let Ok(request) = serde_json::from_slice::<ServiceWireRequest>(&bytes) else {
                     return;
                 };
@@ -215,7 +248,7 @@ struct Fx {
     svc: Arc<Service>,
     threads: ServiceThreads,
     intents: PathBuf,
-    instance: uuid::Uuid,
+    instance: herdr_threads::node::NodeUuid,
 }
 
 async fn fx() -> Fx {
@@ -225,7 +258,7 @@ async fn fx() -> Fx {
     let svc = Arc::new(Service::default());
     tokio::spawn(serve(listener, svc.clone()));
     let intents = ServiceThreads::intents_dir_in(dir.path());
-    let instance = uuid::Uuid::new_v4();
+    let instance = herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes());
     let threads = ServiceThreads::with_system_clock(socket, intents.clone(), instance).unwrap();
     Fx {
         _dir: dir,
@@ -433,7 +466,7 @@ async fn no_daemon_is_a_disconnect() {
     let t = ServiceThreads::with_system_clock(
         dir.path().join("absent.sock"),
         dir.path().join("i/intents"),
-        uuid::Uuid::new_v4(),
+        herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
     )
     .unwrap();
     let r = t
@@ -620,7 +653,7 @@ mod ack {
         let old = ServiceThreads::with_system_clock(
             socket,
             dir.path().join("i/intents"),
-            uuid::Uuid::new_v4(),
+            herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
         )
         .unwrap();
         assert_eq!(
@@ -635,7 +668,7 @@ mod ack {
         let none = ServiceThreads::with_system_clock(
             dir.path().join("none.sock"),
             dir.path().join("j/intents"),
-            uuid::Uuid::new_v4(),
+            herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
         )
         .unwrap();
         assert!(matches!(
@@ -643,4 +676,122 @@ mod ack {
             Err(ThreadsError::Disconnected(_))
         ));
     }
+}
+
+/// Replacing a node must never reinterpret the old journal under the new identity.
+#[tokio::test]
+async fn node_change_refuses_old_pending_journal_without_modifying_it() {
+    let f = fx().await;
+    f.svc.drop_next_mutation.store(true, Ordering::SeqCst);
+    let key = OpKey("ensure:old-node-pending".into());
+    assert!(
+        f.threads
+            .ensure_thread(ChannelScope::Seat, "old", &key)
+            .await
+            .is_err()
+    );
+    let journal = herdr_threads::client::service::ServiceIntentJournal::open(&f.intents).unwrap();
+    let pending = journal.pending().unwrap();
+    assert_eq!(pending.len(), 1);
+    let before = journal.inspect(&pending[0]).unwrap();
+    let new_node = herdr_threads::node::NodeUuid::from_bytes([0x77; 16]);
+    assert_ne!(f.instance, new_node);
+    let reopened = ServiceThreads::with_system_clock(
+        f._dir.path().join("t.sock"),
+        f.intents.clone(),
+        new_node,
+    );
+    assert!(
+        reopened.is_err(),
+        "fresh node must require explicit recovery"
+    );
+    assert_eq!(journal.pending().unwrap(), pending);
+    assert_eq!(
+        serde_json::to_value(journal.inspect(&pending[0]).unwrap()).unwrap(),
+        serde_json::to_value(before).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn pane_resolution_uses_host_guard_and_never_claimless_seats() {
+    use crate::model::HerdrPaneId;
+    use crate::threads::{PaneSeatMap, ThreadsSeatMap};
+    use herdr_threads::protocol::commands::Command;
+    use herdr_threads::protocol::results::CommandResult;
+    use herdr_threads::protocol::wire::{WireRequest, WireResponse};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("map.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let peer = tokio::spawn(async move {
+        let mut operations = Vec::new();
+        for call in 0..3 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request: WireRequest =
+                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+            let result = match request.command {
+                Command::ResolveSeat(q) => {
+                    assert_eq!(q.host.as_str(), "/host-a.sock");
+                    assert_eq!(q.target.as_str(), "w1:p1");
+                    operations.push(q.operation);
+                    if call == 2 {
+                        Err(api_error(ErrorCode::TargetUnresolved))
+                    } else {
+                        Ok(CommandResult::SeatResolved(SeatId::new("host-a-seat")))
+                    }
+                }
+                _ => Err(api_error(ErrorCode::InvalidRequest)),
+            };
+            let response = WireResponse {
+                version: PROTOCOL_VERSION,
+                request_id: request.request_id,
+                instance: request.expected_instance,
+                daemon_boot: BOOT.into(),
+                result,
+            };
+            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                .await
+                .unwrap();
+        }
+        assert_ne!(
+            operations[0], operations[1],
+            "a cached operation could return a stale seat after rebind"
+        );
+    });
+    let map = ThreadsSeatMap::new(
+        socket,
+        herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+        Arc::new(herdr_threads::app::SystemClock::new()),
+        herdr_threads::protocol::ids::HostLocator::parse("/host-a.sock").unwrap(),
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            map.seat_for(&HerdrPaneId("w1:p1".into())).await.unwrap(),
+            Some(seat("host-a-seat"))
+        );
+    }
+    assert!(
+        matches!(
+            map.seat_for(&HerdrPaneId("w1:p1".into())).await,
+            Err(ThreadsError::Rejected(_))
+        ),
+        "restore holds must be returned, with no claimless fallback"
+    );
+    peer.await.unwrap();
+}
+
+#[cfg(feature = "threads-service-ack")]
+#[tokio::test]
+async fn send_time_receipt_capability_absence_falls_back_but_disconnect_does_not() {
+    let f = fx().await;
+    f.svc.no_send_time_receipts.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.threads.delivery_capability().await.unwrap(),
+        DeliveryCapability::NotifyFallback
+    );
+    let g = fx().await;
+    g.svc.drop_capability_probe.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        g.threads.delivery_capability().await,
+        Err(ThreadsError::Disconnected(_))
+    ));
 }

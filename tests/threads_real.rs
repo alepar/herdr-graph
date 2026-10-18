@@ -61,18 +61,23 @@ impl<'a> ThreadsDaemon<'a> {
             .arg(&self.state)
             .arg("--host-endpoint")
             .arg(&self.herdr.socket);
-        c.args(args);
+        c.args(args)
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .env("CLAUDE_CODE_SESSION_ID", "graph-threads-test");
         if let Some(p) = pane {
-            c.env("HERDR_PANE_ID", &p.0);
+            c.env("HERDR_PANE_ID", &p.0)
+                // Public cooperative harness markers name only this isolated test process.
+                .env("CLAUDE_PID", std::process::id().to_string())
+                .env("CLAUDE_CODE_SESSION_ID", "graph-threads-test");
         }
+        c.env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY");
         c.stdin(Stdio::null()).output().expect("herdr-threads runs")
     }
 
     /// Register a synthetic native session through the public hook, without credentials.
     fn register_agent(&self, pane: &HerdrPaneId) {
         use std::os::unix::fs::PermissionsExt;
-        let resolved = self.cli(Some(pane), &["seat", "resolve", "--pane", &pane.0]);
-        ok("resolve agent seat", &resolved);
         let bin = self.herdr.root.join("fixture-bin");
         std::fs::create_dir_all(&bin).unwrap();
         let claude = bin.join("claude");
@@ -101,6 +106,10 @@ impl<'a> ThreadsDaemon<'a> {
             .arg("--host-endpoint")
             .arg(&self.herdr.socket)
             .args(["hook", "claude"])
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .env("CLAUDE_CODE_SESSION_ID", "graph-threads-test")
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
             .env("HERDR_ENV", "1")
             .env("HERDR_PANE_ID", &pane.0)
             .env("HERDR_SOCKET_PATH", &self.herdr.socket)
@@ -193,7 +202,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
         support::skip("set HG_REAL_THREADS=1");
         return;
     }
-    let herdr = match PrivateHerdr::start() {
+    let herdr = match PrivateHerdr::start_without_credentials() {
         Ok(h) => h,
         Err(e) if support::herdr_binary().is_none() => {
             support::skip(&format!("{e}"));
@@ -228,10 +237,16 @@ async fn real_threads_channel_invite_membership_notify_release() {
         .check(&intents)
         .expect("intents dir is private");
     let threads =
-        ServiceThreads::with_system_clock(found.socket.clone(), intents, found.instance).unwrap();
+        ServiceThreads::with_system_clock(found.socket.clone(), intents.clone(), found.instance)
+            .unwrap();
     let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
         Arc::new(herdr_threads::app::SystemClock::new());
-    let map = ThreadsSeatMap::new(found.socket.clone(), found.instance, clock);
+    let map = ThreadsSeatMap::new(
+        found.socket.clone(),
+        found.instance,
+        clock,
+        herdr_threads::protocol::ids::HostLocator::parse(herdr.socket.to_str().unwrap()).unwrap(),
+    );
 
     // A pane in the private Herdr, registered as a synthetic native agent seat.
     let client = herdr.client();
@@ -244,6 +259,47 @@ async fn real_threads_channel_invite_membership_notify_release() {
         .await
         .expect("workspace");
     let pane = created.pane.clone().expect("first pane");
+    // Resolution creates only a bare local seat, even before a native session enrolls.
+    let bare = map
+        .seat_for(&pane)
+        .await
+        .expect("host-qualified resolve")
+        .unwrap();
+    assert_eq!(map.seat_for(&pane).await.unwrap(), Some(bare.clone()));
+    let inspection = daemon.cli(None, &["seat", "inspect", &bare.0, "--json"]);
+    ok("inspect bare seat", &inspection);
+    let inspected: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+    assert!(
+        inspected.to_string().contains("\"open_binding\":null"),
+        "resolution must not enroll any occupant binding: {inspected}"
+    );
+
+    // One node serves two private Herdr hosts whose local pane IDs collide.
+    let other = PrivateHerdr::start_without_credentials().expect("second private host");
+    let other_created = other
+        .client()
+        .create_workspace(CreateWorkspace {
+            label: "threads-other-host".into(),
+            cwd: other.root.join("home"),
+            env: vec![],
+        })
+        .await
+        .unwrap();
+    let other_pane = other_created.pane.unwrap();
+    assert_eq!(
+        pane, other_pane,
+        "fixture must exercise identical pane text"
+    );
+    let other_map = ThreadsSeatMap::new(
+        found.socket.clone(),
+        found.instance,
+        Arc::new(herdr_threads::app::SystemClock::new()),
+        herdr_threads::protocol::ids::HostLocator::parse(other.socket.to_str().unwrap()).unwrap(),
+    );
+    let other_seat = other_map.seat_for(&other_pane).await.unwrap().unwrap();
+    assert_ne!(bare, other_seat, "different hosts must not alias");
+    assert_eq!(map.seat_for(&pane).await.unwrap(), Some(bare.clone()));
+
     daemon.register_agent(&pane);
     let seat = poll("the pane's threads seat", async || {
         map.seat_for(&pane).await.ok().flatten()
@@ -396,7 +452,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
 
     // A busy service (a second registration while the first lives) is reported, never taken over.
     let second = ServiceThreads::with_system_clock(
-        found.socket,
+        found.socket.clone(),
         herdr.root.join("graph/.graph-local/threads-intents-2"),
         found.instance,
     )
@@ -406,6 +462,35 @@ async fn real_threads_channel_invite_membership_notify_release() {
         .await;
     assert!(matches!(r, Err(ThreadsError::ServiceBusy)), "{r:?}");
     assert!(Path::new(&herdr.root).exists());
+    drop(second);
+    drop(threads);
+    ok(
+        "stop private threads for restart",
+        &daemon.cli(None, &["daemon", "stop"]),
+    );
+    ok(
+        "restart private threads",
+        &daemon.cli(None, &["daemon", "ensure"]),
+    );
+    let restarted = discover(&daemon.state, &herdr.socket).unwrap();
+    assert_eq!(restarted.instance, found.instance);
+    let threads =
+        ServiceThreads::with_system_clock(restarted.socket, intents, restarted.instance).unwrap();
+    assert_eq!(
+        threads
+            .ensure_thread(ChannelScope::Seat, "alpha/foreman", &key)
+            .await
+            .unwrap(),
+        thread
+    );
+    let receipts = threads
+        .receipt_state(std::slice::from_ref(&msg))
+        .await
+        .unwrap();
+    assert!(matches!(
+        receipts[0].recipients[0].state,
+        ReceiptState::Acknowledged { .. }
+    ));
 }
 
 /// hg-zmi.46: the production wiring (default discovery, no `HERDR_GRAPH_THREADS_*` variable anywhere) reaches a
@@ -417,7 +502,7 @@ async fn production_discovery_reaches_real_threads_daemon() {
         support::skip("set HG_REAL_THREADS=1");
         return;
     }
-    let herdr = match PrivateHerdr::start() {
+    let herdr = match PrivateHerdr::start_without_credentials() {
         Ok(h) => h,
         Err(e) if support::herdr_binary().is_none() => {
             support::skip(&format!("{e}"));
@@ -436,7 +521,7 @@ async fn production_discovery_reaches_real_threads_daemon() {
         .mode(0o700)
         .create(&state)
         .unwrap();
-    let _daemon = ThreadsDaemon::start_at(&herdr, threads_binary(), state);
+    let daemon = ThreadsDaemon::start_at(&herdr, threads_binary(), state);
 
     let graph_root = herdr.root.join("graph");
     let ctx = herdr_graph::daemon::DaemonCtx {
@@ -458,4 +543,28 @@ async fn production_discovery_reaches_real_threads_daemon() {
         .delivery_capability()
         .await
         .expect("default discovery reaches the real daemon");
+    let old = discover(&daemon.state, &herdr.socket).unwrap();
+    ok(
+        "stop private threads before fresh store",
+        &daemon.cli(None, &["daemon", "stop"]),
+    );
+    let saved = daemon.state.join("saved-old-node");
+    std::fs::rename(daemon.state.join("node"), &saved).unwrap();
+    ok(
+        "start fresh private node",
+        &daemon.cli(None, &["daemon", "ensure"]),
+    );
+    let new = discover(&daemon.state, &herdr.socket).unwrap();
+    assert_ne!(old.instance, new.instance);
+    assert!(
+        saved.join("herdr-threads.db").is_file(),
+        "old artifacts must remain recoverable"
+    );
+    assert!(
+        matches!(
+            threads.delivery_capability().await,
+            Err(ThreadsError::Rejected(_))
+        ),
+        "cached endpoint must not register or dispatch against a fresh node"
+    );
 }
