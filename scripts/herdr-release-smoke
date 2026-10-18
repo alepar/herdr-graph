@@ -247,13 +247,15 @@ def classify_suite(returncode, output, expected):
     cases = {name: ('PASS' if status == 'ok' else 'FAIL') for name, status in results}
     summaries = re.findall(r'^test result: ok\. (\d+) passed; (\d+) failed; (\d+) ignored; '
                            r'(\d+) measured; (\d+) filtered out;', output, re.M)
-    valid = (returncode == 0 and len(results) == len(expected) and
+    panic = re.search(r"^\s*thread '[^\r\n]*' (?:\(\d+\) )?panicked at(?:\s|:)", output, re.M)
+    valid = (returncode == 0 and panic is None and len(results) == len(expected) and
              set(cases) == set(expected) and all(status == 'ok' for _, status in results) and
              summaries == [(str(len(expected)), '0', '0', '0', '0')] and
              not re.search(r'SKIPPED:|isolation violations|PrivateHerdr teardown:', output))
     return {'status': 'PASS' if valid else 'FAIL', 'cases': cases,
             'expected': list(expected), 'observed_count': len(results),
-            'detail': '' if valid else 'exit/result inventory/summary/skip or teardown check failed'}
+            'detail': ('Rust panic diagnostic in runtime output' if panic else
+                       '' if valid else 'exit/result inventory/summary/skip or teardown check failed')}
 
 
 def process_snapshot():

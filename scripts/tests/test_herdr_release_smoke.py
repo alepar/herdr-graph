@@ -57,6 +57,27 @@ class DriverTests(unittest.TestCase):
             with self.subTest(code=code, output=output):
                 self.assertEqual(self.driver.classify_suite(code, output, ['core'])['status'], 'FAIL')
 
+    def test_background_rust_panic_fails_with_complete_success_output(self):
+        for diagnostic in (
+                "thread '<unnamed>' panicked at src/worker.rs:12:5:\nbackground worker failed\n",
+                "thread 'tokio-runtime-worker' (12345) panicked at src/worker.rs:12:5:\nbackground worker failed\n"):
+            with self.subTest(diagnostic=diagnostic):
+                result = self.driver.classify_suite(0, self.output() + diagnostic, ['core'])
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertIn('panic', result['detail'])
+
+    def test_background_panic_failure_retains_success_results_and_diagnostic(self):
+        diagnostic = "thread '<unnamed>' panicked at src/worker.rs:12:5:\nbackground worker failed"
+        fake = self.program('background-panic', f'import sys\nprint({self.output()!r})\n'
+                            f'print({diagnostic!r}, file=sys.stderr)\n')
+        directory = self.root / 'run'
+        result = self.driver.run_suite(fake, ['core'], dict(os.environ), directory, 5)
+        self.assertEqual(result['returncode'], 0)
+        self.assertEqual(result['cases'], {'core': 'PASS'})
+        self.assertEqual(result['status'], 'FAIL')
+        self.assertIn(diagnostic, Path(result['log']).read_text())
+        self.assertEqual(json.loads((directory / 'result.json').read_text())['status'], 'FAIL')
+
     def test_sigterm_sets_cancellation_and_runs_cleanup(self):
         fake = self.program('sleeping-test', 'import time\ntime.sleep(30)\n')
         result_path = self.root / 'interrupted.json'

@@ -163,3 +163,45 @@ regression above independently proved a concrete teardown defect and its fix.
   and the live user session remain outside these shell/synthetic fixtures.
 - No production compatibility failure was found; no controller production review
   was required. Independent matrix review/full 0.9.1–0.9.5 execution remains later.
+
+## Review I1 — background Rust panic gate (fix round 1)
+
+Base for this focused fix is `ef4b3a2a2c01f29aaa14de04e2460229f181c7ef`
+(the controller's intervening change was documentation only). The review reproduced
+`classify_suite` accepting a standard background-thread panic alongside exit zero,
+exact successful case results, and the successful summary. A detached thread's
+panic need not propagate into the enclosing libtest result, so the existing exit
+and case checks were insufficient.
+
+- Added two behavioral tests against actual driver functions before fixing the
+  parser. The first checks standard unnamed-thread and modern named-thread plus
+  numeric-thread-ID panic headers with otherwise complete successful output. The
+  second runs a fake test executable that exits zero, prints a successful case and
+  summary to stdout, and prints the background panic to stderr; it requires suite
+  FAIL, the retained diagnostic in `output.log`, and FAIL in `result.json` while
+  preserving the observed successful case result.
+- Red: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -k panic -v`,
+  `/private/tmp/hg-task3-i1-panic-red.log`: **2 tests, 3 expected failures**, each
+  reporting the original incorrect PASS.
+- `classify_suite` now rejects standard Rust `thread '...' panicked at ...`
+  diagnostics, including the optional modern `(numeric-thread-ID)` field. It
+  returns an explicit Rust panic failure detail and leaves the captured output
+  intact. No result/cleanup checks were relaxed.
+- Green: the same focused command, `/private/tmp/hg-task3-i1-panic-green.log`:
+  **2 passed**. Covering command:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v`,
+  `/private/tmp/hg-task3-i1-driver-final.log`: **24 passed, zero failures/errors/skips**
+  (10.664 seconds; all 22 original tests plus the two new tests).
+- Both changed Python files passed in-memory `compile(source, filename, 'exec')`
+  and trailing-whitespace checks with bytecode disabled. `git diff --check` passed;
+  no `__pycache__` artifacts were generated.
+- Reclassified all three saved final 0.9.5 suite outputs with the updated parser:
+  **30/5/2 output inventories still PASS**. Those logs contain no standard panic
+  diagnostics. This is a focused parser check over existing evidence, not a new
+  runtime qualification run. No 37-case repeat was needed for this parser-only fix;
+  the complete exact-tag five-version matrix remains Task 4 after review approval.
+
+Only the matrix script, its behavioral tests, and this proper implementation report
+changed. Production code, private fixtures, existing trial/runtime evidence,
+upstream source, and source `bin/herdr-graph` remain unchanged. The ignored scratch
+copy and committed proper report are synchronized.
