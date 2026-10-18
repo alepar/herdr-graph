@@ -1,6 +1,9 @@
 //! herdr-graph: Git-backed organization graph for Herdr (teamspaces, seats, clones).
 //! See docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-design.md.
 
+#[cfg(all(test, feature = "test-support"))]
+extern crate self as herdr_graph;
+
 pub mod bootstrap;
 pub mod cli;
 pub mod config;

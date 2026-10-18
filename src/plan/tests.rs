@@ -28,6 +28,47 @@ use chrono::TimeZone;
 use serde_json::json;
 use std::sync::Arc;
 
+#[cfg(feature = "test-support")]
+#[path = "../../tests/support/isolated.rs"]
+mod isolated;
+
+/// Run global failpoint tests in an exact-filtered, guarded private process.
+#[cfg(feature = "test-support")]
+fn isolated_crash_test(name: &str) -> bool {
+    const CHILD: &str = "HG_PLAN_CRASH_TEST_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(name) {
+        return true;
+    }
+    let root = isolated::TestRoot::new();
+    let log_path = root.path().join("crash-test.log");
+    let log = std::fs::File::create(&log_path).unwrap();
+    let mut child = root.spawn(
+        root.command(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, name)
+            .env("TMPDIR", root.path())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    );
+    let status = child
+        .wait_timeout(std::time::Duration::from_secs(30))
+        .expect("isolated crash test timed out");
+    let output = std::fs::read_to_string(&log_path).unwrap();
+    assert!(status.success(), "isolated crash test failed: {output}");
+    assert!(
+        output.contains(&format!("test {name} ... ok"))
+            && output.contains("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;")
+            && output
+                .lines()
+                .filter(|line| line.starts_with("test result:"))
+                .count()
+                == 1,
+        "isolated crash test did not execute exactly its selected case: {output}"
+    );
+    assert!(root.violations().is_empty(), "{}", root.violations());
+    false
+}
+
 fn t0() -> crate::model::Timestamp {
     chrono::Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap()
 }
@@ -2622,7 +2663,33 @@ fn reconnect_rejects_wrong_from_same_node_noncanonical_nodes_and_stale_head() {
 
 #[cfg(feature = "test-support")]
 #[test]
+fn reconnect_crash_fixture_preserves_parent_failpoints() {
+    if !isolated_crash_test("plan::tests::reconnect_crash_fixture_preserves_parent_failpoints") {
+        return;
+    }
+    // This sentinel is armed only in our private child, never in the parallel harness.
+    let point = "writer.after_cas_before_journal";
+    crate::failpoint::arm(point, crate::failpoint::FailAction::Panic);
+    let fixture = std::panic::catch_unwind(
+        reconnect_interrupted_before_and_after_commit_resumes_exact_transition,
+    );
+    let sentinel = std::panic::catch_unwind(|| crate::failpoint::trigger(point));
+    crate::failpoint::disarm(point);
+    assert!(fixture.is_ok(), "crash fixture hit its parent's failpoint");
+    assert!(
+        sentinel.is_err(),
+        "crash fixture changed its parent's registry"
+    );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
 fn reconnect_interrupted_before_and_after_commit_resumes_exact_transition() {
+    if !isolated_crash_test(
+        "plan::tests::reconnect_interrupted_before_and_after_commit_resumes_exact_transition",
+    ) {
+        return;
+    }
     use crate::threads::namespace as ns;
     for point in ["writer.after_tree_build", "writer.after_cas_before_journal"] {
         let fx = fx();
