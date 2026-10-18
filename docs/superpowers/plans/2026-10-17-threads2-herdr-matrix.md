@@ -1,5 +1,7 @@
 # Threads 2 compatibility and Herdr release matrix implementation plan
 
+**Completion status (2026-10-18):** Implementation and all task/final reviews complete; integration decision pending. See [completion record](../reviews/2026-10-18-threads2-completion.md). The checklist below preserves the execution requirements and historical task boundaries.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Restore local graph integration with current herdr-threads and provide a repeatable release sweep across recent supported Herdr versions.
