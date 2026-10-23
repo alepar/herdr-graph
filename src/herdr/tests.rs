@@ -135,8 +135,8 @@ fn pane(id: &str) -> HerdrPaneId {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let dir = PathBuf::from(format!(
-        "/private/tmp/hg-ut-{tag}-{}",
+    let dir = crate::config::tmp_dir().join(format!(
+        "hg-ut-{tag}-{}",
         ulid::Ulid::new().to_string().to_lowercase()
     ));
     std::fs::create_dir_all(&dir).unwrap();

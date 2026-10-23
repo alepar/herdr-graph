@@ -1,6 +1,6 @@
 //! `TestRoot`: the isolation fixture for every test that spawns a process (hg-zmi.77).
 //!
-//! One short root under `/private/tmp` holds HOME, the XDG dirs, the Claude config, the Herdr plugin dirs,
+//! One short root under the temp dir (`/private/tmp` on macOS, `/tmp` elsewhere) holds HOME, the XDG dirs, the Claude config, the Herdr plugin dirs,
 //! the Herdr socket and the graph instance. Children get `env_clear()` plus [`scrubbed_env`], which also
 //! sets `HG_TEST_ROOT=<root>`: the library tripwire refuses (exit 97) any path a child resolves outside
 //! it, and `Drop` sweeps every process still carrying the marker, so a setsid daemon or a grandchild does
@@ -18,20 +18,20 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// Roots this fixture family creates (`PrivateHerdr` uses `hg-`, `TestRoot` uses `hgt-`).
-const ROOT_PREFIXES: &[&str] = &["/private/tmp/hgt-", "/private/tmp/hg-"];
+const ROOT_PREFIXES: &[&str] = &["hgt-", "hg-"];
 
 pub struct TestRoot {
     root: PathBuf,
 }
 
 impl TestRoot {
-    /// A fresh root `/private/tmp/hgt-<ulid lowercase>` (short: the `sockaddr_un` limit).
+    /// A fresh root `<tmp_dir>/hgt-<ulid lowercase>` (short: the `sockaddr_un` limit).
     pub fn new() -> Self {
         if std::env::var_os("HG_MATRIX_REGISTRY").is_none() {
             reap_orphans();
         }
-        let root = PathBuf::from(format!(
-            "/private/tmp/hgt-{}",
+        let root = herdr_graph::config::tmp_dir().join(format!(
+            "hgt-{}",
             ulid::Ulid::new().to_string().to_lowercase()
         ));
         for d in [
@@ -232,7 +232,17 @@ impl Drop for ChildGuard {
 /// `(pid, line)` of every process in `ps eww -ax` (argv followed by the environment) that is not this one.
 fn ps_lines() -> Vec<(u32, String)> {
     let out = Command::new("/bin/ps")
-        .args(["eww", "-ax", "-o", "pid=,ppid=,stat=,lstart=,command="])
+        // procps refuses the mixed BSD/Unix `-ax` form; BSD ps keeps it.
+        .args([
+            "eww",
+            if cfg!(target_os = "macos") {
+                "-ax"
+            } else {
+                "ax"
+            },
+            "-o",
+            "pid=,ppid=,stat=,lstart=,command=",
+        ])
         .env_clear()
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -354,7 +364,11 @@ pub fn reap_orphans() {
             .into_iter()
             .filter(|(_, l)| {
                 markers(l).iter().any(|m| {
-                    ROOT_PREFIXES.iter().any(|p| m.starts_with(p)) && !Path::new(m).exists()
+                    let tmp = herdr_graph::config::tmp_dir().to_string_lossy();
+                    ROOT_PREFIXES
+                        .iter()
+                        .any(|p| m.starts_with(&format!("{tmp}/{p}")))
+                        && !Path::new(m).exists()
                 })
             })
             .map(|(p, _)| p)

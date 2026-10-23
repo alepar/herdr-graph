@@ -81,7 +81,7 @@ fn wait_for_socket(child: &mut Child, socket: &Path) -> anyhow::Result<()> {
 }
 
 impl PrivateHerdr {
-    /// root = /private/tmp/hg-<ulid lower>. Errors when `herdr` is not installed.
+    /// root = <tmp_dir>/hg-<ulid lower>. Errors when `herdr` is not installed.
     pub fn start() -> anyhow::Result<Self> {
         Self::start_with_credentials(true)
     }
@@ -94,8 +94,8 @@ impl PrivateHerdr {
     fn start_with_credentials(include_api_keys: bool) -> anyhow::Result<Self> {
         let herdr =
             super::herdr_binary().ok_or_else(|| anyhow::anyhow!("herdr is not installed"))?;
-        let root = PathBuf::from(format!(
-            "/private/tmp/hg-{}",
+        let root = herdr_graph::config::tmp_dir().join(format!(
+            "hg-{}",
             ulid::Ulid::new().to_string().to_lowercase()
         ));
         for d in [

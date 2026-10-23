@@ -27,7 +27,10 @@ fn manifest_parses_with_expected_values() {
     assert_eq!(m["min_herdr_version"].as_str(), Some("0.9.1"));
     assert_eq!(
         m["platforms"].as_array().unwrap(),
-        &[toml::Value::String("macos".into())]
+        &[
+            toml::Value::String("macos".into()),
+            toml::Value::String("linux".into())
+        ]
     );
 
     let build = &m["build"].as_array().unwrap()[0];

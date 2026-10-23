@@ -48,7 +48,7 @@ pub fn run_foreground(instance: &Path, herdr_socket: Option<&Path>) -> anyhow::R
     if let Some(parent) = paths.socket.parent() {
         std::fs::create_dir_all(parent)?;
         if !parent.starts_with(&paths.root) {
-            // /private/tmp fallback directory: owner-only.
+            // Temp-dir fallback directory: owner-only.
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
         }

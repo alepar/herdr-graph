@@ -221,14 +221,14 @@ async fn real_threads_channel_invite_membership_notify_release() {
 
     // The graph's view of the daemon: discovered from its published descriptor, never the user's live one.
     let found = discover(&daemon.state, &herdr.socket).expect("daemon published its endpoint");
-    // The daemon binds a short per-instance socket under /private/tmp/herdr-threads-<uid>/ when the state
+    // The daemon binds a short per-instance socket under <tmp_dir>/herdr-threads-<uid>/ when the state
     // path is too long for a socket address; the name is a hash of the private instance directory. Anything
     // else must be inside the private root, and nothing may be a live user resource.
     match herdr.guard().check(&found.socket) {
         Ok(()) => {}
         Err(IsolationError::OutsideRoot(p, _))
-            if p.to_string_lossy()
-                .starts_with("/private/tmp/herdr-threads-") => {}
+            if p.starts_with(herdr_graph::config::tmp_dir())
+                && p.to_string_lossy().contains("/herdr-threads-") => {}
         Err(e) => panic!(
             "threads socket {} is not private: {e}",
             found.socket.display()

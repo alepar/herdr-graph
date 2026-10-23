@@ -10,6 +10,15 @@ pub const ENV_INSTANCE: &str = "HERDR_GRAPH_INSTANCE";
 /// Unix socket paths must stay below the platform limit (104 bytes on macOS).
 const SOCKET_PATH_LIMIT: usize = 100;
 
+/// Short shared temp directory: `/private/tmp` on macOS (canonical `/tmp`), `/tmp` elsewhere.
+pub fn tmp_dir() -> &'static Path {
+    Path::new(if cfg!(target_os = "macos") {
+        "/private/tmp"
+    } else {
+        "/tmp"
+    })
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Env {
     pub instance: Option<String>,
@@ -185,7 +194,7 @@ impl InstancePaths {
     }
 }
 
-/// `<root>/.graph-local/daemon.sock`; if that path is ≥ 100 bytes → `/private/tmp/herdr-graph-<uid>/<hash16>.sock`
+/// `<root>/.graph-local/daemon.sock`; if that path is ≥ 100 bytes → `<tmp_dir>/herdr-graph-<uid>/<hash16>.sock`
 /// with hash16 = first 16 hex chars of sha256(root as bytes). uid = libc::getuid().
 pub fn socket_path(root: &Path) -> PathBuf {
     let direct = root.join(".graph-local/daemon.sock");
@@ -196,7 +205,7 @@ pub fn socket_path(root: &Path) -> PathBuf {
     let hash16: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
     // SAFETY: getuid has no preconditions and cannot fail.
     let uid = unsafe { libc::getuid() };
-    PathBuf::from(format!("/private/tmp/herdr-graph-{uid}/{hash16}.sock"))
+    tmp_dir().join(format!("herdr-graph-{uid}/{hash16}.sock"))
 }
 
 #[cfg(test)]
@@ -294,11 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_long_root_falls_back_under_private_tmp() {
+    fn socket_path_long_root_falls_back_under_tmp_dir() {
         let root = PathBuf::from(format!("/{}", "a".repeat(119)));
         let p = socket_path(&root);
         assert!(
-            p.to_str().unwrap().starts_with("/private/tmp/herdr-graph-"),
+            p.starts_with(tmp_dir()) && p.to_str().unwrap().contains("/herdr-graph-"),
             "{p:?}"
         );
         assert!(p.as_os_str().len() < 100);

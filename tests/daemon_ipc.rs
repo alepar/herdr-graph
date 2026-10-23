@@ -235,9 +235,10 @@ fn long_socket_path_fallback_serves() {
     assert!(out.status.success(), "{}", stderr(&out));
     let sock = f.sock();
     assert!(
-        sock.starts_with(format!("/private/tmp/herdr-graph-{}", unsafe {
-            libc::getuid()
-        })),
+        sock.starts_with(
+            herdr_graph::config::tmp_dir()
+                .join(format!("herdr-graph-{}", unsafe { libc::getuid() }))
+        ),
         "{sock:?}"
     );
     assert!(sock.exists());
