@@ -80,7 +80,7 @@ class DriverTests(unittest.TestCase):
 
     def diagnostic_fixture(self, files, setup=''):
         files = {'config/herdr/herdr-server.log': '', **files}
-        private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
+        private = Path(self.driver.TMP + '/hg-' + __import__('uuid').uuid4().hex)
         private.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
         body = f"""import json, os
@@ -349,7 +349,7 @@ Path({str(result_path)!r}).write_text(json.dumps(result))
         self.assertEqual(result['status'], 'FAIL')
 
     def test_root_removal_failure_is_recorded_as_failed_cleanup(self):
-        private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
+        private = Path(self.driver.TMP + '/hg-' + __import__('uuid').uuid4().hex)
         private.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
         fake = self.program('owned-ok', f'''import json,os
@@ -383,7 +383,7 @@ print({self.output()!r})
         self.assertTrue(root.exists())
 
     def test_cleanup_tracks_protected_orphan_before_its_parent_exits(self):
-        private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
+        private = Path(self.driver.TMP + '/hg-' + __import__('uuid').uuid4().hex)
         private.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
         daemon_code = ("import subprocess,time; from pathlib import Path; "
@@ -406,7 +406,7 @@ time.sleep(30)
 
     def test_timeout_reaps_detached_child_from_registered_owned_root(self):
         # A child deliberately escapes the runner's process group; only the owned-root fallback finds it.
-        private = Path('/private/tmp/hg-' + __import__('uuid').uuid4().hex)
+        private = Path(self.driver.TMP + '/hg-' + __import__('uuid').uuid4().hex)
         private.mkdir()
         self.addCleanup(lambda: __import__('shutil').rmtree(private, ignore_errors=True))
         body = f'''import json, os, subprocess, time

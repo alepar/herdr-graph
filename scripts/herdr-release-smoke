@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify graph with checksum-pinned private Herdr releases (macOS runtime only).
+"""Qualify graph with checksum-pinned private Herdr releases on macOS or Linux.
 
 Builds once, then runs 30 graph E2E + 5 Herdr API + 2 actual threads cases per
 release. No model launches. See docs/validation/herdr-release-matrix.md.
@@ -30,6 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LIST = ROOT / 'tests/herdr-releases.tsv'
 REPO = 'herdrdev/herdr'
 FLOOR = (0, 9, 1)
+# Short shared temp dir, matching graph's config::tmp_dir(): canonical /tmp on macOS.
+TMP = '/private/tmp' if platform.system() == 'Darwin' else '/tmp'
 ASSETS = ('herdr-linux-aarch64', 'herdr-linux-x86_64', 'herdr-macos-aarch64', 'herdr-macos-x86_64')
 STOP = threading.Event()
 SUITES = {
@@ -209,7 +211,7 @@ def verify_binary(binary, version, digest):
         raise RuntimeError(f'checksum mismatch for {binary}; evidence preserved')
     if not binary.is_absolute() or not os.access(binary, os.X_OK):
         raise RuntimeError(f'not an absolute executable: {binary}')
-    with tempfile.TemporaryDirectory(prefix='hgm-version-', dir='/private/tmp') as root:
+    with tempfile.TemporaryDirectory(prefix='hgm-version-', dir=TMP) as root:
         log = Path(root) / 'version.log'
         run = run_process([binary, '--version'], safe_environment(), 10, log)
         reported = log.read_text().strip()
@@ -261,7 +263,9 @@ def classify_suite(returncode, output, expected):
 
 def process_snapshot():
     """Only inspect: environment is kept in memory, never emitted to logs/reports."""
-    run = subprocess.run(['/bin/ps', 'eww', '-ax', '-o', 'pid=,ppid=,pgid=,stat=,lstart=,command='],
+    # procps refuses the mixed BSD/Unix `-ax` form; BSD ps keeps it.
+    ax = '-ax' if platform.system() == 'Darwin' else 'ax'
+    run = subprocess.run(['/bin/ps', 'eww', ax, '-o', 'pid=,ppid=,pgid=,stat=,lstart=,command='],
                          env={'PATH': '/usr/bin:/bin'}, capture_output=True, text=True, timeout=10)
     if run.returncode:
         raise RuntimeError('cannot inspect owned processes for cleanup')
@@ -285,7 +289,7 @@ def registry_ownership(registry, owner):
             try:
                 entry = json.loads(line)
                 root = Path(entry['root'])
-                if (not re.fullmatch(r'/private/tmp/(?:hg|hgt)-[a-z0-9]+', str(root)) or
+                if (not re.fullmatch(re.escape(TMP) + r'/(?:hg|hgt)-[a-z0-9]+', str(root)) or
                         root.is_symlink() or (root / '.matrix-owner').read_text() != owner):
                     raise ValueError('root lacks exact run ownership')
                 if root not in roots:
@@ -572,7 +576,7 @@ def run_suite(executable, expected, env, directory, timeout, expected_roots=0, d
 
 
 def validate_inventory(executable, expected, env):
-    with tempfile.TemporaryDirectory(prefix='hgm-inventory-', dir='/private/tmp') as root:
+    with tempfile.TemporaryDirectory(prefix='hgm-inventory-', dir=TMP) as root:
         log = Path(root) / 'inventory.log'
         run = run_process([executable, '--list', '--format=terse'], env, 15, log)
         actual = re.findall(r'^(\S+): test$', log.read_text(), re.M)
@@ -617,13 +621,13 @@ def build_once(env, directory):
 
 
 def host_asset():
-    # Linux asset checksums are pinned for provenance; private runtime support is macOS-only today.
-    if platform.system() != 'Darwin':
-        raise RuntimeError('private Herdr graph qualification currently requires macOS')
-    arch = {'arm64': 'aarch64', 'x86_64': 'x86_64'}.get(platform.machine())
+    system = {'Darwin': 'macos', 'Linux': 'linux'}.get(platform.system())
+    if system is None:
+        raise RuntimeError(f'unsupported host operating system: {platform.system()}')
+    arch = {'arm64': 'aarch64', 'aarch64': 'aarch64', 'x86_64': 'x86_64'}.get(platform.machine())
     if arch is None:
         raise RuntimeError(f'unsupported host architecture: {platform.machine()}')
-    return f'herdr-macos-{arch}'
+    return f'herdr-{system}-{arch}'
 
 
 def write_reports(report, payload):
@@ -654,7 +658,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--versions', nargs='+')
-    parser.add_argument('--cache', type=Path, default=Path(f'/private/tmp/herdr-graph-releases-{os.getuid()}'))
+    parser.add_argument('--cache', type=Path, default=Path(f'{TMP}/herdr-graph-releases-{os.getuid()}'))
     parser.add_argument('--report', type=Path, help='report stem (writes .json, .md and .logs/)')
     parser.add_argument('--jobs', type=int, default=2)
     parser.add_argument('--timeout', type=float, default=900, help='deadline per suite in seconds (default 900)')
@@ -685,7 +689,7 @@ def main():
     if unknown:
         parser.error('unknown version: ' + ', '.join(unknown))
     asset = host_asset()
-    report = (args.report or Path(tempfile.mkdtemp(prefix='hgm-', dir='/private/tmp')) / 'matrix').resolve()
+    report = (args.report or Path(tempfile.mkdtemp(prefix='hgm-', dir=TMP)) / 'matrix').resolve()
     logs = report.with_suffix('.logs')
     logs.mkdir(parents=True, exist_ok=False)
     env = safe_environment()

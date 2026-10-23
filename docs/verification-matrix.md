@@ -16,7 +16,9 @@ Run on Linux x86_64 (Fedora 44) with Herdr 0.9.5; this is the first Linux run. I
 | `cargo test --features private-herdr -- --test-threads=1` | 741 passed, 0 failed, 6 ignored |
 | `HG_REAL_THREADS=1 … --test threads_real` (threads built from the pinned submodule) | 2 passed, 0 failed |
 
-No `hg-`/`hgt-` roots remained under `/tmp` afterwards. Not rerun at v2.3.1: the macOS Herdr 0.9.1–0.9.5 release matrix with retained diagnostics (its driver is macOS-only) and tier 4 real agents.
+No `hg-`/`hgt-` roots remained under `/tmp` afterwards. Tier 4 real agents was not run.
+
+The release matrix driver now also runs on Linux. Its first Linux run (Herdr 0.9.1–0.9.5) passed 4 releases and failed 1 case on 0.9.2: an intermittent duplicate workspace after a mid-operation daemon kill. Graph's lost-response recovery can snapshot Herdr before Herdr applies a create still buffered from the killed daemon. See [herdr-release-matrix.md](validation/herdr-release-matrix.md#linux-x86_64-run-at-threads-v231--2026-10-23). The macOS sweep has not been rerun at v2.3.1.
 
 ## Replacement threads 2.0.4 qualification (2026-10-18)
 

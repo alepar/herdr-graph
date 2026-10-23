@@ -1,6 +1,6 @@
 # Herdr release qualification
 
-Run `scripts/herdr-release-smoke` from this checkout on macOS. It reuses the real
+Run `scripts/herdr-release-smoke` from this checkout on macOS or Linux. It reuses the real
 private fixtures in `tests/e2e_private_herdr.rs`, `tests/herdr_client.rs`, and
 `tests/threads_real.rs`: **30 + 5 + 2 = 37 cases per release**. It does not create
 a second graph/Herdr test harness. The exact expected names live in `SUITES` in
@@ -9,8 +9,8 @@ or failing case fails qualification until the inventory is deliberately reviewed
 
 ```sh
 scripts/herdr-release-smoke --list
-scripts/herdr-release-smoke --versions 0.9.5 --jobs 1 --report /private/tmp/graph-herdr-one
-scripts/herdr-release-smoke --jobs 2 --cache /private/tmp/graph-herdr-cache --report /private/tmp/graph-herdr-all
+scripts/herdr-release-smoke --versions 0.9.5 --jobs 1 --report /tmp/graph-herdr-one
+scripts/herdr-release-smoke --jobs 2 --cache /tmp/graph-herdr-cache --report /tmp/graph-herdr-all
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests -v
 ```
 
@@ -53,7 +53,7 @@ Each selected host binary is hashed again on every run and must report exactly
 `herdr VERSION` with exit zero within ten seconds. A mismatch fails and preserves
 the existing cache entry or failed download for inspection.
 
-The default graph cache is `/private/tmp/herdr-graph-releases-UID`; `--cache`
+The default graph cache is `TMP/herdr-graph-releases-UID`, where `TMP` is `/private/tmp` on macOS and `/tmp` on Linux; `--cache`
 selects another graph-owned cache. An existing matching threads cache entry at
 `~/.cache/herdr-threads/herdr-releases/VERSION/PLATFORM/herdr` may be copied into
 the graph cache. The source cache is read-only: nothing there is deleted,
@@ -71,9 +71,10 @@ release missing any required platform asset or SHA-256 digest is an error.
 `--check-upstream` fails for new/missing versions or changed digests.
 `--update` rewrites pins from that official metadata; it does not confer runtime
 support. Review the change, run driver regressions, then rerun the complete matrix
-before expanding a support claim. Checksums for Linux assets are provenance,
-**not Linux runtime qualification**. The plugin currently declares macOS support,
-and the runtime driver refuses other operating systems.
+before expanding a support claim. The driver selects the asset for the host
+(`herdr-{macos,linux}-{aarch64,x86_64}`) and refuses other operating systems.
+Checksums for an asset are provenance only; runtime qualification for a
+platform comes from a matrix run on it.
 
 ## Dependency/build prerequisites
 
@@ -81,8 +82,8 @@ Use the ordinary Rust toolchain and the repository lockfiles. The dependency is
 an official Git submodule, currently pinned to herdr-threads **v2.3.1**, exact
 commit `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144`, wire protocol **9**.
 It supersedes v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819` (see the
-2026-10-23 entry in `docs/verification-matrix.md`; this macOS sweep has not been
-rerun at v2.3.1). v2.0.4 in turn superseded the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
+2026-10-23 entry in `docs/verification-matrix.md`; this sweep has run at v2.3.1
+on Linux x86_64 only, not yet on macOS). v2.0.4 in turn superseded the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
 v2.0.4 became latest stable during replacement qualification, and its tag and
 unchanged consumed public API were reverified before updating the gitlink/lock.
 
@@ -220,6 +221,25 @@ played through the CLI. This matrix does not validate native model inference,
 model authentication, remote threads continuity, real restore holds, a live user
 session, or model/summarizer quality. Reconnect/epoch unit and hybrid tests remain
 separate evidence, rather than being relabeled as real-service matrix cases.
+
+## Linux x86_64 run at threads v2.3.1 — 2026-10-23
+
+First Linux run of the driver (Fedora 44, `--jobs 2`), graph `7bdb4af` plus the
+driver port, official threads v2.3.1 `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144`.
+Herdr 0.9.1, 0.9.3, 0.9.4 and 0.9.5 passed 37/37. **0.9.2 failed 1/37**:
+`e2e_daemon_kill_mid_op_recovers_no_duplicates` found a duplicate workspace
+after the mid-operation SIGKILL. The aggregate result is FAIL. The case passed
+5/5 when rerun alone on 0.9.2 and on 0.9.5.
+
+Herdr's log and the retained journal show a real at-most-once race in graph's
+lost-response recovery, not a 0.9.2 regression. The killed daemon's
+`workspace.create` was still in its socket buffer. The restarted daemon locked
+and snapshotted at about 10.302 s. Herdr applied the buffered create at 10.312 s,
+with the effect's nonce label. Recovery then created a second workspace at
+10.489 s, because its earlier snapshot lacked the nonce-labelled one. The fake
+Herdr cannot express this window, because it applies requests synchronously.
+This is open and must be fixed before Linux, or a v2.3.1 rerun on macOS, can be
+claimed as a full pass.
 
 ## Replacement qualification — 2026-10-18
 
