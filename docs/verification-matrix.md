@@ -3,6 +3,21 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## Threads 2.3.1 qualification (2026-10-23)
+
+Graph pins official threads v2.3.1 `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144` (annotated tag `558ae85fc7594fde685b120dda8a15dde14a83cb`), protocol 9, superseding v2.0.4. Consumed public API delta from v2.0.4: `BindingPresence` gains optional, defaulted `binding_id`/`native_session`/`provenance`; `CheckInMode` gains `Fork`; capabilities `seat.binding_details_v1` and `handoff.launch_directories_v1` are added. Graph constructs and matches neither type, and no graph production code changed for the dependency. The lockfile change is the threads package version plus `tempfile`'s `getrandom` 0.4.3 → 0.3.4 from re-resolution.
+
+Run on Linux x86_64 (Fedora 44) with Herdr 0.9.5; this is the first Linux run. It required making the fixtures and the long-path socket fallback use `/tmp` off macOS (macOS keeps `/private/tmp`), Linux-compatible `ps` arguments in the isolation reaper, and `linux` in the plugin manifest's `platforms`.
+
+| Tier | Result |
+| --- | --- |
+| `cargo test` | 694 passed, 0 failed, 1 ignored |
+| `cargo test --features test-support` | 710 passed, 0 failed, 1 ignored |
+| `cargo test --features private-herdr -- --test-threads=1` | 741 passed, 0 failed, 6 ignored |
+| `HG_REAL_THREADS=1 … --test threads_real` (threads built from the pinned submodule) | 2 passed, 0 failed |
+
+No `hg-`/`hgt-` roots remained under `/tmp` afterwards. Not rerun at v2.3.1: the macOS Herdr 0.9.1–0.9.5 release matrix with retained diagnostics (its driver is macOS-only) and tier 4 real agents.
+
 ## Replacement threads 2.0.4 qualification (2026-10-18)
 
 Frozen graph `1005d04657a260dc89a55d3b1d37ce6b6f7cdb7e` uses official threads v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819`, protocol 9, macOS aarch64. The replacement matrix adds post-cleanup inspection and retention of Herdr, graph, threads and private plugin diagnostic logs. The earlier matrix below checked only harness output for panics and removed daemon logs; it cannot establish absence of private-daemon panics.

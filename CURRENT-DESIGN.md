@@ -88,7 +88,7 @@ Threads 0.2.9 integration is verified at `223b61a88625d7f442d22d9b8728dc4b2282b1
 
 ## Threads 2 node identity and reviewed recovery — updated 2026-10-18
 
-The current adapter uses threads 2.0.4's canonical node identity and wire protocol 9, with graph-managed panes resolved through the public host-qualified `ResolveSeat`. Resolution may allocate a bare local seat and never enrolls a native occupant or fabricates acceptance/ACK. Service-ACK also requires the send-time-receipts capability; definitive unsupported capability selects Notify fallback, while transient errors remain errors.
+The current adapter uses threads 2.3.1's canonical node identity and wire protocol 9, with graph-managed panes resolved through the public host-qualified `ResolveSeat`. Resolution may allocate a bare local seat and never enrolls a native occupant or fabricates acceptance/ACK. Service-ACK also requires the send-time-receipts capability; definitive unsupported capability selects Notify fallback, while transient errors remain errors.
 
 Graph binds service journals and reference-bearing calls to the exact node and committed namespace epoch. A different node or populated unbound legacy graph fails closed until the exact original store is restored or an explicit `threads reconnect --from ... --to ... --head ...` plan is reviewed and applied. Git commits the target epoch and preserved recovery artifact before local binding publication; per-epoch journals preserve the old intent bytes. External participation requires explicit new plans. Stale snapshots/writebacks fail closed, and all pre-boundary plans require fresh review. Ordinary undo cannot cross that boundary.
 

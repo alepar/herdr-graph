@@ -78,9 +78,11 @@ and the runtime driver refuses other operating systems.
 ## Dependency/build prerequisites
 
 Use the ordinary Rust toolchain and the repository lockfiles. The dependency is
-an official Git submodule, currently pinned to herdr-threads **v2.0.4**, exact
-commit `b83d032a64cb9f665f49806b744f7cc730626819`, wire protocol **9**.
-It supersedes the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
+an official Git submodule, currently pinned to herdr-threads **v2.3.1**, exact
+commit `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144`, wire protocol **9**.
+It supersedes v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819` (see the
+2026-10-23 entry in `docs/verification-matrix.md`; this macOS sweep has not been
+rerun at v2.3.1). v2.0.4 in turn superseded the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
 v2.0.4 became latest stable during replacement qualification, and its tag and
 unchanged consumed public API were reverified before updating the gitlink/lock.
 
