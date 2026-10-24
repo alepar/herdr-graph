@@ -76,6 +76,8 @@ pub enum EffectKind {
     CloseWorkspace,
     ClosePane,
     CloseTab,
+    /// Close a late copy of one of our creates (Herdr applied a lost request after recovery re-created it).
+    CloseDuplicate,
     ReplaceSession,
     EnsureThread,
     Invite,
@@ -115,6 +117,7 @@ impl EffectKind {
             EffectKind::CloseWorkspace => "close_workspace",
             EffectKind::ClosePane => "close_pane",
             EffectKind::CloseTab => "close_tab",
+            EffectKind::CloseDuplicate => "close_duplicate",
             EffectKind::ReplaceSession => "replace_session",
             EffectKind::EnsureThread => "ensure_thread",
             EffectKind::Invite => "invite",

@@ -64,6 +64,42 @@ pub struct LiveWorkspace<'a> {
     pub stamped: bool,
 }
 
+/// A late copy of a create of `object` (a teamspace's workspace or a seat's tab); see `LiveIndex::duplicates`.
+pub struct Duplicate<'a> {
+    pub object: AnyId,
+    pub copy: Surplus<'a>,
+}
+
+pub enum Surplus<'a> {
+    Workspace(&'a WorkspaceInfo),
+    Tab(&'a TabInfo),
+}
+
+impl Surplus<'_> {
+    /// The copy's label: the create's nonce label.
+    pub fn label(&self) -> &str {
+        match self {
+            Surplus::Workspace(w) => &w.label,
+            Surplus::Tab(t) => &t.label,
+        }
+    }
+
+    /// The copy still has the shape Herdr created (one tab of one pane, no graph token, no agent).
+    pub fn pristine_pane(&self) -> Option<&PaneInfo> {
+        let tab = match self {
+            Surplus::Workspace(w) => match w.tabs.as_slice() {
+                [t] => t,
+                _ => return None,
+            },
+            Surplus::Tab(t) => t,
+        };
+        match tab.panes.as_slice() {
+            [p] if token_of(&p.metadata).is_none() && p.agent.is_none() => Some(p),
+            _ => None,
+        }
+    }
+}
+
 /// Matches graph objects to live Herdr objects: by token, else by binding in the same incarnation, else by
 /// the journal's live refs. Tabs have no tokens (Herdr 0.9.1): a seat's tab is its bound tab id, else the tab
 /// holding its token-matched panes.
@@ -325,6 +361,58 @@ impl<'a> LiveIndex<'a> {
             .panes_of(seat)
             .find_map(|p| self.pane(&p.clone))
             .map(|lp| (lp.ws, lp.tab))
+    }
+
+    /// Nonce labels of `object`'s completed creates of `kind`.
+    fn done_nonces(&self, object: &AnyId, kind: &EffectKind) -> BTreeSet<String> {
+        self.journal
+            .effects_for_object(object)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|e| &e.kind == kind && e.status == EffectStatus::Done)
+            .filter_map(|e| e.nonce_label)
+            .collect()
+    }
+
+    /// Late copies of our own creates: Herdr can apply a request after its client died, so a create whose
+    /// outcome was lost and that recovery re-issued may land a second time. A copy carries the nonce of a
+    /// completed create of the same object while that object's live counterpart is another workspace or tab.
+    pub fn duplicates(&self) -> Vec<Duplicate<'a>> {
+        let mut out = Vec::new();
+        for ws in &self.desired.workspaces {
+            let any = ws.ts.to_any();
+            let Some(live) = self.workspace(&ws.ts).filter(|l| l.stamped) else {
+                continue;
+            };
+            let nonces = self.done_nonces(&any, &EffectKind::CreateWorkspace);
+            for w in &self.snap.workspaces {
+                if w.id != live.ws.id
+                    && token_of(&w.metadata).is_none()
+                    && nonces.contains(&w.label)
+                {
+                    out.push(Duplicate {
+                        object: any.clone(),
+                        copy: Surplus::Workspace(w),
+                    });
+                }
+            }
+        }
+        for tab in &self.desired.tabs {
+            let any = tab.seat.to_any();
+            let Some((_, live)) = self.tab_for_seat(&tab.seat) else {
+                continue;
+            };
+            let nonces = self.done_nonces(&any, &EffectKind::CreateTab);
+            for t in self.snap.workspaces.iter().flat_map(|w| &w.tabs) {
+                if t.id != live.id && nonces.contains(&t.label) && self.tab_owner(&t.id).is_none() {
+                    out.push(Duplicate {
+                        object: any.clone(),
+                        copy: Surplus::Tab(t),
+                    });
+                }
+            }
+        }
+        out
     }
 
     /// Active clones of `seat` that have no live pane and are not `unknown`, in clone-id order.
@@ -660,6 +748,41 @@ pub fn plan_effects(
     }
 
     plan_closes(&mut o, &idx);
+    for dup in idx.duplicates() {
+        // One effect per copy: the Herdr id and incarnation name it, the nonce label lets the executor find it.
+        let id = match &dup.copy {
+            Surplus::Workspace(w) => w.id.0.as_str(),
+            Surplus::Tab(t) => t.id.0.as_str(),
+        };
+        let target = format!(
+            "{} {id} {}",
+            EffectKind::CloseDuplicate.as_str(),
+            serde_json::to_string(&snap.incarnation).unwrap_or_default()
+        );
+        let op = desired.op_for(&dup.object);
+        let rev = desired.rev_of(&dup.object).unwrap_or(0);
+        let ef = EffectId::derive(&op, &dup.object, &target, rev);
+        if o.seen.insert(ef.clone()) {
+            o.planned.push(PlannedEffect {
+                record: EffectRecord {
+                    id: ef,
+                    op,
+                    object: dup.object,
+                    kind: EffectKind::CloseDuplicate,
+                    object_rev: rev,
+                    fencing_rev: rev,
+                    status: EffectStatus::Pending,
+                    predicted: vec![],
+                    nonce_label: Some(dup.copy.label().to_owned()),
+                    attempts: 0,
+                    last_error: None,
+                    updated_at: now,
+                    sched: Default::default(),
+                },
+                deps: vec![],
+            });
+        }
+    }
     o.planned
 }
 

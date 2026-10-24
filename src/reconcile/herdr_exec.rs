@@ -5,7 +5,7 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
-    LiveIndex, LiveRef, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
+    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
     set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
@@ -562,6 +562,51 @@ impl HerdrExecutor {
         out
     }
 
+    /// Close every late copy of `e`'s object that carries `e`'s nonce label and is still as Herdr created it
+    /// with a shell in the foreground. A copy someone has started using is left alone and reported.
+    async fn close_duplicate(
+        &self,
+        cx: &ExecCx<'_>,
+        idx: &LiveIndex<'_>,
+        e: &EffectRecord,
+    ) -> ExecOutcome {
+        let Some(label) = e.nonce_label.as_deref() else {
+            return ExecOutcome::Failed("close_duplicate needs the copy's nonce label".into());
+        };
+        let copies = idx.duplicates();
+        for dup in copies
+            .iter()
+            .filter(|d| d.object == e.object && d.copy.label() == label)
+        {
+            let what = match dup.copy {
+                Surplus::Workspace(_) => "workspace",
+                Surplus::Tab(_) => "tab",
+            };
+            let in_use = || {
+                ExecOutcome::NeedsRevision(format!(
+                    "duplicate {what} {label:?} from a lost create is in use; close it if it is not wanted"
+                ))
+            };
+            let Some(pane) = dup.copy.pristine_pane() else {
+                return in_use();
+            };
+            match cx.herdr.process_info(&pane.id).await {
+                Ok(pi) if pi.is_shell => {}
+                Ok(_) => return in_use(),
+                Err(err) => return close_outcome(Err(err)),
+            }
+            let closed = match dup.copy {
+                Surplus::Workspace(w) => cx.herdr.close_workspace(&w.id).await,
+                Surplus::Tab(t) => cx.herdr.close_tab(&t.id).await,
+            };
+            match close_outcome(closed) {
+                ExecOutcome::Done => {}
+                other => return other,
+            }
+        }
+        ExecOutcome::Done
+    }
+
     /// Time left of the 90 s grace after the last incarnation change (r2), if any.
     fn grace_remaining(&self, cx: &ExecCx<'_>) -> Option<chrono::Duration> {
         let raw = self
@@ -633,6 +678,7 @@ impl EffectExecutor for HerdrExecutor {
                 | EffectKind::CloseWorkspace
                 | EffectKind::ClosePane
                 | EffectKind::CloseTab
+                | EffectKind::CloseDuplicate
                 | EffectKind::ReplaceSession
                 | EffectKind::RelaunchOccupant
         )
@@ -726,6 +772,7 @@ impl EffectExecutor for HerdrExecutor {
                 };
                 close_outcome(cx.herdr.close_workspace(&l.ws.id).await)
             }
+            EffectKind::CloseDuplicate => self.close_duplicate(cx, &idx, e).await,
             other => {
                 ExecOutcome::Failed(format!("herdr executor does not handle {}", other.as_str()))
             }

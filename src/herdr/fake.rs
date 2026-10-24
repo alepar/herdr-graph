@@ -38,7 +38,12 @@ pub enum Fault {
     Hang,
     /// `start_agent` only: return this outcome without starting anything. Ignored by other methods.
     StartOutcome(StartOutcome),
+    /// Creates only: report `Timeout` without applying; [`FakeHerdr::apply_late`] applies the call later, as
+    /// Herdr does with a request still buffered from a client that died. Other methods run normally.
+    AppliedLate,
 }
+
+type LateCall = Box<dyn FnOnce(&mut FakeState, &mut Events) + Send>;
 
 #[derive(Default)]
 struct FakeState {
@@ -55,6 +60,7 @@ struct FakeState {
     calls: Vec<FakeCall>,
     faults: HashMap<String, VecDeque<Fault>>,
     last_tab_closes_workspace: bool,
+    late: Vec<LateCall>,
 }
 
 pub struct FakeHerdr {
@@ -292,7 +298,12 @@ impl FakeHerdr {
             Some(Fault::Unavailable) => Err(HerdrError::Unavailable("fake: unavailable".into())),
             Some(Fault::Timeout) => Err(HerdrError::Timeout),
             Some(Fault::Rejected(m)) => Err(rejected(method, m)),
-            Some(f @ (Fault::LostResponse | Fault::Hang | Fault::StartOutcome(_))) => Ok(Some(f)),
+            Some(
+                f @ (Fault::LostResponse
+                | Fault::Hang
+                | Fault::StartOutcome(_)
+                | Fault::AppliedLate),
+            ) => Ok(Some(f)),
         }
     }
 
@@ -304,6 +315,35 @@ impl FakeHerdr {
         f: impl FnOnce(&mut FakeState, &mut Events) -> Result<T, HerdrError>,
     ) -> Result<T, HerdrError> {
         let fault = self.enter(method, call)?;
+        self.run(fault, f).await
+    }
+
+    /// A mutating call that may also be applied late ([`Fault::AppliedLate`]).
+    async fn create<T>(
+        &self,
+        method: &str,
+        call: FakeCall,
+        f: impl FnOnce(&mut FakeState, &mut Events) -> Result<T, HerdrError> + Send + 'static,
+    ) -> Result<T, HerdrError> {
+        let fault = self.enter(method, call)?;
+        if matches!(fault, Some(Fault::AppliedLate)) {
+            self.state
+                .lock()
+                .unwrap()
+                .late
+                .push(Box::new(move |st, ev| {
+                    let _ = f(st, ev);
+                }));
+            return Err(HerdrError::Timeout);
+        }
+        self.run(fault, f).await
+    }
+
+    async fn run<T>(
+        &self,
+        fault: Option<Fault>,
+        f: impl FnOnce(&mut FakeState, &mut Events) -> Result<T, HerdrError>,
+    ) -> Result<T, HerdrError> {
         let mut ev = Vec::new();
         let out = f(&mut self.state.lock().unwrap(), &mut ev)?;
         self.emit(ev);
@@ -320,6 +360,14 @@ impl FakeHerdr {
         let mut ev = Vec::new();
         f(&mut self.state.lock().unwrap(), &mut ev);
         self.emit(ev);
+    }
+
+    /// Apply every call parked by [`Fault::AppliedLate`], in order, emitting their events.
+    pub fn apply_late(&self) {
+        let late = std::mem::take(&mut self.state.lock().unwrap().late);
+        for f in late {
+            self.scripted(f);
+        }
     }
 
     pub fn user_close_pane(&self, p: &HerdrPaneId) {
@@ -485,7 +533,7 @@ impl HerdrApi for FakeHerdr {
                 Fault::Unavailable => Err(HerdrError::Unavailable("fake: unavailable".into())),
                 Fault::Timeout | Fault::LostResponse | Fault::Hang => Err(HerdrError::Timeout),
                 Fault::Rejected(m) => Err(rejected("session.snapshot", m)),
-                Fault::StartOutcome(_) => Ok(HerdrSnapshot {
+                Fault::StartOutcome(_) | Fault::AppliedLate => Ok(HerdrSnapshot {
                     incarnation: st.incarnation(),
                     workspaces: st.workspaces.clone(),
                 }),
@@ -515,10 +563,10 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn create_workspace(&self, req: CreateWorkspace) -> Result<Created, HerdrError> {
-        self.mutate(
+        self.create(
             "workspace.create",
             FakeCall::CreateWorkspace(req.clone()),
-            |st, ev| {
+            move |st, ev| {
                 let ws_id = st.ws_id();
                 let tab_id = st.tab_id();
                 let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
@@ -591,32 +639,36 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn create_tab(&self, req: CreateTab) -> Result<Created, HerdrError> {
-        self.mutate("tab.create", FakeCall::CreateTab(req.clone()), |st, ev| {
-            let ws = req.workspace.clone();
-            st.find_ws(&ws)
-                .ok_or_else(|| rejected("tab.create", format!("workspace {ws} not found")))?;
-            let tab_id = st.tab_id();
-            let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
-            let pane_id = pane.id.clone();
-            st.find_ws(&ws).expect("workspace").tabs.push(TabInfo {
-                id: tab_id.clone(),
-                label: req.label.clone(),
-                panes: vec![pane],
-            });
-            ev.push((
-                "tab_created",
-                json!({ "tab_id": tab_id, "workspace_id": ws, "label": req.label }),
-            ));
-            ev.push((
-                "pane_created",
-                json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
-            ));
-            Ok(Created {
-                workspace: Some(ws),
-                tab: Some(tab_id),
-                pane: Some(pane_id),
-            })
-        })
+        self.create(
+            "tab.create",
+            FakeCall::CreateTab(req.clone()),
+            move |st, ev| {
+                let ws = req.workspace.clone();
+                st.find_ws(&ws)
+                    .ok_or_else(|| rejected("tab.create", format!("workspace {ws} not found")))?;
+                let tab_id = st.tab_id();
+                let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
+                let pane_id = pane.id.clone();
+                st.find_ws(&ws).expect("workspace").tabs.push(TabInfo {
+                    id: tab_id.clone(),
+                    label: req.label.clone(),
+                    panes: vec![pane],
+                });
+                ev.push((
+                    "tab_created",
+                    json!({ "tab_id": tab_id, "workspace_id": ws, "label": req.label }),
+                ));
+                ev.push((
+                    "pane_created",
+                    json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
+                ));
+                Ok(Created {
+                    workspace: Some(ws),
+                    tab: Some(tab_id),
+                    pane: Some(pane_id),
+                })
+            },
+        )
         .await
     }
 
@@ -651,24 +703,28 @@ impl HerdrApi for FakeHerdr {
     }
 
     async fn split_pane(&self, req: SplitPane) -> Result<Created, HerdrError> {
-        self.mutate("pane.split", FakeCall::SplitPane(req.clone()), |st, ev| {
-            let tab_id = st
-                .tab_of_pane(&req.target)
-                .ok_or_else(|| rejected("pane.split", format!("pane {} not found", req.target)))?;
-            let ws = st.ws_of_tab(&tab_id).expect("workspace of tab");
-            let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
-            let pane_id = pane.id.clone();
-            st.find_tab(&tab_id).expect("tab").panes.push(pane);
-            ev.push((
-                "pane_created",
-                json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
-            ));
-            Ok(Created {
-                workspace: Some(ws),
-                tab: Some(tab_id),
-                pane: Some(pane_id),
-            })
-        })
+        self.create(
+            "pane.split",
+            FakeCall::SplitPane(req.clone()),
+            move |st, ev| {
+                let tab_id = st.tab_of_pane(&req.target).ok_or_else(|| {
+                    rejected("pane.split", format!("pane {} not found", req.target))
+                })?;
+                let ws = st.ws_of_tab(&tab_id).expect("workspace of tab");
+                let pane = st.new_pane(None, req.cwd.clone(), req.env.clone());
+                let pane_id = pane.id.clone();
+                st.find_tab(&tab_id).expect("tab").panes.push(pane);
+                ev.push((
+                    "pane_created",
+                    json!({ "pane_id": pane_id, "tab_id": tab_id, "workspace_id": ws }),
+                ));
+                Ok(Created {
+                    workspace: Some(ws),
+                    tab: Some(tab_id),
+                    pane: Some(pane_id),
+                })
+            },
+        )
         .await
     }
 

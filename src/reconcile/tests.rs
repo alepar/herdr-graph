@@ -687,6 +687,111 @@ async fn lost_response_create_adopted_by_nonce() {
     assert!(only_clone(&fx, "foreman").runtime.bound.is_some());
 }
 
+/// Herdr applied the lost create only after recovery had re-created it: the late copy carries the
+/// create's nonce, is untouched, and is closed; the re-created object stays.
+#[tokio::test]
+async fn late_applied_workspace_create_is_closed_as_duplicate() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("workspace.create", Fault::AppliedLate);
+    step(&fx).await;
+    assert_eq!(
+        rows(&fx, EffectKind::CreateWorkspace)[0].status,
+        EffectStatus::Unknown
+    );
+    step(&fx).await;
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CreateWorkspace(_))),
+        2,
+        "nothing to adopt yet: recovery re-creates"
+    );
+    let kept = fx.herdr.snapshot().await.unwrap().workspaces[0].clone();
+    assert!(kept.metadata.contains_key("hg"));
+
+    fx.herdr.apply_late();
+    assert_eq!(fx.herdr.snapshot().await.unwrap().workspaces.len(), 2);
+    step(&fx).await;
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(snap.workspaces.len(), 1, "{:#?}", snap.workspaces);
+    assert_eq!(snap.workspaces[0].id, kept.id);
+    assert_eq!(snap.workspaces[0].tabs.len(), kept.tabs.len());
+    let cleanup = rows(&fx, EffectKind::CloseDuplicate);
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].status, EffectStatus::Done);
+    assert!(cleanup[0].predicted.is_empty(), "no graph object changes");
+    step(&fx).await;
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CloseWorkspace(_))),
+        1
+    );
+}
+
+#[tokio::test]
+async fn late_applied_tab_create_is_closed_as_duplicate() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("tab.create", Fault::AppliedLate);
+    step(&fx).await;
+    assert_eq!(
+        rows(&fx, EffectKind::CreateTab)[0].status,
+        EffectStatus::Unknown
+    );
+    step(&fx).await;
+    let before = fx.herdr.snapshot().await.unwrap().workspaces[0]
+        .tabs
+        .clone();
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CreateTab(_))), 2);
+
+    fx.herdr.apply_late();
+    step(&fx).await;
+    let tabs = fx.herdr.snapshot().await.unwrap().workspaces[0]
+        .tabs
+        .clone();
+    assert_eq!(tabs, before, "the late tab is closed, the seat's tab kept");
+    assert_eq!(count_calls(&fx, |c| matches!(c, FakeCall::CloseTab(_))), 1);
+    assert_eq!(
+        rows(&fx, EffectKind::CloseDuplicate)[0].status,
+        EffectStatus::Done
+    );
+    assert!(only_clone(&fx, "foreman").runtime.bound.is_some());
+}
+
+/// A late copy someone has started using is left alone and reported instead.
+#[tokio::test]
+async fn late_duplicate_in_use_is_reported_not_closed() {
+    let fx = fx();
+    activate(&fx, "claude");
+    fx.herdr.fail_next("workspace.create", Fault::AppliedLate);
+    step(&fx).await;
+    step(&fx).await;
+    fx.herdr.apply_late();
+    let late = fx
+        .herdr
+        .snapshot()
+        .await
+        .unwrap()
+        .workspaces
+        .into_iter()
+        .find(|w| !w.metadata.contains_key("hg"))
+        .expect("late copy");
+    fx.herdr.set_process(&late.tabs[0].panes[0].id, non_shell());
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(fx.herdr.snapshot().await.unwrap().workspaces.len(), 2);
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::CloseWorkspace(_))),
+        0
+    );
+    let cleanup = rows(&fx, EffectKind::CloseDuplicate);
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].status, EffectStatus::NeedsRevision);
+    assert!(
+        fx.notes.messages().iter().any(|m| m.contains(&late.label)),
+        "{:?}",
+        fx.notes.messages()
+    );
+}
+
 #[tokio::test]
 async fn unknown_start_outcome_is_inspected_not_duplicated() {
     let fx = fx();
