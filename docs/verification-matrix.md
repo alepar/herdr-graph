@@ -18,7 +18,7 @@ Run on Linux x86_64 (Fedora 44) with Herdr 0.9.5; this is the first Linux run. I
 
 No `hg-`/`hgt-` roots remained under `/tmp` afterwards. Tier 4 real agents was not run.
 
-The release matrix driver now also runs on Linux. Its first Linux run (Herdr 0.9.1–0.9.5) passed 4 releases and failed 1 case on 0.9.2: an intermittent duplicate workspace after a mid-operation daemon kill. Graph's lost-response recovery can snapshot Herdr before Herdr applies a create still buffered from the killed daemon. See [herdr-release-matrix.md](validation/herdr-release-matrix.md#linux-x86_64-run-at-threads-v231--2026-10-23). The macOS sweep has not been rerun at v2.3.1.
+The release matrix driver now also runs on Linux. Its first Linux run (Herdr 0.9.1–0.9.5) failed 1 case on 0.9.2: an intermittent duplicate workspace after a mid-operation daemon kill. Graph's lost-response recovery could snapshot Herdr before Herdr applied a create still buffered from the killed daemon. Commit `7110552` closes such late workspace and tab copies; panes from a lost split remain uncovered. The rerun passed **185/185** with clean cleanup and diagnostic gates. See [herdr-release-matrix.md](validation/herdr-release-matrix.md#linux-x86_64-run-at-threads-v231--2026-10-23). The macOS sweep has not been rerun at v2.3.1.
 
 ## Replacement threads 2.0.4 qualification (2026-10-18)
 

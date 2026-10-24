@@ -82,7 +82,7 @@ Use the ordinary Rust toolchain and the repository lockfiles. The dependency is
 an official Git submodule, currently pinned to herdr-threads **v2.3.1**, exact
 commit `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144`, wire protocol **9**.
 It supersedes v2.0.4 `b83d032a64cb9f665f49806b744f7cc730626819` (see the
-2026-10-23 entry in `docs/verification-matrix.md`; this sweep has run at v2.3.1
+2026-10-23 entry in `docs/verification-matrix.md`; this sweep has passed at v2.3.1
 on Linux x86_64 only, not yet on macOS). v2.0.4 in turn superseded the earlier official v2.0.3 pin `ded34fa971c18cef81ea1b597097a8ff7cd91eb3`:
 v2.0.4 became latest stable during replacement qualification, and its tag and
 unchanged consumed public API were reverified before updating the gitlink/lock.
@@ -237,9 +237,21 @@ lost-response recovery, not a 0.9.2 regression. The killed daemon's
 and snapshotted at about 10.302 s. Herdr applied the buffered create at 10.312 s,
 with the effect's nonce label. Recovery then created a second workspace at
 10.489 s, because its earlier snapshot lacked the nonce-labelled one. The fake
-Herdr cannot express this window, because it applies requests synchronously.
-This is open and must be fixed before Linux, or a v2.3.1 rerun on macOS, can be
-claimed as a full pass.
+Herdr could not express this window, because it applied requests synchronously.
+
+Commit `7110552` fixes it. The planner now detects late copies: unstamped
+workspaces or tabs that carry the nonce of a completed create while the
+object's live counterpart is elsewhere. It closes a copy that is still as Herdr
+created it, and reports one that is in use. The fake's new `Fault::AppliedLate`
+reproduces the race in unit tests. A late duplicate pane from a lost split is
+not covered: a split carries no nonce, because no Herdr release accepts a pane
+label at split time, so a late pane cannot be distinguished from a user's split.
+
+The rerun at `7110552` (`--jobs 2`) **passed 37/37 on every release, 185 total**,
+with all 15 cleanup and 15 diagnostic gates clean. Separately, the daemon-kill
+case passed 40/40 runs, four at a time across all five releases. Those passing
+runs do not show whether any of them hit the race window; the unit tests
+exercise the cleanup path itself.
 
 ## Replacement qualification — 2026-10-18
 
