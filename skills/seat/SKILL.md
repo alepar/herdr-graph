@@ -1,6 +1,6 @@
 ---
 name: seat
-description: Resolve this pane's graph identity (teamspace, seat, clone) and load the files that apply to it. Use when a session starts in a herdr-graph pane, when a hook says "run /seat", or when you need to know which seat you are.
+description: Resolve this pane's graph identity (teamspace, seat, clone) and load the files that apply to it. Use when a session starts in a herdr-graph pane, when a hook says to run /seat (at start, after /clear or after compaction), or when you need to know which seat you are.
 ---
 
 # /seat

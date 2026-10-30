@@ -107,6 +107,7 @@ impl PrivateHerdr {
             "runtime",
             "threads-state",
             "claude",
+            "codex",
             "plugin-config",
             "graph",
         ] {

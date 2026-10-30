@@ -43,6 +43,7 @@ impl TestRoot {
             "runtime",
             "threads-state",
             "claude",
+            "codex",
             "plugin-config",
             "graph",
         ] {

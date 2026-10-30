@@ -408,7 +408,7 @@ fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
     let (out, took) = run_hook();
     assert!(out.status.success(), "{}", stderr(&out));
     assert!(took < Duration::from_secs(2), "hook took {took:?}");
-    assert!(stdout(&out).contains("run /seat"), "{}", stdout(&out));
+    assert_eq!(stdout(&out).trim_end(), herdr_graph::cli::seat::HOOK_PROMPT);
     assert_eq!(
         spooled(),
         1,
@@ -437,7 +437,7 @@ fn session_start_hook_is_fast_without_daemon_and_spool_is_ingested() {
         took < Duration::from_secs(2),
         "hook took {took:?} while the daemon was starting"
     );
-    assert!(stdout(&out).contains("run /seat"), "{}", stdout(&out));
+    assert_eq!(stdout(&out).trim_end(), herdr_graph::cli::seat::HOOK_PROMPT);
     assert_eq!(spooled(), 2, "stderr: {}", stderr(&out));
 
     // Once the daemon is up it ingests the spool.

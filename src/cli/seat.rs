@@ -2,7 +2,7 @@
 //!
 //! `seat [--json]` asks the daemon (ensuring it) to resolve the calling pane and prints the reply: verbatim JSON
 //! with `--json`, readable sections otherwise. The hidden `--hook-prompt` is what the SessionStart hook runs:
-//! it prints `run /seat` for graph panes, reads the committed graph directly and never fails or starts a daemon.
+//! it tells graph panes to run `/seat`, reads the committed graph directly and never fails or starts a daemon.
 use crate::bootstrap::{render_seat, wants_seat_prompt};
 use crate::config::{Env, plugin_config_dir_via_herdr};
 use crate::daemon::client::{CallMode, call_daemon};
@@ -17,18 +17,23 @@ pub enum Commands {
     Seat {
         #[arg(long)]
         json: bool,
-        /// Print `run /seat` when this pane is a graph pane (used by the SessionStart hook).
+        /// Tell a graph pane's session to run `/seat` (used by the SessionStart hook).
         #[arg(long, hide = true)]
         hook_prompt: bool,
+        /// With `--hook-prompt`: print Codex's `hookSpecificOutput.additionalContext` JSON.
+        #[arg(long, hide = true, requires = "hook_prompt")]
+        codex: bool,
     },
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     match cmd {
         Commands::Seat {
-            hook_prompt: true, ..
+            hook_prompt: true,
+            codex,
+            ..
         } => {
-            hook_prompt();
+            hook_prompt(codex);
             Ok(ExitCode::SUCCESS)
         }
         Commands::Seat { json, .. } => {
@@ -44,8 +49,27 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     }
 }
 
+/// What the SessionStart hook prints for a graph pane. It fires on startup, resume, clear and compact, and
+/// says why: a bare `run /seat` was mostly ignored, above all after compaction.
+pub const HOOK_PROMPT: &str = "herdr-graph: this pane is a graph seat. Before replying, run the seat skill (/seat) \
+     to load your seat role, rules and instructions. Do this after every start, clear and compaction: a summary \
+     of an earlier /seat run is not a substitute, so run it again.";
+
+/// The hook's stdout: plain text for Claude, `additionalContext` JSON for Codex.
+pub fn hook_output(codex: bool) -> String {
+    if codex {
+        serde_json::json!({"hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": HOOK_PROMPT,
+        }})
+        .to_string()
+    } else {
+        HOOK_PROMPT.to_owned()
+    }
+}
+
 /// Never errors: any failure prints nothing.
-fn hook_prompt() {
+fn hook_prompt(codex: bool) {
     let env = Env::from_process();
     let graph = std::env::var(ENV_GRAPH).ok();
     let prompt = if graph.as_deref() == Some("1") {
@@ -64,6 +88,6 @@ fn hook_prompt() {
         .unwrap_or(false)
     };
     if prompt {
-        println!("run /seat");
+        println!("{}", hook_output(codex));
     }
 }

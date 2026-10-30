@@ -1,5 +1,7 @@
-//! `herdr-graph setup claude [--uninstall]` (spec §9): an owned SessionStart hook group plus the `seat` and
-//! `graph` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}`.
+//! `herdr-graph setup claude|codex [--uninstall]` (spec §9): an owned SessionStart hook group plus the `seat`
+//! and `graph` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}` (`settings.json`) or `${CODEX_HOME:-~/.codex}`
+//! (`hooks.json`, which has the same `hooks.SessionStart` shape). Both harnesses fire SessionStart on startup,
+//! resume, clear and compact, so the `/seat` prompt comes back after every context reset.
 //!
 //! Ownership follows the herdr-threads pattern: the installed hook group is recognised by an installation
 //! marker (a trailing shell comment in its command, so Claude's settings schema sees nothing unusual), and a
@@ -21,12 +23,39 @@ const SKILLS: &[(&str, &str)] = &[
     ("graph", include_str!("../../skills/graph/SKILL.md")),
 ];
 
+/// Where a harness keeps its hooks and skills.
+pub struct Target {
+    /// The hooks file inside the config dir.
+    settings: &'static str,
+    group: fn(&Path) -> Value,
+}
+
+pub const CLAUDE: Target = Target {
+    settings: "settings.json",
+    group: claude_group,
+};
+
+/// Codex trusts a new or changed hook only after an interactive review (`/hooks`); setup never writes trust.
+pub const CODEX: Target = Target {
+    settings: "hooks.json",
+    group: codex_group,
+};
+
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     let dir = claude_config_dir
         .map(Path::to_path_buf)
         .or_else(|| home.map(|h| h.join(".claude")))?;
     crate::herdr::isolation::tripwire(&dir, "setup_claude::config_dir");
+    Some(dir)
+}
+
+/// `${CODEX_HOME:-<home>/.codex}`.
+pub fn codex_dir(codex_home: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    let dir = codex_home
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|h| h.join(".codex")))?;
+    crate::herdr::isolation::tripwire(&dir, "setup_claude::codex_dir");
     Some(dir)
 }
 
@@ -48,8 +77,19 @@ pub fn hook_command(binary: &Path) -> String {
     format!("{b} seat --hook-prompt; {b} session-report --from-hook claude {OWNER_MARKER}")
 }
 
-fn owned_group(binary: &Path) -> Value {
+/// The Codex hook command: only the `/seat` prompt, as `additionalContext` JSON. Codex session ids come from
+/// Herdr, so there is no session report.
+pub fn codex_hook_command(binary: &Path) -> String {
+    let b = sh_quote(&binary.to_string_lossy());
+    format!("{b} seat --hook-prompt --codex {OWNER_MARKER}")
+}
+
+fn claude_group(binary: &Path) -> Value {
     json!({ "matcher": "", "hooks": [{ "type": "command", "command": hook_command(binary), "timeout": 10 }] })
+}
+
+fn codex_group(binary: &Path) -> Value {
+    json!({ "hooks": [{ "type": "command", "command": codex_hook_command(binary), "timeout": 10 }] })
 }
 
 fn is_owned(group: &Value) -> bool {
@@ -154,10 +194,15 @@ fn session_start_mut<'a>(doc: &'a mut Value, path: &Path) -> anyhow::Result<&'a 
     })
 }
 
-/// Install the owned hook group and the two skills. Idempotent.
+/// Install the owned Claude hook group and the two skills. Idempotent.
 pub fn install(config: &Path, binary: &Path) -> anyhow::Result<InstallReport> {
+    install_for(&CLAUDE, config, binary)
+}
+
+/// Install the owned hook group and the two skills for `target`. Idempotent.
+pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Result<InstallReport> {
     std::fs::create_dir_all(config).with_context(|| format!("creating {}", config.display()))?;
-    let settings = config.join("settings.json");
+    let settings = config.join(target.settings);
     let manifest_path = config.join(MANIFEST);
     let before = match std::fs::read_to_string(&settings) {
         Ok(t) => Some(t),
@@ -168,7 +213,7 @@ pub fn install(config: &Path, binary: &Path) -> anyhow::Result<InstallReport> {
         Some(t) => parse_settings(&settings, t)?,
         None => json!({}),
     };
-    let desired = owned_group(binary);
+    let desired = (target.group)(binary);
     let arr = session_start_mut(&mut doc, &settings)?;
     let owned_at: Vec<usize> = arr
         .iter()
@@ -262,7 +307,12 @@ fn write_skills(config: &Path) -> anyhow::Result<Vec<String>> {
 
 /// Remove exactly what `install` added.
 pub fn uninstall(config: &Path) -> anyhow::Result<UninstallReport> {
-    let settings = config.join("settings.json");
+    uninstall_for(&CLAUDE, config)
+}
+
+/// Remove exactly what `install_for(target, ..)` added.
+pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<UninstallReport> {
+    let settings = config.join(target.settings);
     let manifest_path = config.join(MANIFEST);
     let manifest = Manifest::read(&manifest_path);
     let current = std::fs::read_to_string(&settings).ok();

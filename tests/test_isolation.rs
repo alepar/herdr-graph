@@ -348,7 +348,7 @@ fn root_reaper_reaps_protected_descendant() {
 ///
 /// * R1: `Command::new(` other than `ps`, `kill` and `git`.
 /// * R2: a read of the `HOME` variable from the process environment.
-/// * R3: an explicit `.env("HOME"` / `.env("XDG_*"` / `.env("CLAUDE_CONFIG_DIR"` / `.env("HERDR_PLUGIN_*"`: the
+/// * R3: an explicit `.env("HOME"` / `.env("XDG_*"` / `.env("CLAUDE_CONFIG_DIR"` / `.env("CODEX_HOME"` / `.env("HERDR_PLUGIN_*"`: the
 ///   environment must come from `scrubbed_env`.
 fn scan(text: &str) -> Vec<(usize, &'static str)> {
     const R1_ALLOWED: &[&str] = &[
@@ -363,6 +363,7 @@ fn scan(text: &str) -> Vec<(usize, &'static str)> {
         ".env(\"HOME\"",
         ".env(\"XDG_",
         ".env(\"CLAUDE_CONFIG_DIR\"",
+        ".env(\"CODEX_HOME\"",
         ".env(\"HERDR_PLUGIN_",
     ];
     let mut hits = Vec::new();

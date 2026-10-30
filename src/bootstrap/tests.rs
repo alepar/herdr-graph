@@ -1063,6 +1063,65 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
 }
 
 #[test]
+fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(&config).unwrap();
+    let original =
+        r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}"#;
+    std::fs::write(config.join("hooks.json"), original).unwrap();
+
+    let report = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(report.hook, HookChange::Installed);
+    assert_eq!(report.skills_written, ["seat", "graph"]);
+    assert!(!config.join("settings.json").exists());
+    let hooks: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(config.join("hooks.json")).unwrap()).unwrap();
+    assert_eq!(
+        hooks["hooks"]["SessionStart"].as_array().unwrap().len(),
+        2,
+        "{hooks}"
+    );
+    let groups = owned_groups(&hooks);
+    assert_eq!(groups.len(), 1, "{hooks}");
+    assert!(groups[0].get("matcher").is_none(), "{hooks}");
+    assert_eq!(
+        groups[0]["hooks"][0]["command"],
+        format!(
+            "'{BIN}' seat --hook-prompt --codex {}",
+            setup_claude::OWNER_MARKER
+        )
+    );
+    assert!(config.join("skills/seat/SKILL.md").exists());
+
+    let again = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(again.hook, HookChange::Unchanged);
+    assert!(again.skills_written.is_empty());
+
+    let removed = setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert!(removed.hook_removed);
+    assert_eq!(
+        std::fs::read_to_string(config.join("hooks.json")).unwrap(),
+        original
+    );
+    assert!(!config.join("skills/seat").exists());
+}
+
+#[test]
+fn hook_output_is_plain_for_claude_and_additional_context_for_codex() {
+    use crate::cli::seat::{HOOK_PROMPT, hook_output};
+    assert_eq!(hook_output(false), HOOK_PROMPT);
+    let codex: serde_json::Value = serde_json::from_str(&hook_output(true)).unwrap();
+    assert_eq!(
+        codex,
+        serde_json::json!({"hookSpecificOutput": {
+            "hookEventName": "SessionStart", "additionalContext": HOOK_PROMPT,
+        }})
+    );
+    assert!(HOOK_PROMPT.contains("/seat") && HOOK_PROMPT.contains("compaction"));
+}
+
+#[test]
 fn setup_claude_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("claude");

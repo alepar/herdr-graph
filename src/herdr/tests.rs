@@ -1040,6 +1040,7 @@ fn scrubbed_env_drops_inherited_herdr_and_claude_vars() {
             ("HERDR_PANE_ID", "w1:p1"),
             ("HERDR_ENV", "1"),
             ("CLAUDE_CONFIG_DIR", "/Users/real/.claude"),
+            ("CODEX_HOME", "/Users/real/.codex"),
             ("CLAUDECODE", "1"),
             ("CLAUDE_CODE_ENTRYPOINT", "cli"),
             ("XDG_CONFIG_HOME", "/Users/real/.config"),
@@ -1067,6 +1068,7 @@ fn scrubbed_env_drops_inherited_herdr_and_claude_vars() {
         "HERDR_PLUGIN_STATE_DIR",
         "HERDR_PLUGIN_CONFIG_DIR",
         "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
         "HERDR_GRAPH_INSTANCE",
         "HG_TEST_ROOT",
     ] {

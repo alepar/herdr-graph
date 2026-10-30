@@ -133,7 +133,7 @@ fn readme_has_required_sections() {
     for want in [
         "## Install",
         "## Create an instance",
-        "## Claude setup",
+        "## Claude and Codex setup",
         "## /seat",
         "## Plan, confirm, relay",
         "## Undo",

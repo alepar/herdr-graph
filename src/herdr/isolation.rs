@@ -73,6 +73,7 @@ pub fn live_resources_from(
             "HERDR_PLUGIN_STATE_DIR" => live.push((path, "live herdr-threads state")),
             "HERDR_PLUGIN_CONFIG_DIR" => live.push((path, "the user's Herdr plugin config")),
             "CLAUDE_CONFIG_DIR" => live.push((path, "the user's Claude config")),
+            "CODEX_HOME" => live.push((path, "the user's Codex config")),
             _ if k.starts_with("HERDR_THREADS_") && v.starts_with('/') => {
                 live.push((path, "live herdr-threads state"))
             }
@@ -94,6 +95,7 @@ pub fn live_resources_from(
         ));
         live.push((h.join(".local/state/herdr"), "live herdr-threads state"));
         live.push((h.join(".claude"), "the user's Claude config"));
+        live.push((h.join(".codex"), "the user's Codex config"));
         live.push((h.join(".claude-mem"), "the memory observer"));
     }
     live
@@ -145,6 +147,7 @@ pub const PATH_VARS: &[&str] = &[
     "HERDR_PLUGIN_STATE_DIR",
     "HERDR_PLUGIN_CONFIG_DIR",
     "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
     "HERDR_GRAPH_INSTANCE",
 ];
 
@@ -172,6 +175,7 @@ pub fn scrubbed_env_from(
         ("HERDR_PLUGIN_STATE_DIR".into(), p("threads-state")),
         ("HERDR_PLUGIN_CONFIG_DIR".into(), p("plugin-config")),
         ("CLAUDE_CONFIG_DIR".into(), p("claude")),
+        ("CODEX_HOME".into(), p("codex")),
         ("HERDR_GRAPH_INSTANCE".into(), p("graph")),
         (TEST_ROOT_VAR.into(), root.to_string_lossy().into_owned()),
     ];

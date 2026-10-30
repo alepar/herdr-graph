@@ -343,7 +343,7 @@ pub fn seat_reply(
     Ok(reply)
 }
 
-/// `seat --hook-prompt`: whether the SessionStart hook should print `run /seat`. True when `HERDR_GRAPH=1`
+/// `seat --hook-prompt`: whether the SessionStart hook should tell the session to run `/seat`. True when `HERDR_GRAPH=1`
 /// (the pane was launched by graph) or when the pane id resolves to a bound live clone (spec §9, r2).
 pub fn wants_seat_prompt(
     graph_env: Option<&str>,
