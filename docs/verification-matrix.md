@@ -3,6 +3,29 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## Threads 2.6.4 qualification and session-context re-injection (2026-10-29)
+
+Graph pins official threads v2.6.4 `cdc8423f51417670426a798d529d394d36fdafb9` (annotated tag `c5b35ad8be314069da471536e31d3581be0c755d`), superseding v2.3.1. Wire protocol stays 9 and node schema is 10, with one-way store upgrades in 2.4.1 (schema 8), 2.4.2 (9) and 2.6.0 (10). Graph compiles against the API with no production change; the lockfile change is the threads version only. All targets and features also compile against v2.7.0, which is in qualification. The real-threads tier passes against a v2.7.0 daemon (2/2), which is the version installed on blacky.
+
+| Tier (Linux x86_64, Herdr 0.9.5) | Result |
+| --- | --- |
+| `cargo test` | 699 passed, 0 failed, 1 ignored |
+| `cargo test --no-default-features` | 696 passed, 0 failed, 1 ignored |
+| `cargo test --features test-support` | 715 passed, 0 failed, 1 ignored |
+| `cargo test --features private-herdr -- --test-threads=1` | 746 passed, 0 failed, 6 ignored |
+| `HG_REAL_THREADS=1 … --test threads_real` | 2 passed (v2.6.4), 2 passed (v2.7.0) |
+| `python3 -m unittest discover -s scripts/tests` | 35 passed |
+| `scripts/herdr-release-smoke --versions 0.9.1 … 0.9.5 --jobs 2` | 185/185, all cleanup and diagnostic gates clean |
+
+The first full run failed one test, `readme_has_required_sections`, because the README heading was renamed to "Claude and Codex setup". It passes after updating the expected heading; that rerun covered `--test packaging` only.
+
+Session context after compaction. Graph's SessionStart hook prints the `/seat` prompt in a graph pane. Claude fires SessionStart with source `startup`, `resume`, `clear` and `compact`, and Codex 0.163 does the same. The checks:
+
+- Claude 2.1.312, headless (`claude -p`, `/compact` on resume). `SessionStart:compact` re-runs graph's hook, and its output lands after the compact boundary. The old text `run /seat` led to `/seat` in 1 of 4 opportunities, and never after compaction. The new text says why and that a summary is not a substitute. With it, `/seat` ran 12 of 12 times: at start and again after compaction in each of 6 sessions. All 6 then answered with the codeword from the stub seat's AGENTS.md.
+- Codex 0.163.0, interactive in a throwaway Herdr tab. Graph had no Codex hook before; `setup codex` adds one to `hooks.json` that returns `additionalContext`. After trusting it through `/hooks`, startup ran the seat skill, and so did `/compact` followed by a prompt. The rollout carries the hook text twice, and Codex answered with the stub seat's codeword. The profile's `hooks.json` and `config.toml` were restored to their exact prior bytes afterwards.
+
+Both runs used a stub `herdr-graph` on PATH that returns a bound seat, since this machine has no graph instance. A real `seat.resolve` reply was not exercised in these sessions.
+
 ## Threads 2.3.1 qualification (2026-10-23)
 
 Graph pins official threads v2.3.1 `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144` (annotated tag `558ae85fc7594fde685b120dda8a15dde14a83cb`), protocol 9, superseding v2.0.4. Consumed public API delta from v2.0.4: `BindingPresence` gains optional, defaulted `binding_id`/`native_session`/`provenance`; `CheckInMode` gains `Fork`; capabilities `seat.binding_details_v1` and `handoff.launch_directories_v1` are added. Graph constructs and matches neither type, and no graph production code changed for the dependency. The lockfile change is the threads package version plus `tempfile`'s `getrandom` 0.4.3 → 0.3.4 from re-resolution.

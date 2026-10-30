@@ -23,17 +23,18 @@ herdr-graph init <path> [--with-examples] [--no-user-config]
 
 The instance is located by, in order: `HERDR_GRAPH_INSTANCE`, the plugin config dir, then `~/.config/herdr-graph/config.toml`. `init` prints where it wrote the user config (or that it left one alone); `--no-user-config` writes nothing under `$HOME`, so probes can create an instance and point at it with `HERDR_GRAPH_INSTANCE`.
 
-## Claude setup
+## Claude and Codex setup
 
 ```sh
-herdr-graph setup claude [--uninstall]
+herdr-graph setup claude [--uninstall]   # ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json
+herdr-graph setup codex [--uninstall]    # ${CODEX_HOME:-~/.codex}/hooks.json
 ```
 
-Installs the SessionStart hook and the `/seat` and `graph` skills. Herdr manifests do not declare Claude skills or hooks, so this command does it.
+Each installs a SessionStart hook and the `seat` and `graph` skills. Herdr manifests do not declare harness skills or hooks, so these commands do it. In a graph pane the hook tells the session to run the seat skill. Both harnesses fire SessionStart on startup, resume, clear and compaction, so a session whose context was reset or compacted reloads its seat role. Codex runs a new or changed hook only after you trust it in an interactive session (the startup review or `/hooks`); setup never writes that trust.
 
 ## /seat
 
-`/seat` (in a Claude session started by herdr-graph) shows or sets the session's seat identity. The `graph` skill documents the CLI for agents.
+`/seat` (in a Claude or Codex session started by herdr-graph) shows or sets the session's seat identity. The `graph` skill documents the CLI for agents.
 
 ## Plan, confirm, relay
 
@@ -77,7 +78,7 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 
 
 herdr-graph consumes herdr-threads only through its public client API (`third_party/herdr-threads`). Summarizer requests use service-ACK delivery (herdr-threads epic `ht-5nb`, on herdr-threads main since 84de563d): graph registers `service_session_v2`, posts an ACK-required request on the summarizer seat channel, and reads its receipts; an ACK means the summarizer received (dispatched) the request, never that it was processed. ACK delivery also requires `messages.send_time_receipts_v1`. If a compatible daemon definitively lacks either capability, graph falls back to Notify plus `herdr-graph request ack`. The cargo feature `threads-service-ack` is on by default (`--no-default-features` forces the fallback).
 
-The verified dependency target is herdr-threads **2.3.1**, release commit `bdb0c5a5ac4623dc3a3187d53f6b20f814bd4144` (`v2.3.1`), dependency submodule pinned to that exact official release commit, using wire protocol **9**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v2.3.1). Threads 2.1.0–2.3.0 upgrade the threads node store one way (schemas 3–5); back up the threads state directory before upgrading the daemon if you might downgrade. Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane resolution uses the public host-qualified `ResolveSeat` operation for graph-managed panes. It may allocate a bare local seat before an agent enrolls; it never checks in, accepts invitations or ACKs. Each call uses a fresh operation key so a later pane rebind cannot replay an old resolution. A lost response may leave a bare seat; repeating resolution returns the current unique owner for that host and pane. Restore holds remain authoritative. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
+The verified dependency target is herdr-threads **2.6.4**, release commit `cdc8423f51417670426a798d529d394d36fdafb9` (`v2.6.4`), dependency submodule pinned to that exact official release commit, using wire protocol **9**. [Official release](https://github.com/alepar/herdr-threads/releases/tag/v2.6.4). Graph also runs against a 2.7.0 daemon (same protocol and node schema). Threads 2.1.0–2.6.0 upgrade the threads node store one way (schemas 3–10); back up the threads state directory before upgrading the daemon if you might downgrade. Rebuild graph when upgrading the threads checkout, and restart the graph daemon to load that binary; a binary built against an older wire protocol cannot communicate with the upgraded threads daemon. Pane resolution uses the public host-qualified `ResolveSeat` operation for graph-managed panes. It may allocate a bare local seat before an agent enrolls; it never checks in, accepts invitations or ACKs. Each call uses a fresh operation key so a later pane rebind cannot replay an old resolution. A lost response may leave a bare seat; repeating resolution returns the current unique owner for that host and pane. Restore holds remain authoritative. A `not_required` receipt represents a waived ACK obligation and never marks a summarizer request as dispatched. Graph-managed channels are exempt from threads' automatic quiet-channel archival.
 
 ### herdr-threads discovery
 
@@ -118,7 +119,7 @@ Ordinary undo refuses reconnect actions and actions predating the current namesp
 
 ### Initializing the pinned threads dependency
 
-The repository pins `third_party/herdr-threads` as a Git submodule at the exact official v2.3.1 release commit. Initialize it before building; this does not change any separate local threads checkout:
+The repository pins `third_party/herdr-threads` as a Git submodule at the exact official v2.6.4 release commit. Initialize it before building; this does not change any separate local threads checkout:
 
 ```sh
 git submodule update --init --recursive
@@ -143,13 +144,13 @@ Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) go
 
 ## Verification matrix
 
-[docs/verification-matrix.md](docs/verification-matrix.md) records the October 23 threads 2.3.1 qualification on Linux x86_64 with Herdr 0.9.5 (all tiers 1–3 and 5 pass), and the October 18 threads 2.0.4 qualification on macOS aarch64: Herdr **0.9.1–0.9.5 each passed all 37 private graph/API/threads cases** (185 total), with clean teardown and retained private-daemon/plugin diagnostics. The [qualification handoff](docs/releases/2026-10-17-threads2-herdr-qualification.md) records exact source revisions, feature-suite counts, checksums, preserved failures, recovery limits and review/integration gates. October 5/7 evidence remains historical and unchanged.
+[docs/verification-matrix.md](docs/verification-matrix.md) records the October 29 threads 2.6.4 qualification and the October 23 threads 2.3.1 qualification on Linux x86_64 with Herdr 0.9.5 (all tiers 1–3 and 5 pass), and the October 18 threads 2.0.4 qualification on macOS aarch64: Herdr **0.9.1–0.9.5 each passed all 37 private graph/API/threads cases** (185 total), with clean teardown and retained private-daemon/plugin diagnostics. The [qualification handoff](docs/releases/2026-10-17-threads2-herdr-qualification.md) records exact source revisions, feature-suite counts, checksums, preserved failures, recovery limits and review/integration gates. October 5/7 evidence remains historical and unchanged.
 
 `verified-real` means exercised against private Herdr or an isolated herdr-threads daemon. `verified-fake` means covered with fakes or a real Git store and journal. `assumed` marks behavior that remains unexercised or skipped.
 
 Run tier 3 serially: `cargo test --features private-herdr -- --test-threads=1`. The seat-rename and undo-adoption regressions wait for the derived view and pane token respectively. Historical defects D1–D3 have been fixed; their regressions run in the normal suite.
 
-Real-agent launch/resume, SessionStart bootstrap, and the agent summarizer flow still require the opt-in tier and credentials. Service-ACK delivery is exercised against an isolated 2.3.1 threads daemon with synthetic public-hook registration and cooperative CLI acceptance/ACK; real summarizer-agent delivery is separate. Herdr live handoff remains untested.
+Real-agent launch/resume, SessionStart bootstrap, and the agent summarizer flow still require the opt-in tier and credentials. Service-ACK delivery is exercised against an isolated 2.6.4 threads daemon with synthetic public-hook registration and cooperative CLI acceptance/ACK; real summarizer-agent delivery is separate. Herdr live handoff remains untested.
 
 Run feature tiers sequentially: another Cargo feature build can replace `target/debug/herdr-graph` while subprocess tests are using it.
 
