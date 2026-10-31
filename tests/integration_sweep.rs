@@ -964,11 +964,11 @@ mod wiring {
 
     /// `herdr-graph seat <args>` as a seat pane would run it: cleared env, the instance and the pane id only.
     fn seat_cmd(root: &Path, pane: &str, tmp: &Path, args: &[&str]) -> std::process::Output {
-        std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+        std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph")) // isolation-ok: env cleared, HOME is a tempdir
             .env_clear()
             .env("HERDR_GRAPH_INSTANCE", root)
             .env("HERDR_PANE_ID", pane)
-            .env("HOME", tmp)
+            .env("HOME", tmp) // isolation-ok: HOME is a tempdir
             .current_dir(tmp)
             .arg("seat")
             .args(args)
@@ -1065,11 +1065,11 @@ mod wiring {
         let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
         let run = |args: &[&str]| {
             std::fs::create_dir_all(&home).unwrap();
-            std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+            std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph")) // isolation-ok: env cleared, HOME is a tempdir
                 .env_clear()
-                .env("HOME", &home)
-                .env("CLAUDE_CONFIG_DIR", &claude)
-                .env("CODEX_HOME", &codex)
+                .env("HOME", &home) // isolation-ok: tempdir HOME
+                .env("CLAUDE_CONFIG_DIR", &claude) // isolation-ok: tempdir config dir
+                .env("CODEX_HOME", &codex) // isolation-ok: tempdir config dir
                 .env("HERDR_GRAPH_INSTANCE", &instance)
                 .current_dir(dir.path())
                 .args(args)
