@@ -1,0 +1,7 @@
+diff --git a/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md
+new file mode 100644
+index 0000000..074147b
+--- /dev/null
++++ b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md
+@@ -0,0 +1 @@
++summary: flag-sweep 0 · unstated 0 · citations 0 (dependent 0, unwired 0, unknown 0)

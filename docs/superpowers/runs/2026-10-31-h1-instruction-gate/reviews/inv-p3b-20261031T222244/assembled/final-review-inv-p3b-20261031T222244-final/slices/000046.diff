@@ -1,0 +1,34 @@
+diff --git a/src/cli/setup.rs b/src/cli/setup.rs
+index 921bd28..89a8c23 100644
+--- a/src/cli/setup.rs
++++ b/src/cli/setup.rs
+@@ -82,6 +82,14 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
+                 "not installed"
+             }
+         );
++        println!(
++            "apply gate: {}",
++            if r.gate_removed {
++                "removed"
++            } else {
++                "not installed"
++            }
++        );
+         if r.skills_removed.is_empty() {
+             println!("skills: none installed");
+         } else {
+@@ -100,6 +108,14 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
+             HookChange::Unchanged => "already installed",
+         }
+     );
++    println!(
++        "apply gate: {}",
++        match r.gate {
++            HookChange::Installed => "installed",
++            HookChange::Updated => "updated",
++            HookChange::Unchanged => "already installed",
++        }
++    );
+     if r.skills_written.is_empty() {
+         println!("skills: already installed");
+     } else {

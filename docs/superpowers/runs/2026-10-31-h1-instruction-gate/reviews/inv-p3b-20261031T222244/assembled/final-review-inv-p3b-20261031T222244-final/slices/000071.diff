@@ -1,0 +1,29 @@
+diff --git a/src/templates/document.rs b/src/templates/document.rs
+index 313e8fc..d5ec56b 100644
+--- a/src/templates/document.rs
++++ b/src/templates/document.rs
+@@ -56,6 +56,24 @@ pub struct FieldChange {
+ }
+ 
+ impl TemplateDocument {
++    /// `(field path, text)` for every instruction text the document sets: the root `agents_md`, and each
++    /// member's `agents_md` and `responsibility` that is `Some`.
++    pub fn instruction_texts(&self) -> Vec<(String, &str)> {
++        let mut out = Vec::new();
++        if let Some(t) = &self.agents_md {
++            out.push(("agents_md".to_owned(), t.as_str()));
++        }
++        for m in &self.members {
++            if let Some(t) = &m.agents_md {
++                out.push((format!("members.{}.agents_md", m.name), t.as_str()));
++            }
++            if let Some(t) = &m.responsibility {
++                out.push((format!("members.{}.responsibility", m.name), t.as_str()));
++            }
++        }
++        out
++    }
++
+     pub fn parse(text: &str) -> Result<Self, String> {
+         let doc: Self = toml::from_str(text).map_err(|e| format!("template document: {e}"))?;
+         doc.validate()?;

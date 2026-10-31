@@ -1,0 +1,23 @@
+diff --git a/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md
+new file mode 100644
+index 0000000..ec2352f
+--- /dev/null
++++ b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md
+@@ -0,0 +1,17 @@
++GAP · R15 · integration sweep not yet a bead
++GAP · R16 · writer inventory has no owner before the sweep
++GAP · out-of-apply commits · direct git commits to the graph repo would be rendered
++GAP · gate bypass · rewrapped invocations, socket calls, settings edits, prompt-skipping modes
++GAP · R17 · user cannot check the prompt hash against the diff
++GAP · templates as sources · template instructions need a plan-only path
++GAP · R3 · summarizer template file not named
++GAP · R9 · relay hint unowned
++GAP · R18 · Codex coverage may be documentation only
++GAP · harness-native nested loading · nested CLAUDE.md loading via data paths
++GAP · e2e slice · set -> apply -> render not asserted end to end
++GAP · R14 · docs omit undo
++UNOWNED-SEAM · instruction-vs-data predicate · hg-45e.8 hardcodes the instruction set
++UNOWNED-SEAM · committed-revision reader · hg-45e.4/.5/.6/.13
++UNOWNED-SEAM · undo preview diff · hg-45e.5 vs hg-45e.2
++UNOWNED-SEAM · truncation contract · hg-45e.6/.7/.14
++UNOWNED-SEAM · bound_paths helper · hg-45e.6/.7/.14

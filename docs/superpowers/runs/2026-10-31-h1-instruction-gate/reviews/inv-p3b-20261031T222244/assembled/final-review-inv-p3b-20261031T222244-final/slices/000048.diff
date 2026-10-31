@@ -1,0 +1,24 @@
+diff --git a/src/config.rs b/src/config.rs
+index ade2a4e..890523b 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -33,6 +33,10 @@ pub struct Env {
+     /// `HERDR_PLUGIN_STATE_DIR` (herdr-graph's own plugin state dir under Herdr).
+     pub plugin_state_dir: Option<PathBuf>,
+     pub xdg_state_home: Option<PathBuf>,
++    /// `CLAUDE_CONFIG_DIR`.
++    pub claude_config_dir: Option<PathBuf>,
++    /// `CODEX_HOME`.
++    pub codex_home: Option<PathBuf>,
+ }
+ 
+ fn var(name: &str) -> Option<String> {
+@@ -52,6 +56,8 @@ impl Env {
+             threads_state_dir: var("HERDR_GRAPH_THREADS_STATE_DIR").map(PathBuf::from),
+             plugin_state_dir: var("HERDR_PLUGIN_STATE_DIR").map(PathBuf::from),
+             xdg_state_home: var("XDG_STATE_HOME").map(PathBuf::from),
++            claude_config_dir: var("CLAUDE_CONFIG_DIR").map(PathBuf::from),
++            codex_home: var("CODEX_HOME").map(PathBuf::from),
+         }
+     }
+ }

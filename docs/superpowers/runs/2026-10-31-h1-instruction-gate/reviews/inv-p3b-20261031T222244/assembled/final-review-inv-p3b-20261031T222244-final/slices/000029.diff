@@ -1,0 +1,13 @@
+diff --git a/evidence/hg-45e.6/bootstrap-tests.log b/evidence/hg-45e.6/bootstrap-tests.log
+new file mode 100644
+index 0000000..c6fc774
+--- /dev/null
++++ b/evidence/hg-45e.6/bootstrap-tests.log
+@@ -0,0 +1,7 @@
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
++     Running unittests src/lib.rs (target/debug/deps/herdr_graph-68a9e8c866085df8)
++
++running 41 tests
++
++test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 642 filtered out; finished in 0.36s
++

@@ -1,0 +1,39 @@
+diff --git a/src/plan/types.rs b/src/plan/types.rs
+index 2260382..792f74e 100644
+--- a/src/plan/types.rs
++++ b/src/plan/types.rs
+@@ -34,6 +34,14 @@ impl PlanEffect {
+         self
+     }
+ 
++    /// The effect's unified diff detail, when it carries one (rendered as a block, never inline).
++    pub fn diff(&self) -> Option<&str> {
++        self.detail
++            .get("diff")
++            .and_then(|d| d.as_str())
++            .filter(|d| !d.is_empty())
++    }
++
+     /// One-line human rendering: `<kind> <object> <detail summary>`, with an `(induced)` suffix.
+     pub fn describe(&self) -> String {
+         let mut s = format!("{} {}", self.kind, self.object);
+@@ -41,10 +49,15 @@ impl PlanEffect {
+             serde_json::Value::Null => {}
+             serde_json::Value::Object(m) if m.is_empty() => {}
+             serde_json::Value::Object(m) => {
+-                let parts: Vec<String> =
+-                    m.iter().map(|(k, v)| format!("{k}={}", short(v))).collect();
+-                s.push(' ');
+-                s.push_str(&parts.join(" "));
++                let parts: Vec<String> = m
++                    .iter()
++                    .filter(|(k, _)| k.as_str() != "diff")
++                    .map(|(k, v)| format!("{k}={}", short(v)))
++                    .collect();
++                if !parts.is_empty() {
++                    s.push(' ');
++                    s.push_str(&parts.join(" "));
++                }
+             }
+             other => {
+                 s.push(' ');

@@ -1,0 +1,11 @@
+diff --git a/evidence/hg-45e.18/lib-tests.log b/evidence/hg-45e.18/lib-tests.log
+new file mode 100644
+index 0000000..75ff361
+--- /dev/null
++++ b/evidence/hg-45e.18/lib-tests.log
+@@ -0,0 +1,5 @@
++test plan::tests::seat_override_section_rejects_inadmissible_text ... ok
++test plan::tests::seat_override_section_cap_warning ... ok
++test templates::tests::template_edit_rejects_inadmissible_agents_md ... ok
++test templates::tests::template_edit_cap_warning ... ok
++test result: ok. 695 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s

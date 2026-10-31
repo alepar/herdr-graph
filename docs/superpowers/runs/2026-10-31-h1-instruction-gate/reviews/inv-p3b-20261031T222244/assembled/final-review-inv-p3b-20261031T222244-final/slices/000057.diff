@@ -1,0 +1,12 @@
+diff --git a/src/model/mod.rs b/src/model/mod.rs
+index 613d2d7..83cd412 100644
+--- a/src/model/mod.rs
++++ b/src/model/mod.rs
+@@ -1,6 +1,7 @@
+ //! IDs, record schemas, (de)serialization (spec §2). Records are TOML with `schema`, `id`, `rev`.
+ pub mod action;
+ pub mod application;
++pub mod b64;
+ pub mod change;
+ pub mod clone;
+ pub mod common;

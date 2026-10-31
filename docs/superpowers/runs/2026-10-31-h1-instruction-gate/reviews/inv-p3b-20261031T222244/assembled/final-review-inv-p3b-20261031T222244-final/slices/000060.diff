@@ -1,0 +1,12 @@
+diff --git a/src/plan/core_kinds.rs b/src/plan/core_kinds.rs
+index 9eac527..571c311 100644
+--- a/src/plan/core_kinds.rs
++++ b/src/plan/core_kinds.rs
+@@ -46,6 +46,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
+     reg.register(Arc::new(SeatResurrect));
+     reg.register(Arc::new(CloneAdd));
+     reg.register(Arc::new(CloneRetire));
++    reg.register(Arc::new(crate::plan::instructions::InstructionsKind));
+ }
+ 
+ // ---------------------------------------------------------------------------------------------

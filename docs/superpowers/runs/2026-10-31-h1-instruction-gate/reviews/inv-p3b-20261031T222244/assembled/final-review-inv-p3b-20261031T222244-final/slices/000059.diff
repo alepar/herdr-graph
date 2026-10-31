@@ -1,0 +1,16 @@
+diff --git a/src/plan/commands.rs b/src/plan/commands.rs
+index 48b1f95..d584cc4 100644
+--- a/src/plan/commands.rs
++++ b/src/plan/commands.rs
+@@ -65,6 +65,11 @@ pub fn render(p: &Plan, hash: &str) -> String {
+     }
+     for (i, e) in p.effects.iter().enumerate() {
+         out.push_str(&format!("  {}. {}\n", i + 1, e.describe()));
++        if let Some(d) = e.diff() {
++            for line in d.lines() {
++                out.push_str(&format!("      {line}\n"));
++            }
++        }
+     }
+     if !p.warnings.is_empty() {
+         out.push_str("warnings:\n");

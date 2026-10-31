@@ -1,0 +1,106 @@
+diff --git a/src/model/tests.rs b/src/model/tests.rs
+index d505f5c..bd9df1c 100644
+--- a/src/model/tests.rs
++++ b/src/model/tests.rs
+@@ -40,6 +40,58 @@ fn ts() -> Timestamp {
+ mod ids {
+     use super::*;
+ 
++    #[test]
++    fn graph_id_prefix_listed_and_no_prefix_is_a_prefix_of_another() {
++        assert!(
++            IdKind::ALL
++                .iter()
++                .any(|(k, p)| *k == IdKind::Graph && *p == "gr_")
++        );
++        assert_eq!(IdKind::Graph.prefix(), "gr_");
++        for (i, a) in IdKind::ALL.iter().enumerate() {
++            for (j, b) in IdKind::ALL.iter().enumerate() {
++                if i != j {
++                    assert!(!b.1.starts_with(a.1), "{} is a prefix of {}", a.1, b.1);
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn graph_id_from_instance_id_round_trips() {
++        let u = ulid::Ulid::new().to_string();
++        let g = GraphId::from_instance_id(&u).unwrap();
++        assert_eq!(g.as_str(), format!("gr_{u}"));
++        assert_eq!(AnyId::parse(g.as_str()).unwrap(), g.to_any());
++        assert_eq!(g.to_any().kind(), IdKind::Graph);
++        assert_eq!(GraphId::from_instance_id(&u).unwrap(), g);
++    }
++
++    #[test]
++    fn graph_id_rejects_an_instance_id_that_does_not_fit() {
++        let u = ulid::Ulid::new().to_string();
++        assert!(GraphId::from_instance_id("inst").is_err());
++        assert!(GraphId::from_instance_id("").is_err());
++        assert!(GraphId::from_instance_id(&u.to_ascii_lowercase()).is_err());
++    }
++
++    #[test]
++    fn graph_record_graph_id() {
++        let mut rec = GraphRecord {
++            schema: 1,
++            instance_id: ulid::Ulid::new().to_string(),
++            schema_version: 1,
++            summarizer_seat: None,
++            defaults: GraphDefaults::default(),
++        };
++        assert_eq!(
++            rec.graph_id().unwrap().as_str(),
++            format!("gr_{}", rec.instance_id)
++        );
++        rec.instance_id = "inst".into();
++        assert!(rec.graph_id().is_err());
++    }
++
+     #[test]
+     fn id_new_has_prefix_and_ulid_body() {
+         let id = SeatId::new();
+@@ -924,6 +976,42 @@ fn request_kind_categories() {
+     }
+ }
+ 
++#[test]
++fn legacy_content_write_records_deserialize() {
++    let req: ChangeRequest = serde_json::from_value(serde_json::json!({
++        "kind": "content_write",
++        "args": {"object": "x", "rel": "summaries/x.md"},
++        "relied_on": [],
++        "requester": {},
++    }))
++    .unwrap();
++    assert_eq!(req.kind, RequestKind::ContentWrite);
++    assert_eq!(serde_json::to_value(req.kind).unwrap(), "content_write");
++    assert_eq!(RequestKind::ContentWrite.category(), Category::Content);
++
++    let rec = OperationRecord {
++        schema: 1,
++        id: OpId::new(),
++        rev: 1,
++        kind: RequestKind::ContentWrite,
++        summary: "content write x summaries/x.md".into(),
++        requester: Requester::default(),
++        state: OpState::Committed,
++        confirmation: None,
++        plan: None,
++        commit: None,
++        action: None,
++        supersedes: None,
++        superseded_by: None,
++        admitted_at: ts(),
++        finished_at: None,
++        rejection: None,
++    };
++    let text = toml::to_string(&rec).unwrap();
++    assert!(text.contains("kind = \"content_write\""), "{text}");
++    assert_eq!(toml::from_str::<OperationRecord>(&text).unwrap(), rec);
++}
++
+ #[test]
+ fn byte_range_rejects_inverted() {
+     assert!(ByteRange::new(5, 3).is_none());

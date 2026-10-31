@@ -1,0 +1,13 @@
+diff --git a/docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md
+new file mode 100644
+index 0000000..62b71ac
+--- /dev/null
++++ b/docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md
+@@ -0,0 +1,7 @@
++# friction log — 2026-10-31-h1-instruction-gate
++- [2026-10-31 coverage r1] Both coverage reviewers emitted NEEDS-SPEC on the root (spec is one level); not re-dispatched — the orchestrator answered the questions from the committed spec and recorded the rejections with spec citations (cl-5, cl-6, cl-8). Cost saving; slight deviation from the NEEDS-SPEC re-run rule.
++- [2026-10-31 roast-design r1] rung: Workflow (wf_b216df00-086)
++- [2026-10-31 roast-design r2] rung: Workflow (wf_5115f87b-349)
++- [2026-10-31 code launch] coordinator Workflow wf_acd204f1-3f5; concurrency capped at 6 (disk: 287G free, 46G warm target; each task worktree seeds target/ by reflink per the epic Global Constraints); mergeCheck covers default + --all-features
++- [2026-10-31 design] run.md briefly held two invented fields (designRoast-*) and approval records outside the approvals block; moved to design-loop-notes.md and regrouped before launch
++- [2026-10-31 code inv-p3] all 8 merge attempts failed mergeCheck: the run worktree (integration worktree) was created with git worktree add and never ran git submodule update --init, so third_party/herdr-threads (a path dependency) was empty and cargo check failed on every merged tree regardless of task code; task worktrees initialized it themselves, so task-level checks passed. Root cause in super-auto pre-flight (run worktree setup does not init submodules). Fixed by initializing the submodule; 8 blocker beads closed; relaunched. Cost: one full invocation (~28 min, 100 agents, 46 min of rework dispatch time).

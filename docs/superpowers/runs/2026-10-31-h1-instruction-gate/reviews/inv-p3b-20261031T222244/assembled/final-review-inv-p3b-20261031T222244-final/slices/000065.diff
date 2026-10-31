@@ -1,0 +1,393 @@
+diff --git a/src/plan/tests.rs b/src/plan/tests.rs
+index 2747b29..bca6a47 100644
+--- a/src/plan/tests.rs
++++ b/src/plan/tests.rs
+@@ -2846,3 +2846,388 @@ fn reconnect_rejects_stored_and_already_queued_preboundary_plans() {
+         );
+     }
+ }
++
++mod line_diff {
++    use crate::plan::line_diff::unified;
++
++    fn numbered(n: usize, changed: &[usize]) -> String {
++        (1..=n)
++            .map(|i| {
++                if changed.contains(&i) {
++                    format!("L{i}\n")
++                } else {
++                    format!("l{i}\n")
++                }
++            })
++            .collect()
++    }
++
++    fn hunks(d: &str) -> usize {
++        d.lines().filter(|l| l.starts_with("@@")).count()
++    }
++
++    #[test]
++    fn identical_inputs_give_empty_diff() {
++        assert_eq!(unified("a\nb\n", "a\nb\n"), "");
++    }
++
++    #[test]
++    fn empty_before_is_one_add_hunk() {
++        assert_eq!(unified("", "x\ny\n"), "@@ -0,0 +1,2 @@\n+x\n+y\n");
++    }
++
++    #[test]
++    fn empty_after_is_one_remove_hunk() {
++        assert_eq!(unified("x\ny\n", ""), "@@ -1,2 +0,0 @@\n-x\n-y\n");
++    }
++
++    #[test]
++    fn change_in_the_middle_has_three_context_lines() {
++        assert_eq!(
++            unified(&numbered(10, &[]), &numbered(10, &[5])),
++            "@@ -2,7 +2,7 @@\n l2\n l3\n l4\n-l5\n+L5\n l6\n l7\n l8\n"
++        );
++    }
++
++    #[test]
++    fn add_at_end() {
++        assert_eq!(
++            unified("a\nb\n", "a\nb\nc\n"),
++            "@@ -1,2 +1,3 @@\n a\n b\n+c\n"
++        );
++    }
++
++    #[test]
++    fn remove_at_start() {
++        assert_eq!(
++            unified("a\nb\nc\n", "b\nc\n"),
++            "@@ -1,3 +1,2 @@\n-a\n b\n c\n"
++        );
++    }
++
++    #[test]
++    fn distant_changes_make_two_hunks_close_ones_merge() {
++        let before = numbered(20, &[]);
++        assert_eq!(hunks(&unified(&before, &numbered(20, &[2, 18]))), 2);
++        assert_eq!(hunks(&unified(&before, &numbered(20, &[2, 8]))), 1);
++    }
++
++    #[test]
++    fn missing_final_newline_still_diffs_by_line() {
++        assert_eq!(unified("a", "b"), "@@ -1 +1 @@\n-a\n+b\n");
++    }
++}
++
++#[test]
++fn render_prints_diff_block_under_its_effect() {
++    let mut p = sample_plan();
++    p.effects.push(PlanEffect::new(
++        "instructions.set",
++        SeatId::new(),
++        json!({"file": "AGENTS.md", "before_sha": "absent", "after_sha": "abc", "diff": "@@ -0,0 +1 @@\n+hello\n"}),
++    ));
++    let text = super::commands::render(&p, "h");
++    let lines: Vec<&str> = text.lines().collect();
++    let i = lines
++        .iter()
++        .position(|l| l.contains("instructions.set"))
++        .expect("effect line");
++    assert!(lines[i].contains("file=AGENTS.md"));
++    assert!(!lines[i].contains("diff="));
++    assert_eq!(lines[i + 1], "      @@ -0,0 +1 @@");
++    assert_eq!(lines[i + 2], "      +hello");
++    assert!(text.contains("\n      @@ -0,0 +1 @@\n      +hello\n"));
++}
++
++#[test]
++fn describe_omits_diff_detail() {
++    let e = PlanEffect::new(
++        "instructions.set",
++        SeatId::new(),
++        json!({"file": "AGENTS.md", "diff": "@@ -0,0 +1 @@\n+hello\n"}),
++    );
++    let d = e.describe();
++    assert!(!d.contains("diff=") && !d.contains("+hello"));
++    assert!(d.contains("file=AGENTS.md"));
++    assert_eq!(e.diff(), Some("@@ -0,0 +1 @@\n+hello\n"));
++    let plain = PlanEffect::new("seat.retire", SeatId::new(), json!({"name": "x"}));
++    assert_eq!(plain.diff(), None);
++    assert!(plain.describe().contains("name=x"));
++}
++
++mod instructions {
++    use super::*;
++    use crate::model::action::ActionKind;
++    use crate::plan::commands::render;
++    use crate::plan::line_diff::unified;
++    use crate::ports::store::RepoPath;
++
++    /// teamspace alpha with seats a1, a2; teamspace beta with b1.
++    fn world(fx: &Fx) {
++        commit(fx, "teamspace create alpha");
++        commit(fx, "teamspace create beta");
++        commit(fx, "seat create a1 --teamspace alpha");
++        commit(fx, "seat create a2 --teamspace alpha");
++        commit(fx, "seat create b1 --teamspace beta");
++    }
++
++    fn src(fx: &Fx, name: &str, text: &[u8]) -> String {
++        let p = fx.root.parent().unwrap().join(name);
++        std::fs::write(&p, text).unwrap();
++        p.display().to_string()
++    }
++
++    fn err(fx: &Fx, change: &str) -> String {
++        create_plan(&fx.deps, &CallerInfo::default(), words(change))
++            .expect_err(change)
++            .message
++    }
++
++    fn read(fx: &Fx, p: &RepoPath) -> Option<Vec<u8>> {
++        view(fx).read_file(p).unwrap()
++    }
++
++    fn a1_agents(fx: &Fx) -> RepoPath {
++        seat(fx, "a1", None).0.folder.join("AGENTS.md").unwrap()
++    }
++
++    const TAKES_EFFECT: &str = "takes effect at each affected seat's next /seat (start, clear, compaction); a live or resumed session may still hold the previous text until its context is reset:";
++
++    #[test]
++    fn set_plans_effect_diff_and_affected_warning_per_scope() {
++        let fx = fx();
++        world(&fx);
++        let text = "one\ntwo\n";
++        let f = src(&fx, "style.md", text.as_bytes());
++        let graph = layout::graph_id(&view(&fx)).unwrap().to_any();
++        let cases = [
++            ("global rules/style.md", graph, "global", "a1, a2, b1"),
++            (
++                "teamspace alpha rules/style.md",
++                teamspace(&fx, "alpha").1.id.to_any(),
++                "teamspace",
++                "a1, a2",
++            ),
++            (
++                "seat a1 AGENTS.md",
++                seat(&fx, "a1", None).1.id.to_any(),
++                "seat",
++                "a1",
++            ),
++        ];
++        for (change, object, _scope, names) in cases {
++            let sp = plan(&fx, &format!("instructions set {change} --from {f}"));
++            assert_eq!(kinds_of(&sp), ["instructions.set"], "{change}");
++            let e = &sp.plan.effects[0];
++            assert_eq!(e.object, object, "{change}");
++            assert_eq!(e.detail["file"], change.rsplit(' ').next().unwrap());
++            assert_eq!(e.detail["before_sha"], "absent");
++            assert_eq!(
++                e.detail["after_sha"],
++                git2::Oid::hash_object(git2::ObjectType::Blob, text.as_bytes())
++                    .unwrap()
++                    .to_string()
++            );
++            assert_eq!(e.detail["diff"], unified("", text));
++            let shown = render(&sp.plan, &sp.hash);
++            assert!(shown.contains("      +one\n      +two\n"), "{shown}");
++            assert!(
++                sp.plan
++                    .warnings
++                    .iter()
++                    .any(|w| *w == format!("{TAKES_EFFECT} {names}")),
++                "{change}: {:?}",
++                sp.plan.warnings
++            );
++        }
++    }
++
++    #[test]
++    fn apply_writes_file_and_action_record() {
++        let fx = fx();
++        world(&fx);
++        let f = src(&fx, "a.md", b"hello\n");
++        let row = commit(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {f}"),
++        );
++        let a1 = seat(&fx, "a1", None).1.id;
++        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"hello\n");
++        let act = action_of(&fx, &row);
++        assert_eq!(act.kind, ActionKind::InstructionsEdit);
++        assert_eq!(act.affected[0].object, a1.to_any());
++        assert_eq!(act.compensation["file"].as_str(), Some("AGENTS.md"));
++        assert!(!act.compensation.contains_key("before"));
++        assert_eq!(act.compensation["after"].as_str(), Some("hello\n"));
++
++        let row = commit(&fx, "instructions clear seat a1 AGENTS.md");
++        assert!(read(&fx, &a1_agents(&fx)).is_none());
++        let act = action_of(&fx, &row);
++        assert_eq!(act.kind, ActionKind::InstructionsEdit);
++        assert_eq!(act.compensation["before"].as_str(), Some("hello\n"));
++        assert!(!act.compensation.contains_key("after"));
++    }
++
++    #[test]
++    fn edit_after_planning_is_stale() {
++        let fx = fx();
++        world(&fx);
++        let a = src(&fx, "a.md", b"A\n");
++        let b = src(&fx, "b.md", b"B\n");
++        let stale = plan(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {a}"),
++        );
++        commit(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {b}"),
++        );
++        let row = apply_plan(&fx, &stale);
++        assert_eq!(row.rejection.unwrap().reason, "stale_plan");
++        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"B\n");
++    }
++
++    #[test]
++    fn plan_time_rejections() {
++        let fx = fx();
++        world(&fx);
++        let f = src(&fx, "a.md", b"same\n");
++        commit(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {f}"),
++        );
++        let e = err(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {f}"),
++        );
++        assert!(e.contains("no change"), "{e}");
++        let e = err(&fx, "instructions clear seat a2 AGENTS.md");
++        assert!(e.contains("no such instruction file"), "{e}");
++        let bad = src(&fx, "bad.md", &[0xff, 0xfe]);
++        let e = err(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {bad}"),
++        );
++        assert!(e.contains("UTF-8"), "{e}");
++        let e = err(
++            &fx,
++            &format!("instructions set global AGENTS.md --from {f}"),
++        );
++        assert!(e.contains("AGENTS.md"), "{e}");
++        let e = err(
++            &fx,
++            &format!("instructions set global rules/Bad.md --from {f}"),
++        );
++        assert!(e.contains("rules/Bad.md"), "{e}");
++        let e = err(&fx, "instructions set seat a1 AGENTS.md");
++        assert!(e.contains("--from"), "{e}");
++        commit(&fx, "seat retire a2");
++        let e = err(
++            &fx,
++            &format!("instructions set seat a2 AGENTS.md --from {f}"),
++        );
++        assert!(e.contains("retired_object"), "{e}");
++    }
++
++    #[test]
++    fn inadmissible_content_rejected() {
++        let fx = fx();
++        world(&fx);
++        let f = src(&fx, "tag.md", "ok\nhidden\u{E0041}\n".as_bytes());
++        let e = err(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {f}"),
++        );
++        assert!(e.contains("U+E0041") && e.contains("line 2"), "{e}");
++    }
++
++    #[test]
++    fn cap_warning_names_omitted_parts() {
++        let fx = fx();
++        world(&fx);
++        let seat_text = format!("{}\n", "s".repeat(2000));
++        let f = src(&fx, "seat.md", seat_text.as_bytes());
++        commit(
++            &fx,
++            &format!("instructions set seat a1 AGENTS.md --from {f}"),
++        );
++        let big = src(&fx, "big.md", format!("{}\n", "g".repeat(8000)).as_bytes());
++        let sp = plan(
++            &fx,
++            &format!("instructions set global rules/big.md --from {big}"),
++        );
++        let w = sp
++            .plan
++            .warnings
++            .iter()
++            .find(|w| w.starts_with("hook output for a1 would exceed the cap"))
++            .unwrap_or_else(|| panic!("no cap warning: {:?}", sp.plan.warnings));
++        assert!(w.contains("global rules/big.md"), "{w}");
++        assert!(!w.contains("seat AGENTS.md"), "{w}");
++        let small = src(&fx, "small.md", b"tiny\n");
++        let sp = plan(
++            &fx,
++            &format!("instructions set global rules/small.md --from {small}"),
++        );
++        assert!(
++            !sp.plan
++                .warnings
++                .iter()
++                .any(|w| w.contains("exceed the cap")),
++            "{:?}",
++            sp.plan.warnings
++        );
++    }
++}
++
++#[test]
++fn seat_override_section_rejects_inadmissible_text() {
++    let fx = fx();
++    alpha(&fx);
++    commit(&fx, "seat create x --teamspace alpha");
++    let dir = fx.root.join("sections");
++    std::fs::create_dir_all(&dir).unwrap();
++    for (text, needle) in [("ok\nx\u{E0041}y", "U+E0041"), ("a\rb", "U+000D")] {
++        let f = dir.join("s.md");
++        std::fs::write(&f, text).unwrap();
++        let err = match create_plan(
++            &fx.deps,
++            &CallerInfo::default(),
++            words(&format!("seat override x --section note={}", f.display())),
++        ) {
++            Ok(_) => panic!("expected rejection"),
++            Err(e) => e.message,
++        };
++        assert!(
++            err.contains(needle) && err.contains("at line") && err.contains("note"),
++            "{err}"
++        );
++    }
++}
++
++#[test]
++fn seat_override_section_cap_warning() {
++    let fx = fx();
++    alpha(&fx);
++    commit(&fx, "seat create x --teamspace alpha");
++    let f = fx.root.join("big.md");
++    std::fs::write(&f, "y".repeat(9500)).unwrap();
++    let sp = plan(
++        &fx,
++        &format!("seat override x --section big={}", f.display()),
++    );
++    assert!(
++        sp.plan
++            .warnings
++            .iter()
++            .any(|w| w.starts_with("hook output for x would exceed the cap")),
++        "{:?}",
++        sp.plan.warnings
++    );
++    std::fs::write(&f, "small").unwrap();
++    let sp = plan(
++        &fx,
++        &format!("seat override x --section big={}", f.display()),
++    );
++    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
++}

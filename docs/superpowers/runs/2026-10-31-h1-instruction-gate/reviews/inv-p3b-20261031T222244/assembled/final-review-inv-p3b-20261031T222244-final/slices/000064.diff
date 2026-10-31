@@ -1,0 +1,14 @@
+diff --git a/src/plan/mod.rs b/src/plan/mod.rs
+index 7bd8970..10074d8 100644
+--- a/src/plan/mod.rs
++++ b/src/plan/mod.rs
+@@ -9,7 +9,9 @@ pub mod commands;
+ pub mod core_kinds;
+ pub mod grammar;
+ pub mod hash;
++pub mod instructions;
+ pub mod kind;
++pub mod line_diff;
+ pub mod store;
+ pub mod types;
+ 

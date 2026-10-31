@@ -1,0 +1,53 @@
+diff --git a/tests/daemon_composed.rs b/tests/daemon_composed.rs
+index 571fd39..e5982db 100644
+--- a/tests/daemon_composed.rs
++++ b/tests/daemon_composed.rs
+@@ -302,7 +302,7 @@ async fn writer_resume_not_halted() {
+     d.stop().await;
+ }
+ 
+-const ORG_KINDS: [&str; 22] = [
++const ORG_KINDS: [&str; 23] = [
+     "teamspace_create",
+     "teamspace_rename",
+     "teamspace_retire",
+@@ -324,6 +324,7 @@ const ORG_KINDS: [&str; 22] = [
+     "template_copy",
+     "application_apply",
+     "application_retire",
++    "instructions_edit",
+     "undo",
+ ];
+ 
+@@ -344,7 +345,6 @@ async fn every_kind_and_command_registered() {
+         "undo.list",
+         "undo.apply",
+         "seat.resolve",
+-        "content.write",
+         "request.list",
+         "request.ack",
+         "request.complete",
+@@ -379,7 +379,6 @@ async fn every_kind_and_command_registered() {
+             "bookkeeping.request_complete",
+             "bookkeeping.request_unresolved",
+             "bookkeeping.reassign",
+-            "content_write",
+         ]
+         .map(String::from),
+     );
+@@ -389,6 +388,15 @@ async fn every_kind_and_command_registered() {
+             "mutation {k} not registered; have {keys:?}"
+         );
+     }
++    // `content write` was removed in H1: neither its daemon command nor its mutation is registered.
++    assert!(
++        !have.iter().any(|k| k == "content.write"),
++        "content.write must not be registered; have {have:?}"
++    );
++    assert!(
++        !keys.iter().any(|k| k.starts_with("content_write")),
++        "content_write must not be registered; have {keys:?}"
++    );
+     // The composed daemon's writer admits only registered kinds: its registry is this same function's output.
+     d.stop().await;
+ }

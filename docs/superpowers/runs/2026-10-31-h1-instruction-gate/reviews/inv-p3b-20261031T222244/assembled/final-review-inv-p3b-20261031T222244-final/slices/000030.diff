@@ -1,0 +1,43 @@
+diff --git a/evidence/hg-45e.7/tests.log b/evidence/hg-45e.7/tests.log
+new file mode 100644
+index 0000000..1224927
+--- /dev/null
++++ b/evidence/hg-45e.7/tests.log
+@@ -0,0 +1,37 @@
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
++     Running unittests src/lib.rs (target/debug/deps/herdr_graph-68a9e8c866085df8)
++running 33 tests
++test bootstrap::tests::hook_output_is_plain_for_claude_and_additional_context_for_codex ... ok
++test plan::tests::effective::instructions_sections_appended ... ok
++test bootstrap::tests::setup_claude_installs_hook_and_skills_in_temp_config_dir ... ok
++test bootstrap::tests::setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly ... ok
++test bootstrap::tests::hook_instructions::truncation_cuts_a_single_oversize_part ... ok
++test bootstrap::tests::hook_instructions::truncation_stops_at_first_overflow ... ok
++test bootstrap::tests::hook_instructions::store_error_falls_back ... ok
++test bootstrap::tests::hook_instructions::truncation_keeps_specific_parts ... ok
++test bootstrap::tests::hook_instructions::truncated_output_fits_the_cap_including_marker ... ok
++test bootstrap::tests::instructions::fit_hook_rules ... ok
++test cli::seat::tests::seat_instructions_flag_parses ... ok
++test cli::seat::tests::claude_hook_group_has_empty_matcher ... ok
++test cli::seat::tests::claude_and_codex_shapes ... ok
++test cli::tests::clap_definition_is_valid ... ok
++test cli::tests::every_spec_command_parses ... ok
++test bootstrap::tests::hook_prompt_only_when_graph_env_or_bound_pane ... ok
++test bootstrap::tests::instructions::dirty_working_tree_does_not_change_render ... ok
++test bootstrap::tests::instructions::inadmissible_section_body_renders_as_placeholder ... ok
++test bootstrap::tests::hook_instructions::unbound_pane_gets_todays_prompt ... ok
++test bootstrap::tests::instructions::fresh_instance_render_has_no_placeholder ... ok
++test bootstrap::tests::hook_instructions::large_global_rule_is_omitted_whole ... ok
++test bootstrap::tests::hook_instructions::bound_pane_gets_header_and_render ... ok
++test reconcile::tests::relaunch_hook_enqueues_start_for_unoccupied_active_clone ... ok
++test bootstrap::tests::instructions::inadmissible_parts_render_as_placeholder ... ok
++test bootstrap::tests::instructions::participation_is_ordered_and_deduplicated ... ok
++test bootstrap::tests::instructions::empty_parts_are_omitted ... ok
++test bootstrap::tests::instructions::patched_tree_cap_warning ... ok
++test bootstrap::tests::instructions::render_has_all_six_part_kinds_in_order ... ok
++test bootstrap::tests::seat_paths_load_live_reusable_member_and_instance_instructions ... ok
++test observe::tests::session_ended_hook_emitted_after_commit ... ok
++test templates::tests::review_added_reusable_member_without_instructions_undoes_immediately ... ok
++test templates::tests::seat_template_copy_and_undo_restore_instructions_and_runtime ... ok
++test transcripts::tests::absent_occupant_relaunched_via_reconciler_hook ... ok
++test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 679 filtered out; finished in 0.31s

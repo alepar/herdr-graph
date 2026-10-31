@@ -1,0 +1,213 @@
+diff --git a/src/cli/seat.rs b/src/cli/seat.rs
+index 655e898..402cc94 100644
+--- a/src/cli/seat.rs
++++ b/src/cli/seat.rs
+@@ -3,11 +3,16 @@
+ //! `seat [--json]` asks the daemon (ensuring it) to resolve the calling pane and prints the reply: verbatim JSON
+ //! with `--json`, readable sections otherwise. The hidden `--hook-prompt` is what the SessionStart hook runs:
+ //! it tells graph panes to run `/seat`, reads the committed graph directly and never fails or starts a daemon.
++use crate::bootstrap::instructions::{HOOK_RENDER_CAP, fit_hook, render_instructions};
++use crate::bootstrap::resolve::{Resolution, resolve_caller};
+ use crate::bootstrap::{render_seat, wants_seat_prompt};
+ use crate::config::{Env, plugin_config_dir_via_herdr};
+-use crate::daemon::client::{CallMode, call_daemon};
++use crate::daemon::client::{CallMode, call_daemon, caller_info_from_env};
++use crate::daemon::registry::CallerInfo;
++use crate::model::CommitId;
+ use crate::model::launch::ENV_GRAPH;
+ use crate::ports::store::Store;
++use crate::store::tree::TreeRead;
+ use clap::Subcommand;
+ use std::process::ExitCode;
+ 
+@@ -17,6 +22,9 @@ pub enum Commands {
+     Seat {
+         #[arg(long)]
+         json: bool,
++        /// Print only this seat's instruction render (committed revision; no daemon).
++        #[arg(long, conflicts_with_all = ["json", "hook_prompt"])]
++        instructions: bool,
+         /// Tell a graph pane's session to run `/seat` (used by the SessionStart hook).
+         #[arg(long, hide = true)]
+         hook_prompt: bool,
+@@ -36,6 +44,9 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+             hook_prompt(codex);
+             Ok(ExitCode::SUCCESS)
+         }
++        Commands::Seat {
++            instructions: true, ..
++        } => Ok(print_instructions()),
+         Commands::Seat { json, .. } => {
+             let reply = call_daemon("seat.resolve", serde_json::json!({}), CallMode::Ensure)
+                 .map_err(|e| anyhow::anyhow!("{e}"))?;
+@@ -49,45 +60,147 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+     }
+ }
+ 
+-/// What the SessionStart hook prints for a graph pane. It fires on startup, resume, clear and compact, and
+-/// says why: a bare `run /seat` was mostly ignored, above all after compaction.
++/// What the SessionStart hook prints for a graph pane without a render (an unbound pane that is still a graph
++/// pane). It fires on startup, resume, clear and compact, and says why: a bare `run /seat` was mostly ignored,
++/// above all after compaction.
+ pub const HOOK_PROMPT: &str = "herdr-graph: this pane is a graph seat. Before replying, run the seat skill (/seat) \
+      to load your seat role, rules and instructions. Do this after every start, clear and compaction: a summary \
+      of an earlier /seat run is not a substitute, so run it again.";
+ 
+ /// The hook's stdout: plain text for Claude, `additionalContext` JSON for Codex.
+-pub fn hook_output(codex: bool) -> String {
++///
++/// Trigger coverage. Claude: the installed group has an empty matcher, so it fires on startup, resume, clear and
++/// compact. Codex (0.163.0 binary, read-only check): `SessionStart` sources include startup and clear;
++/// compaction has its own `PostCompact` event and no `SessionStart` source, so after compaction Codex agents
++/// must run `herdr-graph seat --instructions` (skills/seat/SKILL.md says so).
++/// Size: no documented Claude Code hook output limit was found in `claude --help` or the installed binary, so
++/// `HOOK_RENDER_CAP` keeps its conservative 9000 bytes.
++pub fn hook_output_text(codex: bool, text: &str) -> String {
+     if codex {
+         serde_json::json!({"hookSpecificOutput": {
+             "hookEventName": "SessionStart",
+-            "additionalContext": HOOK_PROMPT,
++            "additionalContext": text,
+         }})
+         .to_string()
+     } else {
+-        HOOK_PROMPT.to_owned()
++        text.to_owned()
++    }
++}
++
++pub fn hook_output(codex: bool) -> String {
++    hook_output_text(codex, HOOK_PROMPT)
++}
++
++/// The caller's full instruction render, or None when the caller is not a bound seat or the render fails.
++pub fn instructions_text(
++    tree: &dyn TreeRead,
++    at: &CommitId,
++    caller: &CallerInfo,
++) -> Option<String> {
++    let Resolution::Bound { seat, .. } = resolve_caller(tree, caller, None) else {
++        return None;
++    };
++    render_instructions(tree, at, &seat).ok().map(|r| r.text)
++}
++
++/// What the hook prints: header + render (capped) for a bound caller, today's prompt for a graph pane, nothing
++/// otherwise. Never errors; any failure falls back to today's prompt.
++pub fn hook_text(
++    tree: Option<(&dyn TreeRead, &CommitId)>,
++    caller: &CallerInfo,
++    graph_env: Option<&str>,
++) -> Option<String> {
++    if let Some((tree, at)) = tree
++        && let Resolution::Bound { seat, .. } = resolve_caller(tree, caller, None)
++        && let Ok(r) = render_instructions(tree, at, &seat)
++    {
++        return Some(fit_hook(&r, HOOK_RENDER_CAP).text);
++    }
++    wants_seat_prompt(graph_env, tree.map(|(t, _)| t), caller.pane_id.as_deref())
++        .then(|| HOOK_PROMPT.to_owned())
++}
++
++/// Open the located instance's committed head and run `f` on it; None when anything is unavailable.
++fn with_head<T>(env: &Env, f: impl FnOnce(&dyn TreeRead, &CommitId) -> T) -> Option<T> {
++    let (root, _) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr)?;
++    let store = crate::store::GitStore::open(&root).ok()?;
++    let head = store.head().ok()?;
++    let view = crate::store::tree::CommitView {
++        store: &store,
++        at: head.clone(),
++    };
++    Some(f(&view, &head))
++}
++
++/// `seat --instructions`: the render, untruncated; exit 1 when this pane is not a bound seat.
++fn print_instructions() -> ExitCode {
++    let env = Env::from_process();
++    let caller = caller_info_from_env();
++    match with_head(&env, |t, at| instructions_text(t, at, &caller)).flatten() {
++        Some(text) => {
++            print!("{text}");
++            ExitCode::SUCCESS
++        }
++        None => {
++            eprintln!("herdr-graph: not a bound graph seat");
++            ExitCode::FAILURE
++        }
+     }
+ }
+ 
+-/// Never errors: any failure prints nothing.
++/// Never errors: any failure prints today's prompt or nothing.
+ fn hook_prompt(codex: bool) {
+     let env = Env::from_process();
++    let caller = caller_info_from_env();
+     let graph = std::env::var(ENV_GRAPH).ok();
+-    let prompt = if graph.as_deref() == Some("1") {
+-        true
+-    } else {
+-        (|| {
+-            let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)?;
+-            let store = crate::store::GitStore::open(&root).ok()?;
+-            let head = store.head().ok()?;
+-            let view = crate::store::tree::CommitView {
+-                store: &store,
+-                at: head,
+-            };
+-            Some(wants_seat_prompt(None, Some(&view), env.pane_id.as_deref()))
+-        })()
+-        .unwrap_or(false)
+-    };
+-    if prompt {
+-        println!("{}", hook_output(codex));
++    let text = with_head(&env, |t, at| {
++        hook_text(Some((t, at)), &caller, graph.as_deref())
++    })
++    .unwrap_or_else(|| hook_text(None, &caller, graph.as_deref()));
++    if let Some(t) = text {
++        println!("{}", hook_output_text(codex, &t));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::cli::Cli;
++    use clap::Parser;
++
++    #[test]
++    fn claude_and_codex_shapes() {
++        assert_eq!(hook_output_text(false, "x"), "x");
++        let v: serde_json::Value = serde_json::from_str(&hook_output_text(true, "x")).unwrap();
++        assert_eq!(v["hookSpecificOutput"]["additionalContext"], "x");
++        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
++    }
++
++    #[test]
++    fn seat_instructions_flag_parses() {
++        assert!(Cli::try_parse_from(["herdr-graph", "seat", "--instructions"]).is_ok());
++        assert!(Cli::try_parse_from(["herdr-graph", "seat", "--instructions", "--json"]).is_err());
++    }
++
++    #[test]
++    fn claude_hook_group_has_empty_matcher() {
++        let tmp = tempfile::tempdir().unwrap();
++        crate::bootstrap::setup_claude::install(
++            tmp.path(),
++            std::path::Path::new("/bin/herdr-graph"),
++        )
++        .unwrap();
++        let s: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(tmp.path().join("settings.json")).unwrap())
++                .unwrap();
++        let groups = s["hooks"]["SessionStart"].as_array().unwrap();
++        assert!(
++            groups.iter().any(|g| g["matcher"] == ""
++                && g["hooks"][0]["command"]
++                    .as_str()
++                    .unwrap()
++                    .contains("seat --hook-prompt")),
++            "{s}"
++        );
+     }
+ }

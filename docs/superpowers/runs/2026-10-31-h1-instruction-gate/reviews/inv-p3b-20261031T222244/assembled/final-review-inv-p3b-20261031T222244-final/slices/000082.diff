@@ -1,0 +1,171 @@
+diff --git a/src/undo/tests.rs b/src/undo/tests.rs
+index 85c2d68..f866410 100644
+--- a/src/undo/tests.rs
++++ b/src/undo/tests.rs
+@@ -1040,6 +1040,152 @@ fn template_edit_undo_with_conflicting_later_edit_is_repair_required() {
+     );
+ }
+ 
++// instruction edits ---------------------------------------------------------------------------
++
++const RULE: &str = "rules/x.md";
++
++fn instruction_src(fx: &Fx, name: &str, text: &str) -> String {
++    let p = fx.docs.join(name);
++    std::fs::write(&p, text).unwrap();
++    p.display().to_string()
++}
++
++fn set_rule(fx: &Fx, name: &str, text: &str) -> OpRow {
++    let f = instruction_src(fx, name, text);
++    commit(fx, &format!("instructions set seat a1 {RULE} --from {f}"))
++}
++
++/// The text of seat a1's rule file at the current head, None when absent.
++fn rule_text(fx: &Fx) -> Option<String> {
++    use crate::store::instruction_source::{
++        InstructionFile, InstructionTarget, ScopeKind, path, resolve_scope,
++    };
++    let v = view(fx);
++    let target = InstructionTarget {
++        scope: resolve_scope(&v, ScopeKind::Seat, Some("a1")).unwrap(),
++        file: InstructionFile::parse(ScopeKind::Seat, RULE).unwrap(),
++    };
++    let p = path(&v, &target).unwrap();
++    crate::store::tree::TreeRead::read_file(&v, &p)
++        .unwrap()
++        .map(|b| String::from_utf8(b).unwrap())
++}
++
++fn instruction_world(fx: &Fx) {
++    alpha(fx);
++    active_seat(fx, "a1");
++}
++
++#[test]
++fn undo_instruction_set_removes_a_new_file() {
++    let fx = fx();
++    instruction_world(&fx);
++    let act = action_of(&fx, &set_rule(&fx, "a.md", "one\ntwo\n"));
++    assert_eq!(rule_text(&fx).as_deref(), Some("one\ntwo\n"));
++
++    let sp = plan(&fx, &format!("undo {}", act.id));
++    assert_eq!(
++        kinds_of(&sp, "instructions.clear"),
++        [seat_named(&fx, "a1").id.to_any()]
++    );
++    assert_eq!(
++        sp.plan.effects[0].detail["diff"],
++        crate::plan::line_diff::unified("one\ntwo\n", "")
++    );
++    assert!(
++        sp.plan.warnings.iter().any(|w| w
++            .starts_with("takes effect at each affected seat's next /seat")
++            && w.ends_with("a1")),
++        "{:?}",
++        sp.plan.warnings
++    );
++
++    let row = apply_plan(&fx, &sp);
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_eq!(
++        rule_text(&fx),
++        None,
++        "the file that did not exist is removed"
++    );
++    assert_eq!(action(&fx, &act.id).undone_by, vec![row.op.clone()]);
++    assert_eq!(action_of(&fx, &row).kind, ActionKind::Undo);
++
++    let cands = list_candidates(&view(&fx), 20).unwrap();
++    let c = cands
++        .iter()
++        .find(|c| c.act == act.id)
++        .expect("still listed");
++    assert!(c.undone, "the edit is marked undone");
++    let again = plan_err(&fx, &format!("undo {}", act.id));
++    assert!(again.contains("already undone"), "{again}");
++}
++
++#[test]
++fn undo_instruction_edit_restores_previous_text() {
++    let fx = fx();
++    instruction_world(&fx);
++    set_rule(&fx, "a.md", "A\n");
++    let b = action_of(&fx, &set_rule(&fx, "b.md", "B\nmore\n"));
++
++    let sp = plan(&fx, &format!("undo {}", b.id));
++    assert_eq!(
++        sp.plan.effects[0].detail["diff"],
++        crate::plan::line_diff::unified("B\nmore\n", "A\n")
++    );
++    let row = apply_plan(&fx, &sp);
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_eq!(rule_text(&fx).as_deref(), Some("A\n"));
++}
++
++#[test]
++fn undo_instruction_clear_restores_the_file() {
++    let fx = fx();
++    instruction_world(&fx);
++    set_rule(&fx, "a.md", "A\n");
++    let clear = action_of(
++        &fx,
++        &commit(&fx, &format!("instructions clear seat a1 {RULE}")),
++    );
++    assert_eq!(rule_text(&fx), None);
++
++    let sp = plan(&fx, &format!("undo {}", clear.id));
++    assert_eq!(kinds_of(&sp, "instructions.set").len(), 1);
++    let row = apply_plan(&fx, &sp);
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_eq!(rule_text(&fx).as_deref(), Some("A\n"));
++}
++
++#[test]
++fn undo_drifted_instruction_file_is_repair_required() {
++    let fx = fx();
++    instruction_world(&fx);
++    let a = action_of(&fx, &set_rule(&fx, "a.md", "A\n"));
++    set_rule(&fx, "b.md", "B\n");
++
++    let sp = plan(&fx, &format!("undo {}", a.id));
++    let why = sp
++        .plan
++        .repair_required
++        .clone()
++        .expect("a file changed after the edit blocks the undo");
++    assert!(why.contains(RULE) && why.contains(a.id.as_str()), "{why}");
++    assert!(sp.plan.effects.is_empty());
++    let err = admit_apply(
++        &fx.deps,
++        &caller(None),
++        sp.plan.id.as_str(),
++        Some(&sp.hash),
++        "relay",
++    )
++    .unwrap_err();
++    assert!(err.message.contains("repair"), "{}", err.message);
++    assert_eq!(
++        rule_text(&fx).as_deref(),
++        Some("B\n"),
++        "the later edit is untouched"
++    );
++}
++
+ // ---------------------------------------------------------------------------------------------
+ // candidates and the compensating record
+ // ---------------------------------------------------------------------------------------------
+@@ -1226,9 +1372,12 @@ fn review_legacy_added_member_compensation_without_agents_undoes() {
+         toml::Value::Table(toml::from_str(&after).unwrap()),
+     );
+     let inverse = super::preview::template_inverse(&view(&fx), &action).unwrap();
+-    let super::preview::Inverse::Ready { template, document } = inverse else {
++    let super::preview::Inverse::Ready(args) = inverse else {
+         panic!("historical member-add compensation should be undoable: {inverse:?}");
+     };
++    let template = args["template"].as_str().unwrap();
++    let document: crate::templates::document::TemplateDocument =
++        serde_json::from_value(args["document"].clone()).unwrap();
+     assert!(document.members.is_empty());
+     let path = write_doc(&fx, &toml::to_string(&document).unwrap());
+     let p = plan(&fx, &format!("template edit {template} --from {path}"));

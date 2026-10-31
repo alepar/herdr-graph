@@ -1,0 +1,26 @@
+diff --git a/src/model/graph.rs b/src/model/graph.rs
+index 792f6be..f009760 100644
+--- a/src/model/graph.rs
++++ b/src/model/graph.rs
+@@ -1,6 +1,6 @@
+ //! `graph.toml`: instance metadata (no `rev`).
+ use crate::model::harness::Harness;
+-use crate::model::ids::SeatId;
++use crate::model::ids::{GraphId, IdError, SeatId};
+ use serde::{Deserialize, Serialize};
+ 
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+@@ -14,6 +14,13 @@ pub struct GraphRecord {
+     pub defaults: GraphDefaults,
+ }
+ 
++impl GraphRecord {
++    /// This instance's `gr_` id (spec §2.3).
++    pub fn graph_id(&self) -> Result<GraphId, IdError> {
++        GraphId::from_instance_id(&self.instance_id)
++    }
++}
++
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+ pub struct GraphDefaults {
+     #[serde(default, skip_serializing_if = "Option::is_none")]

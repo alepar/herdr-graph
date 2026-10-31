@@ -1,0 +1,12 @@
+diff --git a/src/model/action.rs b/src/model/action.rs
+index de71459..550bd56 100644
+--- a/src/model/action.rs
++++ b/src/model/action.rs
+@@ -38,6 +38,7 @@ pub enum ActionKind {
+     Resurrect,
+     Hydrate,
+     TemplateEdit,
++    InstructionsEdit,
+     ApplicationRetire,
+     ThreadsReconnect,
+     Undo,

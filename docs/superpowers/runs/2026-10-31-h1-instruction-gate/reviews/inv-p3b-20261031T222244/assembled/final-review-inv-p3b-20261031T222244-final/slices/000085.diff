@@ -1,0 +1,31 @@
+diff --git a/templates/system-summarizer/members/summarizer/AGENTS.md b/templates/system-summarizer/members/summarizer/AGENTS.md
+index c5062b5..50acacb 100644
+--- a/templates/system-summarizer/members/summarizer/AGENTS.md
++++ b/templates/system-summarizer/members/summarizer/AGENTS.md
+@@ -19,21 +19,17 @@ Wait for transcript requests on your seat channel. Each request names a processi
+    An ACK only means "dispatched". It is not success: the request stays open until you complete it.
+ 
+ 2. Dispatch ONE subagent per request. Give it the transcript path and the byte range
+-   `[start, end)`. The subagent reads exactly that range, writes the summary to a temporary file,
+-   and stores it in the source seat's folder:
+-
+-   ```
+-   herdr-graph content write --object <source seat id> \
+-     --rel summaries/<tr>-<start>-<end>.md --from <tmp file>
+-   ```
++   `[start, end)`. The subagent reads exactly that range and writes the summary to a temporary file.
+ 
+ 3. When the file is written, complete the request:
+ 
+    ```
+-   herdr-graph request complete <rq> --output summaries/<tr>-<start>-<end>.md --covered <start>-<end>
++   herdr-graph request complete <rq> --summary-from <tmp file> --covered <start>-<end>
+    ```
+ 
+-   `--covered` is the range your summary really covers; it may be smaller than the requested one.
++   The daemon stores the summary at `summaries/<tr>-<start>-<end>.md` in the source seat's folder and
++   completes the request in one commit. `--covered` is the range your summary really covers; it may be
++   smaller than the requested one.
+ 
+ If the subagent fails, do not complete the request. Leave it open: the daemon's liveness scan
+ re-dispatches unresolved requests.

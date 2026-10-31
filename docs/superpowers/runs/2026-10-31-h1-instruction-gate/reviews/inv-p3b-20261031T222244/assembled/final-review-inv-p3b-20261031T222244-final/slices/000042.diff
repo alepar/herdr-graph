@@ -1,0 +1,37 @@
+diff --git a/src/cli/mod.rs b/src/cli/mod.rs
+index cd323c6..07c4be3 100644
+--- a/src/cli/mod.rs
++++ b/src/cli/mod.rs
+@@ -6,6 +6,7 @@ use std::process::ExitCode;
+ pub mod content;
+ pub mod daemon;
+ pub mod init;
++pub mod instructions;
+ pub mod ops;
+ pub mod plan;
+ pub mod request;
+@@ -46,6 +47,8 @@ pub enum Command {
+     #[command(flatten)]
+     Show(show::Commands),
+     #[command(flatten)]
++    Instructions(instructions::Commands),
++    #[command(flatten)]
+     Plan(plan::Commands),
+     #[command(flatten)]
+     Content(content::Commands),
+@@ -68,6 +71,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
+         Command::Seat(c) => seat::run(c),
+         Command::Session(c) => session::run(c),
+         Command::Show(c) => show::run(c),
++        Command::Instructions(c) => instructions::run(c),
+         Command::Plan(c) => plan::run(c),
+         Command::Content(c) => content::run(c),
+         Command::Ops(c) => ops::run(c),
+@@ -116,6 +120,7 @@ mod tests {
+             &["seat"],
+             &["seat", "--json"],
+             &["show", "st_x"],
++            &["instructions", "show", "global"],
+             &["list"],
+             &["list", "seats"],
+             &["path", "st_x"],

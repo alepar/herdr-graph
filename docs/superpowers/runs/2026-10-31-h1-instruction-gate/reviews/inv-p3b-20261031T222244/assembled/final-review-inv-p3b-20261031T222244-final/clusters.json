@@ -1,0 +1,386 @@
+{
+ "changed": [
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-design.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-2.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-1.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-ledger.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-inputs.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-precheck.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-requirements.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-1.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-2.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-inputs.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-1.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-2.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/design-loop-notes.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-ledger-design.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-overrides-design.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/input-h1-review.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.json",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/promotion-review-input.md",
+  "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+  "docs/superpowers/specs/INDEX.md",
+  "evidence/hg-45e.18/lib-tests.log",
+  "evidence/hg-45e.6/bootstrap-tests.log",
+  "evidence/hg-45e.7/tests.log",
+  "evidence/hg-45e.9/features.log",
+  "evidence/hg-45e.9/full.log",
+  "evidence/hg-45e.9/tests.log",
+  "skills/seat/SKILL.md",
+  "src/bootstrap/content.rs",
+  "src/bootstrap/instructions.rs",
+  "src/bootstrap/mod.rs",
+  "src/bootstrap/setup_claude.rs",
+  "src/bootstrap/tests.rs",
+  "src/cli/content.rs",
+  "src/cli/instructions.rs",
+  "src/cli/mod.rs",
+  "src/cli/plan.rs",
+  "src/cli/request.rs",
+  "src/cli/seat.rs",
+  "src/cli/setup.rs",
+  "src/cli/undo.rs",
+  "src/config.rs",
+  "src/daemon/compose.rs",
+  "src/daemon/doctor.rs",
+  "src/model/action.rs",
+  "src/model/b64.rs",
+  "src/model/change.rs",
+  "src/model/common.rs",
+  "src/model/graph.rs",
+  "src/model/ids.rs",
+  "src/model/mod.rs",
+  "src/model/tests.rs",
+  "src/plan/commands.rs",
+  "src/plan/core_kinds.rs",
+  "src/plan/instructions.rs",
+  "src/plan/kinds_extra.rs",
+  "src/plan/line_diff.rs",
+  "src/plan/mod.rs",
+  "src/plan/tests.rs",
+  "src/plan/types.rs",
+  "src/store/instruction_source.rs",
+  "src/store/layout.rs",
+  "src/store/mod.rs",
+  "src/store/tests.rs",
+  "src/templates/document.rs",
+  "src/templates/kinds.rs",
+  "src/templates/tests.rs",
+  "src/threads/effects.rs",
+  "src/transcripts/mod.rs",
+  "src/transcripts/mutations.rs",
+  "src/transcripts/tests.rs",
+  "src/undo/candidates.rs",
+  "src/undo/compensate.rs",
+  "src/undo/mod.rs",
+  "src/undo/preview.rs",
+  "src/undo/tests.rs",
+  "src/writer/mutation.rs",
+  "src/writer/tests.rs",
+  "templates/system-summarizer/members/summarizer/AGENTS.md",
+  "tests/daemon_composed.rs",
+  "tests/integration_sweep.rs"
+ ],
+ "clusters": [
+  {
+   "name": "docs",
+   "files": [
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-ledger.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-inputs.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-precheck.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-inputs.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/design-loop-notes.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/input-h1-review.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.json",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/promotion-review-input.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+    "docs/superpowers/specs/INDEX.md"
+   ],
+   "slices": [
+    "slices/000001.diff",
+    "slices/000002.diff",
+    "slices/000003.diff",
+    "slices/000004.diff",
+    "slices/000005.diff",
+    "slices/000006.diff",
+    "slices/000007.diff",
+    "slices/000008.diff",
+    "slices/000009.diff",
+    "slices/000010.diff",
+    "slices/000011.diff",
+    "slices/000012.diff",
+    "slices/000013.diff",
+    "slices/000014.diff",
+    "slices/000015.diff",
+    "slices/000016.diff",
+    "slices/000017.diff",
+    "slices/000018.diff",
+    "slices/000019.diff",
+    "slices/000020.diff",
+    "slices/000021.diff",
+    "slices/000022.diff",
+    "slices/000023.diff",
+    "slices/000024.diff",
+    "slices/000025.diff",
+    "slices/000026.diff",
+    "slices/000027.diff"
+   ]
+  },
+  {
+   "name": "evidence",
+   "files": [
+    "evidence/hg-45e.18/lib-tests.log",
+    "evidence/hg-45e.6/bootstrap-tests.log",
+    "evidence/hg-45e.7/tests.log",
+    "evidence/hg-45e.9/features.log",
+    "evidence/hg-45e.9/full.log",
+    "evidence/hg-45e.9/tests.log"
+   ],
+   "slices": [
+    "slices/000028.diff",
+    "slices/000029.diff",
+    "slices/000030.diff",
+    "slices/000031.diff",
+    "slices/000032.diff",
+    "slices/000033.diff"
+   ]
+  },
+  {
+   "name": "skills",
+   "files": [
+    "skills/seat/SKILL.md"
+   ],
+   "slices": [
+    "slices/000034.diff"
+   ]
+  },
+  {
+   "name": "src-bootstrap",
+   "files": [
+    "src/bootstrap/content.rs",
+    "src/bootstrap/instructions.rs",
+    "src/bootstrap/mod.rs",
+    "src/bootstrap/setup_claude.rs",
+    "src/bootstrap/tests.rs"
+   ],
+   "slices": [
+    "slices/000035.diff",
+    "slices/000036.diff",
+    "slices/000037.diff",
+    "slices/000038.diff",
+    "slices/000039.diff"
+   ]
+  },
+  {
+   "name": "src-cli",
+   "files": [
+    "src/cli/content.rs",
+    "src/cli/instructions.rs",
+    "src/cli/mod.rs",
+    "src/cli/plan.rs",
+    "src/cli/request.rs",
+    "src/cli/seat.rs",
+    "src/cli/setup.rs",
+    "src/cli/undo.rs"
+   ],
+   "slices": [
+    "slices/000040.diff",
+    "slices/000041.diff",
+    "slices/000042.diff",
+    "slices/000043.diff",
+    "slices/000044.diff",
+    "slices/000045.diff",
+    "slices/000046.diff",
+    "slices/000047.diff"
+   ]
+  },
+  {
+   "name": "src-daemon",
+   "files": [
+    "src/daemon/compose.rs",
+    "src/daemon/doctor.rs"
+   ],
+   "slices": [
+    "slices/000049.diff",
+    "slices/000050.diff"
+   ]
+  },
+  {
+   "name": "src-model",
+   "files": [
+    "src/model/action.rs",
+    "src/model/b64.rs",
+    "src/model/change.rs",
+    "src/model/common.rs",
+    "src/model/graph.rs",
+    "src/model/ids.rs",
+    "src/model/mod.rs",
+    "src/model/tests.rs"
+   ],
+   "slices": [
+    "slices/000051.diff",
+    "slices/000052.diff",
+    "slices/000053.diff",
+    "slices/000054.diff",
+    "slices/000055.diff",
+    "slices/000056.diff",
+    "slices/000057.diff",
+    "slices/000058.diff"
+   ]
+  },
+  {
+   "name": "src-plan",
+   "files": [
+    "src/plan/commands.rs",
+    "src/plan/core_kinds.rs",
+    "src/plan/instructions.rs",
+    "src/plan/kinds_extra.rs",
+    "src/plan/line_diff.rs",
+    "src/plan/mod.rs",
+    "src/plan/tests.rs",
+    "src/plan/types.rs"
+   ],
+   "slices": [
+    "slices/000059.diff",
+    "slices/000060.diff",
+    "slices/000061.diff",
+    "slices/000062.diff",
+    "slices/000063.diff",
+    "slices/000064.diff",
+    "slices/000065.diff",
+    "slices/000066.diff"
+   ]
+  },
+  {
+   "name": "src-root",
+   "files": [
+    "src/config.rs"
+   ],
+   "slices": [
+    "slices/000048.diff"
+   ]
+  },
+  {
+   "name": "src-store",
+   "files": [
+    "src/store/instruction_source.rs",
+    "src/store/layout.rs",
+    "src/store/mod.rs",
+    "src/store/tests.rs"
+   ],
+   "slices": [
+    "slices/000067.diff",
+    "slices/000068.diff",
+    "slices/000069.diff",
+    "slices/000070.diff"
+   ]
+  },
+  {
+   "name": "src-templates",
+   "files": [
+    "src/templates/document.rs",
+    "src/templates/kinds.rs",
+    "src/templates/tests.rs"
+   ],
+   "slices": [
+    "slices/000071.diff",
+    "slices/000072.diff",
+    "slices/000073.diff"
+   ]
+  },
+  {
+   "name": "src-threads",
+   "files": [
+    "src/threads/effects.rs"
+   ],
+   "slices": [
+    "slices/000074.diff"
+   ]
+  },
+  {
+   "name": "src-transcripts",
+   "files": [
+    "src/transcripts/mod.rs",
+    "src/transcripts/mutations.rs",
+    "src/transcripts/tests.rs"
+   ],
+   "slices": [
+    "slices/000075.diff",
+    "slices/000076.diff",
+    "slices/000077.diff"
+   ]
+  },
+  {
+   "name": "src-undo",
+   "files": [
+    "src/undo/candidates.rs",
+    "src/undo/compensate.rs",
+    "src/undo/mod.rs",
+    "src/undo/preview.rs",
+    "src/undo/tests.rs"
+   ],
+   "slices": [
+    "slices/000078.diff",
+    "slices/000079.diff",
+    "slices/000080.diff",
+    "slices/000081.diff",
+    "slices/000082.diff"
+   ]
+  },
+  {
+   "name": "src-writer",
+   "files": [
+    "src/writer/mutation.rs",
+    "src/writer/tests.rs"
+   ],
+   "slices": [
+    "slices/000083.diff",
+    "slices/000084.diff"
+   ]
+  },
+  {
+   "name": "templates",
+   "files": [
+    "templates/system-summarizer/members/summarizer/AGENTS.md"
+   ],
+   "slices": [
+    "slices/000085.diff"
+   ]
+  },
+  {
+   "name": "tests",
+   "files": [
+    "tests/daemon_composed.rs",
+    "tests/integration_sweep.rs"
+   ],
+   "slices": [
+    "slices/000086.diff",
+    "slices/000087.diff"
+   ]
+  }
+ ]
+}

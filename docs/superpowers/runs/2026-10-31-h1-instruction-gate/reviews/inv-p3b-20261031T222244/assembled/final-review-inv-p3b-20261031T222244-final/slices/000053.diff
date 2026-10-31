@@ -1,0 +1,24 @@
+diff --git a/src/model/change.rs b/src/model/change.rs
+index d102e17..1b9a52f 100644
+--- a/src/model/change.rs
++++ b/src/model/change.rs
+@@ -28,8 +28,11 @@ pub enum RequestKind {
+     TemplateCopy,
+     ApplicationApply,
+     ApplicationRetire,
++    InstructionsEdit,
+     ThreadsReconnect,
+     Undo,
++    /// Legacy: removed in H1; kept so journal rows and graph-change records written before still
++    /// deserialize. Nothing creates it.
+     ContentWrite,
+     Observed,
+     Bookkeeping,
+@@ -39,6 +42,7 @@ pub enum RequestKind {
+ #[serde(rename_all = "snake_case")]
+ pub enum Category {
+     Organizational,
++    /// Legacy: removed in H1 with `RequestKind::ContentWrite`; kept for deserialization only.
+     Content,
+     Observed,
+     Bookkeeping,

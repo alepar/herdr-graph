@@ -1,0 +1,460 @@
+{
+  "base": "c77d9ad166dd2ada5b5a5768b499d12da4c36987",
+  "head": "bce6589afead4c031ac9ecfa3a094c9a5c4be161",
+  "sourceAvailable": true,
+  "wholeRangeReady": false,
+  "status": "complete",
+  "changed": [
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-ledger.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-inputs.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-precheck.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-inputs.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-1.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-2.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/design-loop-notes.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/input-h1-review.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.json",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/promotion-review-input.md",
+    "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+    "docs/superpowers/specs/INDEX.md",
+    "evidence/hg-45e.18/lib-tests.log",
+    "evidence/hg-45e.6/bootstrap-tests.log",
+    "evidence/hg-45e.7/tests.log",
+    "evidence/hg-45e.9/features.log",
+    "evidence/hg-45e.9/full.log",
+    "evidence/hg-45e.9/tests.log",
+    "skills/seat/SKILL.md",
+    "src/bootstrap/content.rs",
+    "src/bootstrap/instructions.rs",
+    "src/bootstrap/mod.rs",
+    "src/bootstrap/setup_claude.rs",
+    "src/bootstrap/tests.rs",
+    "src/cli/content.rs",
+    "src/cli/instructions.rs",
+    "src/cli/mod.rs",
+    "src/cli/plan.rs",
+    "src/cli/request.rs",
+    "src/cli/seat.rs",
+    "src/cli/setup.rs",
+    "src/cli/undo.rs",
+    "src/config.rs",
+    "src/daemon/compose.rs",
+    "src/daemon/doctor.rs",
+    "src/model/action.rs",
+    "src/model/b64.rs",
+    "src/model/change.rs",
+    "src/model/common.rs",
+    "src/model/graph.rs",
+    "src/model/ids.rs",
+    "src/model/mod.rs",
+    "src/model/tests.rs",
+    "src/plan/commands.rs",
+    "src/plan/core_kinds.rs",
+    "src/plan/instructions.rs",
+    "src/plan/kinds_extra.rs",
+    "src/plan/line_diff.rs",
+    "src/plan/mod.rs",
+    "src/plan/tests.rs",
+    "src/plan/types.rs",
+    "src/store/instruction_source.rs",
+    "src/store/layout.rs",
+    "src/store/mod.rs",
+    "src/store/tests.rs",
+    "src/templates/document.rs",
+    "src/templates/kinds.rs",
+    "src/templates/tests.rs",
+    "src/threads/effects.rs",
+    "src/transcripts/mod.rs",
+    "src/transcripts/mutations.rs",
+    "src/transcripts/tests.rs",
+    "src/undo/candidates.rs",
+    "src/undo/compensate.rs",
+    "src/undo/mod.rs",
+    "src/undo/preview.rs",
+    "src/undo/tests.rs",
+    "src/writer/mutation.rs",
+    "src/writer/tests.rs",
+    "templates/system-summarizer/members/summarizer/AGENTS.md",
+    "tests/daemon_composed.rs",
+    "tests/integration_sweep.rs"
+  ],
+  "slices": [
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-design.md",
+      "slice": "slices/000001.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back-keys.txt",
+      "slice": "slices/000002.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1-step-back.md",
+      "slice": "slices/000003.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md",
+      "slice": "slices/000004.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-2.md",
+      "slice": "slices/000005.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-1.md",
+      "slice": "slices/000006.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-findings-round-2.md",
+      "slice": "slices/000007.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-ledger.md",
+      "slice": "slices/000008.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-inputs.md",
+      "slice": "slices/000009.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-precheck.md",
+      "slice": "slices/000010.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-requirements.md",
+      "slice": "slices/000011.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-1.md",
+      "slice": "slices/000012.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-1-review-2.md",
+      "slice": "slices/000013.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-inputs.md",
+      "slice": "slices/000014.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-precheck.md",
+      "slice": "slices/000015.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-1.md",
+      "slice": "slices/000016.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/coverage-round-2-review-2.md",
+      "slice": "slices/000017.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/design-loop-notes.md",
+      "slice": "slices/000018.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-ledger-design.md",
+      "slice": "slices/000019.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/findings-overrides-design.md",
+      "slice": "slices/000020.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/friction.md",
+      "slice": "slices/000021.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/input-h1-review.md",
+      "slice": "slices/000022.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.json",
+      "slice": "slices/000023.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/profile-inv-p3.md",
+      "slice": "slices/000024.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/promotion-review-input.md",
+      "slice": "slices/000025.diff"
+    },
+    {
+      "path": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "slice": "slices/000026.diff"
+    },
+    {
+      "path": "docs/superpowers/specs/INDEX.md",
+      "slice": "slices/000027.diff"
+    },
+    {
+      "path": "evidence/hg-45e.18/lib-tests.log",
+      "slice": "slices/000028.diff"
+    },
+    {
+      "path": "evidence/hg-45e.6/bootstrap-tests.log",
+      "slice": "slices/000029.diff"
+    },
+    {
+      "path": "evidence/hg-45e.7/tests.log",
+      "slice": "slices/000030.diff"
+    },
+    {
+      "path": "evidence/hg-45e.9/features.log",
+      "slice": "slices/000031.diff"
+    },
+    {
+      "path": "evidence/hg-45e.9/full.log",
+      "slice": "slices/000032.diff"
+    },
+    {
+      "path": "evidence/hg-45e.9/tests.log",
+      "slice": "slices/000033.diff"
+    },
+    {
+      "path": "skills/seat/SKILL.md",
+      "slice": "slices/000034.diff"
+    },
+    {
+      "path": "src/bootstrap/content.rs",
+      "slice": "slices/000035.diff"
+    },
+    {
+      "path": "src/bootstrap/instructions.rs",
+      "slice": "slices/000036.diff"
+    },
+    {
+      "path": "src/bootstrap/mod.rs",
+      "slice": "slices/000037.diff"
+    },
+    {
+      "path": "src/bootstrap/setup_claude.rs",
+      "slice": "slices/000038.diff"
+    },
+    {
+      "path": "src/bootstrap/tests.rs",
+      "slice": "slices/000039.diff"
+    },
+    {
+      "path": "src/cli/content.rs",
+      "slice": "slices/000040.diff"
+    },
+    {
+      "path": "src/cli/instructions.rs",
+      "slice": "slices/000041.diff"
+    },
+    {
+      "path": "src/cli/mod.rs",
+      "slice": "slices/000042.diff"
+    },
+    {
+      "path": "src/cli/plan.rs",
+      "slice": "slices/000043.diff"
+    },
+    {
+      "path": "src/cli/request.rs",
+      "slice": "slices/000044.diff"
+    },
+    {
+      "path": "src/cli/seat.rs",
+      "slice": "slices/000045.diff"
+    },
+    {
+      "path": "src/cli/setup.rs",
+      "slice": "slices/000046.diff"
+    },
+    {
+      "path": "src/cli/undo.rs",
+      "slice": "slices/000047.diff"
+    },
+    {
+      "path": "src/config.rs",
+      "slice": "slices/000048.diff"
+    },
+    {
+      "path": "src/daemon/compose.rs",
+      "slice": "slices/000049.diff"
+    },
+    {
+      "path": "src/daemon/doctor.rs",
+      "slice": "slices/000050.diff"
+    },
+    {
+      "path": "src/model/action.rs",
+      "slice": "slices/000051.diff"
+    },
+    {
+      "path": "src/model/b64.rs",
+      "slice": "slices/000052.diff"
+    },
+    {
+      "path": "src/model/change.rs",
+      "slice": "slices/000053.diff"
+    },
+    {
+      "path": "src/model/common.rs",
+      "slice": "slices/000054.diff"
+    },
+    {
+      "path": "src/model/graph.rs",
+      "slice": "slices/000055.diff"
+    },
+    {
+      "path": "src/model/ids.rs",
+      "slice": "slices/000056.diff"
+    },
+    {
+      "path": "src/model/mod.rs",
+      "slice": "slices/000057.diff"
+    },
+    {
+      "path": "src/model/tests.rs",
+      "slice": "slices/000058.diff"
+    },
+    {
+      "path": "src/plan/commands.rs",
+      "slice": "slices/000059.diff"
+    },
+    {
+      "path": "src/plan/core_kinds.rs",
+      "slice": "slices/000060.diff"
+    },
+    {
+      "path": "src/plan/instructions.rs",
+      "slice": "slices/000061.diff"
+    },
+    {
+      "path": "src/plan/kinds_extra.rs",
+      "slice": "slices/000062.diff"
+    },
+    {
+      "path": "src/plan/line_diff.rs",
+      "slice": "slices/000063.diff"
+    },
+    {
+      "path": "src/plan/mod.rs",
+      "slice": "slices/000064.diff"
+    },
+    {
+      "path": "src/plan/tests.rs",
+      "slice": "slices/000065.diff"
+    },
+    {
+      "path": "src/plan/types.rs",
+      "slice": "slices/000066.diff"
+    },
+    {
+      "path": "src/store/instruction_source.rs",
+      "slice": "slices/000067.diff"
+    },
+    {
+      "path": "src/store/layout.rs",
+      "slice": "slices/000068.diff"
+    },
+    {
+      "path": "src/store/mod.rs",
+      "slice": "slices/000069.diff"
+    },
+    {
+      "path": "src/store/tests.rs",
+      "slice": "slices/000070.diff"
+    },
+    {
+      "path": "src/templates/document.rs",
+      "slice": "slices/000071.diff"
+    },
+    {
+      "path": "src/templates/kinds.rs",
+      "slice": "slices/000072.diff"
+    },
+    {
+      "path": "src/templates/tests.rs",
+      "slice": "slices/000073.diff"
+    },
+    {
+      "path": "src/threads/effects.rs",
+      "slice": "slices/000074.diff"
+    },
+    {
+      "path": "src/transcripts/mod.rs",
+      "slice": "slices/000075.diff"
+    },
+    {
+      "path": "src/transcripts/mutations.rs",
+      "slice": "slices/000076.diff"
+    },
+    {
+      "path": "src/transcripts/tests.rs",
+      "slice": "slices/000077.diff"
+    },
+    {
+      "path": "src/undo/candidates.rs",
+      "slice": "slices/000078.diff"
+    },
+    {
+      "path": "src/undo/compensate.rs",
+      "slice": "slices/000079.diff"
+    },
+    {
+      "path": "src/undo/mod.rs",
+      "slice": "slices/000080.diff"
+    },
+    {
+      "path": "src/undo/preview.rs",
+      "slice": "slices/000081.diff"
+    },
+    {
+      "path": "src/undo/tests.rs",
+      "slice": "slices/000082.diff"
+    },
+    {
+      "path": "src/writer/mutation.rs",
+      "slice": "slices/000083.diff"
+    },
+    {
+      "path": "src/writer/tests.rs",
+      "slice": "slices/000084.diff"
+    },
+    {
+      "path": "templates/system-summarizer/members/summarizer/AGENTS.md",
+      "slice": "slices/000085.diff"
+    },
+    {
+      "path": "tests/daemon_composed.rs",
+      "slice": "slices/000086.diff"
+    },
+    {
+      "path": "tests/integration_sweep.rs",
+      "slice": "slices/000087.diff"
+    }
+  ],
+  "archives": [
+    {
+      "revision": "bce6589afead4c031ac9ecfa3a094c9a5c4be161",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 43,
+      "invocationId": "inv-p3-20261031T215045",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3-20261031T215045",
+      "report": null,
+      "files": []
+    }
+  ],
+  "collectionOrigins": [],
+  "omitted": [],
+  "gaps": []
+}

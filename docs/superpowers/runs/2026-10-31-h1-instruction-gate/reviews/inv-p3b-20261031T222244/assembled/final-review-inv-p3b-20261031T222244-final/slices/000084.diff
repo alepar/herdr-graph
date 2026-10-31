@@ -1,0 +1,52 @@
+diff --git a/src/writer/tests.rs b/src/writer/tests.rs
+index 3b0f63d..daf9770 100644
+--- a/src/writer/tests.rs
++++ b/src/writer/tests.rs
+@@ -438,6 +438,38 @@ fn unregistered_kind_rejected_at_admit() {
+     );
+ }
+ 
++/// A `ContentWrite` row journaled before H1 removed the mutation: admission refuses new ones and a row that
++/// is already journaled fails (not applies) through the "no mutation registered" path.
++#[test]
++fn legacy_content_write_op_fails_with_no_mutation_registered() {
++    let fx = fx();
++    let legacy = ChangeRequest {
++        kind: RequestKind::ContentWrite,
++        args: json!({ "object": SeatId::new().to_string(), "rel": "summaries/x.md", "bytes_b64": "eA==" }),
++        relied_on: vec![],
++        requester: Requester::default(),
++        supersedes: None,
++        confirmed: None,
++    };
++    assert!(
++        matches!(fx.w.admit(legacy.clone()), Err(WriterError::Invalid(m)) if m.contains("no mutation registered"))
++    );
++    let before = fx.w.store().head().unwrap();
++    let op = fx.w.journal().admit(&legacy, t0()).unwrap();
++    let out = fx.w.drain().unwrap();
++    assert!(matches!(out[..], [StepOutcome::Failed(..)]), "{out:?}");
++    let r = row(&fx, &op);
++    assert_eq!(r.state, OpState::Failed);
++    assert!(
++        r.rejection
++            .unwrap()
++            .reason
++            .contains("no mutation registered"),
++        "failed through the writer's unregistered-mutation path"
++    );
++    assert_eq!(fx.w.store().head().unwrap(), before, "nothing committed");
++}
++
+ #[test]
+ fn relied_on_missing_object_rejected_at_admit() {
+     let fx = fx();
+@@ -1007,7 +1039,7 @@ fn registry_rejects_duplicates_and_keys_use_sub() {
+     assert_eq!(
+         mutation_key(&r),
+         "seat_rename",
+-        "sub only applies to observed/bookkeeping/content_write"
++        "sub only applies to observed/bookkeeping"
+     );
+ }
+ 

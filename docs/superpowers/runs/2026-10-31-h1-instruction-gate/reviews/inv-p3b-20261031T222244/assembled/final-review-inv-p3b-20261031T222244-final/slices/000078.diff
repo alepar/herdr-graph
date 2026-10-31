@@ -1,0 +1,39 @@
+diff --git a/src/undo/candidates.rs b/src/undo/candidates.rs
+index 06f2f2d..312d413 100644
+--- a/src/undo/candidates.rs
++++ b/src/undo/candidates.rs
+@@ -21,7 +21,8 @@ pub struct Candidate {
+     pub undone: bool,
+ }
+ 
+-/// Closure cascades, retirements, hydrations, template edits and application retirements can be undone;
++/// Closure cascades, retirements, hydrations, template edits, instruction edits and
++/// application retirements can be undone;
+ /// resurrections and undos are history only.
+ pub fn is_undoable(kind: ActionKind) -> bool {
+     matches!(
+@@ -30,6 +31,7 @@ pub fn is_undoable(kind: ActionKind) -> bool {
+             | ActionKind::Retire
+             | ActionKind::Hydrate
+             | ActionKind::TemplateEdit
++            | ActionKind::InstructionsEdit
+             | ActionKind::ApplicationRetire
+     )
+ }
+@@ -149,6 +151,16 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
+         }
+         ActionKind::Resurrect => "resurrection".into(),
+         ActionKind::ThreadsReconnect => "threads reconnect (reverse reconnect required)".into(),
++        ActionKind::InstructionsEdit => {
++            let object = a
++                .affected
++                .first()
++                .map_or_else(String::new, |o| names.of(&o.object));
++            format!(
++                "edited instructions {} of {object}",
++                comp_str(a, "file").unwrap_or_default()
++            )
++        }
+         ActionKind::Undo => "undo".into(),
+     }
+ }

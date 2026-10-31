@@ -1,0 +1,50 @@
+diff --git a/src/transcripts/mod.rs b/src/transcripts/mod.rs
+index a4626d3..bb6eabd 100644
+--- a/src/transcripts/mod.rs
++++ b/src/transcripts/mod.rs
+@@ -624,11 +624,19 @@ impl Transcripts {
+         args: serde_json::Value,
+     ) -> Result<serde_json::Value, CommandError> {
+         let rq = Self::request_arg(&args)?;
+-        let output = args
+-            .get("output")
+-            .and_then(|v| v.as_str())
+-            .ok_or_else(|| CommandError::bad_request("needs {output}"))?
+-            .to_owned();
++        let (output, summary_b64) = (
++            args.get("output").and_then(|v| v.as_str()),
++            args.get("summary_b64").and_then(|v| v.as_str()),
++        );
++        if output.is_some() == summary_b64.is_some() {
++            return Err(CommandError::bad_request(
++                "needs exactly one of {output} or {summary_b64}",
++            ));
++        }
++        if let Some(b64) = summary_b64 {
++            crate::model::b64::b64_decode(b64)
++                .map_err(|e| CommandError::bad_request(format!("summary_b64: {e}")))?;
++        }
+         let covered: ByteRange =
+             serde_json::from_value(args.get("covered").cloned().unwrap_or_default())
+                 .map_err(|e| CommandError::bad_request(format!("covered: {e}")))?;
+@@ -663,11 +671,15 @@ impl Transcripts {
+             }
+         };
+         let at = self.clock.now();
+-        self.commit(bookkeeping_request(
+-            "request_complete",
+-            json!({ "rq": rq, "output_ref": output, "covered": covered, "reported_by": reported_by, "at": at }),
+-        ))
+-        .await?;
++        let mut book =
++            json!({ "rq": rq, "covered": covered, "reported_by": reported_by, "at": at });
++        match (output, summary_b64) {
++            (Some(o), _) => book["output_ref"] = json!(o),
++            (_, Some(b)) => book["summary_b64"] = json!(b),
++            _ => {}
++        }
++        self.commit(bookkeeping_request("request_complete", book))
++            .await?;
+         Ok(json!({ "request": rq, "status": "completed" }))
+     }
+ 

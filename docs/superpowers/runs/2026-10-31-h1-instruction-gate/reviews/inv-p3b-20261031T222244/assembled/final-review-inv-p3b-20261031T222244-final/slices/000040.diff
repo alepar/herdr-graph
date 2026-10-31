@@ -1,0 +1,141 @@
+diff --git a/src/cli/content.rs b/src/cli/content.rs
+index b25cc1f..432695e 100644
+--- a/src/cli/content.rs
++++ b/src/cli/content.rs
+@@ -1,14 +1,12 @@
+-//! `content` — owned by hg-zmi.13 (spec §3.5).
+-use crate::bootstrap::content::b64_encode;
+-use crate::daemon::client::{CallMode, call_daemon};
++//! `content` — removed in H1 (spec §1.5). The `write` subcommand keeps its old arguments so existing
++//! callers get guidance instead of a usage error; it does nothing and exits 2.
+ use clap::Subcommand;
+-use serde_json::json;
+ use std::path::PathBuf;
+ use std::process::ExitCode;
+ 
+ #[derive(Subcommand, Debug)]
+ pub enum Commands {
+-    /// Write content files belonging to a graph object.
++    /// Removed: see the guidance printed when run.
+     Content {
+         #[command(subcommand)]
+         action: ContentAction,
+@@ -17,7 +15,7 @@ pub enum Commands {
+ 
+ #[derive(Subcommand, Debug)]
+ pub enum ContentAction {
+-    /// Write FROM to REL inside the object's folder.
++    /// Removed: summaries use `request complete --summary-from`, instructions use `plan instructions`.
+     Write {
+         #[arg(long)]
+         object: String,
+@@ -25,50 +23,69 @@ pub enum ContentAction {
+         rel: PathBuf,
+         #[arg(long)]
+         from: PathBuf,
+-        /// Refuse the write unless the file's current blob hash is this one.
+         #[arg(long)]
+         expect: Option<String>,
+     },
+ }
+ 
+-pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+-    match cmd {
+-        Commands::Content {
+-            action:
+-                ContentAction::Write {
+-                    object,
+-                    rel,
+-                    from,
+-                    expect,
+-                },
+-        } => {
+-            let rel = rel
+-                .to_str()
+-                .ok_or_else(|| anyhow::anyhow!("--rel is not valid UTF-8"))?
+-                .to_owned();
+-            let bytes = std::fs::read(&from)
+-                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", from.display()))?;
+-            let reply = call_daemon(
+-                "content.write",
+-                json!({ "object": object, "rel": rel, "bytes_b64": b64_encode(&bytes), "expect": expect }),
+-                CallMode::Ensure,
+-            )
+-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+-            let state = reply["state"].as_str().unwrap_or("unknown");
+-            let op = reply["op"].as_str().unwrap_or("<op>");
+-            println!("{op} {state}");
+-            super::plan::print_if_still_running(op, state);
+-            if let Some(c) = reply["commit"].as_str() {
+-                println!("commit {c}");
+-            }
+-            if let Some(r) = reply.get("rejection").filter(|r| r.is_object()) {
+-                println!(
+-                    "{}: {}",
+-                    r["reason"].as_str().unwrap_or("rejected"),
+-                    r["explanation"].as_str().unwrap_or_default()
+-                );
+-            }
+-            Ok(super::plan::exit_for_state(state))
+-        }
++pub const STUB_MESSAGE: &str = "content write was removed: summaries use 'herdr-graph request complete <rq> --summary-from <file> --covered <a-b>'; instructions use 'herdr-graph plan instructions set …' then 'herdr-graph apply'";
++
++pub fn run(_cmd: Commands) -> anyhow::Result<ExitCode> {
++    eprintln!("herdr-graph: {STUB_MESSAGE}");
++    Ok(ExitCode::from(2))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::cli::Cli;
++    use clap::Parser;
++
++    #[test]
++    fn content_write_stub_parses_the_old_arguments() {
++        let cli = Cli::try_parse_from([
++            "herdr-graph",
++            "content",
++            "write",
++            "--object",
++            "x",
++            "--rel",
++            "a",
++            "--from",
++            "f",
++            "--expect",
++            "h",
++        ])
++        .unwrap();
++        assert!(matches!(
++            cli.command,
++            crate::cli::Command::Content(Commands::Content {
++                action: ContentAction::Write { .. }
++            })
++        ));
++    }
++
++    #[test]
++    fn stub_message_is_the_guidance_text() {
++        assert_eq!(
++            STUB_MESSAGE,
++            "content write was removed: summaries use 'herdr-graph request complete <rq> --summary-from <file> --covered <a-b>'; instructions use 'herdr-graph plan instructions set …' then 'herdr-graph apply'"
++        );
++    }
++
++    #[test]
++    fn stub_exits_two() {
++        let cmd = Commands::Content {
++            action: ContentAction::Write {
++                object: "x".into(),
++                rel: "a".into(),
++                from: "f".into(),
++                expect: None,
++            },
++        };
++        assert_eq!(
++            format!("{:?}", run(cmd).unwrap()),
++            format!("{:?}", ExitCode::from(2))
++        );
+     }
+ }

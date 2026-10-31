@@ -1,0 +1,495 @@
+diff --git a/src/store/tests.rs b/src/store/tests.rs
+index d2c03a7..7fbfa99 100644
+--- a/src/store/tests.rs
++++ b/src/store/tests.rs
+@@ -1024,6 +1024,53 @@ mod init {
+     }
+ }
+ 
++mod graph_id {
++    use super::*;
++    use crate::model::graph::GraphRecord;
++    use crate::model::{GraphId, IdKind};
++
++    #[test]
++    fn graph_id_helper_and_locate_resolve_to_the_instance_root() {
++        let (_t, store) = new_instance();
++        let c = store.head().unwrap();
++        let v = store.at(&c);
++        let g = layout::graph_id(&v).unwrap();
++        assert_eq!(g, layout::read_graph(&v).unwrap().graph_id().unwrap());
++        let loc = layout::locate(&v, &g.to_any()).unwrap().unwrap();
++        assert_eq!(loc.folder, RepoPath::root());
++        assert_eq!(loc.record_path, rp("graph.toml"));
++        assert_eq!(loc.id, g.to_any());
++        assert_eq!(store.locate(&c, &g.to_any()).unwrap(), Some(loc));
++    }
++
++    #[test]
++    fn locate_of_another_instances_graph_id_is_none() {
++        let (_t, store) = new_instance();
++        let c = store.head().unwrap();
++        let v = store.at(&c);
++        assert_eq!(layout::locate(&v, &GraphId::new().to_any()).unwrap(), None);
++    }
++
++    #[test]
++    fn corrupt_instance_id_is_reported() {
++        let (_t, store) = new_instance();
++        let c = store.head().unwrap();
++        let mut rec: GraphRecord = layout::read_graph(&store.at(&c)).unwrap();
++        rec.instance_id = "not-a-ulid".into();
++        let mut e = EditSet::default();
++        e.put(rp("graph.toml"), toml_bytes(&rec));
++        let c = commit_edits(&store, &e, "corrupt instance id");
++        let v = store.at(&c);
++        match layout::graph_id(&v) {
++            Err(StoreError::Corrupt { path, .. }) => assert_eq!(path, "graph.toml"),
++            other => panic!("expected Corrupt, got {other:?}"),
++        }
++        let any_gr = GraphId::new().to_any();
++        assert_eq!(any_gr.kind(), IdKind::Graph);
++        assert!(layout::locate(&v, &any_gr).is_err());
++    }
++}
++
+ mod targeted_lookup {
+     use super::*;
+     use crate::model::operation::OperationRecord;
+@@ -1188,3 +1235,436 @@ mod targeted_lookup {
+         );
+     }
+ }
++
++mod instruction_source {
++    use super::*;
++    use crate::store::instruction_source::*;
++
++    fn words(s: &str) -> Vec<String> {
++        s.split_whitespace().map(str::to_owned).collect()
++    }
++
++    struct Fx {
++        _t: tempfile::TempDir,
++        store: GitStore,
++        head: CommitId,
++        alpha: TeamspaceRecord,
++        gone: TeamspaceRecord,
++        a1: SeatRecord,
++        old: SeatRecord,
++        a1_dir: RepoPath,
++    }
++
++    /// alpha: live a1, a2, retired old; beta: live b1; retired teamspace gone with seat g1.
++    fn fixture() -> Fx {
++        let (t, store) = new_instance();
++        let mut e = EditSet::default();
++        let put_ts = |e: &mut EditSet, slug: &str, name: &str, lc: Lifecycle| {
++            let mut ts = teamspace(name);
++            ts.lifecycle = lc;
++            let dir = layout::teamspace_dir(slug);
++            e.put(layout::teamspace_record(&dir), toml_bytes(&ts));
++            (ts, dir)
++        };
++        let put_seat =
++            |e: &mut EditSet, dir: &RepoPath, ts: &TeamspaceRecord, name: &str, lc: Lifecycle| {
++                let mut s = seat(name, &ts.id);
++                s.lifecycle = lc;
++                let sd = layout::seat_dir(dir, name);
++                e.put(layout::seat_record(&sd), toml_bytes(&s));
++                (s, sd)
++            };
++        let (alpha, ad) = put_ts(&mut e, "alpha", "alpha", Lifecycle::Active);
++        let (beta, bd) = put_ts(&mut e, "beta", "beta", Lifecycle::Dormant);
++        let (gone, gd) = put_ts(&mut e, "gone", "gone", Lifecycle::Retired);
++        let (a1, a1_dir) = put_seat(&mut e, &ad, &alpha, "a1", Lifecycle::Active);
++        put_seat(&mut e, &ad, &alpha, "a2", Lifecycle::Dormant);
++        let (old, _) = put_seat(&mut e, &ad, &alpha, "old", Lifecycle::Retired);
++        put_seat(&mut e, &bd, &beta, "b1", Lifecycle::Active);
++        put_seat(&mut e, &gd, &gone, "g1", Lifecycle::Active);
++        let head = commit_edits(&store, &e, "fixture");
++        Fx {
++            _t: t,
++            store,
++            head,
++            alpha,
++            gone,
++            a1,
++            old,
++            a1_dir,
++        }
++    }
++
++    #[test]
++    fn parse_words_shapes() {
++        let r = parse_words(&words("global rules/x.md"), true).unwrap();
++        assert_eq!(
++            r,
++            InstructionRef {
++                scope: ScopeKind::Global,
++                target: None,
++                file: Some(InstructionFile::Rule("x".into()))
++            }
++        );
++        let r = parse_words(&words("teamspace alpha rules/x.md"), true).unwrap();
++        assert_eq!(
++            (r.scope, r.target.as_deref()),
++            (ScopeKind::Teamspace, Some("alpha"))
++        );
++        let r = parse_words(&words("seat a1 AGENTS.md"), true).unwrap();
++        assert_eq!(r.file, Some(InstructionFile::AgentsMd));
++        let r = parse_words(&words("seat a1"), false).unwrap();
++        assert_eq!((r.target.as_deref(), r.file), (Some("a1"), None));
++        let r = parse_words(&words("global"), false).unwrap();
++        assert_eq!((r.scope, r.file), (ScopeKind::Global, None));
++        for (w, req) in [
++            ("seat a1", true),
++            ("global", true),
++            ("global foo rules/x.md", true),
++            ("bogus x", true),
++            ("seat", false),
++            ("seat a1 AGENTS.md extra", true),
++            ("", true),
++        ] {
++            assert!(
++                matches!(parse_words(&words(w), req), Err(InstructionError::Usage(_))),
++                "{w:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn file_names_and_allowed_files() {
++        for w in [
++            "rules/Code-Style.md",
++            "rules/a/b.md",
++            "rules/.x.md",
++            "rules/x.txt",
++            "rules/.md",
++        ] {
++            assert!(
++                matches!(
++                    InstructionFile::parse(ScopeKind::Seat, w),
++                    Err(InstructionError::BadName(_))
++                ),
++                "{w}"
++            );
++        }
++        assert!(matches!(
++            InstructionFile::parse(ScopeKind::Global, "AGENTS.md"),
++            Err(InstructionError::NotAllowed { .. })
++        ));
++        assert!(matches!(
++            InstructionFile::parse(ScopeKind::Teamspace, "AGENTS.md"),
++            Err(InstructionError::NotAllowed { .. })
++        ));
++        assert!(matches!(
++            InstructionFile::parse(ScopeKind::Seat, "notes.md"),
++            Err(InstructionError::NotAllowed { .. })
++        ));
++        assert_eq!(
++            InstructionFile::parse(ScopeKind::Seat, "AGENTS.md"),
++            Ok(InstructionFile::AgentsMd)
++        );
++        let ok = InstructionFile::parse(ScopeKind::Global, "rules/a_b-9.md").unwrap();
++        assert_eq!(ok.rel(), "rules/a_b-9.md");
++        // Distinct errors: unknown and retired targets are other variants again.
++        let fx = fixture();
++        let v = fx.store.at(&fx.head);
++        let unknown = resolve_scope(&v, ScopeKind::Seat, Some("nope")).unwrap_err();
++        let retired = resolve_scope(&v, ScopeKind::Seat, Some("old")).unwrap_err();
++        assert!(matches!(unknown, InstructionError::UnknownTarget { .. }));
++        assert!(matches!(retired, InstructionError::Retired { .. }));
++    }
++
++    #[test]
++    fn resolve_targets() {
++        let fx = fixture();
++        let v = fx.store.at(&fx.head);
++        assert_eq!(
++            resolve_scope(&v, ScopeKind::Global, None),
++            Ok(InstructionScope::Global)
++        );
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Global, Some("x")),
++            Err(InstructionError::Usage(_))
++        ));
++        assert_eq!(
++            resolve_scope(&v, ScopeKind::Teamspace, Some("alpha")),
++            Ok(InstructionScope::Teamspace(fx.alpha.id.clone()))
++        );
++        assert_eq!(
++            resolve_scope(&v, ScopeKind::Teamspace, Some(fx.alpha.id.as_str())),
++            Ok(InstructionScope::Teamspace(fx.alpha.id.clone()))
++        );
++        assert_eq!(
++            resolve_scope(&v, ScopeKind::Seat, Some("a1")),
++            Ok(InstructionScope::Seat(fx.a1.id.clone()))
++        );
++        assert_eq!(
++            resolve_scope(&v, ScopeKind::Seat, Some(fx.a1.id.as_str())),
++            Ok(InstructionScope::Seat(fx.a1.id.clone()))
++        );
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Seat, Some("nope")),
++            Err(InstructionError::UnknownTarget { .. })
++        ));
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Seat, Some(SeatId::new().as_str())),
++            Err(InstructionError::UnknownTarget { .. })
++        ));
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Seat, Some("old")),
++            Err(InstructionError::Retired { .. })
++        ));
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Seat, Some(fx.old.id.as_str())),
++            Err(InstructionError::Retired { .. })
++        ));
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Teamspace, Some("gone")),
++            Err(InstructionError::Retired { .. })
++        ));
++        assert!(matches!(
++            resolve_scope(&v, ScopeKind::Teamspace, Some(fx.gone.id.as_str())),
++            Err(InstructionError::Retired { .. })
++        ));
++    }
++
++    #[test]
++    fn ambiguous_live_name_lists_ids() {
++        let fx = fixture();
++        // A second live seat named a1 in beta.
++        let beta =
++            resolve_scope(&fx.store.at(&fx.head), ScopeKind::Teamspace, Some("beta")).unwrap();
++        let InstructionScope::Teamspace(beta_id) = beta else {
++            panic!()
++        };
++        let dup = seat("a1", &beta_id);
++        let mut e = EditSet::default();
++        e.put(
++            layout::seat_record(&layout::seat_dir(&layout::teamspace_dir("beta"), "dup")),
++            toml_bytes(&dup),
++        );
++        let c = commit_edits(&fx.store, &e, "dup");
++        let err = resolve_scope(&fx.store.at(&c), ScopeKind::Seat, Some("a1")).unwrap_err();
++        match err {
++            InstructionError::Ambiguous(m) => {
++                assert!(
++                    m.contains(fx.a1.id.as_str()) && m.contains(dup.id.as_str()),
++                    "{m}"
++                )
++            }
++            other => panic!("{other:?}"),
++        }
++    }
++
++    #[test]
++    fn paths_and_object_ids() {
++        let fx = fixture();
++        let v = fx.store.at(&fx.head);
++        let rule = InstructionFile::Rule("x".into());
++        let g = InstructionTarget {
++            scope: InstructionScope::Global,
++            file: rule.clone(),
++        };
++        assert_eq!(path(&v, &g).unwrap(), rp("rules/x.md"));
++        assert_eq!(
++            g.scope.object_id(&v).unwrap(),
++            layout::graph_id(&v).unwrap().to_any()
++        );
++        let t = InstructionTarget {
++            scope: InstructionScope::Teamspace(fx.alpha.id.clone()),
++            file: rule,
++        };
++        assert_eq!(path(&v, &t).unwrap(), rp("teamspaces/alpha/rules/x.md"));
++        assert_eq!(t.scope.object_id(&v).unwrap(), fx.alpha.id.to_any());
++        let s = InstructionTarget {
++            scope: InstructionScope::Seat(fx.a1.id.clone()),
++            file: InstructionFile::AgentsMd,
++        };
++        assert_eq!(path(&v, &s).unwrap(), fx.a1_dir.join("AGENTS.md").unwrap());
++        let missing = InstructionScope::Seat(SeatId::new());
++        assert!(matches!(
++            scope_folder(&v, &missing),
++            Err(InstructionError::UnknownTarget { .. })
++        ));
++    }
++
++    #[test]
++    fn affected_seats_per_scope() {
++        let fx = fixture();
++        let v = fx.store.at(&fx.head);
++        let names = |s: &InstructionScope| -> Vec<String> {
++            affected_seats(&v, s)
++                .unwrap()
++                .into_iter()
++                .map(|a| a.name)
++                .collect()
++        };
++        assert_eq!(names(&InstructionScope::Global), ["a1", "a2", "b1"]);
++        assert_eq!(
++            names(&InstructionScope::Teamspace(fx.alpha.id.clone())),
++            ["a1", "a2"]
++        );
++        assert_eq!(names(&InstructionScope::Seat(fx.a1.id.clone())), ["a1"]);
++        let a = affected_seats(&v, &InstructionScope::Seat(fx.a1.id.clone())).unwrap();
++        assert_eq!(a[0].id, fx.a1.id);
++    }
++
++    #[test]
++    fn classify_paths() {
++        for f in [FolderKind::Seat, FolderKind::Teamspace, FolderKind::Root] {
++            for rel in [
++                "AGENTS.md",
++                "rules/x.md",
++                "rules/Code-Style.md",
++                "rules/a/b.md",
++            ] {
++                assert_eq!(classify(f, rel), PathClass::Instruction, "{rel}");
++                assert!(is_instruction_source(f, rel));
++            }
++        }
++        for rel in [
++            "seat.toml",
++            "clones/c/clone.toml",
++            "teamspace.toml",
++            "graph.toml",
++            "template.toml",
++        ] {
++            assert_eq!(classify(FolderKind::Seat, rel), PathClass::Record, "{rel}");
++        }
++        for f in [FolderKind::Seat, FolderKind::Clone] {
++            for rel in ["notes/n.md", "summaries/tr-0-5.md"] {
++                assert_eq!(classify(f, rel), PathClass::Data, "{rel}");
++                assert!(!is_instruction_source(f, rel));
++            }
++            for rel in [".gitkeep", "rules/.gitkeep", "notes/.x"] {
++                assert_eq!(classify(f, rel), PathClass::Ignored, "{rel}");
++            }
++        }
++        assert_eq!(classify(FolderKind::Clone, "clone.toml"), PathClass::Record);
++        // A clone's rules/ or AGENTS.md is plain data: instructions live on seats.
++        assert_eq!(classify(FolderKind::Clone, "AGENTS.md"), PathClass::Data);
++        assert_eq!(layout::RECORD_FILES.len(), 5);
++    }
++
++    #[test]
++    fn fresh_instance_gitkeep_is_ignored() {
++        let (_t, store) = new_instance();
++        let v = store.at(&store.head().unwrap());
++        assert!(v.read_file(&rp("rules/.gitkeep")).unwrap().is_some());
++        assert!(
++            list_files(&v, &InstructionScope::Global)
++                .unwrap()
++                .is_empty()
++        );
++        assert_eq!(
++            classify(FolderKind::Root, "rules/.gitkeep"),
++            PathClass::Ignored
++        );
++    }
++
++    #[test]
++    fn list_files_reports_bad_names() {
++        let fx = fixture();
++        let mut e = EditSet::default();
++        for f in [
++            "rules/ok.md",
++            "rules/Bad.md",
++            "rules/n/x.md",
++            "rules/.keep",
++            "AGENTS.md",
++        ] {
++            e.put(fx.a1_dir.join(f).unwrap(), b"x\n".to_vec());
++        }
++        e.put(fx.a1_dir.join("notes/n.md").unwrap(), b"data".to_vec());
++        let c = commit_edits(&fx.store, &e, "files");
++        let v = fx.store.at(&c);
++        let listed = list_files(&v, &InstructionScope::Seat(fx.a1.id.clone())).unwrap();
++        let rels: Vec<&str> = listed.iter().map(|l| l.rel.as_str()).collect();
++        assert_eq!(
++            rels,
++            ["AGENTS.md", "rules/Bad.md", "rules/n/x.md", "rules/ok.md"]
++        );
++        let ok: Vec<bool> = listed.iter().map(|l| l.name.is_ok()).collect();
++        assert_eq!(ok, [true, false, false, true]);
++        assert_eq!(listed[3].name, Ok(InstructionFile::Rule("ok".into())));
++        assert_eq!(listed[3].path, fx.a1_dir.join("rules/ok.md").unwrap());
++        assert!(
++            listed[1]
++                .name
++                .as_ref()
++                .unwrap_err()
++                .to_string()
++                .contains("rules/Bad.md")
++        );
++        // Same checker for a scope with no AGENTS.md.
++        assert!(check_name(ScopeKind::Teamspace, "AGENTS.md").is_err());
++        assert!(check_name(ScopeKind::Seat, "AGENTS.md").is_ok());
++    }
++
++    #[test]
++    fn content_clause() {
++        assert_eq!(check_content(b"a\tb\nc\r\nd"), Ok("a\tb\nc\r\nd"));
++        assert_eq!(check_content(b"\r\n"), Ok("\r\n"));
++        assert_eq!(check_content("héllo ✓".as_bytes()), Ok("héllo ✓"));
++        let reason = |b: &[u8]| check_content(b).unwrap_err().reason;
++        assert_eq!(reason(b"\x1b[31m"), "control character U+001B at line 1");
++        assert_eq!(reason(b"a\rb"), "bare carriage return (U+000D) at line 1");
++        assert_eq!(reason(b"a\r"), "bare carriage return (U+000D) at line 1");
++        assert_eq!(
++            reason("x\n\u{0085}".as_bytes()),
++            "control character U+0085 at line 2"
++        );
++        assert_eq!(reason(b"\x7f"), "control character U+007F at line 1");
++        assert_eq!(reason(b"\n\n\x00"), "control character U+0000 at line 3");
++        assert_eq!(reason(b"ab\xff"), "not valid UTF-8 (at byte 2)");
++        assert_eq!(reason(&[0xff]), "not valid UTF-8 (at byte 0)");
++        for c in [
++            '\u{AD}',
++            '\u{61C}',
++            '\u{180E}',
++            '\u{200B}',
++            '\u{200F}',
++            '\u{202A}',
++            '\u{202E}',
++            '\u{2060}',
++            '\u{2064}',
++            '\u{2066}',
++            '\u{206F}',
++            '\u{FEFF}',
++            '\u{FFF9}',
++            '\u{FFFB}',
++            '\u{E0000}',
++            '\u{E0041}',
++            '\u{E007F}',
++        ] {
++            let text = format!("ok\n{c}");
++            let r = reason(text.as_bytes());
++            assert_eq!(
++                r,
++                format!("invisible or format character U+{:04X} at line 2", c as u32)
++            );
++        }
++        assert!(reason("\u{E0041}".as_bytes()).contains("U+E0041"));
++        // Neighbours just outside the ranges are admissible.
++        for c in [
++            '\u{AE}',
++            '\u{2065}',
++            '\u{2070}',
++            '\u{FFFC}',
++            '\u{E0080}',
++            '\u{200A}',
++            '\u{2029}',
++        ] {
++            let s = c.to_string();
++            assert_eq!(
++                check_content(s.as_bytes()),
++                Ok(s.as_str()),
++                "U+{:04X}",
++                c as u32
++            );
++        }
++    }
++}
