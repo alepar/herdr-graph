@@ -1351,11 +1351,26 @@ fn init_with_examples_templates_hydrate() {
     );
     assert_eq!(clone_of(&fx, &foreman.id).seat, foreman.id);
 
-    // The member instructions arrive in the seat folder; the summarizer's carry the protocol.
+    // The member instructions stay in the template; the summarizer's carry the protocol.
     let md = |name: &str| {
-        String::from_utf8(file_in(&fx, seat_rec(&fx, name).id.as_str(), "AGENTS.md").unwrap())
+        let tpl_id = seat_rec(&fx, name).template_ref.unwrap().template;
+        let v = view(&fx);
+        let folder = layout::locate(&v, &tpl_id.to_any())
             .unwrap()
+            .unwrap()
+            .folder;
+        let slug = crate::store::slug::slugify(name);
+        String::from_utf8(
+            v.read_file(&layout::member_agents_md(&folder, &slug))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap()
     };
+    assert!(
+        file_in(&fx, seat_rec(&fx, "summarizer").id.as_str(), "AGENTS.md").is_none(),
+        "no seat copy of the member instructions"
+    );
     let s = md("summarizer");
     for needle in [
         "herdr-graph request ack <rq>",

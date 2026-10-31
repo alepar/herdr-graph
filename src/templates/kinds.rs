@@ -388,12 +388,12 @@ fn withdrawal_effects(
     Ok(v)
 }
 
-/// Seat + clone records and the member's AGENTS.md for one template member (hydration and live propagation).
+/// Seat + clone records for one template member (hydration and live propagation).
+/// Member instructions stay in the template folder and render live (spec §4.1 step 3).
 #[allow(clippy::too_many_arguments)]
 fn create_member_seat(
     cx: &mut MutationCx<'_>,
     tpl: &TemplateRecord,
-    tpl_dir: &RepoPath,
     member: &TemplateMember,
     app: &AppId,
     ts_id: &TeamspaceId,
@@ -427,13 +427,6 @@ fn create_member_seat(
     cx.tree
         .put_record(layout::seat_record(&seat_dir), &mut rec)?;
     created_object(acc, seat_id.to_any(), startup_lifecycle(member.startup));
-    // Legacy inline templates seed an instance file. Reusable definitions retain live member
-    // references so future specialization edits cannot conflict with a stale copied context.
-    if member.seat_template.is_none()
-        && let Some(bytes) = agents_md(&cx.tree, tpl_dir, &member.name)?
-    {
-        cx.tree.put_file(seat_dir.join("AGENTS.md")?, bytes);
-    }
     Ok(())
 }
 
@@ -1134,7 +1127,6 @@ impl OrgKind for TemplateEdit {
                         create_member_seat(
                             cx,
                             &new,
-                            &loc.folder,
                             member,
                             &app.id,
                             &app.teamspace,
@@ -1358,7 +1350,6 @@ struct ApplyArgs {
 }
 
 struct HydratePlan {
-    loc: ObjectLocation,
     tpl: TemplateRecord,
     ts: TsInfo,
     /// Members mapped to an existing seat.
@@ -1366,7 +1357,7 @@ struct HydratePlan {
 }
 
 fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, PlanError> {
-    let (loc, tpl) = resolve_template(tree, &a.template)?;
+    let (_, tpl) = resolve_template(tree, &a.template)?;
     if tpl.kind != TemplateKind::Team {
         return Err(PlanError::Invalid(
             "application apply requires a team template".into(),
@@ -1414,12 +1405,7 @@ fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, Plan
         }
         reused.insert(mem, f);
     }
-    Ok(HydratePlan {
-        loc,
-        tpl,
-        ts,
-        reused,
-    })
+    Ok(HydratePlan { tpl, ts, reused })
 }
 
 struct ApplicationApply;
@@ -1567,7 +1553,6 @@ impl OrgKind for ApplicationApply {
             create_member_seat(
                 cx,
                 &h.tpl,
-                &h.loc.folder,
                 m,
                 &app_id,
                 &h.ts.rec.id,
