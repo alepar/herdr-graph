@@ -3179,3 +3179,55 @@ mod instructions {
         );
     }
 }
+
+#[test]
+fn seat_override_section_rejects_inadmissible_text() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create x --teamspace alpha");
+    let dir = fx.root.join("sections");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (text, needle) in [("ok\nx\u{E0041}y", "U+E0041"), ("a\rb", "U+000D")] {
+        let f = dir.join("s.md");
+        std::fs::write(&f, text).unwrap();
+        let err = match create_plan(
+            &fx.deps,
+            &CallerInfo::default(),
+            words(&format!("seat override x --section note={}", f.display())),
+        ) {
+            Ok(_) => panic!("expected rejection"),
+            Err(e) => e.message,
+        };
+        assert!(
+            err.contains(needle) && err.contains("at line") && err.contains("note"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn seat_override_section_cap_warning() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create x --teamspace alpha");
+    let f = fx.root.join("big.md");
+    std::fs::write(&f, "y".repeat(9500)).unwrap();
+    let sp = plan(
+        &fx,
+        &format!("seat override x --section big={}", f.display()),
+    );
+    assert!(
+        sp.plan
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("hook output for x would exceed the cap")),
+        "{:?}",
+        sp.plan.warnings
+    );
+    std::fs::write(&f, "small").unwrap();
+    let sp = plan(
+        &fx,
+        &format!("seat override x --section big={}", f.display()),
+    );
+    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+}

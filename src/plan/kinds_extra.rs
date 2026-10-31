@@ -4,6 +4,7 @@
 use super::grammar::{self, Scope, flag, positional};
 use super::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use super::types::{Plan, PlanEffect, Reserved};
+use crate::bootstrap::instructions::{PatchedTree, cap_warning};
 use crate::daemon::registry::CallerInfo;
 use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::clone::CloneRecord;
@@ -17,8 +18,9 @@ use crate::model::seat::{InstructionSection, SeatRecord};
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{AnyId, HerdrPaneId, TeamspaceId};
 use crate::ports::store::{ObjectLocation, RepoPath};
+use crate::store::instruction_source::check_content;
 use crate::store::layout;
-use crate::store::record::read_toml;
+use crate::store::record::{read_toml, to_toml_bytes};
 use crate::store::slug::unique_slug;
 use crate::store::tree::TreeRead;
 use crate::writer::{Applied, MutationCx, MutationError, Reject};
@@ -439,6 +441,9 @@ impl OrgKind for SeatOverride {
             let text = std::fs::read_to_string(&path).map_err(|e| {
                 PlanError::Invalid(format!("cannot read section file {}: {e}", path.display()))
             })?;
+            check_content(text.as_bytes()).map_err(|e| {
+                PlanError::Invalid(format!("section {name} ({}): {e}", path.display()))
+            })?;
             sections.push(InstructionSection {
                 name: name.to_owned(),
                 body: text,
@@ -496,11 +501,14 @@ impl OrgKind for SeatOverride {
             effects.extend(session_replacements(&f.rec, &clones, &old, &new));
         }
         let summary = format!("override seat {} config", f.rec.name);
-        Ok(body(
-            effects,
-            vec![rev_of(f.rec.id.clone(), f.rec.rev)],
-            summary,
-        ))
+        let mut out = body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary);
+        if a.set.instructions_sections.is_some() {
+            let mut patched = PatchedTree::new(cx.tree);
+            patched.put(f.loc.record_path.clone(), to_toml_bytes(&edited)?);
+            out.warnings
+                .extend(cap_warning(&patched, &cx.at, &edited.id)?);
+        }
+        Ok(out)
     }
     fn mutate(
         &self,
