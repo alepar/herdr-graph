@@ -1,6 +1,7 @@
 //! IDs, record schemas, (de)serialization (spec §2). Records are TOML with `schema`, `id`, `rev`.
 pub mod action;
 pub mod application;
+pub mod b64;
 pub mod change;
 pub mod clone;
 pub mod common;

@@ -38,8 +38,16 @@ pub enum RequestAction {
     /// Complete a request with its output.
     Complete {
         request: String,
-        #[arg(long)]
-        output: String,
+        /// Output reference recorded on the request (bookkeeping only; no file is written).
+        #[arg(
+            long,
+            required_unless_present = "summary_from",
+            conflicts_with = "summary_from"
+        )]
+        output: Option<String>,
+        /// Summary file: the daemon writes it to summaries/<tr>-<start>-<end>.md in the source seat's folder.
+        #[arg(long, value_name = "FILE")]
+        summary_from: Option<std::path::PathBuf>,
         #[arg(long)]
         covered: String,
     },
@@ -78,6 +86,7 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             RequestAction::Complete {
                 request,
                 output,
+                summary_from,
                 covered,
             } => {
                 let covered = match parse_covered(&covered) {
@@ -87,10 +96,23 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
                         return Ok(ExitCode::from(2));
                     }
                 };
-                mutate(
-                    "request.complete",
-                    serde_json::json!({ "request": request, "output": output, "covered": covered }),
-                )
+                let args = if let Some(path) = summary_from {
+                    let bytes = match std::fs::read(&path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("herdr-graph: reading {}: {e}", path.display());
+                            return Ok(ExitCode::from(2));
+                        }
+                    };
+                    serde_json::json!({
+                        "request": request,
+                        "summary_b64": crate::model::b64::b64_encode(&bytes),
+                        "covered": covered,
+                    })
+                } else {
+                    serde_json::json!({ "request": request, "output": output, "covered": covered })
+                };
+                mutate("request.complete", args)
             }
         },
     }
@@ -169,5 +191,20 @@ mod tests {
         assert!(parse_covered("abc").is_err());
         assert!(parse_covered("1-x").is_err());
         assert!(parse_covered("-5").is_err());
+    }
+
+    #[test]
+    fn complete_accepts_output_or_summary_from_not_both() {
+        use clap::Parser;
+        let parse = |extra: &[&str]| {
+            let mut argv = vec!["herdr-graph", "request", "complete", "rq_x"];
+            argv.extend_from_slice(extra);
+            argv.extend_from_slice(&["--covered", "0-1"]);
+            crate::cli::Cli::try_parse_from(argv)
+        };
+        assert!(parse(&["--output", "o"]).is_ok());
+        assert!(parse(&["--summary-from", "f"]).is_ok());
+        assert!(parse(&["--output", "o", "--summary-from", "f"]).is_err());
+        assert!(parse(&[]).is_err());
     }
 }
