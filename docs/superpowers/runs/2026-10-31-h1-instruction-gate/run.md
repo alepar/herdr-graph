@@ -1,7 +1,7 @@
 # super-auto run — 2026-10-31-h1-instruction-gate
 
 flags: planOneShot=t skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-design
+phase: code
 codeMechanism: Workflow
 runTag: h1-instruction-gate-20261031T205333
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -27,3 +27,5 @@ stepBackDesign-round-1: local — five round-1 findings form two small clusters 
 designRoast-round-1-fixes: C1 admissibility predicate (spec §2.2a; hg-45e.3/.4/.6/.14/.15), C2 seat-layer preservation (spec §1.5, §4.4; hg-45e.4/.6/.7/.11, new hg-45e.17), C3 tty prompt refusal under agent markers (spec Key decisions, §3.3, §3.5; hg-45e.10/.11) — applied inline, auto; re-roast: design decisions changed
 designRoast-exit: converged at round 2 (Should-fix 10 confirmed, 0 Blocking) — punch list of 10 applied inline to spec (§2.2a, §4.1, §4.4, Key abstractions, Out of scope, §3.5) and beads (hg-45e.3/.4/.6/.7/.11, new hg-45e.18); no re-roast per the converged exit; two round-1 escalations remain parked
 graph-pass: depth 7→6 · width 2.6→3.0 · applied 1 · parked 0
+- root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "4aa4a85520e82612b7257bdbab69842d477d147d", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-code", "source": "skill"}, {"id": "final-sweep", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "cargo test && cargo test --features test-support && cargo check --locked --offline --all-targets --all-features", "configuration": "run worktree, default features", "requiredLive": false}, {"id": "phase7-choice", "kind": "human", "owner": "human", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [], "checkEvidence": [], "runFailures": []}
+- review-collection · {"invocationId": "inv-p3-20261031T215045", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan/final-review-inv-p3-20261031T215045.md", "review": "pending", "required": [], "settled": false}
