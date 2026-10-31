@@ -959,6 +959,150 @@ mod wiring {
     }
 
     // -----------------------------------------------------------------------------------------
+    // configuration smoke (hg-45e.12): the three instruction scopes and the two harness gates
+    // -----------------------------------------------------------------------------------------
+
+    /// `herdr-graph seat <args>` as a seat pane would run it: cleared env, the instance and the pane id only.
+    fn seat_cmd(root: &Path, pane: &str, tmp: &Path, args: &[&str]) -> std::process::Output {
+        std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+            .env_clear()
+            .env("HERDR_GRAPH_INSTANCE", root)
+            .env("HERDR_PANE_ID", pane)
+            .env("HOME", tmp)
+            .current_dir(tmp)
+            .arg("seat")
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn stdout_ok(o: &std::process::Output) -> String {
+        assert!(
+            o.status.success(),
+            "exit {:?}: {}",
+            o.status.code(),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        String::from_utf8(o.stdout.clone()).unwrap()
+    }
+
+    /// Each scope: plan `instructions set` -> relay apply -> `seat --instructions` shows the text under its
+    /// `## <scope> rules/smoke.md` header and the SessionStart hook render carries it; an uncommitted edit of
+    /// the same working-tree file reaches neither.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sweep_instruction_scopes_render_end_to_end() {
+        let (dir, root) = new_instance();
+        let d = Daemon::start(&root).await;
+        d.committed(&["teamspace", "create", "ts", "--active"])
+            .await;
+        d.committed(&[
+            "seat",
+            "create",
+            "smoker",
+            "--teamspace",
+            "ts",
+            "--active",
+            "--harness",
+            "shell",
+        ])
+        .await;
+        eventually("the seat pane bound", || d.pane("smoker").is_some()).await;
+        let pane = d.pane("smoker").unwrap().0;
+        let tmp = dir.path().to_path_buf();
+
+        let scopes: [(&str, Vec<&str>); 3] = [
+            ("global", vec!["global"]),
+            ("teamspace", vec!["teamspace", "ts"]),
+            ("seat", vec!["seat", "smoker"]),
+        ];
+        let mut seat_path = String::new();
+        for (word, scope) in &scopes {
+            let marker = format!("SMOKE-MARKER-{word}-committed");
+            let src = tmp.join(format!("{word}.md"));
+            std::fs::write(&src, format!("{marker}\n")).unwrap();
+            let mut words = vec!["instructions", "set"];
+            words.extend(scope);
+            words.extend(["rules/smoke.md", "--from", src.to_str().unwrap()]);
+            d.committed(&words).await;
+
+            let inst = stdout_ok(&seat_cmd(&root, &pane, &tmp, &["--instructions"]));
+            let header = inst
+                .lines()
+                .find(|l| l.starts_with(&format!("## {word} rules/smoke.md — ")))
+                .unwrap_or_else(|| panic!("{word}: no header in:\n{inst}"));
+            assert!(inst.contains(&marker), "{word}: {inst}");
+            if *word == "seat" {
+                seat_path = header.rsplit(" — ").next().unwrap().to_owned();
+            }
+            let hook = stdout_ok(&seat_cmd(&root, &pane, &tmp, &["--hook-prompt"]));
+            assert!(
+                hook.starts_with("herdr-graph: this pane is graph seat"),
+                "{word}: {hook}"
+            );
+            assert!(hook.contains(&marker), "{word}: {hook}");
+        }
+
+        // An uncommitted working-tree edit of the committed seat file never reaches the render.
+        let wt = root.join(&seat_path);
+        assert!(wt.is_file(), "seat file not in the working tree: {wt:?}");
+        std::fs::write(&wt, "SMOKE-MARKER-seat-uncommitted\n").unwrap();
+        for flag in ["--instructions", "--hook-prompt"] {
+            let out = stdout_ok(&seat_cmd(&root, &pane, &tmp, &[flag]));
+            assert!(!out.contains("uncommitted"), "{flag}: {out}");
+            assert!(out.contains("SMOKE-MARKER-seat-committed"), "{flag}: {out}");
+        }
+        d.stop().await;
+    }
+
+    /// `setup <harness>` installs the owned hook and its apply gate (doctor: `[ok] harness_gate <h>`);
+    /// `setup <harness> --uninstall` removes both (doctor: no `harness_gate <h>` line).
+    #[test]
+    fn sweep_harness_gate_install_doctor_uninstall() {
+        // The default tier has no `TestRoot` (it is gated on a feature): HOME and both harness config dirs sit in
+        // a tempdir and the child gets nothing else.
+        let dir = tempfile::tempdir().unwrap();
+        let (home, instance) = (dir.path().join("home"), dir.path().join("graph"));
+        let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
+        let run = |args: &[&str]| {
+            std::fs::create_dir_all(&home).unwrap();
+            std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+                .env_clear()
+                .env("HOME", &home)
+                .env("CLAUDE_CONFIG_DIR", &claude)
+                .env("CODEX_HOME", &codex)
+                .env("HERDR_GRAPH_INSTANCE", &instance)
+                .current_dir(dir.path())
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        let init = run(&["init", instance.to_str().unwrap()]);
+        assert!(init.status.success(), "{:?}", init);
+        for h in ["claude", "codex"] {
+            let ok_line = format!("[ok] harness_gate {h}:");
+            let doctor = |args: &[&str]| {
+                let o = run(args);
+                String::from_utf8_lossy(&o.stdout).into_owned()
+            };
+            let before = doctor(&["doctor"]);
+            assert!(!before.contains(&format!("harness_gate {h}")), "{before}");
+
+            let set = run(&["setup", h]);
+            assert!(set.status.success(), "setup {h}: {:?}", set);
+            let after = doctor(&["doctor"]);
+            assert!(
+                after.lines().any(|l| l.starts_with(&ok_line)),
+                "{h} gate not ok:\n{after}"
+            );
+
+            let un = run(&["setup", h, "--uninstall"]);
+            assert!(un.status.success(), "uninstall {h}: {:?}", un);
+            let gone = doctor(&["doctor"]);
+            assert!(!gone.contains(&format!("harness_gate {h}")), "{gone}");
+        }
+    }
+
+    // -----------------------------------------------------------------------------------------
 
     /// Every `RequestKind` has a mutation the writer can run: an exact key, or (for the kinds that select a
     /// handler by `sub`) at least one `<kind>.<sub>` key. The match has no wildcard, so a new variant fails to
