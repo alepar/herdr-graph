@@ -125,6 +125,123 @@ The spec enumerates three instruction scopes and two harnesses. One leaf exercis
 
 Removing the `content write` stub next release; process-ancestry verification of approvals (`SO_PEERCRED`); migrating existing instances' summarizer templates automatically; launch-time system-prompt injection.
 
+## Key abstractions
+
+**InstructionSource** — new module holding two closed enums: `InstructionScope { Global, Teamspace(TeamspaceId), Seat(SeatId) }` and `InstructionFile { Rule(name), AgentsMd }`. It is the one definition of the editable instruction files outside templates.
+- Owns:
+  - parsing `<scope> [<target>] <file>` words, including the `[a-z0-9][a-z0-9_-]*` name rule;
+  - which files each scope allows (only `Seat` has `AgentsMd`);
+  - mapping a (scope, file) pair to its repo path at a revision through `layout::locate`;
+  - the effect object id (`GraphId` for `Global`);
+  - the affected-seats set for the plan warning;
+  - the "is this seat/clone-folder path an instruction source" predicate. The record-file list moves here or into `layout`, so this predicate and the `data` listing share one list.
+- Hides: where instruction files live, and which files count as instructions rather than data.
+- Must not:
+  - read or compare file contents, build plans or diffs, or order the rendered stack (`InstructionsKind` and the renderer do those);
+  - accept a path supplied by the caller (spec §2.1).
+- Relationships: pure functions over `TreeRead`. `InstructionsKind`, `instructions show`, the renderer and `bound_paths`' `data` listing depend on it. It depends only on `layout` and ids.
+- Lifecycle: stateless values, built per call.
+- Errors: a bad name, a file the scope does not allow, a target that cannot be resolved, or a retired target (`retired_object`). These surface as `PlanError::Usage`/`Invalid` at plan time and as a `Reject` at mutate time.
+
+**InstructionsKind** — new `OrgKind` with one `RequestKind::InstructionsEdit`, registered under the verbs `("instructions","set")` and `("instructions","clear")`. A clear is a set to absent.
+- Owns:
+  - plan-time validation: UTF-8, `no change`, `no such instruction file`;
+  - the `instructions.set`/`instructions.clear` effect with detail `{file, before_sha, after_sha, diff}`;
+  - the affected-seats warning;
+  - in `mutate`, writing or deleting the file and writing the `InstructionsEdit` action record, with `{file, before, after}` as its compensation.
+- Hides: how an instruction edit becomes effects and an undoable action.
+- Must not:
+  - check staleness itself: `OrgMutation`'s `same_effects` recomputation does that (§2.4);
+  - touch template or seat-section instructions (§2.1);
+  - render diffs for display.
+- Relationships: implements `OrgKind` and is registered once in `KindRegistry`. It delegates paths to `InstructionSource` and diff text to `LineDiff`. `UndoKind` holds an `Arc` to it.
+- Lifecycle: created at kind registration, then a stateless `Arc` that lives for the process.
+- Errors: `PlanError::Usage`/`Invalid`. `stale_plan` comes from the apply adapter.
+
+**LineDiff** — new small module: a unified line diff (LCS, 3 lines of context).
+- Owns: producing the `diff` detail text.
+- Hides: the diff algorithm. No crate: builds run `--locked --offline` (§2.4).
+- Must not: know about plans or files. `plan::commands::render` only indents its output.
+- Relationships: called by `InstructionsKind`.
+- Lifecycle: pure function.
+
+**InstructionRenderer** — new module `src/bootstrap/instructions.rs` (`render_instructions` → `RenderedInstructions`): the verbatim, ordered instruction stack for one seat at one commit.
+- Owns: the six-step order of §4.1, part labels and headers, the leading revision line, dropping empty or absent parts, and the non-UTF-8 placeholder.
+- Hides: the precedence order and the text format.
+- Must not: read the working tree, resolve the caller, truncate, or add the hook header (the hook output in `cli/seat.rs` does those).
+- Relationships: it consumes `TemplateParticipation` and `InstructionSource`. `seat_reply`, `seat --instructions` and `--hook-prompt` depend on it.
+- Lifecycle: built per call and returned by value.
+- Errors: `StoreError` only. The hook maps any error to today's prompt; `seat --instructions` exits 1 on an unresolved caller.
+
+**TemplateParticipation** — new function extracted from `bound_paths`: the ordered, de-duplicated participating templates, each with its optional member and responsibility. Order: the seat's own `template_ref`, its shared template, then each application's template and mapped members.
+- Owns: the template traversal order.
+- Hides: how a seat's templates are found, directly and through applications.
+- Must not: format paths or text.
+- Relationships: `bound_paths` and `InstructionRenderer` both consume it, so they cannot diverge (§4.1).
+- Lifecycle: computed per call.
+
+**ApprovalGate** — new closed enum on `setup_claude::Target`: `SettingsAsk` (Claude `permissions.ask` entries) and `RulesFile` (Codex owned `rules/herdr-graph.rules`).
+- Owns:
+  - the desired entries, in bare and absolute-binary forms;
+  - install that never duplicates an existing entry;
+  - uninstall that removes only what the manifest recorded;
+  - the presence check that doctor calls.
+- Hides: each harness's approval mechanism and syntax.
+- Must not: write trust settings, or decide which harness is installed (doctor's `harness_gate` skips harnesses without the owned hook).
+- Relationships: composed into `Target`. `install_for`/`uninstall_for` match on it, and `doctor` depends on `setup_claude`.
+- Lifecycle: `const` values. The manifest is the only state.
+- Errors: `anyhow` errors on unparseable config, which leave the file unmodified. Doctor maps an absent gate to `WARN`.
+
+**GraphId / `IdKind::Graph`** — extended: one deterministic `gr_` id per instance, derived from `graph.toml` `instance_id`. `layout::locate` resolves it to the root folder with record `graph.toml`. An `instance_id` that does not fit is corrupt (§2.3).
+
+**RequestComplete mutation** — extended: optional summary bytes. At apply time it derives the target path (request → transcript → seat → `locate`), writes the file, sets `output_ref`, and decides between a no-op, `summary_conflict` and a write in the same mutation (§1.2-1.3). `b64_encode`/`b64_decode` move to a shared module.
+
+**UndoKind / `ActionKind`** — extended: `ActionKind::InstructionsEdit`, `is_undoable`, an `instructions` `Arc<dyn OrgKind>` field, and `instructions_inverse` mirroring `template_inverse`. `Inverse::Ready` may carry the inverse kind's args, so both inverses share the enum.
+
+**hook output (`cli/seat.rs`)** — extended: on `Bound` it prints the header plus the render, cut at `HOOK_RENDER_CAP` on a line boundary with the marker line appended. The Claude/Codex output shapes are unchanged.
+
+Variation:
+- Instruction scopes and files are a fixed set: closed enums with `match` in `InstructionSource`.
+- Organizational change kinds keep coming: `OrgKind` implementations chosen in `KindRegistry`.
+- Harnesses: one `ApprovalGate` variant per `Target` const.
+- Undoable action kinds: one `UndoKind` match arm per kind.
+
+Walk-through: `plan instructions set seat alice rules/style.md --from f` goes through these steps:
+1. `KindRegistry::resolve` selects `InstructionsKind`.
+2. `InstructionsKind` plans it, with paths from `InstructionSource` and the diff from `LineDiff`.
+3. The plan is printed, and the harness ask rule fires on `apply`.
+4. `OrgMutation` recomputes and matches the effects.
+5. `mutate` writes the file and the action record.
+6. At the next SessionStart, `--hook-prompt` calls `resolve_caller`, then `render_instructions`, then caps the output.
+
+Future change: adding `CLAUDE.md` as a seat instruction file touches one `InstructionFile` variant and its path mapping.
+
+Deliberate exceptions:
+- Per spec §2.5: undo is per-kind, so `UndoKind` gets an explicit `InstructionsEdit` arm and no generic file compensation.
+- Per spec §4.3/§4.4: `seat --instructions` and `--hook-prompt` resolve the caller without the daemon, which deliberately adds a second resolution path.
+- Per spec §1.2: the summary path is derived inside the bookkeeping mutation at apply time.
+- Per spec §1.5: `RequestKind::ContentWrite`/`Category::Content` stay as variants nothing creates, kept for deserialization.
+
+Digest:
+- InstructionSource: owns the closed set of instruction scopes and files outside templates, their paths, the affected seats and the instruction-vs-data predicate;
+  new files or scopes are added as enum variants here;
+  callers never build instruction paths or file lists themselves.
+- InstructionsKind: owns planning and applying instruction set/clear as one `OrgKind` with an undoable action;
+  registered once in `KindRegistry`;
+  callers never write instruction files outside its `mutate`.
+- LineDiff: owns unified line-diff text for plan effects;
+  new diff consumers call it;
+  callers never hand-roll diffs or format them inside plans.
+- InstructionRenderer: owns the verbatim, ordered instruction stack at a commit;
+  new stack parts are added to its order here;
+  callers never read the working tree or reorder parts, and only the hook adds truncation and the header.
+- TemplateParticipation: owns the ordered traversal of a seat's participating templates and members;
+  traversal changes go here;
+  `bound_paths` and the renderer never walk templates themselves.
+- ApprovalGate: owns each harness's `apply` approval rule install, uninstall and presence check;
+  a new harness adds a variant and a `Target` const;
+  doctor and setup never inspect harness rule syntax directly.
+
 ## Post-Implementation Notes
 
 > *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
