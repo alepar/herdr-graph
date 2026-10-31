@@ -1024,6 +1024,53 @@ mod init {
     }
 }
 
+mod graph_id {
+    use super::*;
+    use crate::model::graph::GraphRecord;
+    use crate::model::{GraphId, IdKind};
+
+    #[test]
+    fn graph_id_helper_and_locate_resolve_to_the_instance_root() {
+        let (_t, store) = new_instance();
+        let c = store.head().unwrap();
+        let v = store.at(&c);
+        let g = layout::graph_id(&v).unwrap();
+        assert_eq!(g, layout::read_graph(&v).unwrap().graph_id().unwrap());
+        let loc = layout::locate(&v, &g.to_any()).unwrap().unwrap();
+        assert_eq!(loc.folder, RepoPath::root());
+        assert_eq!(loc.record_path, rp("graph.toml"));
+        assert_eq!(loc.id, g.to_any());
+        assert_eq!(store.locate(&c, &g.to_any()).unwrap(), Some(loc));
+    }
+
+    #[test]
+    fn locate_of_another_instances_graph_id_is_none() {
+        let (_t, store) = new_instance();
+        let c = store.head().unwrap();
+        let v = store.at(&c);
+        assert_eq!(layout::locate(&v, &GraphId::new().to_any()).unwrap(), None);
+    }
+
+    #[test]
+    fn corrupt_instance_id_is_reported() {
+        let (_t, store) = new_instance();
+        let c = store.head().unwrap();
+        let mut rec: GraphRecord = layout::read_graph(&store.at(&c)).unwrap();
+        rec.instance_id = "not-a-ulid".into();
+        let mut e = EditSet::default();
+        e.put(rp("graph.toml"), toml_bytes(&rec));
+        let c = commit_edits(&store, &e, "corrupt instance id");
+        let v = store.at(&c);
+        match layout::graph_id(&v) {
+            Err(StoreError::Corrupt { path, .. }) => assert_eq!(path, "graph.toml"),
+            other => panic!("expected Corrupt, got {other:?}"),
+        }
+        let any_gr = GraphId::new().to_any();
+        assert_eq!(any_gr.kind(), IdKind::Graph);
+        assert!(layout::locate(&v, &any_gr).is_err());
+    }
+}
+
 mod targeted_lookup {
     use super::*;
     use crate::model::operation::OperationRecord;

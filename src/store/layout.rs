@@ -12,7 +12,8 @@ use crate::model::teamspace::TeamspaceRecord;
 use crate::model::template::TemplateRecord;
 use crate::model::transcript::TranscriptRecord;
 use crate::model::{
-    ActionId, AnyId, AppId, IdKind, OpId, RequestId, SeatId, TeamspaceId, Timestamp, TranscriptId,
+    ActionId, AnyId, AppId, GraphId, IdKind, OpId, RequestId, SeatId, TeamspaceId, Timestamp,
+    TranscriptId,
 };
 use crate::ports::store::{EntryKind, ObjectLocation, RepoPath, StoreError};
 use std::collections::BTreeSet;
@@ -316,12 +317,35 @@ fn find_record_file<R: Record>(
     Ok(found)
 }
 
+/// The instance's `gr_` id from graph.toml (spec §2.3); an instance_id that does not fit is corrupt.
+pub fn graph_id(tr: &dyn TreeRead) -> Result<GraphId, StoreError> {
+    let g = read_graph(tr)?;
+    g.graph_id().map_err(|e| StoreError::Corrupt {
+        path: graph_toml().as_str().into(),
+        reason: format!(
+            "instance_id {:?} does not form a graph id: {e}",
+            g.instance_id
+        ),
+    })
+}
+
 /// Resolve any id to its current location (spec §2.1: paths are never cached as authority).
 /// Operational records inspect ID-named candidates in both layouts and reject corrupt/duplicate matches.
 /// app_ uses its direct path; other standalone objects scan their supported roots.
+/// gr_ → the instance root folder with record `graph.toml` (spec §2.3).
 /// mem_/ns_/ef_/pl_ → Ok(None) (not standalone objects). `folder` = object dir (folder records) or the file's parent.
 pub fn locate(tr: &dyn TreeRead, id: &AnyId) -> Result<Option<ObjectLocation>, StoreError> {
     match id.kind() {
+        IdKind::Graph => {
+            if tr.read_file(&graph_toml())?.is_none() {
+                return Ok(None);
+            }
+            Ok((graph_id(tr)?.to_any() == *id).then(|| ObjectLocation {
+                id: id.clone(),
+                record_path: graph_toml(),
+                folder: RepoPath::root(),
+            }))
+        }
         IdKind::Teamspace => find_by_id(list_teamspaces(tr), id),
         IdKind::Seat => find_by_id(all_seats(tr), id),
         IdKind::Clone => find_by_id(all_clones(tr), id),

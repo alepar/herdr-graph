@@ -1,6 +1,6 @@
 //! `graph.toml`: instance metadata (no `rev`).
 use crate::model::harness::Harness;
-use crate::model::ids::SeatId;
+use crate::model::ids::{GraphId, IdError, SeatId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -12,6 +12,13 @@ pub struct GraphRecord {
     pub summarizer_seat: Option<SeatId>,
     #[serde(default)]
     pub defaults: GraphDefaults,
+}
+
+impl GraphRecord {
+    /// This instance's `gr_` id (spec §2.3).
+    pub fn graph_id(&self) -> Result<GraphId, IdError> {
+        GraphId::from_instance_id(&self.instance_id)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

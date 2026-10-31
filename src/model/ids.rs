@@ -39,10 +39,11 @@ pub enum IdKind {
     Plan,
     Transcript,
     Request,
+    Graph,
 }
 
 impl IdKind {
-    pub const ALL: [(IdKind, &'static str); 13] = [
+    pub const ALL: [(IdKind, &'static str); 14] = [
         (IdKind::Teamspace, "ts_"),
         (IdKind::Seat, "st_"),
         (IdKind::Clone, "cl_"),
@@ -56,6 +57,7 @@ impl IdKind {
         (IdKind::Plan, "pl_"),
         (IdKind::Transcript, "tr_"),
         (IdKind::Request, "rq_"),
+        (IdKind::Graph, "gr_"),
     ];
     pub fn prefix(self) -> &'static str {
         Self::ALL
@@ -156,6 +158,17 @@ define_id!(
     /// `rq_` processing request.
     RequestId, IdKind::Request, "rq_"
 );
+define_id!(
+    /// `gr_` graph instance: one per instance, derived from graph.toml's instance_id (spec §2.3).
+    GraphId, IdKind::Graph, "gr_"
+);
+
+impl GraphId {
+    /// The instance's id: `gr_` + `instance_id` verbatim. Errors when `instance_id` is not a ULID body.
+    pub fn from_instance_id(instance_id: &str) -> Result<Self, IdError> {
+        Self::parse(&format!("gr_{instance_id}"))
+    }
+}
 
 impl EffectId {
     /// Effect identity `ef_ = hash(op_id, object_id, effect_kind, object_rev)` (spec §4.4).
