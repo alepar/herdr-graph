@@ -964,11 +964,11 @@ mod wiring {
 
     /// `herdr-graph seat <args>` as a seat pane would run it: cleared env, the instance and the pane id only.
     fn seat_cmd(root: &Path, pane: &str, tmp: &Path, args: &[&str]) -> std::process::Output {
-        std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+        std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph")) // isolation-ok: env cleared, HOME is a tempdir
             .env_clear()
             .env("HERDR_GRAPH_INSTANCE", root)
             .env("HERDR_PANE_ID", pane)
-            .env("HOME", tmp)
+            .env("HOME", tmp) // isolation-ok: HOME is a tempdir
             .current_dir(tmp)
             .arg("seat")
             .args(args)
@@ -1065,11 +1065,11 @@ mod wiring {
         let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
         let run = |args: &[&str]| {
             std::fs::create_dir_all(&home).unwrap();
-            std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph"))
+            std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph")) // isolation-ok: env cleared, HOME is a tempdir
                 .env_clear()
-                .env("HOME", &home)
-                .env("CLAUDE_CONFIG_DIR", &claude)
-                .env("CODEX_HOME", &codex)
+                .env("HOME", &home) // isolation-ok: tempdir HOME
+                .env("CLAUDE_CONFIG_DIR", &claude) // isolation-ok: tempdir config dir
+                .env("CODEX_HOME", &codex) // isolation-ok: tempdir config dir
                 .env("HERDR_GRAPH_INSTANCE", &instance)
                 .current_dir(dir.path())
                 .args(args)
@@ -1100,6 +1100,134 @@ mod wiring {
             let gone = doctor(&["doctor"]);
             assert!(!gone.contains(&format!("harness_gate {h}")), "{gone}");
         }
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // instruction gate sweep (hg-45e.16): summaries are data; summary into a retired seat, then instructions
+    // -----------------------------------------------------------------------------------------
+
+    /// The path `bookkeeping.request_complete` derives (`summaries/<tr>-<start>-<end>.md`) is data in every
+    /// folder kind, never an instruction source; the neighbouring `rules/` and `AGENTS.md` paths stay instruction.
+    #[test]
+    fn sweep_summary_path_is_never_an_instruction_source() {
+        use herdr_graph::model::TranscriptId;
+        use herdr_graph::store::instruction_source::{
+            FolderKind, PathClass, classify, is_instruction_source,
+        };
+        let tr = TranscriptId::new();
+        let rel = format!("summaries/{tr}-0-10.md");
+        for folder in [
+            FolderKind::Root,
+            FolderKind::Teamspace,
+            FolderKind::Seat,
+            FolderKind::Clone,
+        ] {
+            assert_eq!(classify(folder, &rel), PathClass::Data, "{folder:?} {rel}");
+            assert!(!is_instruction_source(folder, &rel), "{folder:?} {rel}");
+        }
+        assert!(is_instruction_source(FolderKind::Seat, "rules/x.md"));
+        assert!(is_instruction_source(FolderKind::Seat, "AGENTS.md"));
+    }
+
+    /// A summarizer completes a request with `summary_b64` after the source seat is retired: the file lands in
+    /// the archived seat folder at the derived path and the request completes. Then a plan `instructions set seat`
+    /// -> apply -> `seat --instructions` (the binary, from a bound pane) shows the committed text.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sweep_summary_into_retired_seat_and_instruction_plan_flow() {
+        let (dir, root) = new_instance();
+        let d = Daemon::start(&root).await;
+        d.committed(&["teamspace", "create", "alpha", "--active"])
+            .await;
+        for (name, harness) in [("worker", "claude"), ("reader", "shell")] {
+            d.committed(&[
+                "seat",
+                "create",
+                name,
+                "--teamspace",
+                "alpha",
+                "--active",
+                "--harness",
+                harness,
+            ])
+            .await;
+        }
+        eventually("both panes bound", || {
+            d.pane("worker").is_some() && d.pane("reader").is_some()
+        })
+        .await;
+        let worker_pane = d.pane("worker").unwrap();
+
+        // The worker's session ends: one request over its transcript.
+        let herdr = &d.fakes.herdr;
+        herdr.set_agent(
+            &worker_pane,
+            agent(
+                "claude",
+                AgentSession::Path(write_transcript(dir.path(), "worker.jsonl")),
+            ),
+        );
+        eventually("worker occupant", || {
+            d.clone_of("worker").occupant.is_some()
+        })
+        .await;
+        herdr.set_agent(&worker_pane, None);
+        eventually("the worker's request", || d.request_count() == 1).await;
+        let (rq, tr, range) = d.with_view(|v| {
+            let rq = layout::list_requests(v).unwrap().remove(0).1;
+            (rq.id, rq.transcript, rq.range)
+        });
+
+        // Retire the source seat, then complete from the summary text.
+        d.committed(&["seat", "retire", "worker"]).await;
+        let worker = d.seat("worker").id;
+        let folder = d.with_view(|v| layout::locate(v, &worker.to_any()).unwrap().unwrap().folder);
+        assert!(folder.as_str().contains("archive/"), "{}", folder.as_str());
+        let text = "# worker\nsummary text\n";
+        let done = d
+            .call(
+                "request.complete",
+                json!({
+                    "request": rq,
+                    "summary_b64": herdr_graph::model::b64::b64_encode(text.as_bytes()),
+                    "covered": { "start": range.start, "end": range.end },
+                }),
+            )
+            .await
+            .expect("request.complete");
+        assert_eq!(done["status"], "completed", "{done}");
+        let rel = format!("summaries/{tr}-{}-{}.md", range.start, range.end);
+        let stored = d.with_view(|v| v.read_file(&folder.join(&rel).unwrap()).unwrap());
+        assert_eq!(
+            stored.as_deref(),
+            Some(text.as_bytes()),
+            "{rel} in {folder:?}"
+        );
+        assert!(d.with_view(|v| {
+            layout::list_requests(v).unwrap().into_iter().any(|(_, r)| {
+                r.id == rq && r.status == herdr_graph::model::request::RequestStatus::Completed
+            })
+        }));
+
+        // The instruction path: plan -> apply -> the bound pane's `seat --instructions`.
+        let src = dir.path().join("rule.md");
+        std::fs::write(&src, "SWEEP-RULE-reader\n").unwrap();
+        d.committed(&[
+            "instructions",
+            "set",
+            "seat",
+            "reader",
+            "rules/sweep.md",
+            "--from",
+            src.to_str().unwrap(),
+        ])
+        .await;
+        let pane = d.pane("reader").unwrap().0;
+        let shown = stdout_ok(&seat_cmd(&root, &pane, dir.path(), &["--instructions"]));
+        assert!(
+            shown.contains("## seat rules/sweep.md") && shown.contains("SWEEP-RULE-reader"),
+            "{shown}"
+        );
+        d.stop().await;
     }
 
     // -----------------------------------------------------------------------------------------
