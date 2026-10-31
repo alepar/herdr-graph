@@ -16,7 +16,8 @@ use crate::store::tree::TreeRead;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Conservative hook-output cap in bytes (spec §4.4); Task 11 may lower it after checking Claude's docs.
+/// Conservative hook-output cap in bytes (spec §4.4). No documented Claude Code hook output limit was found
+/// (`claude --help`, installed binary), so the 9000 default stands.
 pub const HOOK_RENDER_CAP: usize = 9000;
 
 const AGENTS_MD: &str = "AGENTS.md";

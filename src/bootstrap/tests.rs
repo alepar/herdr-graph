@@ -2393,3 +2393,169 @@ mod instructions {
         assert!(names(&base).contains(&"a.md".to_owned()));
     }
 }
+
+mod hook_instructions {
+    use super::super::instructions::*;
+    use super::*;
+    use crate::cli::seat::{HOOK_PROMPT, hook_text, instructions_text};
+    use crate::model::CommitId;
+
+    fn head_of(fx: &Fx) -> CommitId {
+        fx.store.head().unwrap()
+    }
+
+    fn render_for(fx: &Fx, seat: &SeatRecord) -> RenderedInstructions {
+        render_instructions(&view(fx), &head_of(fx), &seat.id).unwrap()
+    }
+
+    #[test]
+    fn bound_pane_gets_header_and_render() {
+        let fx = fx();
+        let (seat, _) = bound_seat(&fx, "p1");
+        let r = render_for(&fx, &seat);
+        let (v, head) = (view(&fx), head_of(&fx));
+        let out = hook_text(Some((&v, &head)), &caller("p1"), None).unwrap();
+        assert_eq!(out, format!("{}\n{}", hook_header(&r), r.text));
+        assert_eq!(
+            instructions_text(&v, &head, &caller("p1")).as_deref(),
+            Some(r.text.as_str())
+        );
+        // a bound pane gets the render even without HERDR_GRAPH=1, and Codex wraps the same text
+        let json: serde_json::Value =
+            serde_json::from_str(&crate::cli::seat::hook_output_text(true, &out)).unwrap();
+        assert_eq!(json["hookSpecificOutput"]["additionalContext"], out);
+    }
+
+    #[test]
+    fn unbound_pane_gets_todays_prompt() {
+        let fx = fx();
+        bound_seat(&fx, "p1");
+        let (v, head) = (view(&fx), head_of(&fx));
+        assert_eq!(
+            hook_text(Some((&v, &head)), &caller("nope"), Some("1")).as_deref(),
+            Some(HOOK_PROMPT)
+        );
+        assert_eq!(hook_text(Some((&v, &head)), &caller("nope"), None), None);
+        assert_eq!(instructions_text(&v, &head, &caller("nope")), None);
+    }
+
+    #[test]
+    fn large_global_rule_is_omitted_whole() {
+        let fx = fx();
+        let (seat, _) = bound_seat(&fx, "p1");
+        let dir = layout::locate(&view(&fx), &seat.id.to_any())
+            .unwrap()
+            .unwrap()
+            .folder;
+        let agents = format!("{}/AGENTS.md", dir.as_str());
+        put_files(
+            &fx,
+            &[
+                ("rules/big.md", &vec![b'z'; 9500]),
+                (&agents, b"seat instance text\n"),
+            ],
+        );
+        let (v, head) = (view(&fx), head_of(&fx));
+        let out = hook_text(Some((&v, &head)), &caller("p1"), None).unwrap();
+        assert!(out.contains("seat instance text\n"), "{out}");
+        assert!(!out.contains("## global rules/big.md"), "{out}");
+        assert!(
+            out.trim_end().ends_with("omitted global rules/big.md; run herdr-graph seat --instructions for the full text]"),
+            "{out}"
+        );
+        assert!(out.len() <= HOOK_RENDER_CAP, "{}", out.len());
+        // the untruncated render keeps the rule
+        let full = instructions_text(&v, &head, &caller("p1")).unwrap();
+        assert!(full.contains("## global rules/big.md"));
+    }
+
+    #[test]
+    fn store_error_falls_back() {
+        assert_eq!(
+            hook_text(None, &caller("p1"), Some("1")).as_deref(),
+            Some(HOOK_PROMPT)
+        );
+        assert_eq!(hook_text(None, &caller("p1"), None), None);
+    }
+
+    fn parts(sizes: &[(&str, usize)]) -> RenderedInstructions {
+        let seat = SeatId::new();
+        let parts: Vec<Part> = sizes
+            .iter()
+            .map(|(l, n)| Part {
+                label: (*l).into(),
+                path: format!("{l}.md"),
+                body: format!("{}\n", "x".repeat(*n - 1)),
+            })
+            .collect();
+        let mut text = revision_line("s", &seat, "abc");
+        text.push('\n');
+        for p in &parts {
+            text.push_str(&format!("\n## {} — {}\n{}", p.label, p.path, p.body));
+        }
+        RenderedInstructions {
+            rev: "abc".into(),
+            seat,
+            seat_name: "s".into(),
+            parts,
+            text,
+        }
+    }
+
+    #[test]
+    fn truncation_keeps_specific_parts() {
+        let r = parts(&[("g", 400), ("t", 400), ("s", 400)]);
+        let fit = fit_hook(&r, hook_size(&r) - 100);
+        assert_eq!(fit.omitted, ["g"]);
+        let (t, s) = (
+            fit.text.find("## t —").unwrap(),
+            fit.text.find("## s —").unwrap(),
+        );
+        assert!(t < s, "kept parts stay in render order");
+        assert!(!fit.text.contains("## g —"));
+    }
+
+    #[test]
+    fn truncation_stops_at_first_overflow() {
+        // the small general part "a" would fit after the oversize "b", but the walk must not skip ahead
+        let r = parts(&[("a", 50), ("b", 3000), ("c", 200)]);
+        let fit = fit_hook(&r, 1200);
+        assert_eq!(fit.omitted, ["a", "b"]);
+        assert!(!fit.text.contains("## a —") && !fit.text.contains("## b —"));
+        assert!(fit.text.contains("omitted a, b;"));
+    }
+
+    #[test]
+    fn truncation_cuts_a_single_oversize_part() {
+        let mut r = parts(&[("a", 50), ("c", 10)]);
+        r.parts[1].body = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        r.text = r.text.split("## c —").next().unwrap().to_owned()
+            + &format!("## c — c.md\n{}", r.parts[1].body);
+        let fit = fit_hook(&r, 1000);
+        assert_eq!(fit.cut.as_deref(), Some("c"));
+        assert!(fit.text.contains("line 0000\n") && !fit.text.contains("line 0499"));
+        assert!(fit.text.contains("omitted a, c (cut);"));
+    }
+
+    #[test]
+    fn truncated_output_fits_the_cap_including_marker() {
+        for sizes in [
+            vec![("a", 300), ("b", 300), ("c", 300)],
+            vec![("a", 100), ("b", 4000), ("c", 300)],
+            vec![("a", 100), ("c", 5000)],
+        ] {
+            let r = parts(&sizes);
+            for cap in [800, 1000, 1500, 2000] {
+                let fit = fit_hook(&r, cap);
+                assert!(
+                    fit.text.len() <= cap,
+                    "{sizes:?} cap {cap}: {}",
+                    fit.text.len()
+                );
+                if hook_size(&r) > cap {
+                    assert!(fit.text.contains("[truncated: omitted "), "{}", fit.text);
+                }
+            }
+        }
+    }
+}
