@@ -9,3 +9,4 @@ context: Context: claude · planner=200K/167K · implementer=200K/167K · review
 idea: Implement H1 rev 3 design from /tmp/claude-1001/herdr-graph-seat-review-H1.md (copied to docs/superpowers/runs/2026-10-31-h1-instruction-gate/input-h1-review.md). Fully autonomous; design roast and code roast both on.
 branch: super-auto/h1-instruction-gate
 base: main
+spec: 2026-10-31-h1-instruction-gate-design.md
