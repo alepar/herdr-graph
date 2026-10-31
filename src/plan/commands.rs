@@ -65,6 +65,11 @@ pub fn render(p: &Plan, hash: &str) -> String {
     }
     for (i, e) in p.effects.iter().enumerate() {
         out.push_str(&format!("  {}. {}\n", i + 1, e.describe()));
+        if let Some(d) = e.diff() {
+            for line in d.lines() {
+                out.push_str(&format!("      {line}\n"));
+            }
+        }
     }
     if !p.warnings.is_empty() {
         out.push_str("warnings:\n");

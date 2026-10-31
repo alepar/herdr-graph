@@ -2846,3 +2846,111 @@ fn reconnect_rejects_stored_and_already_queued_preboundary_plans() {
         );
     }
 }
+
+mod line_diff {
+    use crate::plan::line_diff::unified;
+
+    fn numbered(n: usize, changed: &[usize]) -> String {
+        (1..=n)
+            .map(|i| {
+                if changed.contains(&i) {
+                    format!("L{i}\n")
+                } else {
+                    format!("l{i}\n")
+                }
+            })
+            .collect()
+    }
+
+    fn hunks(d: &str) -> usize {
+        d.lines().filter(|l| l.starts_with("@@")).count()
+    }
+
+    #[test]
+    fn identical_inputs_give_empty_diff() {
+        assert_eq!(unified("a\nb\n", "a\nb\n"), "");
+    }
+
+    #[test]
+    fn empty_before_is_one_add_hunk() {
+        assert_eq!(unified("", "x\ny\n"), "@@ -0,0 +1,2 @@\n+x\n+y\n");
+    }
+
+    #[test]
+    fn empty_after_is_one_remove_hunk() {
+        assert_eq!(unified("x\ny\n", ""), "@@ -1,2 +0,0 @@\n-x\n-y\n");
+    }
+
+    #[test]
+    fn change_in_the_middle_has_three_context_lines() {
+        assert_eq!(
+            unified(&numbered(10, &[]), &numbered(10, &[5])),
+            "@@ -2,7 +2,7 @@\n l2\n l3\n l4\n-l5\n+L5\n l6\n l7\n l8\n"
+        );
+    }
+
+    #[test]
+    fn add_at_end() {
+        assert_eq!(
+            unified("a\nb\n", "a\nb\nc\n"),
+            "@@ -1,2 +1,3 @@\n a\n b\n+c\n"
+        );
+    }
+
+    #[test]
+    fn remove_at_start() {
+        assert_eq!(
+            unified("a\nb\nc\n", "b\nc\n"),
+            "@@ -1,3 +1,2 @@\n-a\n b\n c\n"
+        );
+    }
+
+    #[test]
+    fn distant_changes_make_two_hunks_close_ones_merge() {
+        let before = numbered(20, &[]);
+        assert_eq!(hunks(&unified(&before, &numbered(20, &[2, 18]))), 2);
+        assert_eq!(hunks(&unified(&before, &numbered(20, &[2, 8]))), 1);
+    }
+
+    #[test]
+    fn missing_final_newline_still_diffs_by_line() {
+        assert_eq!(unified("a", "b"), "@@ -1 +1 @@\n-a\n+b\n");
+    }
+}
+
+#[test]
+fn render_prints_diff_block_under_its_effect() {
+    let mut p = sample_plan();
+    p.effects.push(PlanEffect::new(
+        "instructions.set",
+        SeatId::new(),
+        json!({"file": "AGENTS.md", "before_sha": "absent", "after_sha": "abc", "diff": "@@ -0,0 +1 @@\n+hello\n"}),
+    ));
+    let text = super::commands::render(&p, "h");
+    let lines: Vec<&str> = text.lines().collect();
+    let i = lines
+        .iter()
+        .position(|l| l.contains("instructions.set"))
+        .expect("effect line");
+    assert!(lines[i].contains("file=AGENTS.md"));
+    assert!(!lines[i].contains("diff="));
+    assert_eq!(lines[i + 1], "      @@ -0,0 +1 @@");
+    assert_eq!(lines[i + 2], "      +hello");
+    assert!(text.contains("\n      @@ -0,0 +1 @@\n      +hello\n"));
+}
+
+#[test]
+fn describe_omits_diff_detail() {
+    let e = PlanEffect::new(
+        "instructions.set",
+        SeatId::new(),
+        json!({"file": "AGENTS.md", "diff": "@@ -0,0 +1 @@\n+hello\n"}),
+    );
+    let d = e.describe();
+    assert!(!d.contains("diff=") && !d.contains("+hello"));
+    assert!(d.contains("file=AGENTS.md"));
+    assert_eq!(e.diff(), Some("@@ -0,0 +1 @@\n+hello\n"));
+    let plain = PlanEffect::new("seat.retire", SeatId::new(), json!({"name": "x"}));
+    assert_eq!(plain.diff(), None);
+    assert!(plain.describe().contains("name=x"));
+}
