@@ -38,6 +38,7 @@ pub enum ActionKind {
     Resurrect,
     Hydrate,
     TemplateEdit,
+    InstructionsEdit,
     ApplicationRetire,
     ThreadsReconnect,
     Undo,

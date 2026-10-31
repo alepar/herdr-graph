@@ -28,6 +28,7 @@ pub enum RequestKind {
     TemplateCopy,
     ApplicationApply,
     ApplicationRetire,
+    InstructionsEdit,
     ThreadsReconnect,
     Undo,
     /// Legacy: removed in H1; kept so journal rows and graph-change records written before still

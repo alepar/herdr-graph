@@ -302,7 +302,7 @@ async fn writer_resume_not_halted() {
     d.stop().await;
 }
 
-const ORG_KINDS: [&str; 22] = [
+const ORG_KINDS: [&str; 23] = [
     "teamspace_create",
     "teamspace_rename",
     "teamspace_retire",
@@ -324,6 +324,7 @@ const ORG_KINDS: [&str; 22] = [
     "template_copy",
     "application_apply",
     "application_retire",
+    "instructions_edit",
     "undo",
 ];
 
