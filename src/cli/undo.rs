@@ -69,7 +69,7 @@ fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {
     if cands.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    if !std::io::stdin().is_terminal() {
+    if !super::plan::prompt_terminal(std::io::stdin().is_terminal(), |k| std::env::var_os(k)) {
         println!(
             "to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user"
         );

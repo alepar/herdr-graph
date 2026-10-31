@@ -82,6 +82,14 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
                 "not installed"
             }
         );
+        println!(
+            "apply gate: {}",
+            if r.gate_removed {
+                "removed"
+            } else {
+                "not installed"
+            }
+        );
         if r.skills_removed.is_empty() {
             println!("skills: none installed");
         } else {
@@ -95,6 +103,14 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
     println!(
         "hook: {}",
         match r.hook {
+            HookChange::Installed => "installed",
+            HookChange::Updated => "updated",
+            HookChange::Unchanged => "already installed",
+        }
+    );
+    println!(
+        "apply gate: {}",
+        match r.gate {
             HookChange::Installed => "installed",
             HookChange::Updated => "updated",
             HookChange::Unchanged => "already installed",

@@ -1,9 +1,10 @@
 //! `plan`, `apply` — owned by hg-zmi.6 (spec §3.3, §10).
 //!
 //! `plan [--json] <change…>` sends the raw words to the daemon, which parses them with the registered kinds.
-//! A human at a terminal sees the plan and a `[y/n]` prompt; there is no bypass flag. An agent runs
-//! `plan --json`, shows the plan to the user and, after an explicit yes, runs
-//! `apply <pl> --confirm <hash> --confirmed-by user-relay`.
+//! A human at a terminal sees the plan and a `[y/n]` prompt; there is no bypass flag. An agent (a terminal
+//! with an agent harness marker in its environment counts as one) runs `plan --json`, shows the plan to the
+//! user and runs `apply <pl> --confirm <hash> --confirmed-by user-relay`; the harness asks the user to
+//! approve that command (spec §3).
 use crate::daemon::client::{CallMode, ClientError, EXIT_STILL_RUNNING, call_daemon};
 use clap::Subcommand;
 use serde_json::{Value, json};
@@ -43,6 +44,32 @@ pub enum Decision {
     PrintOnly,
 }
 
+/// Env vars an agent harness sets in its shell; with one present no `[y/n]` prompt is shown (spec §3.3).
+pub const AGENT_MARKERS: [&str; 4] = [
+    "CLAUDE_CODE_SESSION_ID",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "HERDR_GRAPH_SEAT",
+];
+
+pub fn agent_marker_present(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    AGENT_MARKERS
+        .iter()
+        .any(|k| get(k).is_some_and(|v| !v.is_empty()))
+}
+
+/// A terminal the `[y/n]` prompt may use: stdin is a terminal and no agent harness marker is set.
+pub fn prompt_terminal(stdin_tty: bool, get: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    stdin_tty && !agent_marker_present(get)
+}
+
+/// What an agent is told to do with a plan it cannot confirm itself.
+pub fn relay_hint(plan: &str, hash: &str) -> String {
+    format!(
+        "show this plan to the user, then run herdr-graph apply {plan} --confirm {hash} --confirmed-by user-relay; the harness asks the user to approve it"
+    )
+}
+
 pub fn decide(tty: bool, json: bool) -> Decision {
     if json {
         Decision::Json
@@ -77,7 +104,7 @@ fn remote(e: ClientError) -> anyhow::Error {
 pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
     let reply =
         call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure).map_err(remote)?;
-    let tty = std::io::stdin().is_terminal();
+    let tty = prompt_terminal(std::io::stdin().is_terminal(), |k| std::env::var_os(k));
     match decide(tty, json) {
         Decision::Json => {
             println!("{}", serde_json::to_string_pretty(&reply)?);
@@ -86,9 +113,11 @@ pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
         Decision::PrintOnly => {
             print!("{}", reply["rendered"].as_str().unwrap_or_default());
             println!(
-                "to apply, show this plan to the user and after an explicit yes run: herdr-graph apply {} --confirm {} --confirmed-by user-relay",
-                reply["plan_id"].as_str().unwrap_or("<pl>"),
-                reply["hash"].as_str().unwrap_or("<hash>"),
+                "{}",
+                relay_hint(
+                    reply["plan_id"].as_str().unwrap_or("<pl>"),
+                    reply["hash"].as_str().unwrap_or("<hash>"),
+                )
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -177,6 +206,48 @@ fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env_with(
+        key: &'static str,
+        value: &'static str,
+    ) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+        move |k| (k == key).then(|| std::ffi::OsString::from(value))
+    }
+
+    #[test]
+    fn agent_marker_blocks_the_prompt_on_a_terminal() {
+        for marker in AGENT_MARKERS {
+            assert_eq!(
+                decide(prompt_terminal(true, env_with(marker, "x")), false),
+                Decision::PrintOnly,
+                "{marker}"
+            );
+        }
+        assert_eq!(
+            decide(prompt_terminal(true, |_| None), false),
+            Decision::Prompt
+        );
+        assert_eq!(
+            decide(
+                prompt_terminal(true, env_with("CODEX_THREAD_ID", "")),
+                false
+            ),
+            Decision::Prompt,
+            "an empty value counts as unset"
+        );
+        assert_eq!(
+            decide(prompt_terminal(false, |_| None), false),
+            Decision::PrintOnly
+        );
+    }
+
+    #[test]
+    fn relay_hint_text() {
+        assert_eq!(
+            relay_hint("pl_1", "abc"),
+            "show this plan to the user, then run herdr-graph apply pl_1 --confirm abc --confirmed-by user-relay; the harness asks the user to approve it"
+        );
+    }
 
     #[test]
     fn already_applied_reply_maps_to_distinct_exit() {

@@ -1267,6 +1267,175 @@ fn setup_claude_uninstall_removes_files_it_created() {
     );
 }
 
+fn read_json(path: &Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+#[test]
+fn setup_claude_adds_apply_ask_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("claude");
+    let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
+    assert_eq!(report.gate, HookChange::Installed);
+    let settings = read_json(&config.join("settings.json"));
+    assert_eq!(
+        settings["permissions"]["ask"],
+        json!([
+            "Bash(herdr-graph apply:*)",
+            "Bash('/opt/herdr graph/bin/herdr-graph' apply:*)"
+        ])
+    );
+    assert!(setup_claude::gate_installed(&setup_claude::CLAUDE, &config).unwrap());
+    let first = std::fs::read(config.join("settings.json")).unwrap();
+    let again = setup_claude::install(&config, Path::new(BIN)).unwrap();
+    assert_eq!(again.hook, HookChange::Unchanged);
+    assert_eq!(again.gate, HookChange::Unchanged);
+    assert_eq!(std::fs::read(config.join("settings.json")).unwrap(), first);
+}
+
+#[test]
+fn setup_claude_relative_binary_adds_only_the_bare_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("claude");
+    setup_claude::install(&config, Path::new("herdr-graph")).unwrap();
+    assert_eq!(
+        read_json(&config.join("settings.json"))["permissions"]["ask"],
+        json!(["Bash(herdr-graph apply:*)"])
+    );
+}
+
+#[test]
+fn setup_claude_keeps_a_preexisting_ask_entry() {
+    let original = r#"{"permissions":{"ask":["Bash(herdr-graph apply:*)","Bash(rm:*)"]}}"#;
+    for manual_edit in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("claude");
+        std::fs::create_dir_all(&config).unwrap();
+        std::fs::write(config.join("settings.json"), original).unwrap();
+        setup_claude::install(&config, Path::new(BIN)).unwrap();
+        let ask = read_json(&config.join("settings.json"))["permissions"]["ask"].clone();
+        let bare = ask
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| *v == "Bash(herdr-graph apply:*)")
+            .count();
+        assert_eq!(bare, 1, "{ask}");
+        let manifest = read_json(&config.join("herdr-graph-setup.json"));
+        assert_eq!(
+            manifest["gate_entries"],
+            json!(["Bash('/opt/herdr graph/bin/herdr-graph' apply:*)"])
+        );
+        if manual_edit {
+            let mut doc = read_json(&config.join("settings.json"));
+            doc["model"] = json!("sonnet");
+            std::fs::write(
+                config.join("settings.json"),
+                serde_json::to_string_pretty(&doc).unwrap(),
+            )
+            .unwrap();
+        }
+        setup_claude::uninstall(&config).unwrap();
+        if manual_edit {
+            let after = read_json(&config.join("settings.json"));
+            assert_eq!(
+                after["permissions"]["ask"],
+                json!(["Bash(herdr-graph apply:*)", "Bash(rm:*)"])
+            );
+            assert_eq!(after["model"], "sonnet");
+        } else {
+            assert_eq!(
+                std::fs::read_to_string(config.join("settings.json")).unwrap(),
+                original
+            );
+        }
+    }
+}
+
+#[test]
+fn setup_claude_uninstall_removes_only_recorded_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("claude");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("settings.json"), r#"{"model":"opus"}"#).unwrap();
+    setup_claude::install(&config, Path::new(BIN)).unwrap();
+    let mut doc = read_json(&config.join("settings.json"));
+    doc["permissions"]["ask"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("Bash(git push:*)"));
+    std::fs::write(
+        config.join("settings.json"),
+        serde_json::to_string_pretty(&doc).unwrap(),
+    )
+    .unwrap();
+
+    let report = setup_claude::uninstall(&config).unwrap();
+    assert!(report.hook_removed && report.gate_removed);
+    let after = read_json(&config.join("settings.json"));
+    assert_eq!(after["permissions"]["ask"], json!(["Bash(git push:*)"]));
+    assert!(owned_groups(&after).is_empty());
+    assert_eq!(after["model"], "opus");
+    assert!(!setup_claude::gate_installed(&setup_claude::CLAUDE, &config).unwrap());
+}
+
+#[test]
+fn setup_codex_writes_and_removes_the_rules_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(&config).unwrap();
+    let original = r#"{"hooks":{}}"#;
+    std::fs::write(config.join("hooks.json"), original).unwrap();
+    let rules = config.join("rules/herdr-graph.rules");
+
+    let report = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(report.gate, HookChange::Installed);
+    let text = std::fs::read_to_string(&rules).unwrap();
+    assert_eq!(text, setup_claude::rules_text(Path::new(BIN)));
+    assert!(text.contains(r#"prefix_rule(pattern=["herdr-graph", "apply"], decision="prompt")"#));
+    assert!(
+        text.contains(
+            r#"prefix_rule(pattern=["/opt/herdr graph/bin/herdr-graph", "apply"], decision="prompt")"#
+        ),
+        "{text}"
+    );
+    assert!(setup_claude::gate_installed(&setup_claude::CODEX, &config).unwrap());
+    let again = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(again.gate, HookChange::Unchanged);
+
+    let removed = setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert!(removed.gate_removed);
+    assert!(!rules.exists() && !config.join("rules").exists());
+    assert!(!setup_claude::gate_installed(&setup_claude::CODEX, &config).unwrap());
+    assert_eq!(
+        std::fs::read_to_string(config.join("hooks.json")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn gate_presence_reports_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("cfg");
+    assert!(!setup_claude::gate_installed(&setup_claude::CLAUDE, &config).unwrap());
+    assert!(!setup_claude::gate_installed(&setup_claude::CODEX, &config).unwrap());
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("settings.json"),
+        r#"{"permissions":{"ask":["Bash(rm:*)","Bash(herdr-graph plan:*)"]}}"#,
+    )
+    .unwrap();
+    assert!(!setup_claude::gate_installed(&setup_claude::CLAUDE, &config).unwrap());
+    std::fs::write(
+        config.join("settings.json"),
+        r#"{"permissions":{"ask":["Bash(/usr/local/bin/herdr-graph apply:*)"]}}"#,
+    )
+    .unwrap();
+    assert!(setup_claude::gate_installed(&setup_claude::CLAUDE, &config).unwrap());
+    std::fs::write(config.join("settings.json"), "not json").unwrap();
+    assert!(setup_claude::gate_installed(&setup_claude::CLAUDE, &config).is_err());
+}
+
 #[test]
 fn hook_prompt_only_when_graph_env_or_bound_pane() {
     let fx = fx();
