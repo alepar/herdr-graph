@@ -18,6 +18,15 @@ use crate::model::{
 use crate::ports::store::{EntryKind, ObjectLocation, RepoPath, StoreError};
 use std::collections::BTreeSet;
 
+/// Record files: written only by organizational kinds; never data or instructions.
+pub const RECORD_FILES: &[&str] = &[
+    "teamspace.toml",
+    "seat.toml",
+    "clone.toml",
+    "template.toml",
+    "graph.toml",
+];
+
 fn p(s: &str) -> RepoPath {
     RepoPath::new(s).expect("static layout path is valid")
 }

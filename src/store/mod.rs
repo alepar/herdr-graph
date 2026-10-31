@@ -2,6 +2,7 @@
 //! Implements crate::ports::store::Store. Readers only ever see complete commits; nothing here reads the working tree.
 pub mod git;
 pub mod init;
+pub mod instruction_source;
 pub mod layout;
 pub mod record;
 pub mod slug;
