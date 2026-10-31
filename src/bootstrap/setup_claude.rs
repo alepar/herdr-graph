@@ -23,23 +23,101 @@ const SKILLS: &[(&str, &str)] = &[
     ("graph", include_str!("../../skills/graph/SKILL.md")),
 ];
 
+/// How a harness asks the user before `herdr-graph apply` runs (spec §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalGate {
+    /// Claude: entries in settings.json `permissions.ask`.
+    SettingsAsk,
+    /// Codex: the owned `rules/herdr-graph.rules` file in `$CODEX_HOME`.
+    RulesFile,
+}
+
 /// Where a harness keeps its hooks and skills.
 pub struct Target {
     /// The hooks file inside the config dir.
     settings: &'static str,
     group: fn(&Path) -> Value,
+    /// How this harness asks before `apply`.
+    pub gate: ApprovalGate,
 }
 
 pub const CLAUDE: Target = Target {
     settings: "settings.json",
     group: claude_group,
+    gate: ApprovalGate::SettingsAsk,
 };
 
 /// Codex trusts a new or changed hook only after an interactive review (`/hooks`); setup never writes trust.
 pub const CODEX: Target = Target {
     settings: "hooks.json",
     group: codex_group,
+    gate: ApprovalGate::RulesFile,
 };
+
+/// The owned Codex rules file, relative to `$CODEX_HOME`.
+const RULES_FILE: &str = "rules/herdr-graph.rules";
+
+/// The `permissions.ask` entries that make Claude ask before `apply`: the bare command and, when the hook
+/// uses an absolute binary, that path in the hook's quoting.
+pub fn ask_entries(binary: &Path) -> Vec<String> {
+    let mut entries = vec!["Bash(herdr-graph apply:*)".to_owned()];
+    if binary.is_absolute() {
+        entries.push(format!(
+            "Bash({} apply:*)",
+            sh_quote(&binary.to_string_lossy())
+        ));
+    }
+    entries
+}
+
+/// The owned Codex rules file. Syntax verified with `codex execpolicy check` (codex-cli 0.163.0): both
+/// rules report a `prompt` decision for `herdr-graph apply ...` and for the absolute-path form.
+pub fn rules_text(binary: &Path) -> String {
+    let mut text = format!("# herdr-graph asks before apply {OWNER_MARKER}\n");
+    text.push_str("prefix_rule(pattern=[\"herdr-graph\", \"apply\"], decision=\"prompt\")\n");
+    if binary.is_absolute() {
+        let path = serde_json::to_string(&*binary.to_string_lossy()).expect("a string serializes");
+        text.push_str(&format!(
+            "prefix_rule(pattern=[{path}, \"apply\"], decision=\"prompt\")\n"
+        ));
+    }
+    text
+}
+
+/// An `ask` entry that guards `herdr-graph apply`, bare or by absolute path.
+fn is_apply_rule(s: &str) -> bool {
+    let Some(program) = s
+        .strip_prefix("Bash(")
+        .and_then(|r| r.strip_suffix(" apply:*)"))
+    else {
+        return false;
+    };
+    let program = program
+        .strip_prefix('\'')
+        .and_then(|p| p.strip_suffix('\''))
+        .unwrap_or(program);
+    Path::new(program).file_name() == Some(std::ffi::OsStr::new("herdr-graph"))
+}
+
+/// Whether `target`'s apply approval gate is present in `config`.
+pub fn gate_installed(target: &Target, config: &Path) -> anyhow::Result<bool> {
+    match target.gate {
+        ApprovalGate::SettingsAsk => {
+            let path = config.join(target.settings);
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+            };
+            let doc = parse_settings(&path, &text)?;
+            Ok(doc["permissions"]["ask"]
+                .as_array()
+                .is_some_and(|a| a.iter().filter_map(Value::as_str).any(is_apply_rule)))
+        }
+        ApprovalGate::RulesFile => Ok(std::fs::read_to_string(config.join(RULES_FILE))
+            .is_ok_and(|t| t.contains("prefix_rule(") && t.contains("\"apply\""))),
+    }
+}
 
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
@@ -112,6 +190,8 @@ pub enum HookChange {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallReport {
     pub hook: HookChange,
+    /// The apply approval gate.
+    pub gate: HookChange,
     /// Skills written (new or changed); empty on a repeat run.
     pub skills_written: Vec<String>,
 }
@@ -119,6 +199,8 @@ pub struct InstallReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UninstallReport {
     pub hook_removed: bool,
+    /// An apply approval entry or rules file this installer added was removed.
+    pub gate_removed: bool,
     pub skills_removed: Vec<String>,
 }
 
@@ -130,7 +212,7 @@ fn sha(bytes: &[u8]) -> String {
 }
 
 /// What the installer recorded, so uninstall can restore exactly.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq)]
 struct Manifest {
     /// `settings.json` text before the first install; None when the installer created the file.
     original: Option<String>,
@@ -139,6 +221,12 @@ struct Manifest {
     /// False once settings.json was edited by someone else and then rewritten by a re-install.
     restorable: bool,
     created_skills_root: bool,
+    /// `permissions.ask` entries this installer added (not ones that were already there).
+    gate_entries: Vec<String>,
+    /// The rules file was written by this installer.
+    gate_file: bool,
+    /// The installer created the `rules/` directory.
+    created_rules_dir: bool,
 }
 
 impl Manifest {
@@ -149,6 +237,17 @@ impl Manifest {
             installed_sha: v["installed_sha"].as_str()?.to_owned(),
             restorable: v["restorable"].as_bool().unwrap_or(false),
             created_skills_root: v["created_skills_root"].as_bool().unwrap_or(false),
+            gate_entries: v["gate_entries"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            gate_file: v["gate_file"].as_bool().unwrap_or(false),
+            created_rules_dir: v["created_rules_dir"].as_bool().unwrap_or(false),
         })
     }
 
@@ -156,6 +255,8 @@ impl Manifest {
         let v = json!({
             "original": self.original, "installed_sha": self.installed_sha,
             "restorable": self.restorable, "created_skills_root": self.created_skills_root,
+            "gate_entries": self.gate_entries, "gate_file": self.gate_file,
+            "created_rules_dir": self.created_rules_dir,
         });
         std::fs::write(path, serde_json::to_string_pretty(&v)? + "\n")
             .with_context(|| format!("writing {}", path.display()))
@@ -236,52 +337,111 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         }
     };
 
+    // The apply approval gate, computed before anything is written.
+    let mut added = Vec::new();
+    let mut rules_write: Option<String> = None;
+    let gate = match target.gate {
+        ApprovalGate::SettingsAsk => {
+            let obj = doc.as_object_mut().expect("checked to be an object");
+            let permissions = obj.entry("permissions").or_insert_with(|| json!({}));
+            let permissions = permissions.as_object_mut().with_context(|| {
+                format!(
+                    "`permissions` in {} is not an object; not modified",
+                    settings.display()
+                )
+            })?;
+            let ask = permissions.entry("ask").or_insert_with(|| json!([]));
+            let ask = ask.as_array_mut().with_context(|| {
+                format!(
+                    "`permissions.ask` in {} is not an array; not modified",
+                    settings.display()
+                )
+            })?;
+            for entry in ask_entries(binary) {
+                if !ask.iter().any(|v| v.as_str() == Some(entry.as_str())) {
+                    ask.push(json!(entry));
+                    added.push(entry);
+                }
+            }
+            if added.is_empty() {
+                HookChange::Unchanged
+            } else {
+                HookChange::Installed
+            }
+        }
+        ApprovalGate::RulesFile => {
+            let desired = rules_text(binary);
+            match std::fs::read_to_string(config.join(RULES_FILE)) {
+                Ok(t) if t == desired => HookChange::Unchanged,
+                Ok(_) => {
+                    rules_write = Some(desired);
+                    HookChange::Updated
+                }
+                Err(_) => {
+                    rules_write = Some(desired);
+                    HookChange::Installed
+                }
+            }
+        }
+    };
+
     let old_manifest = Manifest::read(&manifest_path);
     let first_install = old_manifest.is_none();
     let skills_root_existed = skills_root(config).exists();
-    if hook != HookChange::Unchanged {
+    let settings_changed = hook != HookChange::Unchanged || !added.is_empty();
+    let mut m = match &old_manifest {
+        Some(m) => m.clone(),
+        None => Manifest {
+            original: before.clone(),
+            restorable: true,
+            ..Manifest::default()
+        },
+    };
+    if settings_changed {
         let text = pretty(&doc)?;
-        let mut m = match old_manifest {
-            Some(mut m) => {
-                // Someone edited the file since we last wrote it: exact restoration is no longer honest.
-                if before.as_deref().map(|t| sha(t.as_bytes())) != Some(m.installed_sha.clone()) {
-                    m.restorable = false;
-                }
-                m
-            }
-            None => Manifest {
-                original: before.clone(),
-                restorable: true,
-                ..Manifest::default()
-            },
-        };
+        // Someone edited the file since we last wrote it: exact restoration is no longer honest.
+        if old_manifest.is_some()
+            && before.as_deref().map(|t| sha(t.as_bytes())) != Some(m.installed_sha.clone())
+        {
+            m.restorable = false;
+        }
         std::fs::write(&settings, &text)
             .with_context(|| format!("writing {}", settings.display()))?;
         m.installed_sha = sha(text.as_bytes());
         if first_install && !skills_root_existed {
             m.created_skills_root = true;
         }
-        let skills_written = write_skills(config)?;
-        m.write(&manifest_path)?;
-        return Ok(InstallReport {
-            hook,
-            skills_written,
-        });
-    }
-    let skills_written = write_skills(config)?;
-    if first_install {
+    } else if first_install {
         // Hook group found without a manifest (installed by hand or the manifest was lost): record what we can.
         let text = before.unwrap_or_default();
-        Manifest {
+        m = Manifest {
             original: Some(text.clone()),
             installed_sha: sha(text.as_bytes()),
-            restorable: false,
-            created_skills_root: false,
+            ..Manifest::default()
+        };
+    }
+    for entry in added {
+        if !m.gate_entries.contains(&entry) {
+            m.gate_entries.push(entry);
         }
-        .write(&manifest_path)?;
+    }
+    if let Some(text) = rules_write {
+        let path = config.join(RULES_FILE);
+        let dir = path.parent().expect("the rules file has a parent");
+        if !dir.exists() {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            m.created_rules_dir = true;
+        }
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+        m.gate_file = true;
+    }
+    let skills_written = write_skills(config)?;
+    if first_install || old_manifest.as_ref() != Some(&m) {
+        m.write(&manifest_path)?;
     }
     Ok(InstallReport {
         hook,
+        gate,
         skills_written,
     })
 }
@@ -317,6 +477,7 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
     let manifest = Manifest::read(&manifest_path);
     let current = std::fs::read_to_string(&settings).ok();
     let mut hook_removed = false;
+    let mut gate_removed = false;
 
     if let Some(text) = &current {
         let exact = manifest
@@ -329,35 +490,74 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
                 None => std::fs::remove_file(&settings)?,
             }
             hook_removed = true;
+            gate_removed = manifest
+                .as_ref()
+                .is_some_and(|m| !m.gate_entries.is_empty());
         } else {
             let mut doc = parse_settings(&settings, text)?;
             let had_owned = doc["hooks"]["SessionStart"]
                 .as_array()
                 .is_some_and(|a| a.iter().any(is_owned));
-            if had_owned {
+            let recorded: &[String] = manifest.as_ref().map_or(&[], |m| &m.gate_entries);
+            if had_owned || !recorded.is_empty() {
                 let obj = doc.as_object_mut().expect("checked to be an object");
-                let hooks = obj
-                    .get_mut("hooks")
-                    .and_then(Value::as_object_mut)
-                    .expect("hooks exist when an owned group does");
-                let arr = hooks
-                    .get_mut("SessionStart")
-                    .and_then(Value::as_array_mut)
-                    .expect("checked");
-                arr.retain(|g| !is_owned(g));
-                if arr.is_empty() {
-                    hooks.remove("SessionStart");
+                if had_owned {
+                    let hooks = obj
+                        .get_mut("hooks")
+                        .and_then(Value::as_object_mut)
+                        .expect("hooks exist when an owned group does");
+                    let arr = hooks
+                        .get_mut("SessionStart")
+                        .and_then(Value::as_array_mut)
+                        .expect("checked");
+                    arr.retain(|g| !is_owned(g));
+                    if arr.is_empty() {
+                        hooks.remove("SessionStart");
+                    }
+                    if hooks.is_empty() {
+                        obj.remove("hooks");
+                    }
                 }
-                if hooks.is_empty() {
-                    obj.remove("hooks");
+                if let Some(permissions) = obj.get_mut("permissions").and_then(Value::as_object_mut)
+                {
+                    if let Some(ask) = permissions.get_mut("ask").and_then(Value::as_array_mut) {
+                        for entry in recorded {
+                            if let Some(i) = ask.iter().position(|v| v.as_str() == Some(entry)) {
+                                ask.remove(i);
+                                gate_removed = true;
+                            }
+                        }
+                        if ask.is_empty() && gate_removed {
+                            permissions.remove("ask");
+                        }
+                    }
+                    if permissions.is_empty() && gate_removed {
+                        obj.remove("permissions");
+                    }
                 }
-                if obj.is_empty() && manifest.as_ref().is_some_and(|m| m.original.is_none()) {
-                    std::fs::remove_file(&settings)?;
-                } else {
-                    std::fs::write(&settings, pretty(&doc)?)?;
+                if had_owned || gate_removed {
+                    if obj.is_empty() && manifest.as_ref().is_some_and(|m| m.original.is_none()) {
+                        std::fs::remove_file(&settings)?;
+                    } else {
+                        std::fs::write(&settings, pretty(&doc)?)?;
+                    }
                 }
-                hook_removed = true;
+                hook_removed = had_owned;
             }
+        }
+    }
+
+    if manifest.as_ref().is_some_and(|m| m.gate_file) {
+        let path = config.join(RULES_FILE);
+        if path.exists() {
+            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+            gate_removed = true;
+        }
+        let dir = path.parent().expect("the rules file has a parent");
+        if manifest.as_ref().is_some_and(|m| m.created_rules_dir)
+            && std::fs::read_dir(dir).is_ok_and(|mut d| d.next().is_none())
+        {
+            let _ = std::fs::remove_dir(dir);
         }
     }
 
@@ -381,6 +581,7 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
     }
     Ok(UninstallReport {
         hook_removed,
+        gate_removed,
         skills_removed,
     })
 }
