@@ -3,8 +3,8 @@
 use super::adopt::{ADOPT_BINDING_KEY, adoption};
 use super::candidates::{is_undoable, read_action};
 use super::preview::{
-    Inverse, closes_caller, compute_restore, read_application, read_clone, restore_preview,
-    template_edit_args, template_inverse,
+    Inverse, closes_caller, compute_restore, instructions_inverse, read_application, read_clone,
+    restore_preview, template_inverse,
 };
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, ActionRecord};
@@ -37,6 +37,7 @@ use std::sync::Arc;
 pub struct UndoKind {
     pub(crate) app_retire: Arc<dyn OrgKind>,
     pub(crate) template_edit: Arc<dyn OrgKind>,
+    pub(crate) instructions: Arc<dyn OrgKind>,
 }
 
 #[derive(Deserialize)]
@@ -160,24 +161,24 @@ impl OrgKind for UndoKind {
                 self.app_retire
                     .plan(cx, &json!({ "application": app.to_string() }), reserved)?
             }
-            ActionKind::TemplateEdit => match template_inverse(cx.tree, &orig)? {
-                Inverse::Conflict(why) => PlanBody {
-                    effects: vec![],
-                    relied_on: vec![],
-                    warnings: vec![],
-                    repair_required: Some(why),
-                    summary: String::new(),
-                },
-                Inverse::Ready { template, document } => self.template_edit.plan(
-                    cx,
-                    &template_edit_args(&template, &document),
-                    reserved,
-                )?,
-            },
-            ActionKind::ThreadsReconnect
-            | ActionKind::Resurrect
-            | ActionKind::Undo
-            | ActionKind::InstructionsEdit => {
+            ActionKind::TemplateEdit | ActionKind::InstructionsEdit => {
+                let (inverse, kind) = if orig.kind == ActionKind::TemplateEdit {
+                    (template_inverse(cx.tree, &orig)?, &self.template_edit)
+                } else {
+                    (instructions_inverse(cx.tree, &orig)?, &self.instructions)
+                };
+                match inverse {
+                    Inverse::Conflict(why) => PlanBody {
+                        effects: vec![],
+                        relied_on: vec![],
+                        warnings: vec![],
+                        repair_required: Some(why),
+                        summary: String::new(),
+                    },
+                    Inverse::Ready(args) => kind.plan(cx, &args, reserved)?,
+                }
+            }
+            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
                 unreachable!("{:?} is not undoable", orig.kind)
             }
         };
@@ -218,20 +219,20 @@ impl OrgKind for UndoKind {
                 self.app_retire
                     .mutate(cx, &json!({ "application": app.to_string() }), plan)?;
             }
-            ActionKind::TemplateEdit => match template_inverse(&cx.tree, &orig).map_err(mm)? {
-                Inverse::Conflict(why) => return Err(reject("repair_required", why)),
-                Inverse::Ready { template, document } => {
-                    self.template_edit.mutate(
-                        cx,
-                        &template_edit_args(&template, &document),
-                        plan,
-                    )?;
+            ActionKind::TemplateEdit | ActionKind::InstructionsEdit => {
+                let (inverse, kind) = if orig.kind == ActionKind::TemplateEdit {
+                    (template_inverse(&cx.tree, &orig), &self.template_edit)
+                } else {
+                    (instructions_inverse(&cx.tree, &orig), &self.instructions)
+                };
+                match inverse.map_err(mm)? {
+                    Inverse::Conflict(why) => return Err(reject("repair_required", why)),
+                    Inverse::Ready(args) => {
+                        kind.mutate(cx, &args, plan)?;
+                    }
                 }
-            },
-            ActionKind::ThreadsReconnect
-            | ActionKind::Resurrect
-            | ActionKind::Undo
-            | ActionKind::InstructionsEdit => {
+            }
+            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
                 return Err(MutationError::Bug(format!(
                     "{:?} is not undoable",
                     orig.kind

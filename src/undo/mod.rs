@@ -23,8 +23,12 @@ pub fn register_kinds(reg: &mut KindRegistry) {
     let template_edit = reg
         .get(RequestKind::TemplateEdit)
         .expect("register the templates kinds before undo");
+    let instructions = reg
+        .get(RequestKind::InstructionsEdit)
+        .expect("register the core kinds before undo");
     reg.register(Arc::new(compensate::UndoKind {
         app_retire,
         template_edit,
+        instructions,
     }));
 }

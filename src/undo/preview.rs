@@ -11,6 +11,9 @@ use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateI
 use crate::plan::core_kinds::{open_clone_effects, read_seat, read_ts, rev_of};
 use crate::plan::kind::{PlanBody, PlanCx, PlanError};
 use crate::plan::types::{PlanEffect, Reserved};
+use crate::store::instruction_source::{
+    self as source, InstructionError, InstructionFile, InstructionTarget, ScopeKind,
+};
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::TreeRead;
@@ -496,12 +499,10 @@ fn runtime_effects(
 
 #[derive(Debug)]
 pub enum Inverse {
-    /// The edit document that puts the changed fields back, on top of the template as it is now.
-    Ready {
-        template: TemplateId,
-        document: Box<TemplateDocument>,
-    },
-    /// A later edit or a seat override touches a changed field.
+    /// The arguments of the inverse kind's plan: the edit document that puts a template's changed fields
+    /// back, or the `instructions set|clear` that restores a file.
+    Ready(Value),
+    /// A later edit or a seat override touches a changed field, or an instruction file has drifted.
     Conflict(String),
 }
 
@@ -737,13 +738,55 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             c.after.as_ref(),
         )?;
     }
-    Ok(Inverse::Ready {
-        template: tpl,
-        document: Box::new(doc),
-    })
+    Ok(Inverse::Ready(template_edit_args(&tpl, &doc)))
 }
 
 /// Arguments of the template edit that applies the inverse patch.
 pub fn template_edit_args(template: &TemplateId, doc: &TemplateDocument) -> Value {
     json!({ "template": template.to_string(), "document": doc })
+}
+
+/// The inverse of an instruction edit: set(before) or clear when before was absent, when the file still
+/// holds `after`; otherwise a conflict (spec §2.5).
+pub fn instructions_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inverse, PlanError> {
+    let bad = |m: &str| PlanError::Invalid(format!("action {} {m}", act.id));
+    let file = comp_str(act, "file").ok_or_else(|| bad("names no instruction file"))?;
+    let object = &act
+        .affected
+        .first()
+        .ok_or_else(|| bad("affects no object"))?
+        .object;
+    let (scope, target) = match object.kind() {
+        IdKind::Graph => (ScopeKind::Global, None),
+        IdKind::Teamspace => (ScopeKind::Teamspace, Some(object.to_string())),
+        IdKind::Seat => (ScopeKind::Seat, Some(object.to_string())),
+        _ => return Err(bad("affects an object that has no instruction files")),
+    };
+    let ie = |e: InstructionError| match e {
+        InstructionError::Store(s) => PlanError::Store(s),
+        other => PlanError::Invalid(other.to_string()),
+    };
+    let target_ref = InstructionTarget {
+        scope: source::resolve_scope(tree, scope, target.as_deref()).map_err(ie)?,
+        file: InstructionFile::parse(scope, file).map_err(ie)?,
+    };
+    let path = source::path(tree, &target_ref).map_err(ie)?;
+    let current = tree
+        .read_file(&path)?
+        .map(|b| String::from_utf8_lossy(&b).into_owned());
+    if current.as_deref() != comp_str(act, "after") {
+        return Ok(Inverse::Conflict(format!(
+            "{} changed since action {}; resolve it by hand or plan instructions set",
+            path.as_str(),
+            act.id
+        )));
+    }
+    let before = comp_str(act, "before");
+    Ok(Inverse::Ready(json!({
+        "action": if before.is_some() { "set" } else { "clear" },
+        "scope": target_ref.scope.kind().word(),
+        "target": target,
+        "file": file,
+        "content": before,
+    })))
 }
