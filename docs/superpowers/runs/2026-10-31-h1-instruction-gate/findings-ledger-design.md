@@ -1,0 +1,9 @@
+# findings ledger — design — through r1
+triggers: none
+blocking: r0=- r1=0 carriedB=- regressedB=- degraded=none not-computable=no-progress,returned,regressed
+ignored-overrides: 0
+- [Should-fix] §2.2 "The content must be valid UTF-8"; §2.4 diff detail; §4.1 verbatim render · raised r1@- · open · source roast · text docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md
+- [Should-fix] Key decisions "Every plan commits only through `herdr-graph apply`"; §3.3 "the terminal `[y/n]` prompt for humans stays"; §3.5 residual vectors; §2.5 Undo · raised r1@- · open · source roast · text docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md
+- [Should-fix] §4.1 order ("later section wins") with §4.4 "Output is capped at HOOK_RENDER_CAP = 9000 bytes, cut at a line boundary" · raised r1@- · open · source roast · text docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md
+- [Should-fix] §4.1 steps 3 and 6 with "later section wins"; §1.5 "update their instance's summarizer template through plan template edit" · raised r1@- · open · source roast · text docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md
+- [Should-fix] §2.1 "`<name>` matches `[a-z0-9][a-z0-9_-]*`" vs §4.1 "rules/*.md (by file name)"; Key abstractions InstructionSource predicate · raised r1@- · open · source roast · text docs/superpowers/runs/2026-10-31-h1-instruction-gate/2026-10-31-h1-instruction-gate-roast-design-1.md
