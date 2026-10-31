@@ -5,6 +5,8 @@ description: Resolve this pane's graph identity (teamspace, seat, clone) and loa
 
 # /seat
 
+Codex: after a clear or compaction, run `herdr-graph seat --instructions` and follow its output.
+
 Find out who you are in the graph, then read what applies to you.
 
 ## Steps
