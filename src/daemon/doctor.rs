@@ -1,5 +1,6 @@
 //! `doctor`: installation and instance diagnostics (spec §10).
 use super::client::{Client, hello};
+use crate::bootstrap::setup_claude;
 use crate::config::{Env, InstancePaths, InstanceSource, plugin_config_dir_via_herdr, socket_path};
 use crate::journal::{Journal, OpRow};
 use crate::model::CloneLifecycle;
@@ -7,6 +8,7 @@ use crate::model::common::{Availability, Lifecycle};
 use crate::model::operation::OpState;
 use crate::model::request::RequestStatus;
 use crate::ports::store::Store;
+use crate::store::instruction_source::{self, InstructionScope};
 use crate::store::layout;
 use crate::store::tree::{CommitView, TreeRead};
 use crate::threads::discovery::{DiscoveryInputs, Source, resolve_state_dir};
@@ -226,6 +228,88 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
     )
 }
 
+/// harness_gate (spec §3.4): per harness whose owned SessionStart hook is installed, the apply gate's presence.
+pub fn harness_gate_checks(claude: Option<&Path>, codex: Option<&Path>) -> Vec<Check> {
+    use crate::bootstrap::setup_claude::{CLAUDE, CODEX, gate_installed, owned_hook_installed};
+    let mut out = Vec::new();
+    for (name, target, dir) in [("claude", &CLAUDE, claude), ("codex", &CODEX, codex)] {
+        let Some(dir) = dir else { continue };
+        let label = format!("harness_gate {name}");
+        match owned_hook_installed(target, dir) {
+            Ok(false) => continue,
+            Err(e) => {
+                out.push(warn_check(&label, e.to_string()));
+                continue;
+            }
+            Ok(true) => {}
+        }
+        out.push(match gate_installed(target, dir) {
+            Ok(true) => check(&label, true, "apply ask rule present"),
+            Ok(false) => warn_check(&label, format!("run herdr-graph setup {name}")),
+            Err(e) => warn_check(&label, e.to_string()),
+        });
+    }
+    out
+}
+
+/// instruction_files (spec §2.2a): files in instruction locations that fail the admissibility predicate.
+fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
+    let mut scopes = vec![InstructionScope::Global];
+    let read = (|| -> Result<(), crate::ports::store::StoreError> {
+        for (_, t) in layout::list_teamspaces(tree)? {
+            if t.lifecycle != Lifecycle::Retired {
+                scopes.push(InstructionScope::Teamspace(t.id));
+            }
+        }
+        for (_, s) in layout::all_seats(tree)? {
+            if s.lifecycle != Lifecycle::Retired {
+                scopes.push(InstructionScope::Seat(s.id));
+            }
+        }
+        Ok(())
+    })();
+    if let Err(e) = read {
+        return vec![warn_check(
+            "instruction_files",
+            format!("cannot read the graph: {e}"),
+        )];
+    }
+    let mut out = Vec::new();
+    for scope in &scopes {
+        let files = match instruction_source::list_files(tree, scope) {
+            Ok(f) => f,
+            Err(e) => {
+                out.push(warn_check("instruction_files", e.to_string()));
+                continue;
+            }
+        };
+        for f in files {
+            let path = f.path.as_str();
+            if let Err(e) = &f.name {
+                out.push(warn_check("instruction_files", format!("{path}: {e}")));
+                continue;
+            }
+            match tree.read_file(&f.path) {
+                Ok(Some(bytes)) => {
+                    if let Err(e) = instruction_source::check_content(&bytes) {
+                        out.push(warn_check("instruction_files", format!("{path}: {e}")));
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => out.push(warn_check("instruction_files", format!("{path}: {e}"))),
+            }
+        }
+    }
+    if out.is_empty() {
+        out.push(check(
+            "instruction_files",
+            true,
+            "all instruction files admissible",
+        ));
+    }
+    out
+}
+
 fn undeliverable_check(tree: &dyn TreeRead) -> Check {
     let reqs = match layout::list_requests(tree) {
         Ok(r) => r,
@@ -279,6 +363,7 @@ fn instance_checks(root: &Path, checks: &mut Vec<Check>) {
                 at: head,
             };
             checks.push(unknown_objects_check(&view));
+            checks.extend(instruction_files_check(&view));
             checks.push(undeliverable_check(&view));
         }
         Err(e) => {
@@ -377,6 +462,9 @@ fn attention_effects_check(
 
 pub fn doctor(env: &Env) -> DoctorReport {
     let mut checks = Vec::new();
+    let claude = setup_claude::config_dir(env.claude_config_dir.as_deref(), env.home.as_deref());
+    let codex = setup_claude::codex_dir(env.codex_home.as_deref(), env.home.as_deref());
+    checks.extend(harness_gate_checks(claude.as_deref(), codex.as_deref()));
     let Some((root, source)) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr)
     else {
         checks.push(check(
@@ -516,6 +604,7 @@ mod tests {
     use crate::model::common::Runtime;
     use crate::model::request::{Delivery, ProcessingRequest};
     use crate::model::{OpId, RequestId, SCHEMA_VERSION, TeamspaceId, TranscriptId};
+    use crate::ports::store::RepoPath;
     use crate::store::{EditSet, GitStore};
     use serde_json::json;
 
@@ -746,9 +835,14 @@ mod tests {
         let names: Vec<_> = checks.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
-            ["unknown objects", "undeliverable requests", "failed ops"]
+            [
+                "unknown objects",
+                "instruction_files",
+                "undeliverable requests",
+                "failed ops"
+            ]
         );
-        assert_eq!(checks[2].detail, "no journal yet");
+        assert_eq!(checks[3].detail, "no journal yet");
         assert!(checks.iter().all(|c| c.ok), "{checks:?}");
     }
 
@@ -910,5 +1004,92 @@ mod tests {
         assert_eq!(r.checks.len(), 1);
         assert!(!r.all_ok());
         assert_eq!(r.checks[0].name, "instance");
+    }
+
+    fn harness_dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let t = tempfile::tempdir().unwrap();
+        let (c, x) = (t.path().join("claude"), t.path().join("codex"));
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::create_dir_all(&x).unwrap();
+        (t, c, x)
+    }
+
+    #[test]
+    fn harness_gate_skips_without_owned_hook() {
+        let (_t, c, x) = harness_dirs();
+        assert!(harness_gate_checks(Some(&c), Some(&x)).is_empty());
+        assert!(harness_gate_checks(None, None).is_empty());
+    }
+
+    #[test]
+    fn harness_gate_ok_when_installed() {
+        use crate::bootstrap::setup_claude::{CLAUDE, CODEX, install_for};
+        let (_t, c, x) = harness_dirs();
+        let bin = Path::new("/opt/herdr-graph");
+        install_for(&CLAUDE, &c, bin).unwrap();
+        install_for(&CODEX, &x, bin).unwrap();
+        let checks = harness_gate_checks(Some(&c), Some(&x));
+        let names: Vec<_> = checks.iter().map(|k| k.name.as_str()).collect();
+        assert_eq!(names, ["harness_gate claude", "harness_gate codex"]);
+        assert!(checks.iter().all(|k| k.ok && !k.warn), "{checks:?}");
+    }
+
+    #[test]
+    fn harness_gate_warns_when_gate_missing() {
+        use crate::bootstrap::setup_claude::{CLAUDE, CODEX, install_for};
+        let (_t, c, x) = harness_dirs();
+        let bin = Path::new("/opt/herdr-graph");
+        install_for(&CLAUDE, &c, bin).unwrap();
+        install_for(&CODEX, &x, bin).unwrap();
+        let settings = c.join("settings.json");
+        let mut doc: Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        doc["permissions"]["ask"] = json!([]);
+        std::fs::write(&settings, serde_json::to_vec(&doc).unwrap()).unwrap();
+        std::fs::remove_file(x.join("rules/herdr-graph.rules")).unwrap();
+        let checks = harness_gate_checks(Some(&c), Some(&x));
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().all(|k| k.warn), "{checks:?}");
+        assert_eq!(checks[0].detail, "run herdr-graph setup claude");
+        assert_eq!(checks[1].detail, "run herdr-graph setup codex");
+    }
+
+    #[test]
+    fn instruction_files_check_flags_inadmissible_files() {
+        let (_t, store) = instance();
+        fn view(store: &GitStore) -> CommitView<'_> {
+            CommitView {
+                store,
+                at: store.head().unwrap(),
+            }
+        }
+        // a fresh init instance (rules/.gitkeep) is fine
+        let fresh = instruction_files_check(&view(&store));
+        assert_eq!(fresh.len(), 1);
+        assert!(fresh[0].ok && !fresh[0].warn, "{fresh:?}");
+
+        let rules = |n: &str| RepoPath::root().join(&format!("rules/{n}")).unwrap();
+        let mut e = EditSet::default();
+        e.put(rules("ok.md"), b"be kind\r\nplease\n".to_vec());
+        commit(&store, &e);
+        let c = instruction_files_check(&view(&store));
+        assert!(c.len() == 1 && c[0].ok && !c[0].warn, "{c:?}");
+
+        let mut e = EditSet::default();
+        e.put(rules("Bad.md"), b"x".to_vec());
+        commit(&store, &e);
+        let c = instruction_files_check(&view(&store));
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert!(c[0].warn && c[0].detail.contains("rules/Bad.md"), "{c:?}");
+
+        let mut e = EditSet::default();
+        e.delete(rules("Bad.md"));
+        e.put(rules("sneaky.md"), "hi\u{E0041}".as_bytes().to_vec());
+        commit(&store, &e);
+        let c = instruction_files_check(&view(&store));
+        assert_eq!(c.len(), 1, "{c:?}");
+        assert!(
+            c[0].warn && c[0].detail.contains("rules/sneaky.md") && c[0].detail.contains("U+E0041"),
+            "{c:?}"
+        );
     }
 }

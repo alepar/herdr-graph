@@ -119,6 +119,20 @@ pub fn gate_installed(target: &Target, config: &Path) -> anyhow::Result<bool> {
     }
 }
 
+/// Whether `config` holds `target`'s owned SessionStart hook. A missing settings file means no.
+pub fn owned_hook_installed(target: &Target, config: &Path) -> anyhow::Result<bool> {
+    let path = config.join(target.settings);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let doc = parse_settings(&path, &text)?;
+    Ok(doc["hooks"]["SessionStart"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(is_owned)))
+}
+
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     let dir = claude_config_dir
