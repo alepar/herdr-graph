@@ -1,6 +1,7 @@
 //! Template and application mutation kinds (spec §5): template create/edit/copy, application apply (hydrate)
 //! and retire. Live propagation of a template edit, exclusivity withdrawal and re-addition share one
 //! computation (`compute_edit`) between the plan and the writer-side mutation.
+use crate::bootstrap::instructions::{PatchedTree, cap_warning, template_participation};
 use crate::cli::template as cli;
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, AffectedObject};
@@ -28,8 +29,9 @@ use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use crate::plan::types::{Plan, PlanEffect, Reserved, ReservedId};
 use crate::ports::store::{ObjectLocation, RepoPath, StoreError};
+use crate::store::instruction_source::check_content;
 use crate::store::layout;
-use crate::store::record::read_toml;
+use crate::store::record::{read_toml, to_toml_bytes};
 use crate::store::slug::{slugify, unique_slug};
 use crate::store::tree::TreeRead;
 use crate::templates::document::TemplateDocument;
@@ -913,6 +915,10 @@ impl OrgKind for TemplateEdit {
         reserved: &mut Reserved,
     ) -> Result<PlanBody, PlanError> {
         let a: EditArgs = parse_args(args)?;
+        for (field, text) in a.document.instruction_texts() {
+            check_content(text.as_bytes())
+                .map_err(|e| PlanError::Invalid(format!("{field}: {e}")))?;
+        }
         let (loc, old) = resolve_template(cx.tree, &a.template)?;
         let _act: ActionId = reserved.get_or_mint("act");
         let new = build_new_record(&old, &a.document, reserved)?;
@@ -1067,10 +1073,18 @@ impl OrgKind for TemplateEdit {
                 .collect::<Vec<_>>()
         );
         effects.extend(edit.replacements.clone());
+        let mut warnings = edit.warnings;
+        if changes.iter().any(|c| {
+            c.path == "agents_md"
+                || c.path.ends_with(".agents_md")
+                || c.path.ends_with(".responsibility")
+        }) {
+            warnings.extend(edit_cap_warnings(cx, &loc, &new, &after)?);
+        }
         Ok(PlanBody {
             effects,
             relied_on,
-            warnings: edit.warnings,
+            warnings,
             repair_required: edit.repair_required,
             summary: format!("edit template {}", old.name),
         })
@@ -1201,6 +1215,52 @@ impl OrgKind for TemplateEdit {
 }
 
 /// The edited document as stored: ids resolved, `agents_md` kept only where the edit sets it.
+/// The §4.4 hook-cap warnings for every live seat taking part in the edited template, sized on the
+/// committed tree with the edited template files laid over it.
+fn edit_cap_warnings(
+    cx: &PlanCx<'_>,
+    loc: &ObjectLocation,
+    new: &TemplateRecord,
+    after: &TemplateDocument,
+) -> Result<Vec<String>, PlanError> {
+    let mut patched = PatchedTree::new(cx.tree);
+    patched.put(loc.record_path.clone(), to_toml_bytes(new)?);
+    if let Some(text) = &after.agents_md {
+        let path = loc.folder.join("AGENTS.md")?;
+        if text.is_empty() {
+            patched.delete(path);
+        } else {
+            patched.put(path, text.as_bytes().to_vec());
+        }
+    }
+    for m in &after.members {
+        if let Some(text) = &m.agents_md {
+            let path = layout::member_agents_md(&loc.folder, &slugify(&m.name));
+            if text.is_empty() {
+                patched.delete(path);
+            } else {
+                patched.put(path, text.as_bytes().to_vec());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for (_, seat) in layout::all_seats(cx.tree)? {
+        if seat.lifecycle == Lifecycle::Retired {
+            continue;
+        }
+        if !template_participation(cx.tree, &seat)?
+            .iter()
+            .any(|p| p.template.record_path == loc.record_path)
+        {
+            continue;
+        }
+        if let Some(w) = cap_warning(&patched, &cx.at, &seat.id)? {
+            out.push(w);
+        }
+    }
+    Ok(out)
+}
+
 fn merged_after(new: &TemplateRecord, doc: &TemplateDocument) -> TemplateDocument {
     let mut after = TemplateDocument::from_record(new);
     after.agents_md = doc.agents_md.clone();

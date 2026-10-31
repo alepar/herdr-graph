@@ -2398,3 +2398,54 @@ fn reconnect_rejects_preboundary_template_and_application_plans() {
     assert!(tpl(&fx, "source").relationships.is_empty());
     assert!(layout::list_applications(&view(&fx)).unwrap().is_empty());
 }
+
+fn agents_doc(name: &str, id: &MemberId, root: &str, member: &str, responsibility: &str) -> String {
+    format!(
+        "name = \"{name}\"\nagents_md = \"{root}\"\n\n[[members]]\nid = \"{id}\"\nname = \"lead\"\nstartup = \"deferred\"\nresponsibility = \"{responsibility}\"\nagents_md = \"{member}\"\n"
+    )
+}
+
+#[test]
+fn template_edit_rejects_inadmissible_agents_md() {
+    let fx = fx();
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    for (root, member, resp, needle) in [
+        ("x\\U000E0041", "ok", "ok", "U+E0041"),
+        ("ok", "a\\nb\\rc", "ok", "U+000D"),
+        ("ok", "ok", "a\\u001bb", "U+001B"),
+    ] {
+        let path = write_doc(&fx, &agents_doc("solo", &a, root, member, resp));
+        let err = plan_err(&fx, &format!("template edit solo --from {path}"));
+        assert!(err.contains(needle) && err.contains("line"), "{err}");
+    }
+}
+
+#[test]
+fn template_edit_cap_warning() {
+    let fx = fx();
+    alpha(&fx);
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "solo", "app");
+    let seat_name = seat_by_id(&fx, &member_seat(&fx, "app", &a)).name;
+    let small = write_doc(&fx, &agents_doc("solo", &a, "short", "ok", "ok"));
+    let sp = plan(&fx, &format!("template edit solo --from {small}"));
+    assert!(
+        !sp.plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("exceed the cap")),
+        "{:?}",
+        sp.plan.warnings
+    );
+    let big = write_doc(&fx, &agents_doc("solo", &a, &"x".repeat(9500), "ok", "ok"));
+    let sp = plan(&fx, &format!("template edit solo --from {big}"));
+    let w = sp
+        .plan
+        .warnings
+        .iter()
+        .find(|w| w.starts_with(&format!("hook output for {seat_name} would exceed the cap")))
+        .unwrap_or_else(|| panic!("{:?}", sp.plan.warnings));
+    assert!(w.contains("template solo"), "{w}");
+}
