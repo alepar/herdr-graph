@@ -21,7 +21,8 @@ pub struct Candidate {
     pub undone: bool,
 }
 
-/// Closure cascades, retirements, hydrations, template edits and application retirements can be undone;
+/// Closure cascades, retirements, hydrations, template edits, instruction edits and
+/// application retirements can be undone;
 /// resurrections and undos are history only.
 pub fn is_undoable(kind: ActionKind) -> bool {
     matches!(
@@ -30,6 +31,7 @@ pub fn is_undoable(kind: ActionKind) -> bool {
             | ActionKind::Retire
             | ActionKind::Hydrate
             | ActionKind::TemplateEdit
+            | ActionKind::InstructionsEdit
             | ActionKind::ApplicationRetire
     )
 }
