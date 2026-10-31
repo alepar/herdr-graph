@@ -1,9 +1,9 @@
-use super::content::{self, b64_decode, b64_encode};
 use super::resolve::{Resolution, proposal_words, resolve_caller};
 use super::setup_claude::{self, HookChange};
 use super::*;
 use crate::daemon::registry::CallerInfo;
 use crate::journal::{Journal, OpRow};
+use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{Invitation, InvitationState, InviteConstraint, ThreadsLink};
 use crate::model::common::{Availability, Binding, Lifecycle, Occupant, SystemDuty};
@@ -105,6 +105,23 @@ impl Mutation for TestClone {
     }
 }
 
+/// Test-only file put (`bookkeeping.test_put`): commits `bytes_b64` at `path` (a repo path) through the
+/// writer, so the working tree is synced and local edits are protected exactly as for any other commit.
+/// Stands in for the removed `content write` as the way fixtures place seat, team and summary files.
+struct TestPut;
+impl Mutation for TestPut {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let a = &cx.request.args;
+        let path = RepoPath::new(a["path"].as_str().unwrap()).unwrap();
+        let bytes = b64_decode(a["bytes_b64"].as_str().unwrap()).unwrap();
+        cx.tree.put_file(path, bytes);
+        Ok(Applied {
+            summary: "test put".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     root: std::path::PathBuf,
@@ -132,8 +149,8 @@ fn fx_with(prepare: impl FnOnce(&Path)) -> Fx {
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
-    register_mutations(&mut reg);
     reg.register("bookkeeping.test_clone", Arc::new(TestClone));
+    reg.register("bookkeeping.test_put", Arc::new(TestPut));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -278,11 +295,24 @@ fn caller(pane: &str) -> CallerInfo {
     }
 }
 
-fn write(fx: &Fx, object: &str, rel: &str, bytes: &[u8], expect: Option<&str>) -> OpRow {
-    let args =
-        json!({ "object": object, "rel": rel, "bytes_b64": b64_encode(bytes), "expect": expect });
-    let op = content::admit_write(&fx.deps.plan, &CallerInfo::default(), &args)
-        .unwrap_or_else(|e| panic!("admit write {rel}: {}", e.message));
+/// Commit `bytes` at `rel` inside the folder of `object` (live or archived) and return the journal row.
+fn put(fx: &Fx, object: &str, rel: &str, bytes: &[u8]) -> OpRow {
+    use crate::ports::writer::Writer;
+    let loc = layout::locate(&view(fx), &AnyId::parse(object).unwrap())
+        .unwrap()
+        .unwrap();
+    let path = loc.folder.join(rel).unwrap();
+    let op = fx
+        .w
+        .admit(ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_put", "path": path.as_str(), "bytes_b64": b64_encode(bytes) }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap();
     fx.w.drain().unwrap();
     fx.w.journal().get(&op).unwrap().unwrap()
 }
@@ -549,17 +579,17 @@ fn seat_json_includes_paths_pending_ops_invitations_beads_view_rev() {
     let seat_id = seat.id.to_string();
     let ts_id = seat.teamspace.to_string();
 
-    // Seat and team files the agent must read, written through the real content path.
+    // Seat and team files the agent must read, committed through the writer.
     assert_eq!(
-        write(&fx, &seat_id, "AGENTS.md", b"v1", None).state,
+        put(&fx, &seat_id, "AGENTS.md", b"v1").state,
         OpState::Committed
     );
     assert_eq!(
-        write(&fx, &ts_id, "rules/style.md", b"be brief", None).state,
+        put(&fx, &ts_id, "rules/style.md", b"be brief").state,
         OpState::Committed
     );
     assert_eq!(
-        write(&fx, &clone.id.to_string(), "notes/n.md", b"n", None).state,
+        put(&fx, &clone.id.to_string(), "notes/n.md", b"n").state,
         OpState::Committed
     );
     // A local edit the graph must not overwrite, then a newer committed version of the same file.
@@ -575,7 +605,7 @@ fn seat_json_includes_paths_pending_ops_invitations_beads_view_rev() {
         .join("AGENTS.md");
     std::fs::write(&agents, "local edit").unwrap();
     assert_eq!(
-        write(&fx, &seat_id, "AGENTS.md", b"v2", None).state,
+        put(&fx, &seat_id, "AGENTS.md", b"v2").state,
         OpState::Committed
     );
 
@@ -759,219 +789,43 @@ fn seat_reply_for_an_unknown_pane_is_unbound_with_no_paths() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// content write
+// content write (removed in H1: no daemon command, no mutation)
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn content_write_resolves_current_folder_after_rename() {
+fn content_write_has_no_daemon_command_and_no_mutation() {
+    use crate::ports::writer::Writer;
     let fx = fx();
-    commit(&fx, "teamspace create alpha --active");
-    commit(&fx, "seat create one --teamspace alpha");
-    let seat = seat_rec(&fx, "one");
-    let id = seat.id.to_string();
-    assert_eq!(
-        write(&fx, &id, "notes/a.md", b"first", None).state,
-        OpState::Committed
+    let mut reg = Registry::default();
+    register_commands(
+        &mut reg,
+        BootstrapDeps {
+            plan: fx.deps.plan.clone(),
+            journal: fx.deps.journal.clone(),
+            herdr: None,
+        },
     );
-    let old_folder = layout::locate(&view(&fx), &seat.id.to_any())
-        .unwrap()
-        .unwrap()
-        .folder;
-
-    commit(&fx, "seat rename one two");
-    let new_folder = layout::locate(&view(&fx), &seat.id.to_any())
-        .unwrap()
-        .unwrap()
-        .folder;
-    assert_ne!(old_folder, new_folder);
-
-    assert_eq!(
-        write(&fx, &id, "notes/b.md", b"second", None).state,
-        OpState::Committed
-    );
-    assert_eq!(
-        file_in(&fx, &id, "notes/a.md").unwrap(),
-        b"first",
-        "earlier file moved with the folder"
-    );
-    assert_eq!(file_in(&fx, &id, "notes/b.md").unwrap(), b"second");
-    let head = fx.store.head().unwrap();
-    let stale = old_folder.join("notes/b.md").unwrap();
-    assert_eq!(
-        fx.store.read_file(&head, &stale).unwrap(),
-        None,
-        "nothing is written under the old name"
-    );
-}
-
-#[test]
-fn content_write_rejects_unknown_object_and_record_files_and_dotdot() {
-    let fx = fx();
-    commit(&fx, "teamspace create alpha");
-    commit(&fx, "seat create one --teamspace alpha");
-    let id = seat_rec(&fx, "one").id.to_string();
-    let call = |rel: &str| {
-        let args = json!({ "object": id, "rel": rel, "bytes_b64": b64_encode(b"x") });
-        content::admit_write(&fx.deps.plan, &CallerInfo::default(), &args)
-            .map(|_| ())
-            .unwrap_err()
-            .message
-    };
-    for rel in [
-        "../escape.md",
-        "a/../../b.md",
-        "/abs.md",
-        "",
-        "a//b.md",
-        "./a.md",
-        "a\\b.md",
-        ".git/config",
-    ] {
-        assert!(
-            !call(rel).is_empty(),
-            "{rel:?} must be refused at admission"
-        );
-    }
-    for rel in [
-        "seat.toml",
-        "notes/clone.toml",
-        "teamspace.toml",
-        "template.toml",
-        "deep/er/seat.toml",
-    ] {
-        assert!(call(rel).contains("record file"), "{rel}: {}", call(rel));
-    }
-
-    // The writer validates again: a request that skipped admission-time checks is rejected, not applied.
-    let raw = |object: &str, rel: &str| {
-        use crate::ports::writer::Writer;
-        let op = fx
-            .w
-            .admit(ChangeRequest {
-                kind: RequestKind::ContentWrite,
-                args: json!({ "object": object, "rel": rel, "bytes_b64": b64_encode(b"x"), "path": rel }),
-                relied_on: vec![],
-                requester: Requester::default(),
-                supersedes: None,
-                confirmed: None,
-            })
-            .unwrap();
-        fx.w.drain().unwrap();
-        fx.w.journal().get(&op).unwrap().unwrap()
-    };
-    let before = fx.store.head().unwrap();
-    for rel in ["../escape.md", "seat.toml"] {
-        let row = raw(&id, rel);
-        assert_eq!(
-            (row.state, row.rejection.unwrap().reason),
-            (OpState::Rejected, "invalid_path".to_owned()),
-            "{rel}"
-        );
-    }
-    let ghost = SeatId::new();
-    let row = raw(&ghost.to_string(), "notes/a.md");
-    assert_eq!(row.state, OpState::Rejected);
-    assert_eq!(row.rejection.unwrap().reason, "unknown_object");
-    let row = raw(&crate::model::OpId::new().to_string(), "notes/a.md");
-    assert_eq!(row.rejection.unwrap().reason, "unknown_object");
-    assert_eq!(
-        fx.store.head().unwrap(),
-        before,
-        "rejected writes commit nothing"
-    );
-
-    // A file cannot become a directory nor the reverse.
-    assert_eq!(
-        write(&fx, &id, "notes", b"file", None).state,
-        OpState::Committed
-    );
-    assert_eq!(
-        raw(&id, "notes/inside.md").rejection.unwrap().reason,
-        "invalid_path"
-    );
-    assert_eq!(
-        write(&fx, &id, "dir/x.md", b"x", None).state,
-        OpState::Committed
-    );
-    assert_eq!(raw(&id, "dir").rejection.unwrap().reason, "invalid_path");
-}
-
-#[test]
-fn content_write_retired_object_only_summaries() {
-    let fx = fx();
-    commit(&fx, "teamspace create alpha --active");
-    commit(&fx, "seat create one --teamspace alpha --active");
-    let id = seat_rec(&fx, "one").id.to_string();
-    assert_eq!(
-        write(&fx, &id, "notes/live.md", b"live", None).state,
-        OpState::Committed
-    );
-    commit(&fx, "seat retire one");
-
-    let row = write(&fx, &id, "notes/late.md", b"late", None);
-    assert_eq!(row.state, OpState::Rejected);
-    assert_eq!(row.rejection.unwrap().reason, "retired_object");
-    assert_eq!(file_in(&fx, &id, "notes/late.md"), None);
-
-    let row = write(&fx, &id, "summaries/tr_x-0-10.md", b"summary", None);
-    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    assert_eq!(
-        file_in(&fx, &id, "summaries/tr_x-0-10.md").unwrap(),
-        b"summary"
-    );
-    let loc = layout::locate(&view(&fx), &AnyId::parse(&id).unwrap())
-        .unwrap()
-        .unwrap();
+    let names = reg.command_kinds();
+    assert!(names.iter().any(|n| n == "seat.resolve"), "{names:?}");
     assert!(
-        loc.folder.as_str().contains("archive/"),
-        "written into the archived folder: {}",
-        loc.folder.as_str()
+        !names.iter().any(|n| n.starts_with("content.")),
+        "{names:?}"
     );
-    assert_eq!(
-        file_in(&fx, &id, "notes/live.md").unwrap(),
-        b"live",
-        "earlier files moved to the archive"
-    );
-}
 
-#[test]
-fn content_write_expect_blob_precondition() {
-    let fx = fx();
     commit(&fx, "teamspace create alpha");
     commit(&fx, "seat create one --teamspace alpha");
     let id = seat_rec(&fx, "one").id.to_string();
-    let blob = |fx: &Fx| {
-        let head = fx.store.head().unwrap();
-        let loc = fx
-            .store
-            .locate(&head, &AnyId::parse(&id).unwrap())
-            .unwrap()
-            .unwrap();
-        fx.store
-            .blob_hash(&head, &loc.folder.join("notes/p.md").unwrap())
-            .unwrap()
-            .unwrap()
-            .0
-    };
-    assert_eq!(
-        write(&fx, &id, "notes/p.md", b"v1", None).state,
-        OpState::Committed
-    );
-    let v1 = blob(&fx);
-    assert_eq!(
-        write(&fx, &id, "notes/p.md", b"v2", Some(&v1)).state,
-        OpState::Committed
-    );
-    assert_eq!(file_in(&fx, &id, "notes/p.md").unwrap(), b"v2");
-
-    let stale = write(&fx, &id, "notes/p.md", b"v3", Some(&v1));
-    assert_eq!(stale.state, OpState::Rejected);
-    assert_eq!(stale.rejection.unwrap().reason, "precondition_failed");
-    assert_eq!(
-        file_in(&fx, &id, "notes/p.md").unwrap(),
-        b"v2",
-        "a refused write changes nothing"
-    );
+    let err =
+        fx.w.admit(ChangeRequest {
+            kind: RequestKind::ContentWrite,
+            args: json!({ "object": id, "rel": "AGENTS.md", "bytes_b64": b64_encode(b"x") }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap_err();
+    assert!(err.to_string().contains("no mutation registered"), "{err}");
 }
 
 #[test]
@@ -1543,9 +1397,8 @@ fn init_with_examples_templates_hydrate() {
     let s = md("summarizer");
     for needle in [
         "herdr-graph request ack <rq>",
-        "content write --object <source seat id>",
+        "herdr-graph request complete <rq> --summary-from <tmp file> --covered <start>-<end>",
         "summaries/<tr>-<start>-<end>.md",
-        "herdr-graph request complete <rq> --output",
         "/loop 1h",
         "request list --pending --undispatched",
         "request list --pending --unresolved",
@@ -1779,14 +1632,7 @@ fn seat_paths_load_live_reusable_member_and_instance_instructions() {
         "reusable member instructions stay live, separate from instance context"
     );
     assert_eq!(
-        write(
-            &fx,
-            seat.id.as_str(),
-            "AGENTS.md",
-            b"instance context",
-            None
-        )
-        .state,
+        put(&fx, seat.id.as_str(), "AGENTS.md", b"instance context").state,
         OpState::Committed
     );
     let borrowed_member = crate::model::MemberId::new();
@@ -1868,42 +1714,6 @@ fn seat_paths_load_live_reusable_member_and_instance_instructions() {
         std::fs::read_to_string(updated["seat_agents_md"].as_str().unwrap()).unwrap(),
         "instance context"
     );
-}
-
-#[test]
-fn template_instruction_content_writes_require_reviewable_template_edit() {
-    let fx = fx_with(|root| {
-        examples::install_examples(root).unwrap();
-    });
-    for (_, template) in layout::list_templates(&view(&fx)).unwrap() {
-        let rel = if template.name == "engineer" {
-            "AGENTS.md"
-        } else if template.name == "feature-team" {
-            "members/engineer/AGENTS.md"
-        } else {
-            continue;
-        };
-        let row = write(
-            &fx,
-            template.id.as_str(),
-            rel,
-            b"unreviewed replacement",
-            None,
-        );
-        assert_eq!(row.state, OpState::Rejected);
-        assert!(row.rejection.unwrap().explanation.contains("template edit"));
-        assert_eq!(
-            write(
-                &fx,
-                template.id.as_str(),
-                "notes/AGENTS.md",
-                b"opaque notes",
-                None
-            )
-            .state,
-            OpState::Committed
-        );
-    }
 }
 
 // F1: instruction paths may change, but specialization belongs to the stable member ID.

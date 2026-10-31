@@ -344,7 +344,6 @@ async fn every_kind_and_command_registered() {
         "undo.list",
         "undo.apply",
         "seat.resolve",
-        "content.write",
         "request.list",
         "request.ack",
         "request.complete",
@@ -379,7 +378,6 @@ async fn every_kind_and_command_registered() {
             "bookkeeping.request_complete",
             "bookkeeping.request_unresolved",
             "bookkeeping.reassign",
-            "content_write",
         ]
         .map(String::from),
     );
@@ -389,6 +387,15 @@ async fn every_kind_and_command_registered() {
             "mutation {k} not registered; have {keys:?}"
         );
     }
+    // `content write` was removed in H1: neither its daemon command nor its mutation is registered.
+    assert!(
+        !have.iter().any(|k| k == "content.write"),
+        "content.write must not be registered; have {have:?}"
+    );
+    assert!(
+        !keys.iter().any(|k| k.starts_with("content_write")),
+        "content_write must not be registered; have {keys:?}"
+    );
     // The composed daemon's writer admits only registered kinds: its registry is this same function's output.
     d.stop().await;
 }

@@ -30,6 +30,8 @@ pub enum RequestKind {
     ApplicationRetire,
     ThreadsReconnect,
     Undo,
+    /// Legacy: removed in H1; kept so journal rows and graph-change records written before still
+    /// deserialize. Nothing creates it.
     ContentWrite,
     Observed,
     Bookkeeping,
@@ -39,6 +41,7 @@ pub enum RequestKind {
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     Organizational,
+    /// Legacy: removed in H1 with `RequestKind::ContentWrite`; kept for deserialization only.
     Content,
     Observed,
     Bookkeeping,

@@ -132,7 +132,6 @@ pub fn mutation_registry(plans: Arc<PlanStore>) -> (Arc<KindRegistry>, MutationR
     crate::observe::register_mutations(&mut muts);
     crate::threads::register_mutations(&mut muts);
     crate::transcripts::register_mutations(&mut muts);
-    crate::bootstrap::register_mutations(&mut muts);
     crate::plan::ops::register_mutations(&mut muts);
     (kinds, muts)
 }

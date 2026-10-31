@@ -1,14 +1,15 @@
-//! /seat resolution, show/list/path, content write, setup claude hook/skill installation, shipped example
+//! /seat resolution, show/list/path, setup claude hook/skill installation, shipped example
 //! templates (spec §9, §8.3). Owned by hg-zmi.13.
 //!
-//! Daemon side: `register_commands` adds IPC `seat.resolve` and `content.write`; `register_mutations` adds the
-//! writer mutation `content_write`. Both are wired by `daemon::compose` (hg-zmi.18).
+//! Daemon side: `register_commands` adds IPC `seat.resolve`, wired by `daemon::compose` (hg-zmi.18).
+//! `content write` was removed in H1 (spec §1.5): summaries go through `request complete --summary-from`,
+//! instructions through `plan instructions` and `apply`.
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
 use crate::model::clone::CloneRecord;
 use crate::model::seat::SeatRecord;
 use crate::model::{CloneId, PlanId, SeatId};
-use crate::plan::commands::{PlanDeps, create_plan, wait_result};
+use crate::plan::commands::{PlanDeps, create_plan};
 use crate::plan::ops::pending_for;
 use crate::ports::herdr::{HerdrApi, PaneInfo};
 use crate::ports::store::{RepoPath, Store, StoreError};
@@ -16,14 +17,12 @@ use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::{CommitView, TreeRead};
 use crate::threads::pending_invitations;
-use crate::writer::MutationRegistry;
 use crate::writer::worktree::{read_dirty, view_rev};
 use resolve::{Proposal, Resolution, proposal_words, resolve_caller};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
 
-pub mod content;
 pub mod examples;
 pub mod instructions;
 pub mod resolve;
@@ -40,19 +39,14 @@ pub struct BootstrapDeps {
     pub herdr: Option<Arc<dyn HerdrApi>>,
 }
 
-/// Writer mutations: `content_write`.
-pub fn register_mutations(reg: &mut MutationRegistry) {
-    reg.register(content::MUTATION_KEY, Arc::new(content::ContentWrite));
-}
-
 fn internal(e: impl std::fmt::Display) -> CommandError {
     CommandError::internal(e.to_string())
 }
 
-/// IPC commands: `seat.resolve`, `content.write`.
+/// IPC commands: `seat.resolve`.
 pub fn register_commands(reg: &mut Registry, deps: BootstrapDeps) {
     let deps = Arc::new(deps);
-    let d = deps.clone();
+    let d = deps;
     reg.command("seat.resolve", move |cx: CommandCtx, _args: Value| {
         let d = d.clone();
         async move {
@@ -60,21 +54,6 @@ pub fn register_commands(reg: &mut Registry, deps: BootstrapDeps) {
             tokio::task::spawn_blocking(move || seat_reply(&d, &cx.caller, pane.as_ref()))
                 .await
                 .map_err(internal)?
-        }
-    });
-    let d = deps;
-    reg.command("content.write", move |cx: CommandCtx, args: Value| {
-        let d = d.clone();
-        async move {
-            let op = {
-                let d = d.clone();
-                tokio::task::spawn_blocking(move || {
-                    content::admit_write(&d.plan, &cx.caller, &args)
-                })
-                .await
-                .map_err(internal)??
-            };
-            wait_result(&d.plan, &op).await
         }
     });
 }

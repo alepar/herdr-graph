@@ -208,5 +208,5 @@ impl ByteRange {
     }
 }
 
-/// Path relative to an object's folder, as used by `content write --rel` (validated by hg-zmi.13).
+/// Path relative to an object's folder, inside the folder of a graph object (e.g. `summaries/<tr>-<start>-<end>.md`).
 pub type RelPath = PathBuf;
