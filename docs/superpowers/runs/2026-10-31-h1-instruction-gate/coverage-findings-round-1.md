@@ -1,0 +1,12 @@
+GAP · R15 · no task owns the tree-wide test/check matrix
+GAP · R18 · hook registration must cover startup/resume/clear/compact for both harnesses
+GAP · R17 · harness approval not bound to exact plan content
+GAP · R19 · working-tree edits or harness-native loading could bypass the committed render
+GAP · R16 · other existing writers to instruction files not audited
+GAP · undo bypass · undo might commit instruction changes without apply
+GAP · legacy ContentWrite undo · undo/preview of historical ContentWrite records undefined
+UNOWNED-SEAM · InstructionsEdit action record · schema shared by hg-45e.4 and hg-45e.5
+UNOWNED-SEAM · seat --json contract and hook header · shared by hg-45e.6, hg-45e.7, hg-45e.14
+UNOWNED-SEAM · CLI surface for docs · hg-45e.11 documents surfaces of .4 .7 .8 .9 .10 .13 .14 .15
+UNOWNED-SEAM · summary path vs instruction set · hg-45e.8 vs hg-45e.3/.14
+UNOWNED-SEAM · affected-seats resolution · hg-45e.4 vs hg-45e.6

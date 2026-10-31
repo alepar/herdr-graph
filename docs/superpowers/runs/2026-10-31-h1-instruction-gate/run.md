@@ -13,3 +13,4 @@ spec: 2026-10-31-h1-instruction-gate-design.md
 epic: hg-45e
 approvals:
 - top-split · auto · hg-45e.1 LEAF, hg-45e.2 LEAF, hg-45e.3 LEAF, hg-45e.4 LEAF, hg-45e.5 LEAF, hg-45e.6 LEAF, hg-45e.7 LEAF, hg-45e.8 LEAF, hg-45e.9 LEAF, hg-45e.10 LEAF, hg-45e.11 LEAF, hg-45e.12 LEAF, hg-45e.13 LEAF, hg-45e.14 LEAF, hg-45e.15 LEAF
+- coverage-round-1 · R1..R20 canonical (coverage-round-1-requirements.md) · requirements: 15 · mapped: 14 · unmapped: 1 (R15) · cl-3 applied auto, cl-4 applied auto, cl-5 rejected auto, cl-6 rejected auto, cl-7 applied auto, cl-8 rejected auto, cl-9 rejected auto, cl-10 applied auto, cl-11 applied auto, cl-12 applied auto, cl-13 applied auto, cl-14 rejected auto, cl-1/cl-2 flag-sweep kept auto
