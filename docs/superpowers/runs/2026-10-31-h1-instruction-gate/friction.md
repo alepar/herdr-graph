@@ -9,3 +9,4 @@
 - [2026-10-31 code inv-p3b] task agents committed test logs under a top-level evidence/ directory on task branches (local absolute paths, one FAILED golden log); removed in be43cf8.
 - [2026-10-31 code inv-p3b] remove-task-worktree / stop-run-processes fail closed (exit 4) on user-session processes whose environ is unreadable (sshd-session, systemd --user, defunct zombies), so every landed task worktree was retained; none were run-owned (verified no cwd under the worktrees).
 - [2026-10-31 code inv-p3b] three final-review cluster reports (1, 6, 13) were not strictly extractable (empty Findings section / unmarked finding line); collection exit 3.
+- [2026-10-31 code inv-p3c] final review ran in bounded mode (16/199 paths) because the inv-p3b collection gap made omission provenance unavailable; its own collection then failed (bounded report identity or verdict mismatch). The whole-range review moves to the PR-mode code roast.
