@@ -2018,6 +2018,195 @@ async fn unresolved_requests_cannot_be_acked_or_completed() {
     assert_eq!(request(&fx, &rq.id).status, RequestStatus::Unresolved);
 }
 
+fn summary_args(
+    rq: &RequestId,
+    covered: ByteRange,
+    clone: Option<&CloneId>,
+    bytes: &[u8],
+) -> serde_json::Value {
+    let caller = CallerInfo {
+        graph_clone: clone.map(|c| c.to_string()),
+        ..Default::default()
+    };
+    json!({ "request": rq, "summary_b64": crate::model::b64::b64_encode(bytes), "covered": covered, "_caller": caller })
+}
+
+/// The folder of `seat` at `at` and the bytes of `rel` under it.
+fn summary_file_at(
+    at: crate::store::tree::CommitView<'_>,
+    seat: &SeatId,
+    rel: &str,
+) -> (String, Option<Vec<u8>>) {
+    let loc = crate::store::layout::locate(&at, &seat.to_any())
+        .unwrap()
+        .expect("the seat is located");
+    let path = loc.folder.join(rel).unwrap();
+    (loc.folder.as_str().to_owned(), at.read_file(&path).unwrap())
+}
+
+fn summary_file(fx: &Fx, seat: &SeatId, rel: &str) -> (String, Option<Vec<u8>>) {
+    summary_file_at(view(fx), seat, rel)
+}
+
+#[tokio::test]
+async fn summary_from_writes_into_the_live_seat_folder_and_completes_in_one_commit() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    let sum_clone = clone_of(&fx, "sum");
+    let before = fx.store.head().unwrap();
+    complete(
+        &fx,
+        summary_args(&rq.id, br(0, 60), Some(&sum_clone.id), b"# s\n"),
+    )
+    .await
+    .unwrap();
+    let rel = format!("summaries/{}-0-60.md", rq.transcript);
+    let (folder, bytes) = summary_file(&fx, &worker.seat, &rel);
+    assert_eq!(bytes.as_deref(), Some(&b"# s\n"[..]));
+    assert!(!folder.contains("/archive/"), "{folder}");
+    let done = request(&fx, &rq.id);
+    assert_eq!(done.status, RequestStatus::Completed);
+    let result = done.result.unwrap();
+    assert_eq!(result.output_ref, rel);
+    assert_eq!(result.covered_range, br(0, 60));
+    assert_eq!(the_transcript(&fx).coverage, vec![br(0, 60)]);
+
+    // One commit carries both the file and the completion: before it, neither exists.
+    let at_before = crate::store::tree::CommitView {
+        store: &*fx.store,
+        at: before.clone(),
+    };
+    assert_eq!(summary_file_at(at_before, &worker.seat, &rel).1, None);
+    let old = layout::list_requests(&crate::store::tree::CommitView {
+        store: &*fx.store,
+        at: before,
+    })
+    .unwrap()
+    .into_iter()
+    .map(|(_, r)| r)
+    .find(|r| r.id == rq.id)
+    .unwrap();
+    assert_ne!(old.status, RequestStatus::Completed);
+}
+
+#[tokio::test]
+async fn summary_path_is_always_derived_from_transcript_and_range() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    let sum_clone = clone_of(&fx, "sum");
+    complete(
+        &fx,
+        summary_args(&rq.id, br(60, 100), Some(&sum_clone.id), b"tail\n"),
+    )
+    .await
+    .unwrap();
+    let rel = format!("summaries/{}-60-100.md", rq.transcript);
+    assert_eq!(request(&fx, &rq.id).result.unwrap().output_ref, rel);
+    assert_eq!(
+        summary_file(&fx, &worker.seat, &rel).1.as_deref(),
+        Some(&b"tail\n"[..])
+    );
+
+    // A caller-chosen output next to summary_b64 is refused outright.
+    let mut both = summary_args(&rq.id, br(0, 60), Some(&sum_clone.id), b"x");
+    both["output"] = json!("elsewhere.md");
+    let err = complete(&fx, both).await.unwrap_err();
+    assert!(err.contains("exactly one"), "{err}");
+    assert_eq!(summary_file(&fx, &worker.seat, "elsewhere.md").1, None);
+    assert_eq!(request(&fx, &rq.id).result.unwrap().output_ref, rel);
+}
+
+#[tokio::test]
+async fn summary_retry_identical_is_noop_and_conflicts_reject() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    let sum_clone = clone_of(&fx, "sum");
+    let args = |r: ByteRange, b: &[u8]| summary_args(&rq.id, r, Some(&sum_clone.id), b);
+    complete(&fx, args(br(0, 60), b"first\n")).await.unwrap();
+    let first = (request(&fx, &rq.id), the_transcript(&fx));
+    fx.clock.advance(chrono::Duration::hours(1));
+
+    complete(&fx, args(br(0, 60), b"first\n")).await.unwrap();
+    let again = (request(&fx, &rq.id), the_transcript(&fx));
+    assert_eq!(
+        again, first,
+        "an identical retry changes no record, not even the result time"
+    );
+
+    let err = complete(&fx, args(br(0, 60), b"second\n"))
+        .await
+        .unwrap_err();
+    assert!(err.contains("summary_conflict"), "{err}");
+    let err = complete(&fx, args(br(0, 50), b"first\n"))
+        .await
+        .unwrap_err();
+    assert!(err.contains("summary_conflict"), "{err}");
+
+    let rel = format!("summaries/{}-0-60.md", rq.transcript);
+    assert_eq!(
+        summary_file(&fx, &worker.seat, &rel).1.as_deref(),
+        Some(&b"first\n"[..])
+    );
+    assert_eq!(
+        summary_file(
+            &fx,
+            &worker.seat,
+            &format!("summaries/{}-0-50.md", rq.transcript)
+        )
+        .1,
+        None
+    );
+}
+
+#[tokio::test]
+async fn summary_for_an_archived_seat_lands_in_its_archive_folder() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    plan_and_apply(&fx, "seat retire worker");
+    let sum_clone = clone_of(&fx, "sum");
+    complete(
+        &fx,
+        summary_args(&rq.id, br(0, 60), Some(&sum_clone.id), b"late\n"),
+    )
+    .await
+    .unwrap();
+    let rel = format!("summaries/{}-0-60.md", rq.transcript);
+    let (folder, bytes) = summary_file(&fx, &worker.seat, &rel);
+    assert!(folder.contains("/archive/seats/"), "{folder}");
+    assert_eq!(bytes.as_deref(), Some(&b"late\n"[..]));
+    assert_eq!(request(&fx, &rq.id).status, RequestStatus::Completed);
+}
+
+#[tokio::test]
+async fn summary_must_be_utf8() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    let sum_clone = clone_of(&fx, "sum");
+    let err = complete(
+        &fx,
+        summary_args(&rq.id, br(0, 60), Some(&sum_clone.id), &[0xff, 0xfe]),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("invalid_summary"), "{err}");
+    assert_ne!(request(&fx, &rq.id).status, RequestStatus::Completed);
+    let rel = format!("summaries/{}-0-60.md", rq.transcript);
+    assert_eq!(summary_file(&fx, &worker.seat, &rel).1, None);
+}
+
+#[tokio::test]
+async fn summary_on_unresolved_request_rejects() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    finish_session(&fx, &worker, "native-1", &fx.dir.join("missing.jsonl")).await;
+    let rq = the_request(&fx);
+    let err = complete(&fx, summary_args(&rq.id, br(0, 1), None, b"s"))
+        .await
+        .unwrap_err();
+    assert!(err.contains("request_unresolved"), "{err}");
+    assert_eq!(request(&fx, &rq.id).status, RequestStatus::Unresolved);
+}
+
 #[tokio::test]
 async fn request_list_filters() {
     let fx = fx();

@@ -592,7 +592,10 @@ impl Mutation for RequestAck {
 #[derive(Deserialize)]
 struct CompleteArgs {
     rq: RequestId,
-    output_ref: String,
+    #[serde(default)]
+    output_ref: Option<String>,
+    #[serde(default)]
+    summary_b64: Option<String>,
     covered: ByteRange,
     reported_by: AnyId,
     #[serde(default)]
@@ -616,9 +619,26 @@ impl Mutation for RequestComplete {
                 ),
             ));
         }
+        let output_ref = match (&a.output_ref, &a.summary_b64) {
+            (Some(o), None) => o.clone(),
+            (None, Some(b64)) => match write_summary(cx, &rq, &a, b64)? {
+                SummaryWrite::Written(rel) => rel,
+                SummaryWrite::AlreadyDone => {
+                    return Ok(noop(format!(
+                        "{} already completed with this summary",
+                        a.rq
+                    )));
+                }
+            },
+            _ => {
+                return Err(MutationError::Bug(
+                    "request_complete needs exactly one of output_ref, summary_b64".into(),
+                ));
+            }
+        };
         rq.status = RequestStatus::Completed;
         rq.result = Some(RequestResult {
-            output_ref: a.output_ref.clone(),
+            output_ref: output_ref,
             covered_range: a.covered,
             reported_by: a.reported_by.clone(),
             at: a.at.unwrap_or(cx.now),
@@ -643,6 +663,77 @@ impl Mutation for RequestComplete {
             a.rq, a.covered.start, a.covered.end
         )))
     }
+}
+
+enum SummaryWrite {
+    /// The summary file was staged; the value is its seat-relative path (the request's `output_ref`).
+    Written(String),
+    /// The request is already completed with exactly these bytes and range.
+    AlreadyDone,
+}
+
+/// Stage the summary into the source seat's folder (live or archived) at the path derived from the
+/// transcript and range; the caller never chooses it. An existing file is never overwritten.
+fn write_summary(
+    cx: &mut MutationCx<'_>,
+    rq: &ProcessingRequest,
+    a: &CompleteArgs,
+    b64: &str,
+) -> Result<SummaryWrite, MutationError> {
+    let bytes = crate::model::b64::b64_decode(b64).map_err(MutationError::Bug)?;
+    if std::str::from_utf8(&bytes).is_err() {
+        return Err(reject(
+            "invalid_summary",
+            "the summary is not valid UTF-8 text".into(),
+        ));
+    }
+    let Some(tr) = find_transcript_by_id(&cx.tree, &rq.transcript)? else {
+        return Err(reject(
+            "object_missing",
+            format!("{} does not exist", rq.transcript),
+        ));
+    };
+    let Some(loc) = cx.tree.locate(&tr.seat.to_any())? else {
+        return Err(reject(
+            "object_missing",
+            format!("seat {} of {} does not exist", tr.seat, tr.id),
+        ));
+    };
+    let rel = format!(
+        "summaries/{}-{}-{}.md",
+        tr.id, a.covered.start, a.covered.end
+    );
+    let path = loc.folder.join(&rel)?;
+    let existing = cx.tree.read_file(&path)?;
+    if rq.status == RequestStatus::Completed {
+        if let Some(done) = rq.result.as_ref().filter(|r| r.covered_range != a.covered) {
+            return Err(reject(
+                "summary_conflict",
+                format!(
+                    "{} is already completed covering {}-{}; a summary for {}-{} conflicts",
+                    a.rq,
+                    done.covered_range.start,
+                    done.covered_range.end,
+                    a.covered.start,
+                    a.covered.end
+                ),
+            ));
+        }
+        if existing.as_deref() == Some(&bytes[..]) {
+            return Ok(SummaryWrite::AlreadyDone);
+        }
+    }
+    if existing.is_some() {
+        return Err(reject(
+            "summary_conflict",
+            format!(
+                "{rel} already exists in seat {} with different content; it is never overwritten",
+                tr.seat
+            ),
+        ));
+    }
+    cx.tree.put_file(path, bytes);
+    Ok(SummaryWrite::Written(rel))
 }
 
 // ---------------------------------------------------------------------------------------------
