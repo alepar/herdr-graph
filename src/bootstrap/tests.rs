@@ -1012,10 +1012,15 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
         "hg-ns:<ns>",
         "--confirmed-by user-relay",
         "check-instruction",
-        "content write",
+        "request complete",
+        "--summary-from",
+        "plan instructions set",
+        "instructions show",
+        "the harness asks the user to approve it",
     ] {
         assert!(graph.contains(needle), "graph skill mentions {needle}");
     }
+    assert!(!graph.contains("content write"));
     assert!(seat.contains("herdr-graph seat --json") && seat.contains("bd list --label hg-seat:"));
 }
 
