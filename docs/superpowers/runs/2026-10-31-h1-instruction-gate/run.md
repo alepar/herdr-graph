@@ -18,6 +18,18 @@ parked:
 - 2026-10-31-h1-instruction-gate-roast-design-1.md · escalation · "§3.2: whether a malformed/unsupported Codex .rules file aborts Codex startup is unverified; setup writes the file even when syntax is unconfirmed (check in an isolated CODEX_HOME before writing)"
 - 2026-10-31-h1-instruction-gate-roast-design-1.md · escalation · "§4.4: Codex may cap hook output at ~2,500 tokens (additionalContextLimit) per one seat's source; unsettled whether a 9000-byte render exceeds it"
 
+codeBuckets:
+  completed: 
+  escalated: hg-45e.1, hg-45e.10, hg-45e.17, hg-45e.2, hg-45e.8
+  pendingRetry: 
+  parked: 
+  stalled: false
+  review: no work landed
+  sweep: SWEEP DEFERRED (caller-owned)
+  slowness: round 1: merge queue peaked at 5 — the serial merge lane is the bottleneck; look at mergeCheck duration, seam reviews and rebase conflicts on the Merge: lines; inv-p3 merge checks all failed on an uninitialized submodule in the integration worktree → submodule initialized, blockers closed, relaunched
+  worktreesKept: task worktrees hg-45e.1/.2/.8/.10/.17 — kept for reuse by the relaunch (unmerged implementations)
+  processSweep: stopped 0 · survived 0 · unknown 1 · kept 0 — unknown: pid 1275377 — defunct zombie (no cwd/exe to inspect)
+
 stepBackDesign-round-1: local — five round-1 findings form two small clusters plus one standalone gate-wording gap, each cheap to fix locally; no owning decision worth redesigning (no mechanical triggers)
 graph-pass: depth 7→6 · width 2.6→3.0 · applied 1 · parked 0
 
@@ -27,3 +39,7 @@ approvals:
 - coverage-round-2 · requirements: 20 · mapped: 19 · unmapped: 3 (R3, R15, R16) · divergence findings 12 → 17, novel 76%, widening: yes (cap kept at 2; design roast covers) · cl-15 applied auto, cl-16 applied auto, cl-17 rejected auto, cl-18 rejected auto, cl-19 applied auto, cl-20 rejected auto, cl-21 rejected auto, cl-22 rejected auto, cl-23 applied auto, cl-24 rejected auto, cl-25 applied auto, cl-26 applied auto, cl-27 applied auto, cl-28 rejected auto, cl-29 applied auto, cl-30 applied auto, cl-31 applied auto
 - root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "4aa4a85520e82612b7257bdbab69842d477d147d", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-code", "source": "skill"}, {"id": "final-sweep", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "cargo test && cargo test --features test-support && cargo check --locked --offline --all-targets --all-features", "configuration": "run worktree, default features", "requiredLive": false}, {"id": "phase7-choice", "kind": "human", "owner": "human", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [], "checkEvidence": [], "runFailures": []}
 - review-collection · {"invocationId": "inv-p3-20261031T215045", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan/final-review-inv-p3-20261031T215045.md", "review": "pending", "required": [], "settled": false}
+- review-collection · {"invocationId":"inv-p3-20261031T215045","workspace":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan","reviewPath":null,"review":"no work landed","required":[],"settled":true}
+- review-collection · {"invocationId":"inv-p3-20261031T215045","workspace":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan","reviewPath":null,"review":"no work landed","required":[],"settled":true,"complete":true,"gaps":[]}
+- root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "e61296a40cc8eb2ba54a41d99fd72f0b301654ea", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-code", "source": "skill"}, {"id": "final-sweep", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "cargo test && cargo test --features test-support && cargo check --locked --offline --all-targets --all-features", "configuration": "run worktree, default features", "requiredLive": false, "obligations": ["hg-45e:sweep:h1-instruction-gate-20261031T205333"]}, {"id": "phase7-choice", "kind": "human", "owner": "human", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [{"version": 1, "id": "hg-45e:sweep:h1-instruction-gate-20261031T205333", "kind": "deferred", "operation": "record", "reason": "full-suite measurement deferred to caller", "evidence": [".superpowers/sdd/hg-45e-plan/progress.md#Launch:h1-instruction-gate-20261031T205333"], "data": {"owner": "caller", "runTag": "h1-instruction-gate-20261031T205333", "integrationBranch": "super-auto/h1-instruction-gate"}}], "checkEvidence": [], "runFailures": []}
+- review-collection · {"invocationId": "inv-p3b-20261031T222244", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-h1-instruction-gate/.superpowers/sdd/hg-45e-plan/final-review-inv-p3b-20261031T222244.md", "review": "pending", "required": [], "settled": false}
