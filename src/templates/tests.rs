@@ -1083,15 +1083,23 @@ fn hydrate_creates_dormant_and_active_per_startup() {
     assert_eq!(one.contributions.relationships.len(), 1);
     assert_eq!(one.created_by.op, row.op);
     let v = view(&fx);
-    let md = v
-        .read_file(&seat_dir_of(&fx, &lead.id).join("AGENTS.md").unwrap())
+    // Inline members render their template file live; no seat copy.
+    for seat in [&lead, &dev] {
+        assert!(
+            v.read_file(&seat_dir_of(&fx, &seat.id).join("AGENTS.md").unwrap())
+                .unwrap()
+                .is_none()
+        );
+    }
+    let tpl_folder = layout::locate(&v, &tpl(&fx, "pair").id.to_any())
         .unwrap()
-        .expect("member AGENTS.md copied into the seat");
-    assert_eq!(String::from_utf8(md).unwrap(), "lead notes");
-    assert!(
-        v.read_file(&seat_dir_of(&fx, &dev.id).join("AGENTS.md").unwrap())
+        .unwrap()
+        .folder;
+    assert_eq!(
+        v.read_file(&layout::member_agents_md(&tpl_folder, "lead"))
             .unwrap()
-            .is_none()
+            .as_deref(),
+        Some(b"lead notes".as_slice())
     );
     assert_eq!(
         crate::model::common::Lifecycle::Active,
