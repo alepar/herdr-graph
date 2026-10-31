@@ -1,5 +1,0 @@
-test plan::tests::seat_override_section_rejects_inadmissible_text ... ok
-test plan::tests::seat_override_section_cap_warning ... ok
-test templates::tests::template_edit_rejects_inadmissible_agents_md ... ok
-test templates::tests::template_edit_cap_warning ... ok
-test result: ok. 695 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
