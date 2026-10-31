@@ -1,0 +1,17 @@
+### cargo test --locked --offline --lib bootstrap::
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 647 filtered out; finished in 0.52s
+### cargo test --locked --offline --lib writer::
+test writer::tests::cancel_failed_allowed ... ok
+test writer::tests::poison_panic_marks_failed_and_fifo_continues ... ok
+test writer::tests::poison_finish_failed_error_halts_run_and_resume_finishes ... ok
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 629 filtered out; finished in 0.45s
+### cargo test --locked --offline --lib model::
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 637 filtered out; finished in 0.00s
+### cargo test --locked --offline --lib cli::
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 660 filtered out; finished in 0.01s
+### cargo test --locked --offline --lib threads::
+test result: ok. 56 passed; 0 failed; 0 ignored; 0 measured; 619 filtered out; finished in 0.28s
+### cargo test --locked --offline --test daemon_composed
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.36s
+### cargo test --locked --offline --test integration_sweep
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s

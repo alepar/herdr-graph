@@ -569,7 +569,7 @@ impl ThreadsSource {
                 severity: Severity::Warn,
                 body: format!(
                     "Your local edit to {path} was left in place: graph op {op} changed that file and did not overwrite it \
-                     (see `herdr-graph doctor`). Commit your change through herdr-graph content write or discard it."
+                     (see `herdr-graph doctor`). Commit your change through a plan (herdr-graph plan instructions set …, then herdr-graph apply) or discard it."
                 ),
                 key: format!("notify:worktree_dirty:{op}:{path}"),
             };

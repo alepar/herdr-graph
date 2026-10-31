@@ -977,6 +977,42 @@ fn request_kind_categories() {
 }
 
 #[test]
+fn legacy_content_write_records_deserialize() {
+    let req: ChangeRequest = serde_json::from_value(serde_json::json!({
+        "kind": "content_write",
+        "args": {"object": "x", "rel": "summaries/x.md"},
+        "relied_on": [],
+        "requester": {},
+    }))
+    .unwrap();
+    assert_eq!(req.kind, RequestKind::ContentWrite);
+    assert_eq!(serde_json::to_value(req.kind).unwrap(), "content_write");
+    assert_eq!(RequestKind::ContentWrite.category(), Category::Content);
+
+    let rec = OperationRecord {
+        schema: 1,
+        id: OpId::new(),
+        rev: 1,
+        kind: RequestKind::ContentWrite,
+        summary: "content write x summaries/x.md".into(),
+        requester: Requester::default(),
+        state: OpState::Committed,
+        confirmation: None,
+        plan: None,
+        commit: None,
+        action: None,
+        supersedes: None,
+        superseded_by: None,
+        admitted_at: ts(),
+        finished_at: None,
+        rejection: None,
+    };
+    let text = toml::to_string(&rec).unwrap();
+    assert!(text.contains("kind = \"content_write\""), "{text}");
+    assert_eq!(toml::from_str::<OperationRecord>(&text).unwrap(), rec);
+}
+
+#[test]
 fn byte_range_rejects_inverted() {
     assert!(ByteRange::new(5, 3).is_none());
     assert_eq!(ByteRange::new(3, 5).unwrap().len(), 2);

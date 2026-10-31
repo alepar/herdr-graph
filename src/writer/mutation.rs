@@ -1,5 +1,5 @@
 //! Mutation registration API: feature beads register one `Mutation` per request kind (or
-//! `kind.sub` for observed/bookkeeping/content_write) and the writer applies it to an overlay.
+//! `kind.sub` for observed/bookkeeping) and the writer applies it to an overlay.
 use crate::model::change::{ChangeRequest, ReliedOn, RequestKind};
 use crate::model::operation::Rejection;
 use crate::model::{ActionId, OpId, Timestamp};
@@ -59,14 +59,11 @@ pub trait Mutation: Send + Sync {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError>;
 }
 
-/// Registry key: snake name of `kind` ("seat_create"); for observed/bookkeeping/content_write with
+/// Registry key: snake name of `kind` ("seat_create"); for observed/bookkeeping with
 /// `args["sub"]` a string → "<kind>.<sub>" (e.g. "observed.cascade", "bookkeeping.binding").
 pub fn mutation_key(req: &ChangeRequest) -> String {
     let kind = kind_name(req.kind);
-    let has_sub = matches!(
-        req.kind,
-        RequestKind::Observed | RequestKind::Bookkeeping | RequestKind::ContentWrite
-    );
+    let has_sub = matches!(req.kind, RequestKind::Observed | RequestKind::Bookkeeping);
     match req.args.get("sub").and_then(|v| v.as_str()) {
         Some(sub) if has_sub => format!("{kind}.{sub}"),
         _ => kind,

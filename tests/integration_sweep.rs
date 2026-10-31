@@ -558,38 +558,30 @@ mod golden {
         );
         assert_ne!(tstr(&acked, "status"), "completed");
 
-        // The summarizer writes into the archived seat folder (summaries/ only), then completes.
+        // The summarizer completes with the summary file; the daemon stores it in the archived seat folder
+        // (summaries/ only) and completes the request in one commit.
         let summary = rig.herdr.root.join("summary.md");
         std::fs::write(&summary, "# hello\nthe user said hello\n").unwrap();
-        let out = rig.cli_ok(&[
-            "content",
-            "write",
-            "--object",
-            &chief.id,
-            "--rel",
-            "summaries/x.md",
-            "--from",
-            summary.to_str().unwrap(),
-        ]);
-        assert!(out.contains("committed"), "{out}");
-        assert!(
-            archived.join("summaries/x.md").exists(),
-            "landed in the archived folder {}",
-            archived.display()
-        );
         let covered = format!("0-{}", body.len());
+        let stored = format!("summaries/{tr}-{covered}.md");
         assert_eq!(
             rig.cli_ok(&[
                 "request",
                 "complete",
                 &rq,
-                "--output",
-                "summaries/x.md",
+                "--summary-from",
+                summary.to_str().unwrap(),
                 "--covered",
                 &covered
             ])
             .trim(),
             format!("{rq} completed")
+        );
+        assert_eq!(
+            std::fs::read_to_string(archived.join(&stored)).unwrap(),
+            "# hello\nthe user said hello\n",
+            "landed in the archived folder {}",
+            archived.display()
         );
         assert_eq!(tstr(&rig.show(&rq), "status"), "completed");
         let coverage = rig.show(&tr)["coverage"].to_string();
@@ -627,7 +619,7 @@ mod golden {
             .expect("seat active again");
         assert!(again.path.exists(), "folder is back out of the archive");
         assert!(
-            again.path.join("summaries/x.md").exists(),
+            again.path.join(&stored).exists(),
             "the summary went back with the folder"
         );
     }
@@ -1005,7 +997,6 @@ mod wiring {
             K::ApplicationRetire,
             K::ThreadsReconnect,
             K::Undo,
-            K::ContentWrite,
             K::Observed,
             K::Bookkeeping,
         ];
@@ -1035,7 +1026,9 @@ mod wiring {
                 | K::ApplicationRetire
                 | K::ThreadsReconnect
                 | K::Undo => {}
-                K::ContentWrite | K::Observed | K::Bookkeeping => {}
+                // Legacy since H1 (journal deserialization only): no mutation by design, so not in `all`.
+                K::ContentWrite => continue,
+                K::Observed | K::Bookkeeping => {}
             }
             let name = kind_name(k);
             let has_sub = matches!(k, K::Observed | K::Bookkeeping);
@@ -1959,6 +1952,24 @@ mod cli_sweep {
             failures.is_empty(),
             "commands without a handler or that panic:\n{}",
             failures.join("\n")
+        );
+
+        // `content write` is a stub: exit 2 with the guidance, nothing written.
+        let stub = f.run(&[
+            "content",
+            "write",
+            "--object",
+            &seat,
+            "--rel",
+            "notes/a.md",
+            "--from",
+            &body,
+        ]);
+        assert_eq!(stub.status.code(), Some(2), "{}", text(&stub));
+        assert!(
+            text(&stub).contains("--summary-from") && text(&stub).contains("plan instructions"),
+            "guidance text: {}",
+            text(&stub)
         );
 
         // The reads that must work on a healthy instance, with their content.
