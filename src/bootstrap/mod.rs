@@ -5,18 +5,15 @@
 //! writer mutation `content_write`. Both are wired by `daemon::compose` (hg-zmi.18).
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
-use crate::model::application::ApplicationRecord;
 use crate::model::clone::CloneRecord;
 use crate::model::seat::SeatRecord;
-use crate::model::template::TemplateRecord;
 use crate::model::{CloneId, PlanId, SeatId};
 use crate::plan::commands::{PlanDeps, create_plan, wait_result};
 use crate::plan::ops::pending_for;
 use crate::ports::herdr::{HerdrApi, PaneInfo};
-use crate::ports::store::{ObjectLocation, RepoPath, Store, StoreError};
+use crate::ports::store::{RepoPath, Store, StoreError};
 use crate::store::layout;
 use crate::store::record::read_toml;
-use crate::store::slug::slugify;
 use crate::store::tree::{CommitView, TreeRead};
 use crate::threads::pending_invitations;
 use crate::writer::MutationRegistry;
@@ -28,6 +25,7 @@ use std::sync::Arc;
 
 pub mod content;
 pub mod examples;
+pub mod instructions;
 pub mod resolve;
 pub mod setup_claude;
 pub mod show;
@@ -150,71 +148,28 @@ fn bound_paths(
         layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
 
     let mut templates = Vec::new();
-    let mut applications = Vec::new();
-    let mut push_template =
-        |loc: &ObjectLocation, member: Option<&str>| -> Result<(), StoreError> {
-            let rec = abs(root, &loc.record_path);
-            if !templates.contains(&rec) {
-                templates.push(rec);
-            }
-            let reusable = loc.folder.join("AGENTS.md")?;
-            if tree.read_file(&reusable)?.is_some() {
-                let reference = abs(root, &reusable);
-                if !templates.contains(&reference) {
-                    templates.push(reference);
-                }
-            }
-            if let Some(name) = member {
-                let md = layout::member_agents_md(&loc.folder, &slugify(name));
-                if tree.read_file(&md)?.is_some() {
-                    let reference = abs(root, &md);
-                    if !templates.contains(&reference) {
-                        templates.push(reference);
-                    }
-                }
-            }
-            Ok(())
-        };
-    if let Some(r) = &seat.template_ref
-        && let Some(loc) = layout::locate(tree, &r.template.to_any())?
-    {
-        let member = read_toml::<TemplateRecord>(tree, &loc.record_path)?
-            .and_then(|t| t.members.into_iter().find(|m| m.id == r.member));
-        if let Some(shared) =
-            crate::model::effective::referenced_seat_template(tree, member.as_ref())?
-        {
-            let shared_loc =
-                layout::locate(tree, &shared.id.to_any())?.ok_or_else(|| missing(&shared.id))?;
-            push_template(&shared_loc, None)?;
+    let mut add = |path: String| {
+        if !templates.contains(&path) {
+            templates.push(path);
         }
-        push_template(&loc, member.as_ref().map(|m| m.name.as_str()))?;
-    }
-    for app in &seat.applications {
-        let Some(app_loc) = layout::locate(tree, &app.to_any())? else {
-            continue;
-        };
-        applications.push(abs(root, &app_loc.record_path));
-        let Some(app) = read_toml::<ApplicationRecord>(tree, &app_loc.record_path)? else {
-            continue;
-        };
-        if let Some(loc) = layout::locate(tree, &app.template.to_any())? {
-            let template: TemplateRecord =
-                read_toml(tree, &loc.record_path)?.ok_or_else(|| missing(&app.template))?;
-            push_template(&loc, None)?;
-            for member in template
-                .members
-                .iter()
-                .filter(|m| app.member_map.get(&m.id) == Some(seat_id))
-            {
-                if let Some(shared) =
-                    crate::model::effective::referenced_seat_template(tree, Some(member))?
-                {
-                    let shared_loc = layout::locate(tree, &shared.id.to_any())?
-                        .ok_or_else(|| missing(&shared.id))?;
-                    push_template(&shared_loc, None)?;
-                }
-                push_template(&loc, Some(&member.name))?;
+    };
+    for p in instructions::template_participation(tree, &seat)? {
+        add(abs(root, &p.template.record_path));
+        let reusable = p.template.folder.join("AGENTS.md")?;
+        if tree.read_file(&reusable)?.is_some() {
+            add(abs(root, &reusable));
+        }
+        if let Some(member) = &p.member {
+            let md = instructions::member_agents_path(&p, member);
+            if tree.read_file(&md)?.is_some() {
+                add(abs(root, &md));
             }
+        }
+    }
+    let mut applications = Vec::new();
+    for app in &seat.applications {
+        if let Some(app_loc) = layout::locate(tree, &app.to_any())? {
+            applications.push(abs(root, &app_loc.record_path));
         }
     }
 
