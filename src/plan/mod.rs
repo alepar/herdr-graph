@@ -9,6 +9,7 @@ pub mod commands;
 pub mod core_kinds;
 pub mod grammar;
 pub mod hash;
+pub mod instructions;
 pub mod kind;
 pub mod line_diff;
 pub mod store;

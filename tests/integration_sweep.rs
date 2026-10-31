@@ -995,6 +995,7 @@ mod wiring {
             K::TemplateCopy,
             K::ApplicationApply,
             K::ApplicationRetire,
+            K::InstructionsEdit,
             K::ThreadsReconnect,
             K::Undo,
             K::Observed,
@@ -1024,6 +1025,7 @@ mod wiring {
                 | K::TemplateCopy
                 | K::ApplicationApply
                 | K::ApplicationRetire
+                | K::InstructionsEdit
                 | K::ThreadsReconnect
                 | K::Undo => {}
                 // Legacy since H1 (journal deserialization only): no mutation by design, so not in `all`.

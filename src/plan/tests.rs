@@ -2954,3 +2954,228 @@ fn describe_omits_diff_detail() {
     assert_eq!(plain.diff(), None);
     assert!(plain.describe().contains("name=x"));
 }
+
+mod instructions {
+    use super::*;
+    use crate::model::action::ActionKind;
+    use crate::plan::commands::render;
+    use crate::plan::line_diff::unified;
+    use crate::ports::store::RepoPath;
+
+    /// teamspace alpha with seats a1, a2; teamspace beta with b1.
+    fn world(fx: &Fx) {
+        commit(fx, "teamspace create alpha");
+        commit(fx, "teamspace create beta");
+        commit(fx, "seat create a1 --teamspace alpha");
+        commit(fx, "seat create a2 --teamspace alpha");
+        commit(fx, "seat create b1 --teamspace beta");
+    }
+
+    fn src(fx: &Fx, name: &str, text: &[u8]) -> String {
+        let p = fx.root.parent().unwrap().join(name);
+        std::fs::write(&p, text).unwrap();
+        p.display().to_string()
+    }
+
+    fn err(fx: &Fx, change: &str) -> String {
+        create_plan(&fx.deps, &CallerInfo::default(), words(change))
+            .expect_err(change)
+            .message
+    }
+
+    fn read(fx: &Fx, p: &RepoPath) -> Option<Vec<u8>> {
+        view(fx).read_file(p).unwrap()
+    }
+
+    fn a1_agents(fx: &Fx) -> RepoPath {
+        seat(fx, "a1", None).0.folder.join("AGENTS.md").unwrap()
+    }
+
+    const TAKES_EFFECT: &str = "takes effect at each affected seat's next /seat (start, clear, compaction); a live or resumed session may still hold the previous text until its context is reset:";
+
+    #[test]
+    fn set_plans_effect_diff_and_affected_warning_per_scope() {
+        let fx = fx();
+        world(&fx);
+        let text = "one\ntwo\n";
+        let f = src(&fx, "style.md", text.as_bytes());
+        let graph = layout::graph_id(&view(&fx)).unwrap().to_any();
+        let cases = [
+            ("global rules/style.md", graph, "global", "a1, a2, b1"),
+            (
+                "teamspace alpha rules/style.md",
+                teamspace(&fx, "alpha").1.id.to_any(),
+                "teamspace",
+                "a1, a2",
+            ),
+            (
+                "seat a1 AGENTS.md",
+                seat(&fx, "a1", None).1.id.to_any(),
+                "seat",
+                "a1",
+            ),
+        ];
+        for (change, object, _scope, names) in cases {
+            let sp = plan(&fx, &format!("instructions set {change} --from {f}"));
+            assert_eq!(kinds_of(&sp), ["instructions.set"], "{change}");
+            let e = &sp.plan.effects[0];
+            assert_eq!(e.object, object, "{change}");
+            assert_eq!(e.detail["file"], change.rsplit(' ').next().unwrap());
+            assert_eq!(e.detail["before_sha"], "absent");
+            assert_eq!(
+                e.detail["after_sha"],
+                git2::Oid::hash_object(git2::ObjectType::Blob, text.as_bytes())
+                    .unwrap()
+                    .to_string()
+            );
+            assert_eq!(e.detail["diff"], unified("", text));
+            let shown = render(&sp.plan, &sp.hash);
+            assert!(shown.contains("      +one\n      +two\n"), "{shown}");
+            assert!(
+                sp.plan
+                    .warnings
+                    .iter()
+                    .any(|w| *w == format!("{TAKES_EFFECT} {names}")),
+                "{change}: {:?}",
+                sp.plan.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn apply_writes_file_and_action_record() {
+        let fx = fx();
+        world(&fx);
+        let f = src(&fx, "a.md", b"hello\n");
+        let row = commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        let a1 = seat(&fx, "a1", None).1.id;
+        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"hello\n");
+        let act = action_of(&fx, &row);
+        assert_eq!(act.kind, ActionKind::InstructionsEdit);
+        assert_eq!(act.affected[0].object, a1.to_any());
+        assert_eq!(act.compensation["file"].as_str(), Some("AGENTS.md"));
+        assert!(!act.compensation.contains_key("before"));
+        assert_eq!(act.compensation["after"].as_str(), Some("hello\n"));
+
+        let row = commit(&fx, "instructions clear seat a1 AGENTS.md");
+        assert!(read(&fx, &a1_agents(&fx)).is_none());
+        let act = action_of(&fx, &row);
+        assert_eq!(act.kind, ActionKind::InstructionsEdit);
+        assert_eq!(act.compensation["before"].as_str(), Some("hello\n"));
+        assert!(!act.compensation.contains_key("after"));
+    }
+
+    #[test]
+    fn edit_after_planning_is_stale() {
+        let fx = fx();
+        world(&fx);
+        let a = src(&fx, "a.md", b"A\n");
+        let b = src(&fx, "b.md", b"B\n");
+        let stale = plan(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {a}"),
+        );
+        commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {b}"),
+        );
+        let row = apply_plan(&fx, &stale);
+        assert_eq!(row.rejection.unwrap().reason, "stale_plan");
+        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"B\n");
+    }
+
+    #[test]
+    fn plan_time_rejections() {
+        let fx = fx();
+        world(&fx);
+        let f = src(&fx, "a.md", b"same\n");
+        commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        let e = err(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        assert!(e.contains("no change"), "{e}");
+        let e = err(&fx, "instructions clear seat a2 AGENTS.md");
+        assert!(e.contains("no such instruction file"), "{e}");
+        let bad = src(&fx, "bad.md", &[0xff, 0xfe]);
+        let e = err(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {bad}"),
+        );
+        assert!(e.contains("UTF-8"), "{e}");
+        let e = err(
+            &fx,
+            &format!("instructions set global AGENTS.md --from {f}"),
+        );
+        assert!(e.contains("AGENTS.md"), "{e}");
+        let e = err(
+            &fx,
+            &format!("instructions set global rules/Bad.md --from {f}"),
+        );
+        assert!(e.contains("rules/Bad.md"), "{e}");
+        let e = err(&fx, "instructions set seat a1 AGENTS.md");
+        assert!(e.contains("--from"), "{e}");
+        commit(&fx, "seat retire a2");
+        let e = err(
+            &fx,
+            &format!("instructions set seat a2 AGENTS.md --from {f}"),
+        );
+        assert!(e.contains("retired_object"), "{e}");
+    }
+
+    #[test]
+    fn inadmissible_content_rejected() {
+        let fx = fx();
+        world(&fx);
+        let f = src(&fx, "tag.md", "ok\nhidden\u{E0041}\n".as_bytes());
+        let e = err(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        assert!(e.contains("U+E0041") && e.contains("line 2"), "{e}");
+    }
+
+    #[test]
+    fn cap_warning_names_omitted_parts() {
+        let fx = fx();
+        world(&fx);
+        let seat_text = format!("{}\n", "s".repeat(2000));
+        let f = src(&fx, "seat.md", seat_text.as_bytes());
+        commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        let big = src(&fx, "big.md", format!("{}\n", "g".repeat(8000)).as_bytes());
+        let sp = plan(
+            &fx,
+            &format!("instructions set global rules/big.md --from {big}"),
+        );
+        let w = sp
+            .plan
+            .warnings
+            .iter()
+            .find(|w| w.starts_with("hook output for a1 would exceed the cap"))
+            .unwrap_or_else(|| panic!("no cap warning: {:?}", sp.plan.warnings));
+        assert!(w.contains("global rules/big.md"), "{w}");
+        assert!(!w.contains("seat AGENTS.md"), "{w}");
+        let small = src(&fx, "small.md", b"tiny\n");
+        let sp = plan(
+            &fx,
+            &format!("instructions set global rules/small.md --from {small}"),
+        );
+        assert!(
+            !sp.plan
+                .warnings
+                .iter()
+                .any(|w| w.contains("exceed the cap")),
+            "{:?}",
+            sp.plan.warnings
+        );
+    }
+}

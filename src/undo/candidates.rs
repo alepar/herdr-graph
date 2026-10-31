@@ -149,6 +149,16 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
         }
         ActionKind::Resurrect => "resurrection".into(),
         ActionKind::ThreadsReconnect => "threads reconnect (reverse reconnect required)".into(),
+        ActionKind::InstructionsEdit => {
+            let object = a
+                .affected
+                .first()
+                .map_or_else(String::new, |o| names.of(&o.object));
+            format!(
+                "edited instructions {} of {object}",
+                comp_str(a, "file").unwrap_or_default()
+            )
+        }
         ActionKind::Undo => "undo".into(),
     }
 }
