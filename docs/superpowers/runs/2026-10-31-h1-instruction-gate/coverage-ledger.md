@@ -30,3 +30,8 @@ cl-28 · r2 · UNOWNED-SEAM · committed-revision reader · rejected — every r
 cl-29 · r2 · UNOWNED-SEAM · undo preview diff · applied — hg-45e.5 acceptance: undo plan prints the reverse diff via InstructionsKind delegation (already transitively after hg-45e.2)
 cl-30 · r2 · UNOWNED-SEAM · truncation contract · applied — hg-45e.7 owns the cap and marker; seat --json/--instructions never truncate
 cl-31 · r2 · UNOWNED-SEAM · bound_paths helper · applied — hg-45e.6 owns the helper shape; hg-45e.14 changes output keys only
+cl-32 · graph · GRAPH-EDGE · hg-45e.11 <- hg-45e.5 · applied — docs consume no undo artifact; written from spec §2.5
+cl-g · graph · GRAPH-EDGE · hg-45e.6 <- hg-45e.3 · kept — carries a real artifact (graph-pass judge)
+cl-g · graph · GRAPH-EDGE · hg-45e.5 <- hg-45e.4 · kept — carries a real artifact (graph-pass judge)
+cl-g · graph · GRAPH-EDGE · hg-45e.4 <- hg-45e.6 · kept — carries a real artifact (graph-pass judge)
+cl-g · graph · GRAPH-EDGE · hg-45e.3 <- hg-45e.1 · kept — carries a real artifact (graph-pass judge)

@@ -26,3 +26,4 @@ approvals:
 stepBackDesign-round-1: local — five round-1 findings form two small clusters plus one standalone gate-wording gap, each cheap to fix locally; no owning decision worth redesigning (no mechanical triggers)
 designRoast-round-1-fixes: C1 admissibility predicate (spec §2.2a; hg-45e.3/.4/.6/.14/.15), C2 seat-layer preservation (spec §1.5, §4.4; hg-45e.4/.6/.7/.11, new hg-45e.17), C3 tty prompt refusal under agent markers (spec Key decisions, §3.3, §3.5; hg-45e.10/.11) — applied inline, auto; re-roast: design decisions changed
 designRoast-exit: converged at round 2 (Should-fix 10 confirmed, 0 Blocking) — punch list of 10 applied inline to spec (§2.2a, §4.1, §4.4, Key abstractions, Out of scope, §3.5) and beads (hg-45e.3/.4/.6/.7/.11, new hg-45e.18); no re-roast per the converged exit; two round-1 escalations remain parked
+graph-pass: depth 7→6 · width 2.6→3.0 · applied 1 · parked 0
