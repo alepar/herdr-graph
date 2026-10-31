@@ -2161,3 +2161,425 @@ fn member_rename_explicit_clear_undo_restores_original_specialization() {
     undo_member_edit(&f, &row);
     assert_member_specialization(&f, "dev", Some(ORIGINAL_SPECIALIZATION.as_bytes()));
 }
+
+/// Commit the given repo-relative files on top of head through the store, as `commit_edits` does.
+fn put_files(fx: &Fx, files: &[(&str, &[u8])]) {
+    let head = fx.store.head().unwrap();
+    let mut edits = crate::store::tree::EditSet::default();
+    for (path, bytes) in files {
+        edits.put(RepoPath::new(path).unwrap(), bytes.to_vec());
+    }
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|r| {
+            let sig = crate::store::git::graph_signature()?;
+            let parent = r.find_commit(git2::Oid::from_str(&head.0)?)?;
+            let oid = r.commit(
+                None,
+                &sig,
+                &sig,
+                "put files",
+                &r.find_tree(tree)?,
+                &[&parent],
+            )?;
+            r.reference("refs/heads/main", oid, true, "put files")?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+mod instructions {
+    use super::super::instructions::*;
+    use super::*;
+    use crate::store::tree::TreeRead;
+
+    const SKIPPED: &str = "skipped, not an admissible instruction file";
+
+    struct Lead {
+        fx: Fx,
+        seat: SeatRecord,
+        seat_dir: String,
+        team_dir: String,
+        shared_dir: String,
+        pair_dir: String,
+    }
+
+    fn folder(fx: &Fx, id: &crate::model::AnyId) -> String {
+        layout::locate(&view(fx), id)
+            .unwrap()
+            .unwrap()
+            .folder
+            .as_str()
+            .to_owned()
+    }
+
+    /// Shared seat template `engineer`, team template `pair` (member `lead` on it), applied to alpha.
+    fn lead() -> Lead {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        let input = fx.root.parent().unwrap().join("template-input.toml");
+        std::fs::write(
+            &input,
+            "name = 'engineer'\nkind = 'seat'\nagents_md = 'shared engineer text'\n",
+        )
+        .unwrap();
+        commit(
+            &fx,
+            &format!("template create engineer --from {}", input.display()),
+        );
+        let shared = layout::list_templates(&view(&fx)).unwrap().remove(0).1;
+        std::fs::write(&input, format!("name = 'pair'\n[[members]]\nname = 'lead'\nstartup = 'active'\nseat_template = '{}'\nresponsibility = 'ship it'\nagents_md = 'lead specialization'\n", shared.id)).unwrap();
+        commit(
+            &fx,
+            &format!("template create pair --from {}", input.display()),
+        );
+        let pair = layout::list_templates(&view(&fx))
+            .unwrap()
+            .into_iter()
+            .find(|(_, t)| t.name == "pair")
+            .unwrap()
+            .1;
+        commit(&fx, "application apply pair --teamspace alpha --name one");
+        let seat = seat_rec(&fx, "lead");
+        let ts = teamspace(&fx, "alpha");
+        let l = Lead {
+            seat_dir: folder(&fx, &seat.id.to_any()),
+            team_dir: folder(&fx, &ts.to_any()),
+            shared_dir: folder(&fx, &shared.id.to_any()),
+            pair_dir: folder(&fx, &pair.id.to_any()),
+            seat,
+            fx,
+        };
+        put_files(
+            &l.fx,
+            &[
+                ("rules/a.md", b"global rule\n"),
+                (&format!("{}/rules/t.md", l.team_dir), b"team rule"),
+                (&format!("{}/rules/s.md", l.seat_dir), b"seat rule\n"),
+                (&format!("{}/AGENTS.md", l.seat_dir), b"seat instance\n"),
+                (&format!("{}/AGENTS.md", l.pair_dir), b"pair root\n"),
+            ],
+        );
+        l
+    }
+
+    fn render(l: &Lead) -> RenderedInstructions {
+        render_instructions(&view(&l.fx), &l.fx.store.head().unwrap(), &l.seat.id).unwrap()
+    }
+
+    fn labels(r: &RenderedInstructions) -> Vec<&str> {
+        r.parts.iter().map(|p| p.label.as_str()).collect()
+    }
+
+    fn part<'a>(r: &'a RenderedInstructions, label: &str) -> &'a Part {
+        r.parts
+            .iter()
+            .find(|p| p.label == label)
+            .unwrap_or_else(|| panic!("no part {label}: {:?}", labels(r)))
+    }
+
+    fn set_section(l: &Lead, body: &str) {
+        let f = l.fx.root.parent().unwrap().join("section.md");
+        std::fs::write(&f, body).unwrap();
+        commit(
+            &l.fx,
+            &format!("seat override lead --section style={}", f.display()),
+        );
+    }
+
+    #[test]
+    fn render_has_all_six_part_kinds_in_order() {
+        let l = lead();
+        set_section(&l, "be terse\n");
+        let r = render(&l);
+        assert_eq!(
+            labels(&r),
+            [
+                "global rules/a.md",
+                "teamspace rules/t.md",
+                "seat template engineer",
+                "template pair",
+                "template pair member lead",
+                "seat sections",
+                "seat rules/s.md",
+                "seat AGENTS.md",
+            ]
+        );
+        let head = revision_line("lead", &l.seat.id, short_rev(&r.rev));
+        assert!(
+            r.text
+                .starts_with(&format!("{head}\n\n## global rules/a.md — rules/a.md\n"))
+        );
+        assert!(head.contains(
+            "This replaces any earlier herdr-graph instruction render in this conversation."
+        ));
+        for p in &r.parts {
+            assert!(
+                r.text
+                    .contains(&format!("## {} — {}\n{}", p.label, p.path, p.body))
+            );
+            assert!(p.body.ends_with('\n'), "{}", p.label);
+        }
+        assert_eq!(part(&r, "teamspace rules/t.md").body, "team rule\n");
+        assert_eq!(
+            part(&r, "seat template engineer").path,
+            format!("{}/AGENTS.md", l.shared_dir)
+        );
+        assert_eq!(part(&r, "template pair").body, "pair root\n");
+        let member = part(&r, "template pair member lead");
+        assert_eq!(
+            member.path,
+            format!("{}/members/lead/AGENTS.md", l.pair_dir)
+        );
+        assert!(member.body.starts_with("lead specialization"));
+        assert!(
+            member.body.ends_with("responsibility: ship it\n"),
+            "{:?}",
+            member.body
+        );
+        let sections = part(&r, "seat sections");
+        assert_eq!(sections.body, "### style\nbe terse\n");
+        assert!(sections.path.ends_with("/seat.toml"));
+        assert_eq!(
+            part(&r, "seat AGENTS.md").path,
+            format!("{}/AGENTS.md", l.seat_dir)
+        );
+        assert!(!r.text.contains(SKIPPED));
+    }
+
+    #[test]
+    fn empty_parts_are_omitted() {
+        let l = lead();
+        put_files(
+            &l.fx,
+            &[
+                ("rules/e.md", b""),
+                (&format!("{}/AGENTS.md", l.seat_dir), b" \n\t\n"),
+            ],
+        );
+        let r = render(&l);
+        assert!(
+            !labels(&r).contains(&"global rules/e.md"),
+            "{:?}",
+            labels(&r)
+        );
+        assert!(!labels(&r).contains(&"seat AGENTS.md"), "{:?}", labels(&r));
+        assert!(labels(&r).contains(&"global rules/a.md"));
+    }
+
+    #[test]
+    fn inadmissible_parts_render_as_placeholder() {
+        let l = lead();
+        let seat_bad_name = format!("{}/rules/Code-Style.md", l.seat_dir);
+        let team_esc = format!("{}/rules/esc.md", l.team_dir);
+        let seat_bin = format!("{}/rules/bin.md", l.seat_dir);
+        let pair_root = format!("{}/AGENTS.md", l.pair_dir);
+        put_files(
+            &l.fx,
+            &[
+                (&seat_bad_name, b"UPPERCASE-NAME-LEAK"),
+                ("rules/tag.md", "tag \u{E0041} block".as_bytes()),
+                (&team_esc, b"escape \x1b[31m LEAK"),
+                (&seat_bin, &[0xff]),
+                (&pair_root, "root \u{202E} LEAK".as_bytes()),
+            ],
+        );
+        let r = render(&l);
+        let expect = |label: &str, path: &str| {
+            assert_eq!(
+                part(&r, label).body,
+                format!("({path}: {SKIPPED} — see herdr-graph doctor)\n"),
+                "{label}"
+            );
+            assert_eq!(part(&r, label).path, path);
+        };
+        expect("seat rules/Code-Style.md", &seat_bad_name);
+        expect("global rules/tag.md", "rules/tag.md");
+        expect("teamspace rules/esc.md", &team_esc);
+        expect("seat rules/bin.md", &seat_bin);
+        expect("template pair", &pair_root);
+        for leak in ["LEAK", "\u{E0041}", "\x1b", "\u{202E}"] {
+            assert!(!r.text.contains(leak), "{leak:?}");
+        }
+    }
+
+    #[test]
+    fn inadmissible_section_body_renders_as_placeholder() {
+        let l = lead();
+        set_section(&l, "CLEAN-SECTION\n");
+        let loc = layout::locate(&view(&l.fx), &l.seat.id.to_any())
+            .unwrap()
+            .unwrap();
+        let toml =
+            String::from_utf8(view(&l.fx).read_file(&loc.record_path).unwrap().unwrap()).unwrap();
+        assert!(toml.contains("CLEAN-SECTION"), "{toml}");
+        let bad = toml.replace("CLEAN-SECTION", "BAD\\rSECTION");
+        put_files(&l.fx, &[(loc.record_path.as_str(), bad.as_bytes())]);
+        let r = render(&l);
+        assert_eq!(
+            part(&r, "seat sections").body,
+            format!(
+                "({}: {SKIPPED} — see herdr-graph doctor)\n",
+                loc.record_path.as_str()
+            )
+        );
+        assert!(!r.text.contains("SECTION"));
+    }
+
+    #[test]
+    fn dirty_working_tree_does_not_change_render() {
+        let l = lead();
+        let before = render(&l).text;
+        std::fs::write(
+            l.fx.root.join(&l.seat_dir).join("AGENTS.md"),
+            "DIRTY working tree text",
+        )
+        .unwrap();
+        std::fs::write(l.fx.root.join("rules/a.md"), "DIRTY global").unwrap();
+        let after = render(&l).text;
+        assert_eq!(before, after);
+        assert!(!after.contains("DIRTY"));
+    }
+
+    #[test]
+    fn fresh_instance_render_has_no_placeholder() {
+        let fx = fx();
+        let (seat, _) = bound_seat(&fx, "p1");
+        let r = render_instructions(&view(&fx), &fx.store.head().unwrap(), &seat.id).unwrap();
+        assert!(!r.text.contains(SKIPPED), "{}", r.text);
+        assert!(r.text.starts_with("Instructions for seat one ("));
+    }
+
+    #[test]
+    fn participation_is_ordered_and_deduplicated() {
+        let l = lead();
+        let ps = template_participation(&view(&l.fx), &l.seat).unwrap();
+        let shape: Vec<(&str, bool, bool)> = ps
+            .iter()
+            .map(|p| (p.record.name.as_str(), p.member.is_some(), p.shared))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                ("engineer", false, true),
+                ("pair", true, false),
+                ("pair", false, false)
+            ]
+        );
+    }
+
+    fn rendered(labels: &[(&str, usize)]) -> RenderedInstructions {
+        let seat = SeatId::new();
+        let parts: Vec<Part> = labels
+            .iter()
+            .map(|(l, n)| Part {
+                label: (*l).into(),
+                path: format!("{l}.md"),
+                body: format!("{}\n", "x".repeat(*n - 1)),
+            })
+            .collect();
+        retext(RenderedInstructions {
+            rev: "abc".into(),
+            seat,
+            seat_name: "s".into(),
+            parts,
+            text: String::new(),
+        })
+    }
+
+    fn retext(mut r: RenderedInstructions) -> RenderedInstructions {
+        r.text = revision_line(&r.seat_name, &r.seat, short_rev(&r.rev));
+        r.text.push('\n');
+        for p in &r.parts {
+            r.text
+                .push_str(&format!("\n## {} — {}\n{}", p.label, p.path, p.body));
+        }
+        r
+    }
+
+    #[test]
+    fn fit_hook_rules() {
+        let r = rendered(&[("a", 300), ("b", 300), ("c", 300)]);
+        let full = fit_hook(&r, 5000);
+        assert_eq!(full.text, format!("{}\n{}", hook_header(&r), r.text));
+        assert!(full.omitted.is_empty() && full.cut.is_none());
+        assert_eq!(full.full_size, hook_size(&r));
+
+        // c and b fit, a does not
+        let cap = hook_size(&r) - 150;
+        let fit = fit_hook(&r, cap);
+        assert_eq!(fit.omitted, ["a"]);
+        assert!(fit.text.len() <= cap);
+        assert!(fit.text.contains("## c — c.md") && fit.text.contains("## b — b.md"));
+        assert!(!fit.text.contains("## a — a.md"));
+        assert!(fit.text.ends_with(
+            "[truncated: omitted a; run herdr-graph seat --instructions for the full text]\n"
+        ));
+
+        // big middle part stops the walk even though the general small part would fit
+        let r = rendered(&[("a", 100), ("b", 4000), ("c", 300)]);
+        let fit = fit_hook(&r, 1500);
+        assert_eq!(fit.omitted, ["a", "b"]);
+        assert!(fit.text.contains("## c — c.md") && !fit.text.contains("## a — a.md"));
+        assert!(fit.text.len() <= 1500);
+
+        // a single huge most-specific part is cut at a line boundary
+        let mut r = rendered(&[("a", 100), ("c", 10)]);
+        let body: String = (0..400).map(|i| format!("line {i:04}\n")).collect();
+        r.parts[1].body = body.clone();
+        let r = retext(r);
+        let fit = fit_hook(&r, 1000);
+        assert_eq!(fit.cut.as_deref(), Some("c"));
+        assert_eq!(fit.omitted, ["a"]);
+        assert!(fit.text.len() <= 1000, "{}", fit.text.len());
+        assert!(fit.text.contains("line 0000\n") && !fit.text.contains("line 0399"));
+        assert!(fit.text.ends_with(
+            "omitted a, c (cut); run herdr-graph seat --instructions for the full text]\n"
+        ));
+        let kept = fit.text.split("## c — c.md\n").nth(1).unwrap();
+        let kept = kept.split("\n[truncated").next().unwrap();
+        assert!(
+            body.starts_with(kept),
+            "cut lies on a line boundary of the original"
+        );
+    }
+
+    #[test]
+    fn patched_tree_cap_warning() {
+        let l = lead();
+        let head = l.fx.store.head().unwrap();
+        let base = view(&l.fx);
+        assert_eq!(cap_warning(&base, &head, &l.seat.id).unwrap(), None);
+
+        let mut patched = PatchedTree::new(&base);
+        patched.put(RepoPath::new("rules/big.md").unwrap(), vec![b'z'; 9500]);
+        let w = cap_warning(&patched, &head, &l.seat.id).unwrap().unwrap();
+        assert!(
+            w.starts_with("hook output for lead would exceed the cap ("),
+            "{w}"
+        );
+        assert!(
+            w.contains("> 9000 bytes); at session start these parts will be omitted: "),
+            "{w}"
+        );
+        assert!(
+            w.contains("global rules/a.md") && w.contains("global rules/big.md"),
+            "{w}"
+        );
+        assert!(!w.contains("seat AGENTS.md"), "{w}");
+
+        // patch visible through list_dir, deletion hides the file
+        let rules = RepoPath::new("rules").unwrap();
+        let names = |t: &dyn TreeRead| -> Vec<String> {
+            t.list_dir(&rules)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.name)
+                .collect()
+        };
+        assert!(names(&patched).contains(&"big.md".to_owned()));
+        patched.delete(RepoPath::new("rules/a.md").unwrap());
+        assert!(!names(&patched).contains(&"a.md".to_owned()));
+        assert!(names(&base).contains(&"a.md".to_owned()));
+    }
+}
