@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **`content write`.** The daemon command and mutation are gone. The CLI stub keeps its arguments, exits 2 and prints guidance; the stub is removed next release. `RequestKind::ContentWrite` and `Category::Content` stay as legacy variants so old history still reads.
+
+### Added
+
+- **Summaries.** `herdr-graph request complete <rq> --summary-from <file> --covered <a-b>` writes `summaries/<transcript-id>-<a>-<b>.md` into the source seat's folder and completes the request in one commit. An identical retry is a no-op; different bytes are rejected as `summary_conflict`. Not combinable with `--output`.
+- **Instruction plans.** `herdr-graph plan instructions set|clear <global|teamspace|seat> [<target>] <file> [--from <path>]` with a unified diff, an affected-seats warning, stale-plan detection and undo (`plan undo <act>`; `repair_required` when the file drifted). `herdr-graph instructions show <scope> [<target>] [<file>]` reads the committed head without a daemon.
+- **Admissibility.** Names: seat `AGENTS.md` or `rules/<name>.md` with `<name>` matching `[a-z0-9][a-z0-9_-]*`, no nesting. Content: UTF-8, no control characters other than tab and newline, `\r` only as CRLF, none of the listed invisible or format code points. Dotfiles are ignored. Inadmissible files render as a placeholder and `doctor` warns (`instruction_files`). Plan-time checks also cover `plan template edit` and `plan seat override --section`.
+- **Inline instructions.** `seat --instructions` prints the instruction stack rendered from the committed revision (no daemon). `seat --json` gains `instructions`. In a bound pane the SessionStart hook injects a header plus the render, capped at `HOOK_RENDER_CAP` (9000 bytes). Truncation keeps the most specific parts, omits general parts whole (stopping at the first part that does not fit), and ends with a marker line naming the omitted parts and `seat --instructions`. Plans that change rendered content warn when a seat's hook output would exceed the cap. A live or resumed session may hold earlier instruction text until its context is reset.
+- **Apply ask rule.** `setup claude` adds `Bash(herdr-graph apply:*)` (and the absolute-binary variant) to `permissions.ask`; `setup codex` writes `rules/herdr-graph.rules`. Uninstall removes only what setup added. `doctor` `harness_gate` warns when a harness with the owned hook lacks the rule. The plan's relay hint now reads "show this plan to the user, then run `herdr-graph apply <pl> --confirm <hash> --confirmed-by user-relay`; the harness asks the user to approve it". Check that the plan hash in the approval prompt matches the hash above the diff. The control is cooperative; residual vectors are listed in the README, including prompt-skipping modes, rewrapped invocations, direct daemon-socket calls, edited harness settings, direct git commits, cleared marker variables and harness-native project instruction files.
+
+### Changed
+
+- **`seat --json` paths.** `paths.clone_files` is replaced by `paths.data` (context-only files under the seat and clone folders) and `paths.clone_record` (`clone.toml`).
+- **`[y/n]` prompts.** `plan`, `rebind` and interactive `undo` refuse to prompt under `CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`, `CODEX_THREAD_ID` or `HERDR_GRAPH_SEAT`; they print the plan and the relay hint instead.
+- **Hydration.** Seats hydrated from an inline member no longer get a seeded copy of the member `AGENTS.md` as their seat `AGENTS.md`.
+
+### Migration
+
+Existing instances are not migrated automatically. The shipped summarizer template now uses `request complete --summary-from`. Update the instance's summarizer template through `plan template edit`. Seats hydrated earlier from an inline (non-`seat_template`) member, the summarizer included, carry a seeded seat `AGENTS.md` copy that renders last and shadows the edited template: for each such seat run `herdr-graph plan instructions clear seat <name> AGENTS.md`, then apply.
+
 ## v0.2.0 — 2026-10-30
 
 ### Added
