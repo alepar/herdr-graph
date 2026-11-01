@@ -1076,6 +1076,89 @@ fn instruction_world(fx: &Fx) {
     active_seat(fx, "a1");
 }
 
+fn rule_path(fx: &Fx) -> crate::ports::store::RepoPath {
+    use crate::store::instruction_source::{
+        InstructionFile, InstructionTarget, ScopeKind, path, resolve_scope,
+    };
+    let v = view(fx);
+    let target = InstructionTarget {
+        scope: resolve_scope(&v, ScopeKind::Seat, Some("a1")).unwrap(),
+        file: InstructionFile::parse(ScopeKind::Seat, RULE).unwrap(),
+    };
+    path(&v, &target).unwrap()
+}
+
+/// Commit raw bytes at seat a1's rule file, bypassing `plan` (a hand-committed file).
+fn seed_rule_bytes(fx: &Fx, bytes: &[u8]) {
+    let head = fx.store.head().unwrap();
+    let mut edits = crate::store::tree::EditSet::default();
+    edits.put(rule_path(fx), bytes.to_vec());
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|repo| {
+            let sig = crate::store::git::graph_signature()?;
+            let parent = repo.find_commit(git2::Oid::from_str(&head.0)?)?;
+            repo.commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "raw instruction fixture",
+                &repo.find_tree(tree)?,
+                &[&parent],
+            )
+        })
+        .unwrap();
+}
+
+fn rule_bytes(fx: &Fx) -> Option<Vec<u8>> {
+    crate::store::tree::TreeRead::read_file(&view(fx), &rule_path(fx)).unwrap()
+}
+
+fn undo_restores_raw_bytes(raw: &[u8]) {
+    let fx = fx();
+    instruction_world(&fx);
+    seed_rule_bytes(&fx, raw);
+    let act = action_of(&fx, &set_rule(&fx, "a.md", "A\n"));
+    assert_eq!(rule_text(&fx).as_deref(), Some("A\n"));
+
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    assert_eq!(
+        kinds_of(&sp, "instructions.set"),
+        [seat_named(&fx, "a1").id.to_any()]
+    );
+    let diff = sp.plan.effects[0].detail["diff"].as_str().unwrap();
+    assert!(diff.contains("+"), "{diff}");
+    let shown = crate::plan::commands::render(&sp.plan, &sp.hash);
+    assert!(
+        !shown.contains('\u{FFFD}') && !shown.contains('\x1b'),
+        "{shown}"
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(rule_bytes(&fx).as_deref(), Some(raw));
+}
+
+#[test]
+fn undo_instruction_set_over_non_utf8_restores_bytes() {
+    undo_restores_raw_bytes(&[0xff, b'\n']);
+}
+
+#[test]
+fn undo_instruction_clear_over_esc_restores_bytes() {
+    let fx = fx();
+    instruction_world(&fx);
+    let raw = b"x\x1b[0my\n";
+    seed_rule_bytes(&fx, raw);
+    let row = commit(&fx, &format!("instructions clear seat a1 {RULE}"));
+    assert!(rule_bytes(&fx).is_none());
+    let sp = plan(&fx, &format!("undo {}", action_of(&fx, &row).id));
+    let shown = crate::plan::commands::render(&sp.plan, &sp.hash);
+    assert!(!shown.contains('\x1b'), "{shown}");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(rule_bytes(&fx).as_deref(), Some(&raw[..]));
+}
+
 #[test]
 fn undo_instruction_set_removes_a_new_file() {
     let fx = fx();

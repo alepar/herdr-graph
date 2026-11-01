@@ -1,7 +1,14 @@
 //! Unified line diff for plan effect details (spec §2.4): LCS over lines, 3 lines of
 //! context. No crate: builds run `--locked --offline`.
 
+use crate::store::instruction_source::check_content;
+use std::borrow::Cow;
+
 pub const CONTEXT: usize = 3;
+
+/// Shown instead of a diff when the bytes differ but no line does.
+pub const LINE_ENDINGS_NOTE: &str =
+    "(no line changes: only line endings or the trailing newline differ)";
 
 /// Above this many table cells the LCS table is skipped (bounds memory on pathological input).
 const MAX_CELLS: usize = 4_000_000;
@@ -125,4 +132,31 @@ pub fn unified(before: &str, after: &str) -> String {
         ));
     }
     out
+}
+
+/// `bytes` as displayable instruction text: the text when it passes `check_content`, else a one-line
+/// placeholder naming the reason. Raw bytes (ESC, bare CR, invalid UTF-8) never reach a rendered plan.
+pub fn vetted<'a>(path: &str, bytes: &'a [u8]) -> Cow<'a, str> {
+    match check_content(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(e) => Cow::Owned(format!(
+            "({path}: current content is not admissible instruction text: {}; shown as a placeholder)\n",
+            e.reason
+        )),
+    }
+}
+
+/// The plan-effect diff of an instruction file edit: both sides vetted, and an explicit note when the
+/// bytes differ but the line diff is empty.
+pub fn instruction_diff<'a>(
+    path: &'a str,
+    before: Option<&'a [u8]>,
+    after: Option<&'a [u8]>,
+) -> String {
+    let side = |b: Option<&'a [u8]>| b.map_or(Cow::Borrowed(""), |b| vetted(path, b));
+    let d = unified(&side(before), &side(after));
+    if d.is_empty() && before != after {
+        return format!("{LINE_ENDINGS_NOTE}\n");
+    }
+    d
 }
