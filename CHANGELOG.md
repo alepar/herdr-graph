@@ -28,7 +28,7 @@ Existing instances are not migrated automatically. The shipped summarizer templa
 
 ### Added
 
-- **Codex setup.** `herdr-graph setup codex [--uninstall]` installs an owned SessionStart hook in `${CODEX_HOME:-~/.codex}/hooks.json`, plus the `seat` and `graph` skills. `--uninstall` removes exactly that. Codex runs the hook only after you trust it in an interactive session (the startup review or `/hooks`); setup never writes trust.
+- **Codex setup.** `herdr-graph setup codex [--uninstall]` installs an owned SessionStart hook in `${CODEX_HOME:-~/.codex}/hooks.json`, plus the `seat` and `graph` skills. `--uninstall` removes what setup added and leaves pre-existing artifacts in place. Codex runs the hook only after you trust it in an interactive session (the startup review or `/hooks`); setup never writes trust.
 - **Linux.** The plugin manifest lists `linux`. Tests, fixtures, the long-path socket fallback and the release matrix driver all run on Linux x86_64.
 
 ### Changed

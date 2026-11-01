@@ -18,13 +18,13 @@ pub enum Commands {
 pub enum SetupTarget {
     /// Install the Claude SessionStart hook and the seat and graph skills.
     Claude {
-        /// Remove exactly what setup installed.
+        /// Remove what setup installed; pre-existing artifacts stay.
         #[arg(long)]
         uninstall: bool,
     },
     /// Install the Codex SessionStart hook and the seat and graph skills.
     Codex {
-        /// Remove exactly what setup installed.
+        /// Remove what setup installed; pre-existing artifacts stay.
         #[arg(long)]
         uninstall: bool,
     },
