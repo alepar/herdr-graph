@@ -3407,3 +3407,40 @@ fn seat_override_section_cap_warning() {
     );
     assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
 }
+
+#[test]
+fn seat_override_clear_sections_cap_warning() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create x --teamspace alpha");
+    commit(&fx, "seat create y --teamspace alpha");
+    let big = fx.root.join("big.md");
+    std::fs::write(&big, "y".repeat(9500)).unwrap();
+    let small = fx.root.join("small.md");
+    std::fs::write(&small, "small").unwrap();
+    // x: a big seat AGENTS.md plus a small section; clearing sections cannot bring it under the cap.
+    commit(
+        &fx,
+        &format!("instructions set seat x AGENTS.md --from {}", big.display()),
+    );
+    commit(
+        &fx,
+        &format!("seat override x --section note={}", small.display()),
+    );
+    let sp = plan(&fx, "seat override x --clear sections");
+    assert!(
+        sp.plan
+            .warnings
+            .iter()
+            .any(|w| w.starts_with("hook output for x would exceed the cap")),
+        "{:?}",
+        sp.plan.warnings
+    );
+    // y: the only big part is the section; clearing it removes the warning.
+    commit(
+        &fx,
+        &format!("seat override y --section big={}", big.display()),
+    );
+    let sp = plan(&fx, "seat override y --clear sections");
+    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+}

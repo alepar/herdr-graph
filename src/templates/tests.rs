@@ -2507,6 +2507,75 @@ fn template_edit_cap_warning() {
     assert!(w.contains("template solo"), "{w}");
 }
 
+fn exceed_warnings(sp: &StoredPlan) -> Vec<&String> {
+    sp.plan
+        .warnings
+        .iter()
+        .filter(|w| w.contains("exceed the cap"))
+        .collect()
+}
+
+#[test]
+fn template_edit_cap_warning_covers_created_seats() {
+    let fx = fx();
+    alpha(&fx);
+    let a = MemberId::new();
+    let b = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "solo", "app");
+    let doc = format!(
+        "name = \"solo\"\n\n[[members]]\nid = \"{a}\"\nname = \"lead\"\nstartup = \"deferred\"\n\n[[members]]\nid = \"{b}\"\nname = \"big\"\nstartup = \"deferred\"\nagents_md = \"{}\"\n",
+        "x".repeat(9500)
+    );
+    let path = write_doc(&fx, &doc);
+    let sp = plan(&fx, &format!("template edit solo --from {path}"));
+    let w = exceed_warnings(&sp);
+    assert_eq!(w.len(), 1, "{:?}", sp.plan.warnings);
+    assert!(
+        w[0].starts_with("hook output for big would exceed the cap"),
+        "{}",
+        w[0]
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &member_seat(&fx, "app", &b)).name, "big");
+}
+
+/// Give `lead` a 9500-byte member AGENTS.md through a first edit, applied.
+fn big_member_file(fx: &Fx, a: &MemberId) {
+    let path = write_doc(fx, &agents_doc("solo", a, "short", &"x".repeat(9500), "ok"));
+    commit(fx, &format!("template edit solo --from {path}"));
+}
+
+#[test]
+fn template_edit_cap_warning_follows_renamed_member_file() {
+    let fx = fx();
+    alpha(&fx);
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "solo", "app");
+    big_member_file(&fx, &a);
+    let doc = format!(
+        "name = \"solo\"\n\n[[members]]\nid = \"{a}\"\nname = \"chief\"\nstartup = \"deferred\"\nresponsibility = \"renamed\"\n"
+    );
+    let path = write_doc(&fx, &doc);
+    let sp = plan(&fx, &format!("template edit solo --from {path}"));
+    assert_eq!(exceed_warnings(&sp).len(), 1, "{:?}", sp.plan.warnings);
+}
+
+#[test]
+fn template_edit_cap_warning_drops_when_member_file_cleared() {
+    let fx = fx();
+    alpha(&fx);
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "solo", "app");
+    big_member_file(&fx, &a);
+    let path = write_doc(&fx, &agents_doc("solo", &a, "short", "", "ok"));
+    let sp = plan(&fx, &format!("template edit solo --from {path}"));
+    assert!(exceed_warnings(&sp).is_empty(), "{:?}", sp.plan.warnings);
+}
+
 /// Commit raw file bytes (any content, including inadmissible instruction text) onto the graph head.
 fn commit_raw(fx: &Fx, files: &[(crate::ports::store::RepoPath, Vec<u8>)]) {
     let head = fx.store.head().unwrap();
