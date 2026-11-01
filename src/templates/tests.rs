@@ -2687,48 +2687,87 @@ fn template_edit_undo_restores_removed_member_raw_agents_md() {
     assert_eq!(file_bytes(&fx, &lead).unwrap(), RAW_LEAD);
 }
 
-#[test]
-fn template_edit_undo_old_record_without_raw_bytes_is_repair_required() {
-    let fx = fx();
-    let a = MemberId::new();
-    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
-    let dir = template_dir(&fx, "solo");
-    commit_raw(
-        &fx,
-        &[(layout::member_agents_md(&dir, "lead"), b"old\n".to_vec())],
-    );
-    let path = write_doc(&fx, &agents_doc("solo", &a, "root", "new\\n", "ok"));
-    let row = commit(&fx, &format!("template edit solo --from {path}"));
-    let act = action_of(&fx, &row);
-
-    // Rewrite the committed record the way a build without raw-byte records wrote it.
-    let record = layout::locate(&view(&fx), &act.id.to_any())
+/// Rewrite the committed record the way a build without raw-byte records wrote it.
+fn strip_before_raw(fx: &Fx, act: &ActionRecord) {
+    let record = layout::locate(&view(fx), &act.id.to_any())
         .unwrap()
         .unwrap()
         .record_path;
-    let text = String::from_utf8(file_bytes(&fx, &record).unwrap()).unwrap();
+    let text = String::from_utf8(file_bytes(fx, &record).unwrap()).unwrap();
     let mut table: toml::Table = toml::from_str(&text).unwrap();
     let comp = table["compensation"].as_table_mut().unwrap();
     assert!(comp.remove("before_raw").is_some(), "record: {text}");
     commit_raw(
-        &fx,
+        fx,
         &[(record, toml::to_string(&table).unwrap().into_bytes())],
     );
+}
+
+#[test]
+fn template_edit_undo_old_record_without_raw_bytes_restores_plain_text() {
+    let fx = fx();
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    let dir = template_dir(&fx, "solo");
+    let lead = layout::member_agents_md(&dir, "lead");
+    let root = dir.join("AGENTS.md").unwrap();
+    commit_raw(
+        &fx,
+        &[
+            (lead.clone(), b"old\n".to_vec()),
+            (root.clone(), b"old root\r\n".to_vec()),
+        ],
+    );
+    let path = write_doc(&fx, &agents_doc("solo", &a, "new root", "new\\n", "ok"));
+    let row = commit(&fx, &format!("template edit solo --from {path}"));
+    assert_eq!(file_bytes(&fx, &lead).unwrap(), b"new\n");
+    let act = action_of(&fx, &row);
+    strip_before_raw(&fx, &act);
 
     let undo = plan(&fx, &format!("undo {}", act.id));
-    let why = undo.plan.repair_required.clone().expect("repair_required");
-    assert!(why.contains(crate::undo::preview::NO_RAW_BYTES), "{why}");
-    let err = admit_apply(
-        &fx.deps,
-        &CallerInfo::default(),
-        undo.plan.id.as_str(),
-        Some(&undo.hash),
-        "relay",
-    )
-    .expect_err("a repair_required plan cannot be applied");
-    assert!(err.message.contains("requires repair"), "{}", err.message);
-    assert_eq!(
-        file_bytes(&fx, &layout::member_agents_md(&dir, "lead")).unwrap(),
-        b"new\n"
+    assert!(
+        undo.plan.repair_required.is_none(),
+        "{:?}",
+        undo.plan.repair_required
     );
+    assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+    assert_eq!(file_bytes(&fx, &lead).unwrap(), b"old\n");
+    assert_eq!(file_bytes(&fx, &root).unwrap(), b"old root\r\n");
+}
+
+#[test]
+fn template_edit_undo_old_record_with_lossy_text_is_repair_required() {
+    // Member: invalid UTF-8 is recorded as U+FFFD. Root: valid UTF-8 that fails `check_content`.
+    for (member_old, root_old) in [(RAW_LEAD, &b"old root\n"[..]), (&b"old\n"[..], RAW_ROOT)] {
+        let fx = fx();
+        let a = MemberId::new();
+        create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+        let dir = template_dir(&fx, "solo");
+        let lead = layout::member_agents_md(&dir, "lead");
+        commit_raw(
+            &fx,
+            &[
+                (lead.clone(), member_old.to_vec()),
+                (dir.join("AGENTS.md").unwrap(), root_old.to_vec()),
+            ],
+        );
+        let path = write_doc(&fx, &agents_doc("solo", &a, "new root", "new\\n", "ok"));
+        let row = commit(&fx, &format!("template edit solo --from {path}"));
+        let act = action_of(&fx, &row);
+        strip_before_raw(&fx, &act);
+
+        let undo = plan(&fx, &format!("undo {}", act.id));
+        let why = undo.plan.repair_required.clone().expect("repair_required");
+        assert!(why.contains(crate::undo::preview::NO_RAW_BYTES), "{why}");
+        let err = admit_apply(
+            &fx.deps,
+            &CallerInfo::default(),
+            undo.plan.id.as_str(),
+            Some(&undo.hash),
+            "relay",
+        )
+        .expect_err("a repair_required plan cannot be applied");
+        assert!(err.message.contains("requires repair"), "{}", err.message);
+        assert_eq!(file_bytes(&fx, &lead).unwrap(), b"new\n");
+    }
 }
