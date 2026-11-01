@@ -1102,6 +1102,85 @@ mod wiring {
         }
     }
 
+    /// `harness_gate` is resolved through `Env::from_process`: `CLAUDE_CONFIG_DIR` / `CODEX_HOME` when set,
+    /// `$HOME/.claude` / `$HOME/.codex` otherwise, and the env wins over HOME. A hand-removed gate is a warn.
+    #[test]
+    fn sweep_harness_gate_env_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, instance) = (dir.path().join("home"), dir.path().join("graph"));
+        let (claude, codex) = (dir.path().join("claude"), dir.path().join("codex"));
+        let empty = dir.path().join("empty");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&empty).unwrap();
+        // `with_env` false: env cleared apart from HOME and the instance (HOME fallback).
+        let run_with = |with_env: bool, claude_dir: &Path, args: &[&str]| {
+            let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_herdr-graph")); // isolation-ok: env cleared, HOME is a tempdir
+            c.env_clear()
+                .env("HOME", &home) // isolation-ok: tempdir HOME
+                .env("HERDR_GRAPH_INSTANCE", &instance)
+                .current_dir(dir.path())
+                .args(args);
+            if with_env {
+                c.env("CLAUDE_CONFIG_DIR", claude_dir) // isolation-ok: tempdir config dir
+                    .env("CODEX_HOME", &codex); // isolation-ok: tempdir config dir
+            }
+            c.output().unwrap()
+        };
+        let run = |args: &[&str]| run_with(true, &claude, args);
+        let doctor_of = |o: std::process::Output| String::from_utf8_lossy(&o.stdout).into_owned();
+        let init = run(&["init", instance.to_str().unwrap()]);
+        assert!(init.status.success(), "{:?}", init);
+
+        // Warn direction: install through the env dirs, then remove the gate by hand.
+        for h in ["claude", "codex"] {
+            let set = run(&["setup", h]);
+            assert!(set.status.success(), "setup {h}: {:?}", set);
+        }
+        let settings = claude.join("settings.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        let ask = v["permissions"]["ask"]
+            .as_array_mut()
+            .expect("permissions.ask");
+        ask.retain(|e| !e.as_str().is_some_and(|s| s.contains("herdr-graph apply")));
+        std::fs::write(&settings, serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        std::fs::remove_file(codex.join("rules/herdr-graph.rules")).unwrap();
+        let doc = doctor_of(run(&["doctor"]));
+        for h in ["claude", "codex"] {
+            let line = doc
+                .lines()
+                .find(|l| l.contains(&format!("harness_gate {h}")))
+                .unwrap_or_else(|| panic!("no harness_gate {h} line:\n{doc}"));
+            assert!(line.starts_with("[WARN]"), "{h}: {doc}");
+            assert!(
+                line.contains(&format!("run herdr-graph setup {h}")),
+                "{h}: {doc}"
+            );
+        }
+
+        // HOME fallback: no CLAUDE_CONFIG_DIR / CODEX_HOME at all.
+        for h in ["claude", "codex"] {
+            let un = run(&["setup", h, "--uninstall"]);
+            assert!(un.status.success(), "uninstall {h}: {:?}", un);
+            let set = run_with(false, &claude, &["setup", h]);
+            assert!(set.status.success(), "setup {h} (HOME): {:?}", set);
+        }
+        assert!(home.join(".claude/settings.json").is_file());
+        assert!(home.join(".codex/hooks.json").is_file());
+        let doc = doctor_of(run_with(false, &claude, &["doctor"]));
+        for h in ["claude", "codex"] {
+            assert!(
+                doc.lines()
+                    .any(|l| l.starts_with(&format!("[ok] harness_gate {h}:"))),
+                "{h} HOME gate not ok:\n{doc}"
+            );
+        }
+
+        // The env wins over HOME: an empty CLAUDE_CONFIG_DIR hides the HOME install (no claude line).
+        let doc = doctor_of(run_with(true, &empty, &["doctor"]));
+        assert!(!doc.contains("harness_gate claude"), "{doc}");
+    }
+
     // -----------------------------------------------------------------------------------------
     // instruction gate sweep (hg-45e.16): summaries are data; summary into a retired seat, then instructions
     // -----------------------------------------------------------------------------------------
@@ -2265,6 +2344,91 @@ mod cli_sweep {
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         )
+    }
+
+    /// The binary-level relay leg (spec §3.3): under each agent marker `plan` prints the plan and the relay hint
+    /// (never a `[y/n]` prompt, never an apply), and `apply --confirm <hash> --confirmed-by user-relay` commits
+    /// it. A wrong hash is refused and creates nothing. A real terminal cannot be provided without a pty (no new
+    /// crates), so stdin is null here; marker-over-tty precedence is unit-tested in src/cli/plan.rs
+    /// (`agent_marker_blocks_the_prompt_on_a_terminal`) and src/cli/undo.rs (`relay_hint`).
+    #[test]
+    fn sweep_plan_relay_hint_then_user_relay_apply() {
+        let f = Fixture::new();
+        let out = f.run(&["init", f.instance.to_str().unwrap()]);
+        assert!(out.status.success(), "init: {}", text(&out));
+        let out = f.run(&["daemon", "--ensure"]);
+        assert!(out.status.success(), "daemon --ensure: {}", text(&out));
+
+        for (i, marker) in [
+            "CLAUDE_CODE_SESSION_ID",
+            "CODEX_SESSION_ID",
+            "CODEX_THREAD_ID",
+            "HERDR_GRAPH_SEAT",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("relay{i}");
+            let o = f
+                .cmd(&["plan", "teamspace", "create", &name, "--active"])
+                .env(marker, "x")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{marker}: {}", text(&o));
+            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+            assert!(out.contains(&name), "{marker}: plan not shown: {out}");
+            assert!(!out.contains("[y/n]"), "{marker}: prompted: {out}");
+            let hint = out
+                .lines()
+                .find(|l| l.contains("show this plan to the user, then run herdr-graph apply "))
+                .unwrap_or_else(|| panic!("{marker}: no relay hint: {out}"));
+            let words: Vec<&str> = hint.split_whitespace().collect();
+            let after = |w: &str| {
+                let at = words.iter().position(|x| *x == w).unwrap();
+                words[at + 1].trim_end_matches(';').to_owned()
+            };
+            let (pl, hash) = (after("apply"), after("--confirm"));
+            assert!(pl.starts_with("pl_"), "{marker}: plan id {pl}");
+
+            let listed = text(&f.run(&["list", "teamspaces"]));
+            assert!(!listed.contains(&name), "{marker}: applied early: {listed}");
+
+            if i == 0 {
+                // A wrong hash is refused and creates nothing.
+                let bad = f
+                    .cmd(&[
+                        "apply",
+                        &pl,
+                        "--confirm",
+                        "0000",
+                        "--confirmed-by",
+                        "user-relay",
+                    ])
+                    .env(marker, "x")
+                    .output()
+                    .unwrap();
+                assert!(!bad.status.success(), "wrong hash applied: {}", text(&bad));
+                let listed = text(&f.run(&["list", "teamspaces"]));
+                assert!(!listed.contains(&name), "wrong hash created it: {listed}");
+            }
+
+            let ok = f
+                .cmd(&[
+                    "apply",
+                    &pl,
+                    "--confirm",
+                    &hash,
+                    "--confirmed-by",
+                    "user-relay",
+                ])
+                .env(marker, "x")
+                .output()
+                .unwrap();
+            assert!(ok.status.success(), "{marker}: apply: {}", text(&ok));
+            let listed = text(&f.run(&["list", "teamspaces"]));
+            assert!(listed.contains(&name), "{marker}: not applied: {listed}");
+        }
     }
 
     /// `instructions show` exit codes (spec §3.3): 2 without an instance, 1 with the reason on stderr for a
