@@ -1230,6 +1230,177 @@ mod wiring {
         d.stop().await;
     }
 
+    /// `request.complete` with `summary_b64` writes the summary and completes the request in ONE commit; an
+    /// identical retry is a no-op (head unchanged); other bytes for the same range, or the same bytes for a
+    /// different range, are a `summary_conflict` that leaves every file as it was.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sweep_summary_complete_one_commit_retry_and_conflict() {
+        let (dir, root) = new_instance();
+        let d = Daemon::start(&root).await;
+        d.committed(&["teamspace", "create", "alpha", "--active"])
+            .await;
+        d.committed(&[
+            "seat",
+            "create",
+            "worker",
+            "--teamspace",
+            "alpha",
+            "--active",
+            "--harness",
+            "claude",
+        ])
+        .await;
+        eventually("worker pane", || d.pane("worker").is_some()).await;
+        let pane = d.pane("worker").unwrap();
+        d.fakes.herdr.set_agent(
+            &pane,
+            agent(
+                "claude",
+                AgentSession::Path(write_transcript(dir.path(), "worker.jsonl")),
+            ),
+        );
+        eventually("worker occupant", || {
+            d.clone_of("worker").occupant.is_some()
+        })
+        .await;
+        d.fakes.herdr.set_agent(&pane, None);
+        eventually("the worker's request", || d.request_count() == 1).await;
+        let (rq, tr, range) = d.with_view(|v| {
+            let rq = layout::list_requests(v).unwrap().remove(0).1;
+            (rq.id, rq.transcript, rq.range)
+        });
+        let folder = {
+            let id = d.seat("worker").id;
+            d.with_view(|v| layout::locate(v, &id.to_any()).unwrap().unwrap().folder)
+        };
+        let rel = format!("summaries/{tr}-{}-{}.md", range.start, range.end);
+        let file = folder.join(&rel).unwrap();
+        let head = || GitStore::open(&root).unwrap().head().unwrap();
+        let complete = |text: &str, start: u64, end: u64| {
+            d.call(
+                "request.complete",
+                json!({
+                    "request": rq,
+                    "summary_b64": herdr_graph::model::b64::b64_encode(text.as_bytes()),
+                    "covered": { "start": start, "end": end },
+                }),
+            )
+        };
+        let stored = || d.with_view(|v| v.read_file(&file).unwrap());
+        let changed_between = |from: &herdr_graph::model::CommitId,
+                               to: &herdr_graph::model::CommitId| {
+            let repo = git2::Repository::open(&root).unwrap();
+            let tree = |c: &herdr_graph::model::CommitId| {
+                repo.find_commit(git2::Oid::from_str(&c.0).unwrap())
+                    .unwrap()
+                    .tree()
+                    .unwrap()
+            };
+            let diff = repo
+                .diff_tree_to_tree(Some(&tree(from)), Some(&tree(to)), None)
+                .unwrap();
+            diff.deltas()
+                .map(|dl| dl.new_file().path().unwrap().to_string_lossy().into_owned())
+                .collect::<Vec<String>>()
+        };
+        let (a, b) = ("# first\nsummary\n", "# second\nsummary\n");
+
+        // Let background commits (observer, bindings) go quiet so "exactly one commit" is measurable.
+        let mut last = head();
+        let mut stable = 0;
+        while stable < 10 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let now = head();
+            if now == last {
+                stable += 1;
+            } else {
+                stable = 0;
+                last = now;
+            }
+        }
+
+        // First completion: exactly one commit holding the summary file and the completed request record.
+        let before = head();
+        let done = complete(a, range.start, range.end)
+            .await
+            .expect("first completion");
+        assert_eq!(done["status"], "completed", "{done}");
+        let after = head();
+        assert_ne!(before, after, "the completion committed");
+        let repo = git2::Repository::open(&root).unwrap();
+        let commit = repo
+            .find_commit(git2::Oid::from_str(&after.0).unwrap())
+            .unwrap();
+        assert_eq!(commit.parent_count(), 1);
+        assert_eq!(
+            commit.parent_id(0).unwrap().to_string(),
+            before.0,
+            "one commit: the new head's parent is the old head"
+        );
+        let diff = repo
+            .diff_tree_to_tree(
+                Some(&commit.parent(0).unwrap().tree().unwrap()),
+                Some(&commit.tree().unwrap()),
+                None,
+            )
+            .unwrap();
+        let changed: Vec<String> = diff
+            .deltas()
+            .map(|dl| dl.new_file().path().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            changed.iter().any(|p| p == file.as_str()),
+            "the commit holds the summary file {file:?}: {changed:?}"
+        );
+        let request_path = d.with_view(|v| {
+            let id = rq.clone();
+            layout::locate(v, &id.to_any()).unwrap().unwrap().folder
+        });
+        assert!(
+            changed.iter().any(|p| p.starts_with(request_path.as_str())),
+            "the commit holds the completed request record {request_path:?}: {changed:?}"
+        );
+        assert_eq!(stored().as_deref(), Some(a.as_bytes()));
+
+        // Identical retry: success, nothing committed.
+        let retry = complete(a, range.start, range.end)
+            .await
+            .expect("identical retry succeeds");
+        assert_eq!(retry["status"], "completed", "{retry}");
+        // The writer records the no-op as an audit commit, but its tree is the previous tree.
+        let retry_head = head();
+        let touched = changed_between(&after, &retry_head);
+        assert!(
+            touched.iter().all(|p| p.starts_with("mutations/")),
+            "an identical retry changes no graph file, only its own audit record: {touched:?}"
+        );
+
+        // Different bytes, same range -> summary_conflict; file unchanged.
+        let err = complete(b, range.start, range.end)
+            .await
+            .expect_err("different bytes must conflict")
+            .to_string();
+        assert!(err.contains("summary_conflict"), "{err}");
+        assert_eq!(stored().as_deref(), Some(a.as_bytes()));
+
+        // Same bytes, different range -> summary_conflict; no new file.
+        let err = complete(a, range.start, range.end + 1)
+            .await
+            .expect_err("a different range must conflict")
+            .to_string();
+        assert!(err.contains("summary_conflict"), "{err}");
+        let other = folder
+            .join(&format!(
+                "summaries/{tr}-{}-{}.md",
+                range.start,
+                range.end + 1
+            ))
+            .unwrap();
+        assert_eq!(d.with_view(|v| v.read_file(&other).unwrap()), None);
+        assert_eq!(head(), retry_head, "rejected completions commit nothing");
+        d.stop().await;
+    }
+
     // -----------------------------------------------------------------------------------------
 
     /// Every `RequestKind` has a mutation the writer can run: an exact key, or (for the kinds that select a
@@ -2096,6 +2267,68 @@ mod cli_sweep {
         )
     }
 
+    /// `instructions show` exit codes (spec §3.3): 2 without an instance, 1 with the reason on stderr for a
+    /// bad scope, unknown seat or absent file, 0 with the placeholder for an empty scope.
+    #[test]
+    fn sweep_instructions_show_exit_codes() {
+        let f = Fixture::new();
+        // No instance configured at all (no env var, no config file): exit 2.
+        let o = f
+            .cmd(&["instructions", "show", "global"])
+            .env_remove("HERDR_GRAPH_INSTANCE")
+            .output()
+            .unwrap();
+        assert_eq!(o.status.code(), Some(2), "{}", text(&o));
+        assert!(o.stdout.is_empty(), "{}", text(&o));
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("no instance configured"),
+            "{}",
+            text(&o)
+        );
+
+        // An instance configured but never initialised is a store error, not "no instance": exit 1.
+        let o = f.run(&["instructions", "show", "global"]);
+        assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+        assert!(o.stdout.is_empty(), "{}", text(&o));
+        assert!(
+            String::from_utf8_lossy(&o.stderr).contains("no graph instance"),
+            "{}",
+            text(&o)
+        );
+
+        let out = f.run(&["init", f.instance.to_str().unwrap()]);
+        assert!(out.status.success(), "init: {}", text(&out));
+
+        let o = f.run(&["instructions", "show", "global"]);
+        assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+        assert!(
+            text(&o).contains("(no instruction files in global)"),
+            "{}",
+            text(&o)
+        );
+
+        for (argv, reason) in [
+            (vec!["instructions", "show", "bogus"], "bogus"),
+            (
+                vec!["instructions", "show", "seat", "nobody", "AGENTS.md"],
+                "nobody",
+            ),
+            (
+                vec!["instructions", "show", "global", "rules/absent.md"],
+                "no such instruction file",
+            ),
+        ] {
+            let o = f.run(&argv);
+            assert_eq!(o.status.code(), Some(1), "{argv:?}: {}", text(&o));
+            assert!(o.stdout.is_empty(), "{argv:?}: stdout {}", text(&o));
+            assert!(
+                String::from_utf8_lossy(&o.stderr).contains(reason),
+                "{argv:?}: stderr {}",
+                text(&o)
+            );
+        }
+    }
+
     #[test]
     fn sweep_every_cli_command_reaches_a_handler() {
         let f = Fixture::new();
@@ -2152,6 +2385,15 @@ mod cli_sweep {
         std::fs::write(&body, "notes\n").unwrap();
         let body = body.to_str().unwrap().to_owned();
         let payload_free = ["session-report", "--from-hook", "claude"];
+        relay(&[
+            "instructions",
+            "set",
+            "seat",
+            "foreman",
+            "AGENTS.md",
+            "--from",
+            &body,
+        ]);
 
         // The §10 surface (the same list as `every_spec_command_parses`, with real ids).
         let commands: Vec<Vec<&str>> = vec![
@@ -2208,6 +2450,39 @@ mod cli_sweep {
             ],
             vec!["who", "p-none"],
             vec!["who", &seat],
+            vec!["instructions", "show", "global"],
+            vec!["instructions", "show", "seat", &seat],
+            vec![
+                "plan",
+                "--json",
+                "instructions",
+                "set",
+                "seat",
+                &seat,
+                "rules/x.md",
+                "--from",
+                &body,
+            ],
+            // A plan error (no such file to clear), but it must reach a handler.
+            vec![
+                "plan",
+                "--json",
+                "instructions",
+                "clear",
+                "global",
+                "rules/none.md",
+            ],
+            vec!["seat", "--instructions"],
+            vec![
+                "request",
+                "complete",
+                "rq_does_not_exist",
+                "--summary-from",
+                &body,
+                "--covered",
+                "0-1",
+            ],
+            vec!["undo"],
         ];
         let mut failures = Vec::new();
         for argv in &commands {
@@ -2244,6 +2519,19 @@ mod cli_sweep {
             text(&stub).contains("--summary-from") && text(&stub).contains("plan instructions"),
             "guidance text: {}",
             text(&stub)
+        );
+
+        // After a relayed `instructions set`, `undo` with no terminal prints the relay hint, not a prompt.
+        let hint = f
+            .cmd(&["undo"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(hint.status.success(), "{}", text(&hint));
+        let hint = text(&hint);
+        assert!(
+            hint.contains("edited instructions AGENTS.md") && hint.contains("plan undo <act>"),
+            "{hint}"
         );
 
         // The reads that must work on a healthy instance, with their content.
