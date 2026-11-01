@@ -522,25 +522,75 @@ pub fn check_name(scope: ScopeKind, rel: &str) -> Result<InstructionFile, Inadmi
 /// Invisible and format code points (inclusive ranges) that are never admissible.
 const INVISIBLE: &[(u32, u32)] = &[
     (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
     (0x061C, 0x061C),
-    (0x180E, 0x180E),
+    (0x115F, 0x1160),
+    (0x180B, 0x180E),
     (0x200B, 0x200F),
     (0x202A, 0x202E),
     (0x2060, 0x2064),
     (0x2066, 0x206F),
+    (0x3164, 0x3164),
+    (0xFE00, 0xFE0F),
     (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
     (0xFFF9, 0xFFFB),
     (0xE0000, 0xE007F),
+    (0xE0100, 0xE01EF),
 ];
 
+/// An explicit approximation of Unicode Emoji=Yes (std has no property API and no crate is added): the
+/// bases a U+FE0E / U+FE0F presentation selector may follow.
+const EMOJI_BASE: &[(u32, u32)] = &[
+    (0x00A9, 0x00A9),
+    (0x00AE, 0x00AE),
+    (0x203C, 0x203C),
+    (0x2049, 0x2049),
+    (0x2122, 0x2122),
+    (0x2139, 0x2139),
+    (0x2194, 0x2199),
+    (0x21A9, 0x21AA),
+    (0x231A, 0x231B),
+    (0x2328, 0x2328),
+    (0x23CF, 0x23CF),
+    (0x23E9, 0x23F3),
+    (0x23F8, 0x23FA),
+    (0x24C2, 0x24C2),
+    (0x25AA, 0x25AB),
+    (0x25B6, 0x25B6),
+    (0x25C0, 0x25C0),
+    (0x25FB, 0x25FE),
+    (0x2600, 0x27BF),
+    (0x2934, 0x2935),
+    (0x2B05, 0x2B07),
+    (0x2B1B, 0x2B1C),
+    (0x2B50, 0x2B50),
+    (0x2B55, 0x2B55),
+    (0x3030, 0x3030),
+    (0x303D, 0x303D),
+    (0x3297, 0x3297),
+    (0x3299, 0x3299),
+    (0x1F000, 0x1FAFF),
+];
+
+fn in_ranges(c: char, ranges: &[(u32, u32)]) -> bool {
+    ranges
+        .iter()
+        .any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))
+}
+
 /// The §2.2a content clause, callable on its own (template AGENTS.md, responsibility, section bodies).
+/// U+FE0E and U+FE0F pass only directly after an emoji base, or after a keycap base (`0-9 # *`) that the
+/// selector joins to U+20E3.
 pub fn check_content(bytes: &[u8]) -> Result<&str, Inadmissible> {
     let text = std::str::from_utf8(bytes).map_err(|e| Inadmissible {
         reason: format!("not valid UTF-8 (at byte {})", e.valid_up_to()),
     })?;
     let mut line = 1usize;
     let mut chars = text.chars().peekable();
+    let mut prev: Option<char> = None;
     while let Some(c) = chars.next() {
+        let before = prev.replace(c);
         let bad = |what: &str| Inadmissible {
             reason: format!("{what} U+{:04X} at line {line}", c as u32),
         };
@@ -554,10 +604,11 @@ pub fn check_content(bytes: &[u8]) -> Result<&str, Inadmissible> {
                 });
             }
             c if c.is_control() => return Err(bad("control character")),
-            c if INVISIBLE
-                .iter()
-                .any(|&(lo, hi)| (lo..=hi).contains(&(c as u32))) =>
-            {
+            '\u{FE0E}' | '\u{FE0F}'
+                if before.is_some_and(|p| in_ranges(p, EMOJI_BASE))
+                    || (before.is_some_and(|p| matches!(p, '0'..='9' | '#' | '*'))
+                        && chars.peek() == Some(&'\u{20E3}')) => {}
+            c if in_ranges(c, INVISIBLE) => {
                 return Err(bad("invisible or format character"));
             }
             _ => {}

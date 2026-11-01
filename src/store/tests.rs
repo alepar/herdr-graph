@@ -1667,4 +1667,39 @@ mod instruction_source {
             );
         }
     }
+
+    #[test]
+    fn check_content_rejects_variation_selectors_and_fillers() {
+        let reason = |s: &str| check_content(s.as_bytes()).unwrap_err().reason;
+        for c in [
+            '\u{FE00}',
+            '\u{FE0E}',
+            '\u{FE0F}',
+            '\u{E0100}',
+            '\u{E01EF}',
+            '\u{034F}',
+            '\u{115F}',
+            '\u{1160}',
+            '\u{3164}',
+            '\u{FFA0}',
+            '\u{180B}',
+            '\u{180C}',
+            '\u{180D}',
+        ] {
+            let r = reason(&format!("x{c}y"));
+            assert!(r.contains(&format!("U+{:04X}", c as u32)), "{r}");
+            assert!(r.contains("line 1"), "{r}");
+        }
+        for ok in [
+            "ok \u{2764}\u{FE0F}\n",
+            "\u{1F44D}\u{FE0F}",
+            "\u{263A}\u{FE0E}",
+            "1\u{FE0F}\u{20E3}",
+        ] {
+            assert_eq!(check_content(ok.as_bytes()), Ok(ok), "{ok:?}");
+        }
+        for bad in ["1\u{FE0F}", "\u{FE0F}", "\u{2764}\u{FE0F}\u{FE0F}"] {
+            assert!(reason(bad).contains("U+FE0F"), "{bad:?}");
+        }
+    }
 }

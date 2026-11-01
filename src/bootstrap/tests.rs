@@ -2429,6 +2429,96 @@ mod instructions {
     }
 
     #[test]
+    fn doctor_flags_every_inadmissible_render_part() {
+        let l = lead();
+        set_section(&l, "CLEAN\n");
+        let v = view(&l.fx);
+        let pair = layout::list_templates(&v)
+            .unwrap()
+            .into_iter()
+            .find(|(_, t)| t.name == "pair")
+            .unwrap()
+            .1;
+        let pair_rec = layout::locate(&v, &pair.id.to_any())
+            .unwrap()
+            .unwrap()
+            .record_path;
+        let seat_rec = layout::locate(&v, &l.seat.id.to_any())
+            .unwrap()
+            .unwrap()
+            .record_path;
+        let read = |p: &RepoPath| String::from_utf8(v.read_file(p).unwrap().unwrap()).unwrap();
+        let pair_toml = read(&pair_rec);
+        assert!(pair_toml.contains("ship it"), "{pair_toml}");
+        let seat_toml = read(&seat_rec);
+        assert!(seat_toml.contains("CLEAN"), "{seat_toml}");
+        let shared_md = format!("{}/AGENTS.md", l.shared_dir);
+        let member_md = layout::member_agents_md(&RepoPath::new(&l.pair_dir).unwrap(), "lead");
+        let pair_bad = pair_toml.replace("ship it", "ship \\U000E0041 it");
+        let seat_bad = seat_toml.replace("CLEAN", "BAD\\rX");
+        drop(v);
+        put_files(
+            &l.fx,
+            &[
+                (&shared_md, b"tpl \x1b[31m"),
+                (member_md.as_str(), &[0xff]),
+                (pair_rec.as_str(), pair_bad.as_bytes()),
+                (seat_rec.as_str(), seat_bad.as_bytes()),
+            ],
+        );
+
+        let checks = crate::daemon::doctor::instruction_files_check(&view(&l.fx));
+        assert!(!checks.is_empty());
+        for c in &checks {
+            assert!(c.warn && c.name == "instruction_files", "{c:?}");
+        }
+        let details: Vec<&str> = checks.iter().map(|c| c.detail.as_str()).collect();
+        let one = |prefix: &str| {
+            let hits: Vec<&&str> = details.iter().filter(|d| d.starts_with(prefix)).collect();
+            assert!(!hits.is_empty(), "{prefix}: {details:?}");
+            hits
+        };
+        one(&format!("{shared_md}: "));
+        assert_eq!(
+            one(&format!("{}: not valid UTF-8", member_md.as_str())).len(),
+            1
+        );
+        let resp = one(&format!("{}: responsibility", member_md.as_str()));
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0].contains("U+E0041"), "{resp:?}");
+        one(&format!("{}: instructions_sections", seat_rec.as_str()));
+        let unique: std::collections::BTreeSet<&&str> = details.iter().collect();
+        assert_eq!(
+            unique.len(),
+            details.len(),
+            "duplicate details: {details:?}"
+        );
+        assert_eq!(details.len(), 4, "{details:?}");
+
+        // The renderer replaced the same four parts, from the same part list.
+        let r = render(&l);
+        let skipped = |label: &str, path: &str| {
+            assert_eq!(
+                part(&r, label).body,
+                format!("({path}: {SKIPPED} — see herdr-graph doctor)\n"),
+                "{label}"
+            );
+        };
+        skipped("seat template engineer", &shared_md);
+        skipped("seat sections", seat_rec.as_str());
+        let member = part(&r, "template pair member lead");
+        assert_eq!(member.path, member_md.as_str());
+        assert_eq!(
+            member.body.matches(SKIPPED).count(),
+            2,
+            "member AGENTS.md and responsibility: {:?}",
+            member.body
+        );
+        let seat = seat_parts(&view(&l.fx), &l.seat.id).unwrap();
+        assert_eq!(seat.findings.len(), 4);
+    }
+
+    #[test]
     fn dirty_working_tree_does_not_change_render() {
         let l = lead();
         let before = render(&l).text;

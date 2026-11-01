@@ -1,5 +1,6 @@
 //! `doctor`: installation and instance diagnostics (spec §10).
 use super::client::{Client, hello};
+use crate::bootstrap::instructions::{listed_finding, seat_parts};
 use crate::bootstrap::setup_claude;
 use crate::config::{Env, InstancePaths, InstanceSource, plugin_config_dir_via_herdr, socket_path};
 use crate::journal::{Journal, OpRow};
@@ -252,9 +253,11 @@ pub fn harness_gate_checks(claude: Option<&Path>, codex: Option<&Path>) -> Vec<C
     out
 }
 
-/// instruction_files (spec §2.2a): files in instruction locations that fail the admissibility predicate.
-fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
+/// instruction_files (spec §2.2a, §4.1): every part of every live seat's render that the renderer replaces
+/// with the placeholder, found through the renderer's own part list.
+pub(crate) fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
     let mut scopes = vec![InstructionScope::Global];
+    let mut seats = Vec::new();
     let read = (|| -> Result<(), crate::ports::store::StoreError> {
         for (_, t) in layout::list_teamspaces(tree)? {
             if t.lifecycle != Lifecycle::Retired {
@@ -263,7 +266,7 @@ fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
         }
         for (_, s) in layout::all_seats(tree)? {
             if s.lifecycle != Lifecycle::Retired {
-                scopes.push(InstructionScope::Seat(s.id));
+                seats.push((s.id, s.name));
             }
         }
         Ok(())
@@ -274,40 +277,47 @@ fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
             format!("cannot read the graph: {e}"),
         )];
     }
-    let mut out = Vec::new();
+    let mut details: Vec<String> = Vec::new();
+    let mut add = |d: String| {
+        if !details.contains(&d) {
+            details.push(d);
+        }
+    };
     for scope in &scopes {
-        let files = match instruction_source::list_files(tree, scope) {
-            Ok(f) => f,
-            Err(e) => {
-                out.push(warn_check("instruction_files", e.to_string()));
-                continue;
-            }
-        };
-        for f in files {
-            let path = f.path.as_str();
-            if let Err(e) = &f.name {
-                out.push(warn_check("instruction_files", format!("{path}: {e}")));
-                continue;
-            }
-            match tree.read_file(&f.path) {
-                Ok(Some(bytes)) => {
-                    if let Err(e) = instruction_source::check_content(&bytes) {
-                        out.push(warn_check("instruction_files", format!("{path}: {e}")));
+        match instruction_source::list_files(tree, scope) {
+            Ok(files) => {
+                for f in files {
+                    match listed_finding(tree, &f) {
+                        Ok(Some(x)) => add(format!("{}: {}", x.path, x.reason)),
+                        Ok(None) => {}
+                        Err(e) => add(format!("{}: {e}", f.path.as_str())),
                     }
                 }
-                Ok(None) => {}
-                Err(e) => out.push(warn_check("instruction_files", format!("{path}: {e}"))),
             }
+            Err(e) => add(e.to_string()),
         }
     }
-    if out.is_empty() {
-        out.push(check(
+    for (id, name) in &seats {
+        match seat_parts(tree, id) {
+            Ok(p) => {
+                for x in p.findings {
+                    add(format!("{}: {}", x.path, x.reason));
+                }
+            }
+            Err(e) => add(format!("seat {name}: cannot render instructions: {e}")),
+        }
+    }
+    if details.is_empty() {
+        return vec![check(
             "instruction_files",
             true,
             "all instruction files admissible",
-        ));
+        )];
     }
-    out
+    details
+        .into_iter()
+        .map(|d| warn_check("instruction_files", d))
+        .collect()
 }
 
 fn undeliverable_check(tree: &dyn TreeRead) -> Check {
