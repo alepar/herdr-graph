@@ -23,3 +23,4 @@
 - [2026-11-01 roast-code r3] assembler not re-dispatched (provenance gaps unchanged; deterministic typed result); direct review of the captured range; reviewers told not to build under /tmp.
 - [2026-11-01 report] finalReviewFixRound: hg-45e.49 — one post-loop fix round (autonomous exception): template_inverse refuses legacy undo (roast r3 Should-fix + inv-p5r2 Must-fix)
 - [2026-11-01 report] first phase-6 sweep was MEASUREMENT INVALID: I set TMPDIR to a long path under the run workspace, so 22 socket tests (daemon::server, threads::service_tests) failed with 'path must be shorter than SUN_LEN'; re-run with TMPDIR=/tmp/sp-h1sweep. Logs kept as invalid-t1/t2.log.
+- [2026-11-01 report] the report drafter's Write to report.draft.md was refused by a harness rule (subagents return text, not report files); the orchestrator wrote the returned draft verbatim.
