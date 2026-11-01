@@ -18,3 +18,5 @@
 - [2026-11-01 roast-code r2] assembler not re-dispatched: the inv-p3b/inv-p3c/inv-p5r1 collection gaps that made provenance unavailable in r1 are unchanged, so the result is deterministic; ran the round directly against the captured base/head as in r1.
 - [2026-11-01 roast-code r2] rung: Workflow
 - [2026-11-01 fix-loop r2] the round-2 step-back record was saved condensed (exact keys and cluster rules, paraphrased summary/pattern) rather than verbatim; step-back-check passed.
+- [2026-11-01 roast-code r1/r2] PR-mode reproduce seats built cargo targets in the session scratchpad on /tmp (tgt, target, target-c15, iso-scout-target, ~19.7 GB on a shared 32G tmpfs; /tmp hit 0 MB free transiently). Removed after verifying no users; round 3's artifact text forbids /tmp builds. The roast prompts carry no build-location guard of their own (upstream gap).
+- [2026-11-01 fix-loop r2] a task agent again committed test logs under evidence/ (hg-45e.46); removed. Task prompts lack a no-committed-logs rule.

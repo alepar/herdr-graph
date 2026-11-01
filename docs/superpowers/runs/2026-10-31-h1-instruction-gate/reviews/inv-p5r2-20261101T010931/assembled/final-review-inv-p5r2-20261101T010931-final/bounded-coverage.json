@@ -1,0 +1,210 @@
+{
+ "inspected": [
+  {
+   "path": "CHANGELOG.md",
+   "hunks": [
+    "@@ -1,10 +1,34 @@"
+   ]
+  },
+  {
+   "path": "CREATING_NEW_GRAPH.md",
+   "hunks": [
+    "@@ -67,7 +67,7 @@ This is a recommended composition convention, not an existing automatic instruct"
+   ]
+  },
+  {
+   "path": "CURRENT-DESIGN.md",
+   "hunks": [
+    "@@ -27,7 +27,7 @@ Consolidated contract for the authorized implementation. Detailed decisions and",
+    "@@ -38,6 +38,9 @@ Consolidated contract for the authorized implementation. Detailed decisions and"
+   ]
+  },
+  {
+   "path": "GRAPH_STATE.md",
+   "hunks": [
+    "@@ -60,7 +60,7 @@ The upgraded binary reads both the new paths above and legacy `transcripts/<seat"
+   ]
+  },
+  {
+   "path": "README.md",
+   "hunks": [
+    "@@ -49,10 +49,18 @@ An agent proposes a plan and relays the hash to the user; the user confirms. The"
+   ]
+  },
+  {
+   "path": "docs/superpowers/specs/INDEX.md",
+   "hunks": [
+    "@@ -6,3 +6,4 @@ Format: date \u00b7 title \u00b7 link \u00b7 summary \u00b7 status \u00b7 tags"
+   ]
+  },
+  {
+   "path": "skills/graph/SKILL.md",
+   "hunks": [
+    "@@ -1,6 +1,6 @@",
+    "@@ -15,15 +15,33 @@ Organizational changes are never made directly. They go plan, user confirmation,",
+    "@@ -36,17 +54,37 @@ Organizational changes are never made directly. They go plan, user confirmation,"
+   ]
+  },
+  {
+   "path": "src/cli/mod.rs",
+   "hunks": [
+    "@@ -6,6 +6,7 @@ use std::process::ExitCode;",
+    "@@ -46,6 +47,8 @@ pub enum Command {",
+    "@@ -68,6 +71,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {",
+    "@@ -116,6 +120,7 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/config.rs",
+   "hunks": [
+    "@@ -33,6 +33,10 @@ pub struct Env {",
+    "@@ -52,6 +56,8 @@ impl Env {"
+   ]
+  },
+  {
+   "path": "src/daemon/compose.rs",
+   "hunks": [
+    "@@ -132,7 +132,6 @@ pub fn mutation_registry(plans: Arc<PlanStore>) -> (Arc<KindRegistry>, MutationR"
+   ]
+  },
+  {
+   "path": "src/model/action.rs",
+   "hunks": [
+    "@@ -38,6 +38,7 @@ pub enum ActionKind {"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -28,8 +28,11 @@ pub enum RequestKind {",
+    "@@ -39,6 +42,7 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/model/common.rs",
+   "hunks": [
+    "@@ -208,5 +208,5 @@ impl ByteRange {"
+   ]
+  },
+  {
+   "path": "src/model/graph.rs",
+   "hunks": [
+    "@@ -1,6 +1,6 @@",
+    "@@ -14,6 +14,13 @@ pub struct GraphRecord {"
+   ]
+  },
+  {
+   "path": "src/model/mod.rs",
+   "hunks": [
+    "@@ -1,6 +1,7 @@"
+   ]
+  },
+  {
+   "path": "src/plan/commands.rs",
+   "hunks": [
+    "@@ -65,6 +65,11 @@ pub fn render(p: &Plan, hash: &str) -> String {"
+   ]
+  },
+  {
+   "path": "src/plan/core_kinds.rs",
+   "hunks": [
+    "@@ -46,6 +46,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {"
+   ]
+  },
+  {
+   "path": "src/plan/mod.rs",
+   "hunks": [
+    "@@ -9,7 +9,9 @@ pub mod commands;"
+   ]
+  },
+  {
+   "path": "src/plan/types.rs",
+   "hunks": [
+    "@@ -34,6 +34,14 @@ impl PlanEffect {",
+    "@@ -41,10 +49,15 @@ impl PlanEffect {"
+   ]
+  },
+  {
+   "path": "src/store/mod.rs",
+   "hunks": [
+    "@@ -2,6 +2,7 @@"
+   ]
+  },
+  {
+   "path": "src/writer/mutation.rs",
+   "hunks": [
+    "@@ -1,5 +1,5 @@",
+    "@@ -59,14 +59,11 @@ pub trait Mutation: Send + Sync {"
+   ]
+  },
+  {
+   "path": "src/plan/line_diff.rs",
+   "hunks": [
+    "@@ -0,0 +1,177 @@"
+   ]
+  },
+  {
+   "path": "tests/instruction_writers.rs",
+   "hunks": [
+    "@@ -0,0 +1,143 @@"
+   ]
+  },
+  {
+   "path": "src/cli/setup.rs",
+   "hunks": [
+    "@@ -18,13 +18,13 @@ pub enum Commands {",
+    "@@ -78,6 +78,16 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:",
+    "@@ -100,6 +110,14 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:"
+   ]
+  },
+  {
+   "path": "src/undo/preview.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@",
+    "@@ -11,10 +12,13 @@ use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateI",
+    "@@ -496,12 +500,10 @@ fn runtime_effects(",
+    "@@ -509,6 +511,16 @@ fn comp_str<'a>(act: &'a ActionRecord, key: &str) -> Option<&'a str> {",
+    "@@ -737,13 +749,119 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver"
+   ]
+  },
+  {
+   "path": "src/templates/kinds.rs",
+   "hunks": [
+    "@@ -1,10 +1,12 @@",
+    "@@ -26,13 +28,15 @@ use crate::plan::core_kinds::{",
+    "@@ -177,44 +181,134 @@ pub(crate) fn doc_with_agents(",
+    "@@ -388,12 +482,12 @@ fn withdrawal_effects(",
+    "@@ -427,13 +521,6 @@ fn create_member_seat(",
+    "@@ -657,6 +744,11 @@ impl OrgKind for TemplateCopy {",
+    "@@ -920,6 +1012,18 @@ impl OrgKind for TemplateEdit {",
+    "@@ -938,7 +1042,7 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1074,10 +1178,19 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1089,6 +1202,7 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1101,7 +1215,25 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1134,7 +1266,6 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1184,6 +1315,9 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1208,6 +1342,127 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1358,7 +1613,6 @@ struct ApplyArgs {",
+    "@@ -1366,7 +1620,7 @@ struct HydratePlan {",
+    "@@ -1414,12 +1668,7 @@ fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, Plan",
+    "@@ -1567,7 +1816,6 @@ impl OrgKind for ApplicationApply {"
+   ]
+  },
+  {
+   "path": "src/plan/kinds_extra.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@",
+    "@@ -17,8 +18,9 @@ use crate::model::seat::{InstructionSection, SeatRecord};",
+    "@@ -439,6 +441,9 @@ impl OrgKind for SeatOverride {",
+    "@@ -496,11 +501,18 @@ impl OrgKind for SeatOverride {",
+    "@@ -1309,6 +1321,42 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/setup_claude.rs",
+   "hunks": [
+    "@@ -237,51 +362,124 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res"
+   ]
+  }
+ ]
+}
