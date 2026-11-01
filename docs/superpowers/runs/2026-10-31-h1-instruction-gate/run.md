@@ -15,7 +15,7 @@ roastDesignRound: 2
 roast-design: 2026-10-31-h1-instruction-gate-roast-design-1.md, 2026-10-31-h1-instruction-gate-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 roastCodeRound: 3
-roast-code: 2026-10-31-h1-instruction-gate-roast-pr-1.md, 2026-10-31-h1-instruction-gate-roast-pr-2.md, 2026-10-31-h1-instruction-gate-roast-pr-3.md
+roast-code: 2026-10-31-h1-instruction-gate-roast-pr-1.md, 2026-10-31-h1-instruction-gate-roast-pr-2.md, 2026-10-31-h1-instruction-gate-roast-pr-3.md, 2026-10-31-h1-instruction-gate-roast-pr-post-cap-audit.md
 roastCodeExit: capped
 findingsLedger: findings-ledger.md
 parked:
