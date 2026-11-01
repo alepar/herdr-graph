@@ -156,21 +156,69 @@ fn newline_terminated(mut body: String) -> String {
     body
 }
 
-/// Admissible UTF-8 text or the placeholder; `None` when the file is absent.
-fn read_text(tree: &dyn TreeRead, path: &RepoPath) -> Result<Option<String>, StoreError> {
+/// One part (or part of a part) the renderer replaced with the placeholder, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Finding {
+    /// The path the placeholder names.
+    pub path: String,
+    pub reason: String,
+}
+
+/// A seat's record, its ordered render parts and every placeholder substitution made while building them.
+#[derive(Debug, Clone)]
+pub struct SeatParts {
+    pub rec: SeatRecord,
+    pub parts: Vec<Part>,
+    pub findings: Vec<Finding>,
+}
+
+/// The §2.2a verdict on one listed scope file: name clause, then content clause. `None` when the file is
+/// admissible or absent.
+pub fn listed_finding(tree: &dyn TreeRead, f: &ListedFile) -> Result<Option<Finding>, StoreError> {
+    let path = f.path.as_str().to_owned();
+    if let Err(e) = &f.name {
+        return Ok(Some(Finding {
+            path,
+            reason: e.to_string(),
+        }));
+    }
     Ok(tree
-        .read_file(path)?
-        .map(|bytes| match check_content(&bytes) {
-            Ok(text) => text.to_owned(),
-            Err(_) => placeholder(path.as_str()),
+        .read_file(&f.path)?
+        .and_then(|bytes| check_content(&bytes).err())
+        .map(|e| Finding {
+            path,
+            reason: e.to_string(),
         }))
 }
 
 struct Collector {
     parts: Vec<Part>,
+    findings: Vec<Finding>,
 }
 
 impl Collector {
+    fn skip(&mut self, path: &str, reason: String) -> String {
+        self.findings.push(Finding {
+            path: path.to_owned(),
+            reason,
+        });
+        placeholder(path)
+    }
+
+    /// Admissible UTF-8 text or the placeholder; `None` when the file is absent.
+    fn read_text(
+        &mut self,
+        tree: &dyn TreeRead,
+        path: &RepoPath,
+    ) -> Result<Option<String>, StoreError> {
+        Ok(tree
+            .read_file(path)?
+            .map(|bytes| match check_content(&bytes) {
+                Ok(text) => text.to_owned(),
+                Err(e) => self.skip(path.as_str(), e.to_string()),
+            }))
+    }
+
     fn add(&mut self, label: String, path: &str, body: String) {
         if body.trim().is_empty() {
             return;
@@ -189,9 +237,14 @@ impl Collector {
         f: &ListedFile,
     ) -> Result<(), StoreError> {
         let path = f.path.as_str();
-        let body = match &f.name {
-            Err(_) => Some(placeholder(path)),
-            Ok(_) => read_text(tree, &f.path)?,
+        let body = match listed_finding(tree, f)? {
+            Some(finding) => {
+                let body = self.skip(path, finding.reason);
+                Some(body)
+            }
+            None => tree
+                .read_file(&f.path)?
+                .map(|b| String::from_utf8_lossy(&b).into_owned()),
         };
         if let Some(body) = body {
             self.add(format!("{scope_word} {}", f.rel), path, body);
@@ -214,15 +267,15 @@ pub fn revision_line(name: &str, seat: &SeatId, short_rev: &str) -> String {
     )
 }
 
-/// The seat's full instruction stack at `at`, read from the committed `tree` only.
-pub fn render_instructions(
-    tree: &dyn TreeRead,
-    at: &CommitId,
-    seat: &SeatId,
-) -> Result<RenderedInstructions, StoreError> {
+/// The seat's ordered render parts (spec §4.1) and the substitutions made, from the committed `tree` only.
+/// The one part list shared by the renderer and doctor.
+pub fn seat_parts(tree: &dyn TreeRead, seat: &SeatId) -> Result<SeatParts, StoreError> {
     let seat_loc = layout::locate(tree, &seat.to_any())?.ok_or_else(|| missing(seat))?;
     let rec: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat))?;
-    let mut c = Collector { parts: Vec::new() };
+    let mut c = Collector {
+        parts: Vec::new(),
+        findings: Vec::new(),
+    };
 
     for f in source::list_files(tree, &InstructionScope::Global).map_err(instruction_err)? {
         c.listed(tree, "global", &f)?;
@@ -238,7 +291,7 @@ pub fn render_instructions(
         let tpl = &p.record.name;
         if roots.insert(p.record.id.to_string()) {
             let path = p.template.folder.join(AGENTS_MD)?;
-            if let Some(body) = read_text(tree, &path)? {
+            if let Some(body) = c.read_text(tree, &path)? {
                 let kind = if p.shared {
                     "seat template"
                 } else {
@@ -252,7 +305,7 @@ pub fn render_instructions(
             continue;
         }
         let md = member_agents_path(&p, member);
-        let mut body = read_text(tree, &md)?;
+        let mut body = c.read_text(tree, &md)?;
         let path = if body.is_some() {
             md
         } else {
@@ -261,7 +314,10 @@ pub fn render_instructions(
         if let Some(resp) = &member.responsibility {
             let line = match check_content(resp.as_bytes()) {
                 Ok(_) => format!("responsibility: {resp}\n"),
-                Err(_) => placeholder(path.as_str()),
+                Err(e) => c.skip(
+                    path.as_str(),
+                    format!("responsibility of member {}: {e}", member.name),
+                ),
             };
             let mut text = newline_terminated(body.take().unwrap_or_default());
             if text.trim().is_empty() {
@@ -287,7 +343,10 @@ pub fn render_instructions(
             .collect();
         let body = match check_content(composed.as_bytes()) {
             Ok(_) => composed,
-            Err(_) => placeholder(seat_loc.record_path.as_str()),
+            Err(e) => c.skip(
+                seat_loc.record_path.as_str(),
+                format!("instructions_sections: {e}"),
+            ),
         };
         c.add("seat sections".into(), seat_loc.record_path.as_str(), body);
     }
@@ -301,10 +360,24 @@ pub fn render_instructions(
         c.listed(tree, "seat", f)?;
     }
 
+    Ok(SeatParts {
+        rec,
+        parts: c.parts,
+        findings: c.findings,
+    })
+}
+
+/// The seat's full instruction stack at `at`, read from the committed `tree` only.
+pub fn render_instructions(
+    tree: &dyn TreeRead,
+    at: &CommitId,
+    seat: &SeatId,
+) -> Result<RenderedInstructions, StoreError> {
+    let SeatParts { rec, parts, .. } = seat_parts(tree, seat)?;
     let rev = at.0.clone();
     let mut text = revision_line(&rec.name, seat, short_rev(&rev));
     text.push('\n');
-    for p in &c.parts {
+    for p in &parts {
         text.push('\n');
         text.push_str(&block(p));
     }
@@ -312,7 +385,7 @@ pub fn render_instructions(
         rev,
         seat: seat.clone(),
         seat_name: rec.name,
-        parts: c.parts,
+        parts,
         text,
     })
 }
