@@ -54,7 +54,6 @@ stepBackCode-round-2: local — round 2 code findings stay local: two weaknesses
 scopeFilter-round-2: [Nit] src/bootstrap/setup_claude.rs:426 in-scope — Criterion 4 names `setup claude` uninstall removing only what setup added; a stale hook_preexisting flag makes uninstall leave a hook setup itself wrote and print a misleading present-before-setup message, which is incorrect behavior in a goal-named path.
 scope-filter: 1 in-scope · 0 punch-listed
 
-finalReviewFixRound: hg-45e.49 — one post-loop fix round (autonomous exception): template_inverse refuses legacy undo (roast r3 Should-fix + inv-p5r2 Must-fix)
 
 approvals:
 - top-split · auto · hg-45e.1 LEAF, hg-45e.2 LEAF, hg-45e.3 LEAF, hg-45e.4 LEAF, hg-45e.5 LEAF, hg-45e.6 LEAF, hg-45e.7 LEAF, hg-45e.8 LEAF, hg-45e.9 LEAF, hg-45e.10 LEAF, hg-45e.11 LEAF, hg-45e.12 LEAF, hg-45e.13 LEAF, hg-45e.14 LEAF, hg-45e.15 LEAF
