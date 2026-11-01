@@ -220,6 +220,8 @@ pub struct UninstallReport {
     pub hook_kept: bool,
     /// An apply approval entry or rules file this installer added was removed.
     pub gate_removed: bool,
+    /// The rules file this installer wrote was left in place because it was edited since.
+    pub gate_kept: bool,
     pub skills_removed: Vec<String>,
 }
 
@@ -244,6 +246,8 @@ struct Manifest {
     gate_entries: Vec<String>,
     /// The rules file was written by this installer.
     gate_file: bool,
+    /// sha256 of the rules file as the installer last wrote it.
+    rules_sha: Option<String>,
     /// The installer created the `rules/` directory.
     created_rules_dir: bool,
     /// The owned hook group was present, byte-identical to what setup would install, before setup first
@@ -269,6 +273,7 @@ impl Manifest {
                 })
                 .unwrap_or_default(),
             gate_file: v["gate_file"].as_bool().unwrap_or(false),
+            rules_sha: v["rules_sha"].as_str().map(str::to_owned),
             created_rules_dir: v["created_rules_dir"].as_bool().unwrap_or(false),
             hook_preexisting: v["hook_preexisting"].as_bool().unwrap_or(false),
         })
@@ -279,6 +284,7 @@ impl Manifest {
             "original": self.original, "installed_sha": self.installed_sha,
             "restorable": self.restorable, "created_skills_root": self.created_skills_root,
             "gate_entries": self.gate_entries, "gate_file": self.gate_file,
+            "rules_sha": self.rules_sha,
             "created_rules_dir": self.created_rules_dir,
             "hook_preexisting": self.hook_preexisting,
         });
@@ -362,7 +368,10 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
     };
 
     let old_manifest = Manifest::read(&manifest_path);
-    let rules_owned = old_manifest.as_ref().is_some_and(|m| m.gate_file);
+    let rules_sha = old_manifest
+        .as_ref()
+        .filter(|m| m.gate_file)
+        .and_then(|m| m.rules_sha.clone());
 
     // The apply approval gate, computed before anything is written.
     let mut added = Vec::new();
@@ -399,22 +408,28 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         ApprovalGate::RulesFile => {
             let desired = rules_text(binary);
             let path = config.join(RULES_FILE);
-            match std::fs::read_to_string(&path) {
-                Ok(t) if t == desired => HookChange::Unchanged,
-                Ok(_) if !rules_owned => bail!(
+            match std::fs::read(&path) {
+                Ok(t) if t == desired.as_bytes() => HookChange::Unchanged,
+                Ok(_) if rules_sha.is_none() => bail!(
                     "{} already exists with different content and was not written by herdr-graph setup; \
                      not modified. Merge the apply prompt rules into it by hand, or remove or rename it \
                      and run setup codex again",
+                    path.display()
+                ),
+                Ok(t) if rules_sha.as_deref() != Some(sha(&t).as_str()) => bail!(
+                    "{} was edited since herdr-graph setup wrote it; not modified. Merge the apply prompt \
+                     rules into it by hand, or remove it and run setup codex again",
                     path.display()
                 ),
                 Ok(_) => {
                     rules_write = Some(desired);
                     HookChange::Updated
                 }
-                Err(_) => {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     rules_write = Some(desired);
                     HookChange::Installed
                 }
+                Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
             }
         }
     };
@@ -470,8 +485,9 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
             std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
             m.created_rules_dir = true;
         }
-        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+        std::fs::write(&path, &text).with_context(|| format!("writing {}", path.display()))?;
         m.gate_file = true;
+        m.rules_sha = Some(sha(text.as_bytes()));
     }
     let skills_written = write_skills(config)?;
     if first_install || old_manifest.as_ref() != Some(&m) {
@@ -516,6 +532,7 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
     let current = std::fs::read_to_string(&settings).ok();
     let mut hook_removed = false;
     let mut gate_removed = false;
+    let mut gate_kept = false;
     let hook_preexisting = manifest.as_ref().is_some_and(|m| m.hook_preexisting);
 
     if let Some(text) = &current {
@@ -589,9 +606,18 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
 
     if manifest.as_ref().is_some_and(|m| m.gate_file) {
         let path = config.join(RULES_FILE);
-        if path.exists() {
-            std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
-            gate_removed = true;
+        match std::fs::read(&path) {
+            Ok(t)
+                if manifest.as_ref().and_then(|m| m.rules_sha.as_deref())
+                    == Some(sha(&t).as_str()) =>
+            {
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("removing {}", path.display()))?;
+                gate_removed = true;
+            }
+            Ok(_) => gate_kept = true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         }
         let dir = path.parent().expect("the rules file has a parent");
         if manifest.as_ref().is_some_and(|m| m.created_rules_dir)
@@ -632,6 +658,7 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
         hook_removed,
         hook_kept,
         gate_removed,
+        gate_kept,
         skills_removed,
     })
 }

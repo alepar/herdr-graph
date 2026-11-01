@@ -1376,6 +1376,52 @@ fn setup_codex_writes_and_removes_the_rules_file() {
 }
 
 #[test]
+fn setup_codex_refuses_and_keeps_a_non_utf8_rules_file_it_did_not_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(config.join("rules")).unwrap();
+    std::fs::write(config.join("hooks.json"), r#"{"hooks":{}}"#).unwrap();
+    let rules = config.join("rules/herdr-graph.rules");
+    std::fs::write(&rules, b"# caf\xe9\n").unwrap();
+
+    let err = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not written by herdr-graph setup"), "{err}");
+    assert_eq!(std::fs::read(&rules).unwrap(), b"# caf\xe9\n");
+    setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert_eq!(std::fs::read(&rules).unwrap(), b"# caf\xe9\n");
+}
+
+#[test]
+fn setup_codex_keeps_an_owned_rules_file_edited_since_setup_wrote_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("hooks.json"), r#"{"hooks":{}}"#).unwrap();
+    let rules = config.join("rules/herdr-graph.rules");
+    setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    let edited = format!(
+        "{}# my own rule\n",
+        setup_claude::rules_text(Path::new(BIN))
+    );
+    std::fs::write(&rules, &edited).unwrap();
+
+    let err = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("edited since herdr-graph setup wrote it"),
+        "{err}"
+    );
+    assert_eq!(std::fs::read_to_string(&rules).unwrap(), edited);
+
+    let removed = setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert!(!removed.gate_removed && removed.gate_kept);
+    assert_eq!(std::fs::read_to_string(&rules).unwrap(), edited);
+}
+
+#[test]
 fn setup_codex_refuses_a_different_preexisting_rules_file() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("codex");
@@ -1477,7 +1523,11 @@ fn setup_rewritten_preexisting_hook_is_removed_on_uninstall() {
         std::fs::create_dir_all(&config).unwrap();
         let settings = config.join("settings.json");
         let doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
-        std::fs::write(&settings, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+        std::fs::write(
+            &settings,
+            serde_json::to_string_pretty(&doc).unwrap() + "\n",
+        )
+        .unwrap();
 
         let first = setup_claude::install(&config, Path::new(BIN)).unwrap();
         assert_eq!(first.hook, HookChange::Unchanged, "{case}");
@@ -1491,10 +1541,18 @@ fn setup_rewritten_preexisting_hook_is_removed_on_uninstall() {
             edited["hooks"] = json!({"SessionStart": [other.clone()]});
             HookChange::Updated
         };
-        std::fs::write(&settings, serde_json::to_string_pretty(&edited).unwrap() + "\n").unwrap();
+        std::fs::write(
+            &settings,
+            serde_json::to_string_pretty(&edited).unwrap() + "\n",
+        )
+        .unwrap();
         let second = setup_claude::install(&config, Path::new(BIN)).unwrap();
         assert_eq!(second.hook, expected, "{case}");
-        assert_eq!(owned_groups(&read_json(&settings)), vec![owned.clone()], "{case}");
+        assert_eq!(
+            owned_groups(&read_json(&settings)),
+            vec![owned.clone()],
+            "{case}"
+        );
 
         let removed = setup_claude::uninstall(&config).unwrap();
         assert!(removed.hook_removed, "{case}");
@@ -1553,7 +1611,11 @@ fn setup_non_exact_uninstall_keeps_preexisting_hook_group() {
     std::fs::create_dir_all(&config).unwrap();
     let settings = config.join("settings.json");
     let doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
-    std::fs::write(&settings, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+    std::fs::write(
+        &settings,
+        serde_json::to_string_pretty(&doc).unwrap() + "\n",
+    )
+    .unwrap();
 
     let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
     assert_eq!(report.hook, HookChange::Unchanged);
@@ -1563,7 +1625,11 @@ fn setup_non_exact_uninstall_keeps_preexisting_hook_group() {
 
     let mut edited = read_json(&settings);
     edited["theme"] = json!("dark");
-    std::fs::write(&settings, serde_json::to_string_pretty(&edited).unwrap() + "\n").unwrap();
+    std::fs::write(
+        &settings,
+        serde_json::to_string_pretty(&edited).unwrap() + "\n",
+    )
+    .unwrap();
 
     let removed = setup_claude::uninstall(&config).unwrap();
     assert!(!removed.hook_removed);

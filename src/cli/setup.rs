@@ -88,6 +88,8 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
             "apply gate: {}",
             if r.gate_removed {
                 "removed"
+            } else if r.gate_kept {
+                "rules file left in place (edited since setup wrote it)"
             } else {
                 "not installed"
             }
