@@ -2159,6 +2159,42 @@ async fn summary_retry_identical_is_noop_and_conflicts_reject() {
 }
 
 #[tokio::test]
+async fn summary_after_output_completion_recompletes_same_range() {
+    let fx = fx();
+    let (worker, rq, _) = delivered(&fx, 5).await;
+    let sum_clone = clone_of(&fx, "sum");
+    complete(&fx, complete_args(&rq.id, br(0, 60), Some(&sum_clone.id)))
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&fx, &rq.id).result.unwrap().output_ref,
+        "summaries/out.md"
+    );
+
+    complete(
+        &fx,
+        summary_args(&rq.id, br(0, 60), Some(&sum_clone.id), b"s\n"),
+    )
+    .await
+    .unwrap();
+    let rel = format!("summaries/{}-0-60.md", rq.transcript);
+    assert_eq!(
+        summary_file(&fx, &worker.seat, &rel).1.as_deref(),
+        Some(&b"s\n"[..])
+    );
+    assert_eq!(request(&fx, &rq.id).result.unwrap().output_ref, rel);
+    assert_eq!(the_transcript(&fx).coverage, vec![br(0, 60)]);
+
+    let err = complete(
+        &fx,
+        summary_args(&rq.id, br(0, 50), Some(&sum_clone.id), b"s\n"),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("summary_conflict"), "{err}");
+}
+
+#[tokio::test]
 async fn summary_for_an_archived_seat_lands_in_its_archive_folder() {
     let fx = fx();
     let (worker, rq, _) = delivered(&fx, 5).await;
