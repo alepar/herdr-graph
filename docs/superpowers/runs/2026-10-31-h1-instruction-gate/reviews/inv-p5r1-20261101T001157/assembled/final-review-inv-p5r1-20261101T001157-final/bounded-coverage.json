@@ -1,0 +1,274 @@
+{
+ "inspected": [
+  {
+   "path": "CHANGELOG.md",
+   "hunks": [
+    "@@ -1,5 +1,29 @@"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -5,6 +5,8 @@ description: Resolve this pane's graph identity (teamspace, seat, clone) and loa",
+    "@@ -23,32 +25,19 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "templates/system-summarizer/members/summarizer/AGENTS.md",
+   "hunks": [
+    "@@ -19,21 +19,17 @@ Wait for transcript requests on your seat channel. Each request names a processi"
+   ]
+  },
+  {
+   "path": "src/threads/effects.rs",
+   "hunks": [
+    "@@ -569,7 +569,7 @@ impl ThreadsSource {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -1,33 +1,31 @@",
+    "@@ -42,19 +40,14 @@ pub struct BootstrapDeps {",
+    "@@ -64,21 +57,6 @@ pub fn register_commands(reg: &mut Registry, deps: BootstrapDeps) {",
+    "@@ -111,18 +89,31 @@ fn markdown_in(",
+    "@@ -150,78 +141,52 @@ fn bound_paths(",
+    "@@ -234,7 +199,8 @@ fn bound_paths(",
+    "@@ -285,7 +251,7 @@ pub fn seat_reply(",
+    "@@ -311,16 +277,28 @@ pub fn seat_reply(",
+    "@@ -330,6 +308,7 @@ pub fn seat_reply(",
+    "@@ -412,6 +391,12 @@ pub fn render_seat(reply: &Value) -> String {",
+    "@@ -449,7 +434,14 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/instructions.rs",
+   "hunks": [
+    "@@ -0,0 +1,582 @@"
+   ]
+  },
+  {
+   "path": "src/bootstrap/setup_claude.rs",
+   "hunks": [
+    "@@ -6,7 +6,9 @@",
+    "@@ -23,24 +25,116 @@ const SKILLS: &[(&str, &str)] = &[",
+    "@@ -112,6 +206,8 @@ pub enum HookChange {",
+    "@@ -119,6 +215,10 @@ pub struct InstallReport {",
+    "@@ -130,7 +230,7 @@ fn sha(bytes: &[u8]) -> String {",
+    "@@ -139,6 +239,15 @@ struct Manifest {",
+    "@@ -149,6 +258,18 @@ impl Manifest {",
+    "@@ -156,6 +277,9 @@ impl Manifest {",
+    "@@ -237,51 +361,121 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res",
+    "@@ -317,6 +511,8 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall",
+    "@@ -328,39 +524,79 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall",
+    "@@ -379,8 +615,19 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall"
+   ]
+  },
+  {
+   "path": "src/cli/content.rs",
+   "hunks": [
+    "@@ -1,14 +1,12 @@",
+    "@@ -17,7 +15,7 @@ pub enum Commands {",
+    "@@ -25,50 +23,69 @@ pub enum ContentAction {"
+   ]
+  },
+  {
+   "path": "src/cli/plan.rs",
+   "hunks": [
+    "@@ -1,9 +1,10 @@",
+    "@@ -43,6 +44,32 @@ pub enum Decision {",
+    "@@ -77,7 +104,7 @@ fn remote(e: ClientError) -> anyhow::Error {",
+    "@@ -86,9 +113,11 @@ pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {",
+    "@@ -178,6 +207,48 @@ fn report_apply(result: &Value) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/request.rs",
+   "hunks": [
+    "@@ -38,8 +38,16 @@ pub enum RequestAction {",
+    "@@ -78,6 +86,7 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -87,10 +96,23 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -170,4 +192,19 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/cli/seat.rs",
+   "hunks": [
+    "@@ -3,11 +3,16 @@",
+    "@@ -17,6 +22,9 @@ pub enum Commands {",
+    "@@ -36,6 +44,9 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -49,45 +60,147 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/undo.rs",
+   "hunks": [
+    "@@ -55,6 +55,16 @@ fn candidates() -> anyhow::Result<Value> {",
+    "@@ -69,10 +79,8 @@ fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {",
+    "@@ -159,3 +167,33 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/config.rs",
+   "hunks": [
+    "@@ -33,6 +33,10 @@ pub struct Env {",
+    "@@ -52,6 +56,8 @@ impl Env {"
+   ]
+  },
+  {
+   "path": "src/daemon/doctor.rs",
+   "hunks": [
+    "@@ -1,5 +1,7 @@",
+    "@@ -7,6 +9,7 @@ use crate::model::common::{Availability, Lifecycle};",
+    "@@ -226,6 +229,97 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {",
+    "@@ -279,6 +373,7 @@ fn instance_checks(root: &Path, checks: &mut Vec<Check>) {",
+    "@@ -377,6 +472,9 @@ fn attention_effects_check(",
+    "@@ -516,6 +614,7 @@ mod tests {",
+    "@@ -746,9 +845,14 @@ mod tests {",
+    "@@ -911,4 +1015,91 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/model/action.rs",
+   "hunks": [
+    "@@ -38,6 +38,7 @@ pub enum ActionKind {"
+   ]
+  },
+  {
+   "path": "src/model/b64.rs",
+   "hunks": [
+    "@@ -0,0 +1,41 @@"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -28,8 +28,11 @@ pub enum RequestKind {",
+    "@@ -39,6 +42,7 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/model/ids.rs",
+   "hunks": [
+    "@@ -39,10 +39,11 @@ pub enum IdKind {",
+    "@@ -56,6 +57,7 @@ impl IdKind {",
+    "@@ -156,6 +158,17 @@ define_id!("
+   ]
+  },
+  {
+   "path": "src/plan/instructions.rs",
+   "hunks": [
+    "@@ -0,0 +1,323 @@"
+   ]
+  },
+  {
+   "path": "src/plan/kinds_extra.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@",
+    "@@ -17,8 +18,9 @@ use crate::model::seat::{InstructionSection, SeatRecord};",
+    "@@ -439,6 +441,9 @@ impl OrgKind for SeatOverride {",
+    "@@ -496,11 +501,14 @@ impl OrgKind for SeatOverride {"
+   ]
+  },
+  {
+   "path": "src/plan/types.rs",
+   "hunks": [
+    "@@ -34,6 +34,14 @@ impl PlanEffect {",
+    "@@ -41,10 +49,15 @@ impl PlanEffect {"
+   ]
+  },
+  {
+   "path": "src/store/instruction_source.rs",
+   "hunks": [
+    "@@ -0,0 +1,618 @@"
+   ]
+  },
+  {
+   "path": "src/store/layout.rs",
+   "hunks": [
+    "@@ -12,11 +12,21 @@ use crate::model::teamspace::TeamspaceRecord;",
+    "@@ -316,12 +326,35 @@ fn find_record_file<R: Record>("
+   ]
+  },
+  {
+   "path": "src/templates/document.rs",
+   "hunks": [
+    "@@ -56,6 +56,24 @@ pub struct FieldChange {"
+   ]
+  },
+  {
+   "path": "src/templates/kinds.rs",
+   "hunks": [
+    "@@ -1,6 +1,7 @@",
+    "@@ -26,13 +27,15 @@ use crate::plan::core_kinds::{",
+    "@@ -177,6 +180,51 @@ pub(crate) fn doc_with_agents(",
+    "@@ -388,12 +436,12 @@ fn withdrawal_effects(",
+    "@@ -427,13 +475,6 @@ fn create_member_seat(",
+    "@@ -920,6 +961,10 @@ impl OrgKind for TemplateEdit {",
+    "@@ -938,7 +983,7 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1074,10 +1119,18 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1134,7 +1187,6 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1209,6 +1261,52 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1358,7 +1456,6 @@ struct ApplyArgs {",
+    "@@ -1366,7 +1463,7 @@ struct HydratePlan {",
+    "@@ -1414,12 +1511,7 @@ fn hydrate_facts(tree: &dyn TreeRead, a: &ApplyArgs) -> Result<HydratePlan, Plan",
+    "@@ -1567,7 +1659,6 @@ impl OrgKind for ApplicationApply {"
+   ]
+  },
+  {
+   "path": "src/transcripts/mod.rs",
+   "hunks": [
+    "@@ -624,11 +624,19 @@ impl Transcripts {",
+    "@@ -663,11 +671,15 @@ impl Transcripts {"
+   ]
+  },
+  {
+   "path": "src/transcripts/mutations.rs",
+   "hunks": [
+    "@@ -592,7 +592,10 @@ impl Mutation for RequestAck {",
+    "@@ -616,9 +619,26 @@ impl Mutation for RequestComplete {",
+    "@@ -645,6 +665,77 @@ impl Mutation for RequestComplete {"
+   ]
+  },
+  {
+   "path": "src/undo/candidates.rs",
+   "hunks": [
+    "@@ -21,7 +21,8 @@ pub struct Candidate {",
+    "@@ -30,6 +31,7 @@ pub fn is_undoable(kind: ActionKind) -> bool {",
+    "@@ -149,6 +151,16 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {"
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -3,8 +3,8 @@",
+    "@@ -37,6 +37,7 @@ use std::sync::Arc;",
+    "@@ -160,20 +161,23 @@ impl OrgKind for UndoKind {",
+    "@@ -215,16 +219,19 @@ impl OrgKind for UndoKind {"
+   ]
+  },
+  {
+   "path": "src/undo/mod.rs",
+   "hunks": [
+    "@@ -23,8 +23,12 @@ pub fn register_kinds(reg: &mut KindRegistry) {"
+   ]
+  },
+  {
+   "path": "src/undo/preview.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@",
+    "@@ -11,6 +12,9 @@ use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateI",
+    "@@ -496,12 +500,10 @@ fn runtime_effects(",
+    "@@ -509,6 +511,16 @@ fn comp_str<'a>(act: &'a ActionRecord, key: &str) -> Option<&'a str> {",
+    "@@ -737,13 +749,63 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver"
+   ]
+  },
+  {
+   "path": "src/writer/mutation.rs",
+   "hunks": [
+    "@@ -1,5 +1,5 @@",
+    "@@ -59,14 +59,11 @@ pub trait Mutation: Send + Sync {"
+   ]
+  }
+ ]
+}
