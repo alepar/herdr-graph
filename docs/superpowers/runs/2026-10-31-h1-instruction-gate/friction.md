@@ -17,3 +17,4 @@
 - [2026-11-01 fix-loop r1] disk pressure: retained task worktrees (process helper fail-closed, exit 4; git also refuses to remove worktrees with an initialized submodule) each held a ~49G diverged reflinked target/ (1.2T apparent); a durak storage seat deleted 22 closed targets (/var 70G -> 228G). Guard added: reap closed+merged+clean task worktrees (target/ only when git refuses) at every wake.
 - [2026-11-01 roast-code r2] assembler not re-dispatched: the inv-p3b/inv-p3c/inv-p5r1 collection gaps that made provenance unavailable in r1 are unchanged, so the result is deterministic; ran the round directly against the captured base/head as in r1.
 - [2026-11-01 roast-code r2] rung: Workflow
+- [2026-11-01 fix-loop r2] the round-2 step-back record was saved condensed (exact keys and cluster rules, paraphrased summary/pattern) rather than verbatim; step-back-check passed.

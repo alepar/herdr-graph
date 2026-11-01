@@ -1,0 +1,1 @@
+[Nit] src/bootstrap/setup_claude.rs:426

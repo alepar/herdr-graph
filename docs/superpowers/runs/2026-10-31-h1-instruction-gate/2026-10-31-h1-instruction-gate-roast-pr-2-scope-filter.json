@@ -1,0 +1,1 @@
+{"findings":[{"key":"[Nit] src/bootstrap/setup_claude.rs:426","disposition":"in-scope","reason":"Criterion 4 names `setup claude` uninstall removing only what setup added; a stale hook_preexisting flag makes uninstall leave a hook setup itself wrote and print a misleading present-before-setup message, which is incorrect behavior in a goal-named path."}]}
