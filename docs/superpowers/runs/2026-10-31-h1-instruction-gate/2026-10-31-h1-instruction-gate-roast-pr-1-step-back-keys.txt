@@ -1,0 +1,34 @@
+r1 [Should-fix] src/store/instruction_source.rs:533
+r1 [Should-fix] src/daemon/doctor.rs:256
+r1 [Nit] src/plan/instructions.rs:276
+r1 [Nit] src/plan/line_diff.rs:65
+r1 [Nit] src/bootstrap/setup_claude.rs:405
+r1 [Nit] src/plan/instructions.rs:205
+r1 [Nit] src/templates/kinds.rs:1220
+r1 [Must-fix] Record a human disposition in run.md for the two parked roast-1 Codex escalations: whether a malformed or unsupported .rules file aborts Codex startup, and whether Codex's ~2,500-token additionalContext limit truncates a HOOK_RENDER_CAP=9000 render plus its JSON envelope (run.md:18-19, plan-level decision)
+r1 [Must-fix] setup codex overwrites a pre-existing $CODEX_HOME/rules/herdr-graph.rules with different content and uninstall deletes it (src/bootstrap/setup_claude.rs:386-397, 565-568), contradicting CHANGELOG "Uninstall removes only what setup added"; keep and restore the original bytes or refuse on foreign content (ledger minor [overwrites-preexisting-file] regraded as a data-loss path)
+r1 [Must-fix] Complete a whole-range final review: this bounded review covered 16 of 199 changed paths and the run.md:63 inv-p3b collection gap is unresolved
+r1 [Must-fix] Run the caller-owned full suite (cargo test, cargo test --features test-support, cargo check --locked --offline --all-targets --all-features) at 7195fd6 and record the result; no full-suite measurement of this head exists
+r1 [Must-fix] untested: whole-epic review incomplete; bounded inspected hunks only; all remaining hunks and provenance gaps remain unreviewed
+r1 [Must-fix] untested: No full-suite measurement of head 7195fd6; the sweep is deferred to the caller
+r1 [Must-fix] untested: Unreviewed in this bounded pass: src/bootstrap/instructions.rs, src/bootstrap/mod.rs, src/bootstrap/setup_claude.rs (only head lines 380-400 and 558-575 read), src/bootstrap/tests.rs, src/bootstrap/content.rs, src/store/instruction_source.rs, src/store/layout.rs, src/store/mod.rs, src/store/tests.rs, src/daemon/doctor.rs, src/daemon/compose.rs, src/cli/instructions.rs, src/cli/seat.rs, src/cli/setup.rs, src/cli/undo.rs, src/config.rs, src/model/*, src/plan/line_diff.rs, src/plan/kinds_extra.rs, src/plan/types.rs, src/plan/tests.rs, src/plan/commands.rs, src/plan/core_kinds.rs, src/plan/mod.rs, src/templates/*, src/threads/effects.rs, src/transcripts/tests.rs, src/undo/*, src/writer/*, tests/daemon_composed.rs, docs/superpowers/specs/INDEX.md and all docs/superpowers/runs/ paths including the archived inv-p3b review package
+r1 [Must-fix] untested: Provenance gap retained: 7195fd6:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:63 inv-p3b-20261031T222244 incomplete claimed collection
+r1 [Must-fix] untested: Prior degraded verdict retained: inv-p3b cluster-1, cluster-6 and cluster-13 reports were not strictly extractable (run.md parked degraded-verdict line)
+r1 [Must-fix] untested: hg-45e.16's first test-support run ended mid daemon_ipc with exit 101 and no failure text; the rerun passed and the cause is unproven (possible flake)
+r1 [Must-fix] untested: The R16 writer inventory exists only in the uncommitted task-18-report.md; no committed test or artifact enforces it
+r1 [Must-fix] untested: The sweep drives plan/apply through the daemon helper d.committed, not the herdr-graph plan and apply --confirmed-by user-relay binary path, so the relay-hint output under an agent marker is not exercised end to end
+r1 [Must-fix] untested: setup claude/codex -> doctor harness_gate is covered only by hg-45e.12's sweep_harness_gate_install_doctor_uninstall; the hg-45e.16 sweep relies on it
+r1 [Must-fix] untested: No committed evidence that a Codex SessionStart payload near 9000 bytes plus JSON escaping reaches the model intact
+r1 [Must-fix] untested: Upgrade path for an existing instance with seeded seat AGENTS.md copies and the pre-H1 summarizer template has no test or doctor check (migration is documentation only)
+r1 [Must-fix] untested: No integration test applies an instructions_edit and then undoes it through the composed daemon; undo of global and teamspace scopes has no committed test
+r1 [Must-fix] untested: Summary write and request completion in one commit, the identical-retry no-op and summary_conflict are unit-tested only, not asserted at integration level
+r1 [Must-fix] untested: Re-completing a request completed with --output by --summary-from for the same range writes and re-completes; no test
+r1 [Must-fix] untested: instruction_files doctor check covers only the global rules/ scope; teamspace, seat rules, seat AGENTS.md and retired-scope skipping are untested
+r1 [Must-fix] untested: set/clear against a committed non-UTF-8 or inadmissible current file (plan OK, apply Failed) and CRLF-only edits giving an empty diff are untested
+r1 [Must-fix] untested: Undo marker path in src/cli/undo.rs has no undo-specific test (hg-45e.10)
+r1 [Must-fix] untested: src/cli/instructions.rs no-instance exit path and error exit codes are not tested end to end (hg-45e.13)
+r1 [Must-fix] untested: No test for the seat AGENTS.md will-be-cut cap-warning branch, CRLF content or --from resolved relative to caller cwd (hg-45e.4)
+r1 [Must-fix] untested: No test that an inadmissible member AGENTS.md or responsibility renders the placeholder (hg-45e.6)
+r1 [Must-fix] untested: No seat-reply test that dotfiles like rules/.gitkeep are absent from paths.data (hg-45e.14)
+r1 [Must-fix] untested: Seat skill content (Codex seat --instructions fallback line, new step 3) has no needle test
+r1 [Must-fix] untested: Hook bound rule for a caller resolved only via HERDR_GRAPH_CLONE (env) is untested

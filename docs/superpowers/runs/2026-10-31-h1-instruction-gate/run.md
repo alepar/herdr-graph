@@ -1,7 +1,7 @@
 # super-auto run — 2026-10-31-h1-instruction-gate
 
 flags: planOneShot=t skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-code
+phase: fix-loop
 codeMechanism: Workflow
 runTag: h1-instruction-gate-20261031T205333
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -15,6 +15,8 @@ roastDesignRound: 2
 roast-design: 2026-10-31-h1-instruction-gate-roast-design-1.md, 2026-10-31-h1-instruction-gate-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 roastCodeRound: 1
+roast-code: 2026-10-31-h1-instruction-gate-roast-pr-1.md
+findingsLedger: findings-ledger.md
 parked:
 - 2026-10-31-h1-instruction-gate-roast-design-1.md · escalation · "§3.2: whether a malformed/unsupported Codex .rules file aborts Codex startup is unverified; setup writes the file even when syntax is unconfirmed (check in an isolated CODEX_HOME before writing)"
 - 2026-10-31-h1-instruction-gate-roast-design-1.md · escalation · "§4.4: Codex may cap hook output at ~2,500 tokens (additionalContextLimit) per one seat's source; unsettled whether a 9000-byte render exceeds it"
