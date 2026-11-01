@@ -6,6 +6,7 @@ use crate::cli::template as cli;
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, AffectedObject};
 use crate::model::application::{ApplicationRecord, CreatedBy, Reuse};
+use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::RequestKind;
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, RetireMechanism, Retirement};
@@ -27,7 +28,7 @@ use crate::plan::core_kinds::{
 };
 use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
-use crate::plan::line_diff;
+use crate::plan::line_diff::{self, Side};
 use crate::plan::types::{Plan, PlanEffect, Reserved, ReservedId};
 use crate::ports::store::{ObjectLocation, RepoPath, StoreError};
 use crate::store::instruction_source::check_content;
@@ -180,6 +181,39 @@ pub(crate) fn doc_with_agents(
     Ok(doc)
 }
 
+/// The member of `old` a change path's `<key>` names: its id, or its name when a side has no id.
+fn old_member<'a>(old: &'a TemplateRecord, key: &str) -> Option<&'a TemplateMember> {
+    old.members
+        .iter()
+        .find(|m| m.id.to_string() == key || m.name == key)
+}
+
+/// The decoded `agents_md_raw` of an undo's edit args (see `EditArgs`).
+fn raw_overrides(a: &EditArgs) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    a.agents_md_raw
+        .iter()
+        .map(|(path, b64)| {
+            b64_decode(b64)
+                .map(|b| (path.clone(), b))
+                .map_err(|e| format!("agents_md_raw {path}: {e}"))
+        })
+        .collect()
+}
+
+/// The `instruction_texts` field name of a raw-override path (`members.<id|name>.agents_md` is
+/// `members.<name>.agents_md` there), or `None` when the path names no instruction file of `doc`.
+fn raw_field(doc: &TemplateDocument, path: &str) -> Option<String> {
+    if path == "agents_md" {
+        return Some(path.to_owned());
+    }
+    let key = path.strip_prefix("members.")?.strip_suffix(".agents_md")?;
+    let m = doc
+        .members
+        .iter()
+        .find(|m| m.id.as_ref().is_some_and(|i| i.to_string() == key) || m.name == key)?;
+    Some(format!("members.{}.agents_md", m.name))
+}
+
 /// The displayed `{path, before, after}` of each change, with an instruction `before` that is not
 /// admissible text (non-UTF-8, control characters) replaced by `line_diff::vetted`'s placeholder: the
 /// document's lossy `before` would otherwise show U+FFFD or raw escape bytes.
@@ -188,6 +222,7 @@ fn vetted_changes(
     tpl_dir: &RepoPath,
     old: &TemplateRecord,
     changes: &[FieldChange],
+    raw_after: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<serde_json::Value>, StoreError> {
     let mut out = Vec::new();
     for c in changes {
@@ -198,11 +233,7 @@ fn vetted_changes(
             .strip_prefix("members.")
             .and_then(|k| k.strip_suffix(".agents_md"))
         {
-            match old
-                .members
-                .iter()
-                .find(|m| m.id.to_string() == key || m.name == key)
-            {
+            match old_member(old, key) {
                 Some(m) => agents_md(tree, tpl_dir, &m.name)?,
                 None => None,
             }
@@ -215,12 +246,19 @@ fn vetted_changes(
             None
         };
         let before = match raw {
-            Some(b) if check_content(&b).is_err() => {
-                Some(json!(line_diff::vetted(&c.path, &b).trim_end()))
-            }
+            Some(b) if check_content(&b).is_err() => Some(json!(
+                line_diff::vetted(&c.path, &b, Side::Current).trim_end()
+            )),
             _ => c.before.clone(),
         };
-        out.push(json!({ "path": c.path, "before": before, "after": c.after }));
+        // An undo restores raw bytes that `plan` would refuse as text: show a placeholder, not the lossy text.
+        let after = match raw_after.get(&c.path) {
+            Some(b) if check_content(b).is_err() => Some(json!(
+                line_diff::vetted(&c.path, b, Side::Restored).trim_end()
+            )),
+            _ => c.after.clone(),
+        };
+        out.push(json!({ "path": c.path, "before": before, "after": after }));
     }
     Ok(out)
 }
@@ -698,6 +736,11 @@ impl OrgKind for TemplateCopy {
 struct EditArgs {
     template: String,
     document: TemplateDocument,
+    /// Raw bytes (base64) of instruction files to write over the document's text, keyed by change path
+    /// (`agents_md`, `members.<key>.agents_md`). `parse` never sets it: only an undo's inverse does, for
+    /// bytes `plan` would refuse as text (like `InstructionsKind`'s `content_b64`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    agents_md_raw: BTreeMap<String, String>,
 }
 
 enum Outcome {
@@ -961,7 +1004,15 @@ impl OrgKind for TemplateEdit {
         reserved: &mut Reserved,
     ) -> Result<PlanBody, PlanError> {
         let a: EditArgs = parse_args(args)?;
+        let raw = raw_overrides(&a).map_err(PlanError::Invalid)?;
+        let covered: BTreeSet<String> = raw
+            .keys()
+            .filter_map(|p| raw_field(&a.document, p))
+            .collect();
         for (field, text) in a.document.instruction_texts() {
+            if covered.contains(&field) {
+                continue;
+            }
             check_content(text.as_bytes())
                 .map_err(|e| PlanError::Invalid(format!("{field}: {e}")))?;
         }
@@ -983,7 +1034,7 @@ impl OrgKind for TemplateEdit {
             "template.edit",
             old.id.clone(),
             json!({ "name": old.name, "changed_fields": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
-                "changes": vetted_changes(cx.tree, &loc.folder, &old, &changes)? }),
+                "changes": vetted_changes(cx.tree, &loc.folder, &old, &changes, &raw)? }),
         )];
         let mut relied_on = vec![rev_of(old.id.clone(), old.rev)];
         relied_on.extend(template_dependencies(cx.tree, &new)?);
@@ -1142,6 +1193,7 @@ impl OrgKind for TemplateEdit {
         plan: &Plan,
     ) -> Result<Applied, MutationError> {
         let a: EditArgs = parse_args(args).map_err(mm)?;
+        let raw = raw_overrides(&a).map_err(MutationError::Bug)?;
         let (loc, old) = resolve_template(&cx.tree, &a.template).map_err(mm)?;
         let act: ActionId = reserved_id(plan, "act")?;
         let mut reserved = plan.reserved.clone();
@@ -1154,7 +1206,25 @@ impl OrgKind for TemplateEdit {
 
         // The template itself (the applications below resolve their config against the new record).
         cx.tree.put_record(loc.record_path.clone(), &mut new)?;
+        let before_raw = raw_before_files(&cx.tree, &loc.folder, &old, &changes)?;
         write_agents(cx, &loc.folder, &after, Some(&old))?;
+        for (path, bytes) in &raw {
+            let file = if path == "agents_md" {
+                loc.folder.join("AGENTS.md")?
+            } else {
+                let name = raw_field(&after, path)
+                    .and_then(|f| {
+                        f.strip_prefix("members.")?
+                            .strip_suffix(".agents_md")
+                            .map(str::to_owned)
+                    })
+                    .ok_or_else(|| {
+                        MutationError::Bug(format!("agents_md_raw {path}: no such member"))
+                    })?;
+                layout::member_agents_md(&loc.folder, &slugify(&name))
+            };
+            cx.tree.put_file(file, bytes.clone());
+        }
 
         let mut acc = Acc::default();
         let mut created: Vec<AnyId> = Vec::new();
@@ -1236,6 +1306,9 @@ impl OrgKind for TemplateEdit {
             "changed_fields".into(),
             str_array(changes.iter().map(|c| c.path.as_str())),
         );
+        if !before_raw.is_empty() {
+            comp.insert("before_raw".into(), toml::Value::Table(before_raw));
+        }
         comp.insert(
             "created".into(),
             str_array(created.iter().map(|i| i.as_str())),
@@ -1258,6 +1331,47 @@ impl OrgKind for TemplateEdit {
             action: Some(act),
         })
     }
+}
+
+/// The raw bytes of every existing instruction file this edit overwrites or deletes, base64, keyed by
+/// the instruction path an undo restores (`agents_md`, `members.<key>.agents_md`). The recorded
+/// document text is lossy for inadmissible bytes; these let undo restore the file exactly.
+fn raw_before_files(
+    tree: &dyn TreeRead,
+    tpl_dir: &RepoPath,
+    old: &TemplateRecord,
+    changes: &[FieldChange],
+) -> Result<toml::Table, MutationError> {
+    let mut out = toml::Table::new();
+    for c in changes {
+        let (key, bytes) = if c.path == "agents_md" {
+            (c.path.clone(), tree.read_file(&tpl_dir.join("AGENTS.md")?)?)
+        } else if let Some(k) = c
+            .path
+            .strip_prefix("members.")
+            .and_then(|k| k.strip_suffix(".agents_md"))
+        {
+            let bytes = match old_member(old, k) {
+                Some(m) => agents_md(tree, tpl_dir, &m.name)?,
+                None => None,
+            };
+            (c.path.clone(), bytes)
+        } else if let Some(k) = c.path.strip_prefix("members.").filter(|k| !k.contains('.'))
+            && c.after.is_none()
+        {
+            let bytes = match old_member(old, k) {
+                Some(m) => agents_md(tree, tpl_dir, &m.name)?,
+                None => None,
+            };
+            (format!("members.{k}.agents_md"), bytes)
+        } else {
+            continue;
+        };
+        if let Some(bytes) = bytes {
+            out.insert(key, toml::Value::String(b64_encode(&bytes)));
+        }
+    }
+    Ok(out)
 }
 
 /// The edited document as stored: ids resolved, `agents_md` kept only where the edit sets it.

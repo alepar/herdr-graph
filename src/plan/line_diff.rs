@@ -134,15 +134,30 @@ pub fn unified(before: &str, after: &str) -> String {
     out
 }
 
+/// Which side of a diff a vetted text is shown on, for the placeholder wording.
+#[derive(Clone, Copy)]
+pub enum Side {
+    /// What is on disk now.
+    Current,
+    /// What an undo will put back.
+    Restored,
+}
+
 /// `bytes` as displayable instruction text: the text when it passes `check_content`, else a one-line
 /// placeholder naming the reason. Raw bytes (ESC, bare CR, invalid UTF-8) never reach a rendered plan.
-pub fn vetted<'a>(path: &str, bytes: &'a [u8]) -> Cow<'a, str> {
+pub fn vetted<'a>(path: &str, bytes: &'a [u8], side: Side) -> Cow<'a, str> {
     match check_content(bytes) {
         Ok(text) => Cow::Borrowed(text),
-        Err(e) => Cow::Owned(format!(
-            "({path}: current content is not admissible instruction text: {}; shown as a placeholder)\n",
-            e.reason
-        )),
+        Err(e) => {
+            let which = match side {
+                Side::Current => "current",
+                Side::Restored => "restored",
+            };
+            Cow::Owned(format!(
+                "({path}: {which} content is not admissible instruction text: {}; shown as a placeholder)\n",
+                e.reason
+            ))
+        }
     }
 }
 
@@ -153,8 +168,8 @@ pub fn instruction_diff<'a>(
     before: Option<&'a [u8]>,
     after: Option<&'a [u8]>,
 ) -> String {
-    let side = |b: Option<&'a [u8]>| b.map_or(Cow::Borrowed(""), |b| vetted(path, b));
-    let d = unified(&side(before), &side(after));
+    let show = |b: Option<&'a [u8]>, side| b.map_or(Cow::Borrowed(""), |b| vetted(path, b, side));
+    let d = unified(&show(before, Side::Current), &show(after, Side::Restored));
     if d.is_empty() && before != after {
         return format!("{LINE_ENDINGS_NOTE}\n");
     }
