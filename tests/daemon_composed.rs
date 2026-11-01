@@ -23,6 +23,7 @@ use herdr_graph::ports::store::Store;
 use herdr_graph::ports::writer::{Writer, WriterError};
 use herdr_graph::store::GitStore;
 use herdr_graph::store::init::init_instance;
+use herdr_graph::store::instruction_source::{ScopeKind, resolve_scope};
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
 use herdr_graph::threads::discovery::DiscoveryInputs;
@@ -831,6 +832,152 @@ async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::Herd
         assert!(Instant::now() < deadline, "the undo never finished: {op}");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// plan.create `["undo", act]` then `undo.apply`, polled to `committed`; no pane adoption expected.
+async fn undo_plain(d: &Daemon, act: &str) {
+    let plan = d
+        .call("plan.create", json!({ "words": ["undo", act] }))
+        .await
+        .unwrap();
+    let r = d
+        .call(
+            "undo.apply",
+            json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay" }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r["state"], "admitted", "{r}");
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let op = d.call("ops.get", json!({ "op": r["op"] })).await.unwrap();
+        let state = op["state"]
+            .as_str()
+            .or(op["op"]["state"].as_str())
+            .unwrap_or("")
+            .to_owned();
+        if !matches!(state.as_str(), "admitted" | "applying" | "") {
+            assert_eq!(state, "committed", "{op}");
+            return;
+        }
+        assert!(Instant::now() < deadline, "the undo never finished: {op}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The committed bytes of an instruction file, None when absent.
+fn instruction_bytes(
+    d: &Daemon,
+    scope: InstructionScopeWord,
+    target: Option<&str>,
+    file: &str,
+) -> Option<Vec<u8>> {
+    use herdr_graph::store::instruction_source::{InstructionFile, InstructionTarget, path};
+    d.with_view(|v| {
+        let kind = match scope {
+            InstructionScopeWord::Global => ScopeKind::Global,
+            InstructionScopeWord::Teamspace => ScopeKind::Teamspace,
+            InstructionScopeWord::Seat => ScopeKind::Seat,
+        };
+        let scope = resolve_scope(v, kind, target).unwrap();
+        let file = InstructionFile::parse(kind, file).unwrap();
+        let p = path(v, &InstructionTarget { scope, file }).unwrap();
+        v.read_file(&p).unwrap()
+    })
+}
+
+#[derive(Clone, Copy)]
+enum InstructionScopeWord {
+    Global,
+    Teamspace,
+    Seat,
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn instructions_edit_apply_and_undo_each_scope() {
+    let (dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    d.committed(&[
+        "seat",
+        "create",
+        "w",
+        "--teamspace",
+        "t",
+        "--harness",
+        "shell",
+    ])
+    .await;
+    let src = dir.path().join("body.md");
+    let body = b"# rule\nuse the thing\n";
+    std::fs::write(&src, body).unwrap();
+    let from = src.to_str().unwrap();
+
+    let cases: [(InstructionScopeWord, Option<&str>, &str, Vec<&str>, &str); 3] = [
+        (
+            InstructionScopeWord::Global,
+            None,
+            "rules/g.md",
+            vec!["global", "rules/g.md"],
+            "edited instructions rules/g.md",
+        ),
+        (
+            InstructionScopeWord::Teamspace,
+            Some("t"),
+            "rules/t.md",
+            vec!["teamspace", "t", "rules/t.md"],
+            "edited instructions rules/t.md",
+        ),
+        (
+            InstructionScopeWord::Seat,
+            Some("w"),
+            "AGENTS.md",
+            vec!["seat", "w", "AGENTS.md"],
+            "edited instructions AGENTS.md",
+        ),
+    ];
+    for (scope, target, file, words, label) in cases {
+        let mut cmd = vec!["instructions", "set"];
+        cmd.extend(words);
+        cmd.extend(["--from", from]);
+        d.committed(&cmd).await;
+        assert_eq!(
+            instruction_bytes(&d, scope, target, file).as_deref(),
+            Some(&body[..]),
+            "{label}: the committed file holds the source bytes"
+        );
+        let act = undo_act(&d, label).await;
+        undo_plain(&d, &act).await;
+        assert_eq!(
+            instruction_bytes(&d, scope, target, file),
+            None,
+            "{label}: undo removes the file it created"
+        );
+    }
+
+    // Two sets on one file: undoing the second restores the first.
+    let (a, b) = (dir.path().join("a.md"), dir.path().join("b.md"));
+    std::fs::write(&a, "first\n").unwrap();
+    std::fs::write(&b, "second\n").unwrap();
+    for f in [&a, &b] {
+        d.committed(&[
+            "instructions",
+            "set",
+            "global",
+            "rules/g.md",
+            "--from",
+            f.to_str().unwrap(),
+        ])
+        .await;
+    }
+    let act = undo_act(&d, "edited instructions rules/g.md").await;
+    undo_plain(&d, &act).await;
+    assert_eq!(
+        instruction_bytes(&d, InstructionScopeWord::Global, None, "rules/g.md").as_deref(),
+        Some(&b"first\n"[..]),
+        "undoing the second set puts the first back"
+    );
+    d.stop().await;
 }
 
 /// The daemon is quiet: no Herdr call for a while.

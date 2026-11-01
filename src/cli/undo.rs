@@ -55,6 +55,16 @@ fn candidates() -> anyhow::Result<Value> {
     }
 }
 
+const UNDO_RELAY_HINT: &str = "to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user";
+
+/// The hint printed instead of the `[y/n]` prompt when no human terminal is available.
+fn relay_hint(
+    stdin_tty: bool,
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<&'static str> {
+    (!super::plan::prompt_terminal(stdin_tty, get)).then_some(UNDO_RELAY_HINT)
+}
+
 fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {
     let reply = candidates()?;
     if json {
@@ -69,10 +79,8 @@ fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {
     if cands.is_empty() {
         return Ok(ExitCode::SUCCESS);
     }
-    if !super::plan::prompt_terminal(std::io::stdin().is_terminal(), |k| std::env::var_os(k)) {
-        println!(
-            "to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user"
-        );
+    if let Some(hint) = relay_hint(std::io::stdin().is_terminal(), |k| std::env::var_os(k)) {
+        println!("{hint}");
         return Ok(ExitCode::SUCCESS);
     }
     interactive(&cands)
@@ -157,5 +165,35 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
             return Ok(super::plan::exit_for_state(state));
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn every_agent_marker_withholds_the_prompt() {
+        for marker in crate::cli::plan::AGENT_MARKERS {
+            let got = relay_hint(true, |k| (k == marker).then(|| OsString::from("x")));
+            assert_eq!(got, Some(UNDO_RELAY_HINT), "marker {marker}");
+        }
+    }
+
+    #[test]
+    fn terminal_without_marker_prompts() {
+        assert_eq!(relay_hint(true, |_| None), None);
+    }
+
+    #[test]
+    fn no_terminal_gets_the_hint() {
+        assert_eq!(relay_hint(false, |_| None), Some(UNDO_RELAY_HINT));
+    }
+
+    #[test]
+    fn hint_names_the_plan_route() {
+        assert!(UNDO_RELAY_HINT.contains("plan undo <act>"));
+        assert!(UNDO_RELAY_HINT.contains("relay the plan to the user"));
     }
 }
