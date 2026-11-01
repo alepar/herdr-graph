@@ -27,6 +27,7 @@ use crate::plan::core_kinds::{
 };
 use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
+use crate::plan::line_diff;
 use crate::plan::types::{Plan, PlanEffect, Reserved, ReservedId};
 use crate::ports::store::{ObjectLocation, RepoPath, StoreError};
 use crate::store::instruction_source::check_content;
@@ -34,7 +35,7 @@ use crate::store::layout;
 use crate::store::record::{read_toml, to_toml_bytes};
 use crate::store::slug::{slugify, unique_slug};
 use crate::store::tree::TreeRead;
-use crate::templates::document::TemplateDocument;
+use crate::templates::document::{FieldChange, TemplateDocument};
 use crate::templates::structure::{
     effective_structure_with, member_seat_record, read_seat_rec, read_template,
 };
@@ -177,6 +178,51 @@ pub(crate) fn doc_with_agents(
         );
     }
     Ok(doc)
+}
+
+/// The displayed `{path, before, after}` of each change, with an instruction `before` that is not
+/// admissible text (non-UTF-8, control characters) replaced by `line_diff::vetted`'s placeholder: the
+/// document's lossy `before` would otherwise show U+FFFD or raw escape bytes.
+fn vetted_changes(
+    tree: &dyn TreeRead,
+    tpl_dir: &RepoPath,
+    old: &TemplateRecord,
+    changes: &[FieldChange],
+) -> Result<Vec<serde_json::Value>, StoreError> {
+    let mut out = Vec::new();
+    for c in changes {
+        let raw: Option<Vec<u8>> = if c.path == "agents_md" {
+            tree.read_file(&tpl_dir.join("AGENTS.md")?)?
+        } else if let Some(key) = c
+            .path
+            .strip_prefix("members.")
+            .and_then(|k| k.strip_suffix(".agents_md"))
+        {
+            match old
+                .members
+                .iter()
+                .find(|m| m.id.to_string() == key || m.name == key)
+            {
+                Some(m) => agents_md(tree, tpl_dir, &m.name)?,
+                None => None,
+            }
+        } else if c.path.ends_with(".responsibility") {
+            c.before
+                .as_ref()
+                .and_then(|v| v.as_str())
+                .map(|t| t.as_bytes().to_vec())
+        } else {
+            None
+        };
+        let before = match raw {
+            Some(b) if check_content(&b).is_err() => {
+                Some(json!(line_diff::vetted(&c.path, &b).trim_end()))
+            }
+            _ => c.before.clone(),
+        };
+        out.push(json!({ "path": c.path, "before": before, "after": c.after }));
+    }
+    Ok(out)
 }
 
 fn write_agents(
@@ -937,7 +983,7 @@ impl OrgKind for TemplateEdit {
             "template.edit",
             old.id.clone(),
             json!({ "name": old.name, "changed_fields": changes.iter().map(|c| c.path.clone()).collect::<Vec<_>>(),
-                "changes": changes.iter().map(|c| json!({ "path": c.path, "before": c.before, "after": c.after })).collect::<Vec<_>>() }),
+                "changes": vetted_changes(cx.tree, &loc.folder, &old, &changes)? }),
         )];
         let mut relied_on = vec![rev_of(old.id.clone(), old.rev)];
         relied_on.extend(template_dependencies(cx.tree, &new)?);

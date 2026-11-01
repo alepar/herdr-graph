@@ -4,6 +4,7 @@
 use super::adopt::{Adoption, adoption};
 use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
+use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, Retirement};
 use crate::model::seat::SeatRecord;
@@ -510,6 +511,16 @@ fn comp_str<'a>(act: &'a ActionRecord, key: &str) -> Option<&'a str> {
     act.compensation.get(key).and_then(|v| v.as_str())
 }
 
+/// A byte entry of an instruction-edit compensation: `<key>` as text or `<key>_b64`.
+fn comp_bytes(act: &ActionRecord, key: &str) -> Result<Option<Vec<u8>>, PlanError> {
+    if let Some(t) = comp_str(act, key) {
+        return Ok(Some(t.as_bytes().to_vec()));
+    }
+    comp_str(act, &format!("{key}_b64"))
+        .map(|b| b64_decode(b).map_err(|e| invalid(format!("action {} `{key}_b64`: {e}", act.id))))
+        .transpose()
+}
+
 fn comp_doc(act: &ActionRecord, key: &str) -> Result<TemplateDocument, PlanError> {
     act.compensation
         .get(key)
@@ -771,22 +782,30 @@ pub fn instructions_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<I
         file: InstructionFile::parse(scope, file).map_err(ie)?,
     };
     let path = source::path(tree, &target_ref).map_err(ie)?;
-    let current = tree
-        .read_file(&path)?
-        .map(|b| String::from_utf8_lossy(&b).into_owned());
-    if current.as_deref() != comp_str(act, "after") {
+    let current = tree.read_file(&path)?;
+    if current != comp_bytes(act, "after")? {
         return Ok(Inverse::Conflict(format!(
             "{} changed since action {}; resolve it by hand or plan instructions set",
             path.as_str(),
             act.id
         )));
     }
-    let before = comp_str(act, "before");
-    Ok(Inverse::Ready(json!({
+    let before = comp_bytes(act, "before")?;
+    // Text that `plan` would refuse (non-UTF-8, control characters) is restored as raw bytes.
+    let (content, content_b64) = match &before {
+        Some(b) if source::check_content(b).is_err() => (None, Some(b64_encode(b))),
+        Some(b) => (Some(String::from_utf8_lossy(b).into_owned()), None),
+        None => (None, None),
+    };
+    let mut args = json!({
         "action": if before.is_some() { "set" } else { "clear" },
         "scope": target_ref.scope.kind().word(),
         "target": target,
         "file": file,
-        "content": before,
-    })))
+        "content": content,
+    });
+    if let Some(b) = content_b64 {
+        args["content_b64"] = json!(b);
+    }
+    Ok(Inverse::Ready(args))
 }

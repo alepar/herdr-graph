@@ -3178,6 +3178,122 @@ mod instructions {
             sp.plan.warnings
         );
     }
+
+    fn seed_raw(fx: &Fx, path: &RepoPath, bytes: &[u8]) {
+        let mut edits = crate::store::tree::EditSet::default();
+        edits.put(path.clone(), bytes.to_vec());
+        reconnect_seed(fx, edits);
+    }
+
+    #[test]
+    fn before_side_placeholder_never_leaks_bytes() {
+        use crate::plan::line_diff::instruction_diff;
+        let p = "rules/x.md";
+        let cases: [(&[u8], &str); 3] = [
+            (b"a[31mb\n", "U+001B"),
+            (b"a\rb\n", "bare carriage return"),
+            (&[0xff, b'\n'], "UTF-8"),
+        ];
+        for (raw, reason) in cases {
+            let d = instruction_diff(p, Some(raw), Some(b"new\n"));
+            assert!(
+                d.contains("-(rules/x.md: current content is not admissible instruction text"),
+                "{d:?}"
+            );
+            assert!(d.contains(reason), "{reason}: {d:?}");
+            assert!(d.contains("+new"), "{d:?}");
+            assert!(!d.contains('\x1b') && !d.contains('\r'), "{d:?}");
+            assert!(!d.contains('\u{FFFD}'), "{d:?}");
+        }
+    }
+
+    #[test]
+    fn line_ending_only_change_gets_a_note() {
+        use crate::plan::line_diff::{LINE_ENDINGS_NOTE, instruction_diff};
+        let p = "rules/x.md";
+        let note = format!("{LINE_ENDINGS_NOTE}\n");
+        assert_eq!(
+            instruction_diff(p, Some(b"a\nb\n"), Some(b"a\r\nb\r\n")),
+            note
+        );
+        assert_eq!(instruction_diff(p, Some(b"a\nb"), Some(b"a\nb\n")), note);
+        assert_eq!(instruction_diff(p, Some(b"a\n"), Some(b"a\n")), "");
+        assert_eq!(
+            instruction_diff(p, Some(b"a\n"), Some(b"b\n")),
+            unified("a\n", "b\n")
+        );
+    }
+
+    #[test]
+    fn set_over_non_utf8_file_plans_placeholder_and_applies() {
+        use crate::model::b64::b64_encode;
+        let fx = fx();
+        world(&fx);
+        let raw = [0xffu8, 0xfe, b'\n'];
+        seed_raw(&fx, &a1_agents(&fx), &raw);
+        let f = src(&fx, "ok.md", b"ok\n");
+        let sp = plan(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        let diff = sp.plan.effects[0].detail["diff"].as_str().unwrap();
+        assert!(diff.contains("not admissible instruction text"), "{diff}");
+        assert!(diff.contains("+ok"), "{diff}");
+        let shown = render(&sp.plan, &sp.hash);
+        assert!(!shown.contains('\u{FFFD}'), "{shown}");
+        let row = apply_plan(&fx, &sp);
+        assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"ok\n");
+        let act = action_of(&fx, &row);
+        assert_eq!(
+            act.compensation["before_b64"].as_str(),
+            Some(b64_encode(&raw).as_str())
+        );
+        assert!(!act.compensation.contains_key("before"));
+        assert_eq!(act.compensation["after"].as_str(), Some("ok\n"));
+    }
+
+    #[test]
+    fn clear_over_esc_file_plans_placeholder_and_applies() {
+        let fx = fx();
+        world(&fx);
+        seed_raw(&fx, &a1_agents(&fx), b"x\x1b[2Jy\n");
+        let sp = plan(&fx, "instructions clear seat a1 AGENTS.md");
+        let diff = sp.plan.effects[0].detail["diff"].as_str().unwrap();
+        assert!(diff.contains("not admissible instruction text"), "{diff}");
+        assert!(!render(&sp.plan, &sp.hash).contains('\x1b'));
+        let row = apply_plan(&fx, &sp);
+        assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+        assert!(read(&fx, &a1_agents(&fx)).is_none());
+        let act = action_of(&fx, &row);
+        assert_eq!(act.compensation["before"].as_str(), Some("x\x1b[2Jy\n"));
+        assert!(!act.compensation.contains_key("before_b64"));
+    }
+
+    #[test]
+    fn crlf_only_set_shows_note() {
+        use crate::plan::line_diff::LINE_ENDINGS_NOTE;
+        let fx = fx();
+        world(&fx);
+        let lf = src(&fx, "lf.md", b"a\nb\n");
+        commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {lf}"),
+        );
+        let note = format!("{LINE_ENDINGS_NOTE}\n");
+        for (name, bytes) in [("crlf.md", &b"a\r\nb\r\n"[..]), ("nonl.md", &b"a\nb"[..])] {
+            let f = src(&fx, name, bytes);
+            let sp = plan(
+                &fx,
+                &format!("instructions set seat a1 AGENTS.md --from {f}"),
+            );
+            assert_eq!(sp.plan.effects[0].detail["diff"], note, "{name}");
+            assert!(
+                render(&sp.plan, &sp.hash).contains(LINE_ENDINGS_NOTE),
+                "{name}"
+            );
+        }
+    }
 }
 
 #[test]

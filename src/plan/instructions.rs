@@ -1,7 +1,8 @@
 //! `plan instructions set|clear`: the one way an instruction file (global/teamspace rules, seat AGENTS.md and
 //! rules) changes (spec §2.2, §2.2a, §2.4, §4.4). Planning reads the committed revision; apply writes or
-//! deletes the file and records an `InstructionsEdit` action whose compensation is `{file, before, after}`
-//! (full text, key omitted when absent). Staleness is the generic `same_effects` check of `OrgMutation`.
+//! deletes the file and records an `InstructionsEdit` action whose compensation is
+//! `{file, before|before_b64, after|after_b64}` (full text, or base64 when the bytes are not UTF-8; key
+//! omitted when absent). Staleness is the generic `same_effects` check of `OrgMutation`.
 use super::core_kinds::{Acc, mm, parse_args, write_action};
 use super::kind::{OrgKind, PlanBody, PlanCx, PlanError};
 use super::line_diff;
@@ -10,6 +11,7 @@ use crate::bootstrap::instructions::{PatchedTree, cap_warning};
 use crate::daemon::registry::CallerInfo;
 use crate::model::ActionId;
 use crate::model::action::{ActionKind, AffectedObject};
+use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::common::BlobHash;
 use crate::store::instruction_source::{
@@ -37,12 +39,44 @@ struct Args {
     file: String,
     /// New text for `set`; null for `clear`.
     content: Option<String>,
+    /// Raw bytes for `set`, base64: what an undo restores. Never set by `parse`; it skips `check_content`
+    /// because undo puts back exactly what was committed before (rendered as a placeholder if inadmissible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_b64: Option<String>,
 }
 
 impl Args {
     fn is_set(&self) -> bool {
         self.action == "set"
     }
+
+    /// The bytes `set` writes: `content_b64` decoded, else `content` checked; None for `clear`.
+    fn after_bytes(&self, path: &str) -> Result<Option<Vec<u8>>, PlanError> {
+        if !self.is_set() {
+            return Ok(None);
+        }
+        match (&self.content, &self.content_b64) {
+            (Some(text), None) => {
+                source::check_content(text.as_bytes())
+                    .map_err(|e| PlanError::Invalid(format!("{path}: {e}")))?;
+                Ok(Some(text.as_bytes().to_vec()))
+            }
+            (None, Some(b64)) => b64_decode(b64)
+                .map(Some)
+                .map_err(|e| PlanError::Invalid(format!("content_b64: {e}"))),
+            _ => Err(PlanError::Invalid(
+                "set carries exactly one of content and content_b64".into(),
+            )),
+        }
+    }
+}
+
+/// Compensation entry for `bytes`: `<key>` as text when UTF-8, else `<key>_b64`.
+fn put_bytes(comp: &mut toml::Table, key: &str, bytes: &[u8]) {
+    match std::str::from_utf8(bytes) {
+        Ok(t) => comp.insert(key.into(), toml::Value::String(t.to_owned())),
+        Err(_) => comp.insert(format!("{key}_b64"), toml::Value::String(b64_encode(bytes))),
+    };
 }
 
 fn ie(e: InstructionError) -> PlanError {
@@ -161,6 +195,7 @@ impl OrgKind for InstructionsKind {
             target: r.target,
             file,
             content,
+            content_b64: None,
         })
         .expect("args serialize"))
     }
@@ -175,37 +210,24 @@ impl OrgKind for InstructionsKind {
         let res = resolve(cx.tree, &a)?;
         let _act: ActionId = reserved.get_or_mint("act");
         let before = cx.tree.read_file(&res.path)?;
-        let after = if a.is_set() {
-            let text = a
-                .content
-                .as_deref()
-                .ok_or_else(|| PlanError::Invalid("set carries no content".into()))?;
-            source::check_content(text.as_bytes())
-                .map_err(|e| PlanError::Invalid(format!("{}: {e}", res.path.as_str())))?;
-            if before.as_deref() == Some(text.as_bytes()) {
+        let after = a.after_bytes(res.path.as_str())?;
+        if a.is_set() {
+            if before == after {
                 return Err(PlanError::Invalid(format!(
                     "no change: {} already has this content",
                     res.path.as_str()
                 )));
             }
-            Some(text.as_bytes().to_vec())
-        } else {
-            if before.is_none() {
-                return Err(PlanError::Invalid(format!(
-                    "no such instruction file {}",
-                    res.path.as_str()
-                )));
-            }
-            None
-        };
+        } else if before.is_none() {
+            return Err(PlanError::Invalid(format!(
+                "no such instruction file {}",
+                res.path.as_str()
+            )));
+        }
         let before_sha = before.as_deref().map(blob_sha).transpose()?;
         let after_sha = after.as_deref().map(blob_sha).transpose()?;
-        let text_of = |b: &Option<Vec<u8>>| {
-            b.as_deref()
-                .map(|b| String::from_utf8_lossy(b).into_owned())
-                .unwrap_or_default()
-        };
-        let diff = line_diff::unified(&text_of(&before), &text_of(&after));
+        let diff =
+            line_diff::instruction_diff(res.path.as_str(), before.as_deref(), after.as_deref());
         let effect = PlanEffect::new(
             &format!("instructions.{}", a.action),
             res.object.clone(),
@@ -271,30 +293,18 @@ impl OrgKind for InstructionsKind {
             .get("act")
             .ok_or_else(|| MutationError::Bug("plan reserved no act id".into()))?;
         let before = cx.tree.read_file(&res.path)?;
-        let text_of = |b: Vec<u8>| {
-            String::from_utf8(b)
-                .map_err(|_| MutationError::Bug(format!("{} is not UTF-8", res.path.as_str())))
-        };
-        let before_text = before.map(text_of).transpose()?;
-        let after_text = if a.is_set() {
-            let text = a
-                .content
-                .clone()
-                .ok_or_else(|| MutationError::Bug("set carries no content".into()))?;
-            cx.tree
-                .put_file(res.path.clone(), text.clone().into_bytes());
-            Some(text)
-        } else {
-            cx.tree.delete_file(&res.path);
-            None
-        };
+        let after = a.after_bytes(res.path.as_str()).map_err(mm)?;
+        match &after {
+            Some(b) => cx.tree.put_file(res.path.clone(), b.clone()),
+            None => cx.tree.delete_file(&res.path),
+        }
         let mut comp = toml::Table::new();
         comp.insert("file".into(), toml::Value::String(a.file.clone()));
-        if let Some(t) = before_text {
-            comp.insert("before".into(), toml::Value::String(t));
+        if let Some(b) = &before {
+            put_bytes(&mut comp, "before", b);
         }
-        if let Some(t) = after_text {
-            comp.insert("after".into(), toml::Value::String(t));
+        if let Some(b) = &after {
+            put_bytes(&mut comp, "after", b);
         }
         let acc = Acc {
             affected: vec![AffectedObject {

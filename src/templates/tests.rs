@@ -2422,6 +2422,63 @@ fn template_edit_rejects_inadmissible_agents_md() {
 }
 
 #[test]
+fn template_edit_before_is_vetted() {
+    let fx = fx();
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    let dir = layout::locate(&view(&fx), &tpl(&fx, "solo").id.to_any())
+        .unwrap()
+        .unwrap()
+        .folder;
+    let head = fx.store.head().unwrap();
+    let mut edits = crate::store::tree::EditSet::default();
+    edits.put(
+        layout::member_agents_md(&dir, "lead"),
+        b"old \x1b[31m\n".to_vec(),
+    );
+    edits.put(dir.join("AGENTS.md").unwrap(), vec![0xff, 0xfe]);
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|repo| {
+            let sig = crate::store::git::graph_signature()?;
+            let parent = repo.find_commit(git2::Oid::from_str(&head.0)?)?;
+            repo.commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "raw instruction fixture",
+                &repo.find_tree(tree)?,
+                &[&parent],
+            )
+        })
+        .unwrap();
+    let path = write_doc(&fx, &agents_doc("solo", &a, "new root", "new member", "ok"));
+    let sp = plan(&fx, &format!("template edit solo --from {path}"));
+    let changes = sp.plan.effects[0].detail["changes"].as_array().unwrap();
+    let before_of = |p: &str| {
+        changes
+            .iter()
+            .find(|c| c["path"] == p)
+            .unwrap_or_else(|| panic!("{p}: {changes:?}"))["before"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    for p in ["agents_md".to_owned(), format!("members.{a}.agents_md")] {
+        let b = before_of(&p);
+        assert!(b.contains("not admissible instruction text"), "{p}: {b}");
+        assert!(!b.contains('\x1b') && !b.contains('\u{FFFD}'), "{p}: {b:?}");
+    }
+    let shown = crate::plan::commands::render(&sp.plan, &sp.hash);
+    assert!(
+        !shown.contains('\x1b') && !shown.contains('\u{FFFD}'),
+        "{shown}"
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+}
+
+#[test]
 fn template_edit_cap_warning() {
     let fx = fx();
     alpha(&fx);
