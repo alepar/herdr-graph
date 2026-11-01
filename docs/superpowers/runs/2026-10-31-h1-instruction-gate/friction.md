@@ -20,3 +20,4 @@
 - [2026-11-01 fix-loop r2] the round-2 step-back record was saved condensed (exact keys and cluster rules, paraphrased summary/pattern) rather than verbatim; step-back-check passed.
 - [2026-11-01 roast-code r1/r2] PR-mode reproduce seats built cargo targets in the session scratchpad on /tmp (tgt, target, target-c15, iso-scout-target, ~19.7 GB on a shared 32G tmpfs; /tmp hit 0 MB free transiently). Removed after verifying no users; round 3's artifact text forbids /tmp builds. The roast prompts carry no build-location guard of their own (upstream gap).
 - [2026-11-01 fix-loop r2] a task agent again committed test logs under evidence/ (hg-45e.46); removed. Task prompts lack a no-committed-logs rule.
+- [2026-11-01 roast-code r3] assembler not re-dispatched (provenance gaps unchanged; deterministic typed result); direct review of the captured range; reviewers told not to build under /tmp.
