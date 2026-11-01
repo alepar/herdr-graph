@@ -18,7 +18,7 @@ use crate::store::instruction_source::{
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::TreeRead;
-use crate::templates::document::{DocumentMember, TemplateDocument};
+use crate::templates::document::{DocumentMember, FieldChange, TemplateDocument};
 use crate::templates::structure::read_template;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -749,7 +749,63 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             c.after.as_ref(),
         )?;
     }
-    Ok(Inverse::Ready(template_edit_args(&tpl, &doc)))
+    // Instruction files the restore writes: the recorded document text is lossy for inadmissible bytes,
+    // so the exact bytes come from the record, or the undo is refused.
+    let mut raw = serde_json::Map::new();
+    for c in &changes {
+        let Some((path, text)) = restored_instruction(&before, c) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let Some(b64) = act
+            .compensation
+            .get("before_raw")
+            .and_then(|t| t.get(path.as_str()))
+            .and_then(|v| v.as_str())
+        else {
+            return Ok(Inverse::Conflict(format!(
+                "action {} restores {path}, but the record {NO_RAW_BYTES} and cannot restore the file \
+                 exactly; restore it by hand or plan template edit",
+                act.id
+            )));
+        };
+        let bytes = b64_decode(b64)
+            .map_err(|e| invalid(format!("action {} `before_raw.{path}`: {e}", act.id)))?;
+        if source::check_content(&bytes).is_ok_and(|t| t == text) {
+            continue;
+        }
+        raw.insert(path, json!(b64));
+    }
+    let mut args = template_edit_args(&tpl, &doc);
+    if !raw.is_empty() {
+        args["agents_md_raw"] = Value::Object(raw);
+    }
+    Ok(Inverse::Ready(args))
+}
+
+/// Stable wording of the refusal for a template-edit record without `before_raw`.
+pub const NO_RAW_BYTES: &str = "predates raw-byte undo records";
+
+/// The instruction file restoring change `c` writes: `(raw-record path, recorded before text)`.
+fn restored_instruction(
+    before_doc: &TemplateDocument,
+    c: &FieldChange,
+) -> Option<(String, String)> {
+    let text = |v: Option<&Value>| v.and_then(Value::as_str).map(str::to_owned);
+    if c.path == "agents_md" {
+        return Some((c.path.clone(), text(c.before.as_ref())?));
+    }
+    let rest = c.path.strip_prefix("members.")?;
+    if rest.ends_with(".agents_md") {
+        return Some((c.path.clone(), text(c.before.as_ref())?));
+    }
+    if !rest.contains('.') && c.before.is_some() && c.after.is_none() {
+        let m = before_doc.members.iter().find(|m| member_key(m) == rest)?;
+        return Some((format!("members.{rest}.agents_md"), m.agents_md.clone()?));
+    }
+    None
 }
 
 /// Arguments of the template edit that applies the inverse patch.

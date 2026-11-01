@@ -2506,3 +2506,160 @@ fn template_edit_cap_warning() {
         .unwrap_or_else(|| panic!("{:?}", sp.plan.warnings));
     assert!(w.contains("template solo"), "{w}");
 }
+
+/// Commit raw file bytes (any content, including inadmissible instruction text) onto the graph head.
+fn commit_raw(fx: &Fx, files: &[(crate::ports::store::RepoPath, Vec<u8>)]) {
+    let head = fx.store.head().unwrap();
+    let mut edits = crate::store::tree::EditSet::default();
+    for (path, bytes) in files {
+        edits.put(path.clone(), bytes.clone());
+    }
+    let tree = fx.store.build_tree(&head, &edits).unwrap();
+    fx.store
+        .with_repo(|repo| {
+            let sig = crate::store::git::graph_signature()?;
+            let parent = repo.find_commit(git2::Oid::from_str(&head.0)?)?;
+            repo.commit(
+                Some("refs/heads/main"),
+                &sig,
+                &sig,
+                "raw instruction fixture",
+                &repo.find_tree(tree)?,
+                &[&parent],
+            )
+        })
+        .unwrap();
+}
+
+fn file_bytes(fx: &Fx, path: &crate::ports::store::RepoPath) -> Option<Vec<u8>> {
+    fx.store.read_file(&fx.store.head().unwrap(), path).unwrap()
+}
+
+fn template_dir(fx: &Fx, name: &str) -> crate::ports::store::RepoPath {
+    layout::locate(&view(fx), &tpl(fx, name).id.to_any())
+        .unwrap()
+        .unwrap()
+        .folder
+}
+
+const RAW_LEAD: &[u8] = &[0xff, b'o', b'l', b'd', b'\n'];
+const RAW_ROOT: &[u8] = b"root \x1b[31m\n";
+
+#[test]
+fn template_edit_undo_restores_raw_agents_md() {
+    let fx = fx();
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    let dir = template_dir(&fx, "solo");
+    let lead = layout::member_agents_md(&dir, "lead");
+    let root = dir.join("AGENTS.md").unwrap();
+    commit_raw(
+        &fx,
+        &[
+            (lead.clone(), RAW_LEAD.to_vec()),
+            (root.clone(), RAW_ROOT.to_vec()),
+        ],
+    );
+    let path = write_doc(&fx, &agents_doc("solo", &a, "new root", "new member", "ok"));
+    let row = commit(&fx, &format!("template edit solo --from {path}"));
+    assert_eq!(file_bytes(&fx, &lead).unwrap(), b"new member");
+    let act = action_of(&fx, &row);
+
+    let undo = plan(&fx, &format!("undo {}", act.id));
+    assert!(
+        undo.plan.repair_required.is_none(),
+        "{:?}",
+        undo.plan.repair_required
+    );
+    let shown = crate::plan::commands::render(&undo.plan, &undo.hash);
+    assert!(
+        !shown.contains('\x1b') && !shown.contains('\u{FFFD}'),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("restored content is not admissible instruction text"),
+        "{shown}"
+    );
+    assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+    assert_eq!(file_bytes(&fx, &lead).unwrap(), RAW_LEAD);
+    assert_eq!(file_bytes(&fx, &root).unwrap(), RAW_ROOT);
+}
+
+#[test]
+fn template_edit_undo_restores_removed_member_raw_agents_md() {
+    let fx = fx();
+    let (a, b) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "duo",
+        &[m(&a, "lead", "deferred"), m(&b, "other", "deferred")],
+        &[],
+    );
+    let dir = template_dir(&fx, "duo");
+    let lead = layout::member_agents_md(&dir, "lead");
+    commit_raw(&fx, &[(lead.clone(), RAW_LEAD.to_vec())]);
+    let doc = format!(
+        "name = \"duo\"\n\n[[members]]\nid = \"{b}\"\nname = \"other\"\nstartup = \"deferred\"\n"
+    );
+    let path = write_doc(&fx, &doc);
+    let row = commit(&fx, &format!("template edit duo --from {path}"));
+    assert_eq!(tpl(&fx, "duo").members.len(), 1);
+    assert!(file_bytes(&fx, &lead).is_none());
+    let act = action_of(&fx, &row);
+
+    let undo = plan(&fx, &format!("undo {}", act.id));
+    assert!(
+        undo.plan.repair_required.is_none(),
+        "{:?}",
+        undo.plan.repair_required
+    );
+    assert_eq!(apply_plan(&fx, &undo).state, OpState::Committed);
+    assert_eq!(tpl(&fx, "duo").members.len(), 2);
+    assert_eq!(file_bytes(&fx, &lead).unwrap(), RAW_LEAD);
+}
+
+#[test]
+fn template_edit_undo_old_record_without_raw_bytes_is_repair_required() {
+    let fx = fx();
+    let a = MemberId::new();
+    create_template(&fx, "solo", &[m(&a, "lead", "deferred")], &[]);
+    let dir = template_dir(&fx, "solo");
+    commit_raw(
+        &fx,
+        &[(layout::member_agents_md(&dir, "lead"), b"old\n".to_vec())],
+    );
+    let path = write_doc(&fx, &agents_doc("solo", &a, "root", "new\\n", "ok"));
+    let row = commit(&fx, &format!("template edit solo --from {path}"));
+    let act = action_of(&fx, &row);
+
+    // Rewrite the committed record the way a build without raw-byte records wrote it.
+    let record = layout::locate(&view(&fx), &act.id.to_any())
+        .unwrap()
+        .unwrap()
+        .record_path;
+    let text = String::from_utf8(file_bytes(&fx, &record).unwrap()).unwrap();
+    let mut table: toml::Table = toml::from_str(&text).unwrap();
+    let comp = table["compensation"].as_table_mut().unwrap();
+    assert!(comp.remove("before_raw").is_some(), "record: {text}");
+    commit_raw(
+        &fx,
+        &[(record, toml::to_string(&table).unwrap().into_bytes())],
+    );
+
+    let undo = plan(&fx, &format!("undo {}", act.id));
+    let why = undo.plan.repair_required.clone().expect("repair_required");
+    assert!(why.contains(crate::undo::preview::NO_RAW_BYTES), "{why}");
+    let err = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        undo.plan.id.as_str(),
+        Some(&undo.hash),
+        "relay",
+    )
+    .expect_err("a repair_required plan cannot be applied");
+    assert!(err.message.contains("requires repair"), "{}", err.message);
+    assert_eq!(
+        file_bytes(&fx, &layout::member_agents_md(&dir, "lead")).unwrap(),
+        b"new\n"
+    );
+}

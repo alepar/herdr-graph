@@ -1127,7 +1127,11 @@ fn undo_restores_raw_bytes(raw: &[u8]) {
         [seat_named(&fx, "a1").id.to_any()]
     );
     let diff = sp.plan.effects[0].detail["diff"].as_str().unwrap();
-    assert!(diff.contains("+"), "{diff}");
+    assert!(
+        diff.lines().any(|l| l.starts_with("+(")
+            && l.contains("restored content is not admissible instruction text")),
+        "{diff}"
+    );
     let shown = crate::plan::commands::render(&sp.plan, &sp.hash);
     assert!(
         !shown.contains('\u{FFFD}') && !shown.contains('\x1b'),
@@ -1154,6 +1158,10 @@ fn undo_instruction_clear_over_esc_restores_bytes() {
     let sp = plan(&fx, &format!("undo {}", action_of(&fx, &row).id));
     let shown = crate::plan::commands::render(&sp.plan, &sp.hash);
     assert!(!shown.contains('\x1b'), "{shown}");
+    assert!(
+        shown.contains("restored content is not admissible instruction text"),
+        "{shown}"
+    );
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
     assert_eq!(rule_bytes(&fx).as_deref(), Some(&raw[..]));

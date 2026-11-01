@@ -1317,6 +1317,42 @@ mod tests {
         assert_eq!(o.harness, Some(Harness::Codex), "untouched field stays");
     }
 
+    /// Seat override records no action and is not undoable (spec §2.5); this round trip pins that a
+    /// section body keeps its bytes (tabs, CRLF, a missing trailing newline) through set, replace, reset.
+    #[test]
+    fn seat_override_section_round_trips_bytes() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = ("a\tb\r\nc\r\n", "other");
+        std::fs::write(dir.path().join("a.md"), a).unwrap();
+        std::fs::write(dir.path().join("b.md"), b).unwrap();
+        let caller = CallerInfo {
+            cwd: Some(dir.path().into()),
+            ..Default::default()
+        };
+        let set = |file: &str| {
+            let sp = plan_as(
+                &fx,
+                &caller,
+                &format!("seat override one --section s={file}"),
+            );
+            assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+            seat(&fx, "one").overrides.instructions_sections
+        };
+        let section = |body: &str| {
+            vec![InstructionSection {
+                name: "s".into(),
+                body: body.into(),
+            }]
+        };
+        let first = set("a.md");
+        assert_eq!(first, section(a));
+        assert_eq!(set("b.md"), section(b));
+        assert_eq!(set("a.md"), first);
+    }
+
     #[test]
     fn seat_override_rejects_set_and_clear_of_one_field_and_no_ops() {
         let fx = fx();
