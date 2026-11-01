@@ -749,8 +749,9 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             c.after.as_ref(),
         )?;
     }
-    // Instruction files the restore writes: the recorded document text is lossy for inadmissible bytes,
-    // so the exact bytes come from the record, or the undo is refused.
+    // Instruction files the restore writes: exact bytes come from `before_raw`. Without it, recorded text
+    // that is admissible and free of U+FFFD is exact (the only lossy step is `from_utf8_lossy`); anything
+    // else is refused.
     let mut raw = serde_json::Map::new();
     for c in &changes {
         let Some((path, text)) = restored_instruction(&before, c) else {
@@ -765,9 +766,13 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
             .and_then(|t| t.get(path.as_str()))
             .and_then(|v| v.as_str())
         else {
+            if !text.contains('\u{FFFD}') && source::check_content(text.as_bytes()).is_ok() {
+                continue;
+            }
             return Ok(Inverse::Conflict(format!(
-                "action {} restores {path}, but the record {NO_RAW_BYTES} and cannot restore the file \
-                 exactly; restore it by hand or plan template edit",
+                "action {} restores {path}, but the record {NO_RAW_BYTES} and its recorded text is lossy \
+                 or inadmissible, so the file cannot be restored exactly; restore it by hand or plan \
+                 template edit",
                 act.id
             )));
         };
@@ -785,7 +790,8 @@ pub fn template_inverse(tree: &dyn TreeRead, act: &ActionRecord) -> Result<Inver
     Ok(Inverse::Ready(args))
 }
 
-/// Stable wording of the refusal for a template-edit record without `before_raw`.
+/// Stable wording of the refusal for a template-edit record without `before_raw` whose recorded text
+/// is lossy (U+FFFD) or inadmissible; admissible text without U+FFFD restores exactly without it.
 pub const NO_RAW_BYTES: &str = "predates raw-byte undo records";
 
 /// The instruction file restoring change `c` writes: `(raw-record path, recorded before text)`.

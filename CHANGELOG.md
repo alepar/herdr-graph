@@ -24,6 +24,8 @@
 
 Existing instances are not migrated automatically. The shipped summarizer template now uses `request complete --summary-from`. Update the instance's summarizer template through `plan template edit`. Seats hydrated earlier from an inline (non-`seat_template`) member, the summarizer included, carry a seeded seat `AGENTS.md` copy that renders last and shadows the edited template: for each such seat run `herdr-graph plan instructions clear seat <name> AGENTS.md`, then apply.
 
+Template edits recorded before this release carry no raw bytes. `plan undo` restores their `AGENTS.md` text when it is admissible, and refuses with `repair_required` when the recorded text is lossy (invalid UTF-8, shown as U+FFFD) or inadmissible; restore such a file by hand or through `plan template edit`.
+
 ## v0.2.0 — 2026-10-30
 
 ### Added
