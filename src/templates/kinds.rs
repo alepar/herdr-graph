@@ -263,44 +263,52 @@ fn vetted_changes(
     Ok(out)
 }
 
-fn write_agents(
-    cx: &mut MutationCx<'_>,
+/// The ordered file writes (`None` = delete) that place a template document's instruction files:
+/// the one placement both `write_agents` and the cap estimate apply.
+fn agents_placement(
+    tree: &dyn TreeRead,
     tpl_dir: &RepoPath,
     doc: &TemplateDocument,
     old: Option<&TemplateRecord>,
-) -> Result<(), MutationError> {
+) -> Result<Vec<(RepoPath, Option<Vec<u8>>)>, StoreError> {
+    let mut writes = Vec::new();
     // Snapshot by identity before touching paths: names can swap, and an inverse rename must
     // carry today's instructions rather than the text recorded before the original rename.
     let mut retained = BTreeMap::new();
     if let Some(old) = old {
         for m in &old.members {
-            retained.insert(m.id.clone(), agents_md(&cx.tree, tpl_dir, &m.name)?);
+            retained.insert(m.id.clone(), agents_md(tree, tpl_dir, &m.name)?);
         }
         for m in &old.members {
-            cx.tree
-                .delete_file(&layout::member_agents_md(tpl_dir, &slugify(&m.name)));
+            writes.push((layout::member_agents_md(tpl_dir, &slugify(&m.name)), None));
         }
     }
     if let Some(text) = &doc.agents_md {
         let path = tpl_dir.join("AGENTS.md")?;
-        if text.is_empty() {
-            cx.tree.delete_file(&path);
-        } else {
-            cx.tree.put_file(path, text.as_bytes().to_vec());
-        }
+        writes.push((path, (!text.is_empty()).then(|| text.as_bytes().to_vec())));
     }
     for m in &doc.members {
         let bytes = match &m.agents_md {
             Some(text) => (!text.is_empty()).then(|| text.as_bytes().to_vec()),
             None => m.id.as_ref().and_then(|id| retained.remove(id).flatten()),
         };
-        let path = layout::member_agents_md(tpl_dir, &slugify(&m.name));
-        if let Some(bytes) = bytes {
-            cx.tree.put_file(path, bytes);
-        } else {
-            // A new member or a member with absent instructions cannot inherit stale text
-            // from the previous owner of its destination path.
-            cx.tree.delete_file(&path);
+        // A new member or a member with absent instructions cannot inherit stale text
+        // from the previous owner of its destination path.
+        writes.push((layout::member_agents_md(tpl_dir, &slugify(&m.name)), bytes));
+    }
+    Ok(writes)
+}
+
+fn write_agents(
+    cx: &mut MutationCx<'_>,
+    tpl_dir: &RepoPath,
+    doc: &TemplateDocument,
+    old: Option<&TemplateRecord>,
+) -> Result<(), MutationError> {
+    for (path, bytes) in agents_placement(&cx.tree, tpl_dir, doc, old)? {
+        match bytes {
+            Some(bytes) => cx.tree.put_file(path, bytes),
+            None => cx.tree.delete_file(&path),
         }
     }
     Ok(())
@@ -1175,8 +1183,9 @@ impl OrgKind for TemplateEdit {
             c.path == "agents_md"
                 || c.path.ends_with(".agents_md")
                 || c.path.ends_with(".responsibility")
-        }) {
-            warnings.extend(edit_cap_warnings(cx, &loc, &new, &after)?);
+        }) || edit.apps.iter().any(|ae| !ae.adds.is_empty())
+        {
+            warnings.extend(edit_cap_warnings(cx, &loc, &old, &new, &after, &edit.apps)?);
         }
         Ok(PlanBody {
             effects,
@@ -1374,41 +1383,74 @@ fn raw_before_files(
     Ok(out)
 }
 
-/// The edited document as stored: ids resolved, `agents_md` kept only where the edit sets it.
 /// The §4.4 hook-cap warnings for every live seat taking part in the edited template, sized on the
-/// committed tree with the edited template files laid over it.
+/// committed tree with the edit laid over it: the template record and instruction files exactly as
+/// `write_agents` places them, the seats the edit creates or resurrects, and the application maps.
 fn edit_cap_warnings(
     cx: &PlanCx<'_>,
     loc: &ObjectLocation,
+    old: &TemplateRecord,
     new: &TemplateRecord,
     after: &TemplateDocument,
+    apps: &[AppEdit],
 ) -> Result<Vec<String>, PlanError> {
     let mut patched = PatchedTree::new(cx.tree);
     patched.put(loc.record_path.clone(), to_toml_bytes(new)?);
-    if let Some(text) = &after.agents_md {
-        let path = loc.folder.join("AGENTS.md")?;
-        if text.is_empty() {
-            patched.delete(path);
-        } else {
-            patched.put(path, text.as_bytes().to_vec());
+    for (path, bytes) in agents_placement(cx.tree, &loc.folder, after, Some(old))? {
+        match bytes {
+            Some(bytes) => patched.put(path, bytes),
+            None => patched.delete(path),
         }
     }
-    for m in &after.members {
-        if let Some(text) = &m.agents_md {
-            let path = layout::member_agents_md(&loc.folder, &slugify(&m.name));
-            if text.is_empty() {
-                patched.delete(path);
-            } else {
-                patched.put(path, text.as_bytes().to_vec());
+    for ae in apps {
+        let mut app = ae.app.clone();
+        for w in &ae.withdraw {
+            app.member_map.remove(&w.member);
+        }
+        for add in &ae.adds {
+            match add {
+                AddOp::Create { member, seat, .. } => {
+                    let slug = seat_slug_for(cx.tree, &ae.ts.loc.folder, &member.name, seat, None)?;
+                    let stand_in = member_seat_record(
+                        seat.clone(),
+                        &new.id,
+                        member,
+                        &ae.app.teamspace,
+                        &ae.app.id,
+                    );
+                    patched.put(
+                        layout::seat_record(&layout::seat_dir(&ae.ts.loc.folder, &slug)),
+                        to_toml_bytes(&stand_in)?,
+                    );
+                    app.member_map.insert(member.id.clone(), seat.clone());
+                }
+                AddOp::Resurrect { member, seat, .. } => {
+                    if let Some((seat_loc, mut rec)) = read_seat_rec(cx.tree, seat)? {
+                        rec.lifecycle = if member.startup == Startup::Active {
+                            Lifecycle::Active
+                        } else {
+                            Lifecycle::Dormant
+                        };
+                        rec.retired = None;
+                        if !rec.applications.contains(&ae.app.id) {
+                            rec.applications.push(ae.app.id.clone());
+                        }
+                        patched.put(seat_loc.record_path, to_toml_bytes(&rec)?);
+                    }
+                    app.member_map.insert(member.id.clone(), seat.clone());
+                }
             }
+        }
+        if let Some(app_loc) = layout::locate(cx.tree, &app.id.to_any())? {
+            patched.put(app_loc.record_path, to_toml_bytes(&app)?);
         }
     }
     let mut out = Vec::new();
-    for (_, seat) in layout::all_seats(cx.tree)? {
+    for (_, seat) in layout::all_seats(&patched)? {
         if seat.lifecycle == Lifecycle::Retired {
             continue;
         }
-        if !template_participation(cx.tree, &seat)?
+        if !template_participation(&patched, &seat)?
             .iter()
             .any(|p| p.template.record_path == loc.record_path)
         {
@@ -1421,6 +1463,7 @@ fn edit_cap_warnings(
     Ok(out)
 }
 
+/// The edited document as stored: ids resolved, `agents_md` kept only where the edit sets it.
 fn merged_after(new: &TemplateRecord, doc: &TemplateDocument) -> TemplateDocument {
     let mut after = TemplateDocument::from_record(new);
     after.agents_md = doc.agents_md.clone();

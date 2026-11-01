@@ -502,7 +502,11 @@ impl OrgKind for SeatOverride {
         }
         let summary = format!("override seat {} config", f.rec.name);
         let mut out = body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary);
-        if a.set.instructions_sections.is_some() {
+        if a.set.instructions_sections.is_some()
+            || a.clear
+                .iter()
+                .any(|c| canonical_field(c) == Some("instructions_sections"))
+        {
             let mut patched = PatchedTree::new(cx.tree);
             patched.put(f.loc.record_path.clone(), to_toml_bytes(&edited)?);
             out.warnings
