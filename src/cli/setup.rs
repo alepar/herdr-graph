@@ -78,6 +78,8 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
             "hook: {}",
             if r.hook_removed {
                 "removed"
+            } else if r.hook_kept {
+                "left in place (present before setup)"
             } else {
                 "not installed"
             }

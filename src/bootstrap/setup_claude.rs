@@ -6,7 +6,9 @@
 //! Ownership follows the herdr-threads pattern: the installed hook group is recognised by an installation
 //! marker (a trailing shell comment in its command, so Claude's settings schema sees nothing unusual), and a
 //! small manifest beside `settings.json` records what the installer did. Install is idempotent: a second run
-//! changes nothing. Uninstall removes exactly the owned group and the two skill directories. When
+//! changes nothing. Install never overwrites a rules file it did not write (it refuses instead), and
+//! anything it would own that already exists byte-identical (hook group, ask entries, rules file) is recorded
+//! as pre-existing: uninstall leaves those in place. Uninstall removes exactly what setup added, and the two skill directories. When
 //! `settings.json` is still byte-for-byte what the installer wrote, it is restored to its exact prior bytes
 //! (or removed when the installer created it); when someone edited it since, only the owned group is taken
 //! out of the parsed document and every other hook and setting stays.
@@ -213,6 +215,8 @@ pub struct InstallReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UninstallReport {
     pub hook_removed: bool,
+    /// An owned hook group was left in place because it was already there before setup.
+    pub hook_kept: bool,
     /// An apply approval entry or rules file this installer added was removed.
     pub gate_removed: bool,
     pub skills_removed: Vec<String>,
@@ -241,6 +245,9 @@ struct Manifest {
     gate_file: bool,
     /// The installer created the `rules/` directory.
     created_rules_dir: bool,
+    /// The owned hook group was already present, byte-identical to what setup would install, when setup
+    /// first ran; it is not ours.
+    hook_preexisting: bool,
 }
 
 impl Manifest {
@@ -262,6 +269,7 @@ impl Manifest {
                 .unwrap_or_default(),
             gate_file: v["gate_file"].as_bool().unwrap_or(false),
             created_rules_dir: v["created_rules_dir"].as_bool().unwrap_or(false),
+            hook_preexisting: v["hook_preexisting"].as_bool().unwrap_or(false),
         })
     }
 
@@ -271,6 +279,7 @@ impl Manifest {
             "restorable": self.restorable, "created_skills_root": self.created_skills_root,
             "gate_entries": self.gate_entries, "gate_file": self.gate_file,
             "created_rules_dir": self.created_rules_dir,
+            "hook_preexisting": self.hook_preexisting,
         });
         std::fs::write(path, serde_json::to_string_pretty(&v)? + "\n")
             .with_context(|| format!("writing {}", path.display()))
@@ -351,6 +360,9 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         }
     };
 
+    let old_manifest = Manifest::read(&manifest_path);
+    let rules_owned = old_manifest.as_ref().is_some_and(|m| m.gate_file);
+
     // The apply approval gate, computed before anything is written.
     let mut added = Vec::new();
     let mut rules_write: Option<String> = None;
@@ -385,8 +397,15 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         }
         ApprovalGate::RulesFile => {
             let desired = rules_text(binary);
-            match std::fs::read_to_string(config.join(RULES_FILE)) {
+            let path = config.join(RULES_FILE);
+            match std::fs::read_to_string(&path) {
                 Ok(t) if t == desired => HookChange::Unchanged,
+                Ok(_) if !rules_owned => bail!(
+                    "{} already exists with different content and was not written by herdr-graph setup; \
+                     not modified. Merge the apply prompt rules into it by hand, or remove or rename it \
+                     and run setup codex again",
+                    path.display()
+                ),
                 Ok(_) => {
                     rules_write = Some(desired);
                     HookChange::Updated
@@ -399,7 +418,6 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         }
     };
 
-    let old_manifest = Manifest::read(&manifest_path);
     let first_install = old_manifest.is_none();
     let skills_root_existed = skills_root(config).exists();
     let settings_changed = hook != HookChange::Unchanged || !added.is_empty();
@@ -408,6 +426,7 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         None => Manifest {
             original: before.clone(),
             restorable: true,
+            hook_preexisting: hook == HookChange::Unchanged,
             ..Manifest::default()
         },
     };
@@ -431,6 +450,7 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
         m = Manifest {
             original: Some(text.clone()),
             installed_sha: sha(text.as_bytes()),
+            hook_preexisting: hook == HookChange::Unchanged,
             ..Manifest::default()
         };
     }
@@ -492,6 +512,7 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
     let current = std::fs::read_to_string(&settings).ok();
     let mut hook_removed = false;
     let mut gate_removed = false;
+    let hook_preexisting = manifest.as_ref().is_some_and(|m| m.hook_preexisting);
 
     if let Some(text) = &current {
         let exact = manifest
@@ -503,15 +524,16 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
                 Some(original) => std::fs::write(&settings, original)?,
                 None => std::fs::remove_file(&settings)?,
             }
-            hook_removed = true;
+            hook_removed = !hook_preexisting;
             gate_removed = manifest
                 .as_ref()
                 .is_some_and(|m| !m.gate_entries.is_empty());
         } else {
             let mut doc = parse_settings(&settings, text)?;
-            let had_owned = doc["hooks"]["SessionStart"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(is_owned));
+            let had_owned = !hook_preexisting
+                && doc["hooks"]["SessionStart"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(is_owned));
             let recorded: &[String] = manifest.as_ref().map_or(&[], |m| &m.gate_entries);
             if had_owned || !recorded.is_empty() {
                 let obj = doc.as_object_mut().expect("checked to be an object");
@@ -593,8 +615,18 @@ pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<Uninstall
     if manifest.is_some() {
         std::fs::remove_file(&manifest_path)?;
     }
+    let hook_kept = hook_preexisting
+        && current
+            .as_deref()
+            .and_then(|t| serde_json::from_str::<Value>(t).ok())
+            .is_some_and(|d| {
+                d["hooks"]["SessionStart"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(is_owned))
+            });
     Ok(UninstallReport {
         hook_removed,
+        hook_kept,
         gate_removed,
         skills_removed,
     })

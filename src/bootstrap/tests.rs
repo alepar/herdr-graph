@@ -1376,6 +1376,90 @@ fn setup_codex_writes_and_removes_the_rules_file() {
 }
 
 #[test]
+fn setup_codex_refuses_a_different_preexisting_rules_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(config.join("rules")).unwrap();
+    std::fs::write(config.join("hooks.json"), r#"{"hooks":{}}"#).unwrap();
+    let rules = config.join("rules/herdr-graph.rules");
+    std::fs::write(&rules, "# mine\n").unwrap();
+
+    let err = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("rules/herdr-graph.rules"), "{err}");
+    assert!(err.contains("remove or rename"), "{err}");
+    assert_eq!(std::fs::read_to_string(&rules).unwrap(), "# mine\n");
+    assert_eq!(
+        std::fs::read_to_string(config.join("hooks.json")).unwrap(),
+        r#"{"hooks":{}}"#
+    );
+    assert!(!config.join("herdr-graph-setup.json").exists());
+    assert!(!config.join("skills").exists());
+}
+
+#[test]
+fn setup_codex_keeps_an_identical_preexisting_rules_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(config.join("rules")).unwrap();
+    let rules = config.join("rules/herdr-graph.rules");
+    let text = setup_claude::rules_text(Path::new(BIN));
+    std::fs::write(&rules, &text).unwrap();
+
+    let report = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(report.gate, HookChange::Unchanged);
+    let manifest = read_json(&config.join("herdr-graph-setup.json"));
+    assert_eq!(manifest["gate_file"], false);
+
+    let removed = setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert!(!removed.gate_removed);
+    assert_eq!(std::fs::read_to_string(&rules).unwrap(), text);
+}
+
+#[test]
+fn setup_claude_keeps_a_preexisting_identical_hook_group() {
+    let owned = {
+        let scratch = tempfile::tempdir().unwrap();
+        setup_claude::install(scratch.path(), Path::new(BIN)).unwrap();
+        owned_groups(&read_json(&scratch.path().join("settings.json")))
+            .pop()
+            .unwrap()
+    };
+    let asks = setup_claude::ask_entries(Path::new(BIN));
+    for with_asks in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("claude");
+        std::fs::create_dir_all(&config).unwrap();
+        let mut doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
+        if with_asks {
+            doc["permissions"] = serde_json::json!({"ask": asks});
+        }
+        let original = serde_json::to_string_pretty(&doc).unwrap() + "\n";
+        std::fs::write(config.join("settings.json"), &original).unwrap();
+
+        let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
+        assert_eq!(report.hook, HookChange::Unchanged, "with_asks={with_asks}");
+        let removed = setup_claude::uninstall(&config).unwrap();
+        assert!(!removed.hook_removed, "with_asks={with_asks}");
+        let after = read_json(&config.join("settings.json"));
+        assert_eq!(
+            owned_groups(&after),
+            vec![owned.clone()],
+            "with_asks={with_asks}"
+        );
+        if with_asks {
+            assert_eq!(
+                std::fs::read_to_string(config.join("settings.json")).unwrap(),
+                original
+            );
+        } else {
+            assert!(after["permissions"]["ask"].is_null(), "{after}");
+        }
+    }
+}
+
+#[test]
 fn gate_presence_reports_missing() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("cfg");
