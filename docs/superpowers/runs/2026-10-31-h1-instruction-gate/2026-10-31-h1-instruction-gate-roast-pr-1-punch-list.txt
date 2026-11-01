@@ -1,0 +1,2 @@
+[Nit] src/bootstrap/setup_claude.rs:405
+[Nit] src/templates/kinds.rs:1220

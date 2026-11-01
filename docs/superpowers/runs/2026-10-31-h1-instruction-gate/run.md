@@ -38,6 +38,17 @@ codeBuckets:
 stepBackDesign-round-1: local — five round-1 findings form two small clusters plus one standalone gate-wording gap, each cheap to fix locally; no owning decision worth redesigning (no mechanical triggers)
 graph-pass: depth 7→6 · width 2.6→3.0 · applied 1 · parked 0
 
+stepBackCode-round-1: local — round 1 code findings are local: two stem from one plan-diff decision (lossy, line-wise before), setup ownership and the review/suite/Codex process items each form one sweepable cluster; no design change
+scopeFilter-round-1: [Should-fix] src/store/instruction_source.rs:533 in-scope — Admissibility gap lets an invisible payload pass the approval diff and reach the agent, so the user does not approve the exact change; this is incorrect behavior in the goal-named plan/approval path.
+scopeFilter-round-1: [Should-fix] src/daemon/doctor.rs:256 in-scope — The rendered placeholder points to doctor, which reports 'all admissible' for uncovered render parts; that is a misleading result in the goal-named instruction-stack path.
+scopeFilter-round-1: [Nit] src/plan/instructions.rs:276 in-scope — The sanctioned `plan instructions set|clear` plans successfully but always fails at apply on a non-UTF-8 existing file, so the goal-named plan/apply path does not correctly edit that source.
+scopeFilter-round-1: [Nit] src/plan/line_diff.rs:65 in-scope — A bytes-only change (line endings or trailing newline) shows an empty diff, so the user approves a change they cannot see; this is a misleading result in the goal-named approval path.
+scopeFilter-round-1: [Nit] src/bootstrap/setup_claude.rs:405 punch-list — This is a narrow install/uninstall bookkeeping edge case (pre-existing hook, lost manifest) in setup ownership, not in a behavior the goal names.
+scopeFilter-round-1: [Nit] src/plan/instructions.rs:205 in-scope — Raw old-file bytes (ESC sequences, bare CRs) reach the terminal in the diff the user is approving, which is a misleading result in the goal-named approval path.
+scopeFilter-round-1: [Nit] src/templates/kinds.rs:1220 punch-list — The hook-cap estimate duplicates write_agents' placement rules and under-counts on rename; the goal does not name cap warnings, so this is a structure and dedup improvement outside it.
+cluster dropped: setup-preexisting-ownership — on install with no manifest, setup detects anything it owns that already exists (hook group, ask entries, rules file) and records it as not installed by setup (restorable=false or original bytes saved) or refuses on foreign content; uninstall removes only what setup added and never byte-restores or deletes pre-existing artifacts; apply to every artifact setup claude and setup codex install.
+scope-filter: 5 in-scope · 2 punch-listed
+
 approvals:
 - top-split · auto · hg-45e.1 LEAF, hg-45e.2 LEAF, hg-45e.3 LEAF, hg-45e.4 LEAF, hg-45e.5 LEAF, hg-45e.6 LEAF, hg-45e.7 LEAF, hg-45e.8 LEAF, hg-45e.9 LEAF, hg-45e.10 LEAF, hg-45e.11 LEAF, hg-45e.12 LEAF, hg-45e.13 LEAF, hg-45e.14 LEAF, hg-45e.15 LEAF
 - coverage-round-1 · R1..R20 canonical (coverage-round-1-requirements.md) · requirements: 15 · mapped: 14 · unmapped: 1 (R15) · cl-3 applied auto, cl-4 applied auto, cl-5 rejected auto, cl-6 rejected auto, cl-7 applied auto, cl-8 rejected auto, cl-9 rejected auto, cl-10 applied auto, cl-11 applied auto, cl-12 applied auto, cl-13 applied auto, cl-14 rejected auto, cl-1/cl-2 flag-sweep kept auto

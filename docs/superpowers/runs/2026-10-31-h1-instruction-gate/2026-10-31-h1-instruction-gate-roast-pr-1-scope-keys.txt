@@ -1,0 +1,7 @@
+[Should-fix] src/store/instruction_source.rs:533
+[Should-fix] src/daemon/doctor.rs:256
+[Nit] src/plan/instructions.rs:276
+[Nit] src/plan/line_diff.rs:65
+[Nit] src/bootstrap/setup_claude.rs:405
+[Nit] src/plan/instructions.rs:205
+[Nit] src/templates/kinds.rs:1220
