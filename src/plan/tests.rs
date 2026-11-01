@@ -3294,6 +3294,66 @@ mod instructions {
             );
         }
     }
+
+    #[test]
+    fn cap_warning_names_the_cut_seat_agents_md() {
+        let fx = fx();
+        world(&fx);
+        let f = src(
+            &fx,
+            "big.md",
+            format!("{}\n", "s".repeat(90)).repeat(105).as_bytes(),
+        );
+        let sp = plan(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        let w = sp
+            .plan
+            .warnings
+            .iter()
+            .find(|w| w.starts_with("hook output for a1 would exceed the cap"))
+            .unwrap_or_else(|| panic!("{:?}", sp.plan.warnings));
+        assert!(
+            w.contains("at session start seat AGENTS.md will be cut"),
+            "{w}"
+        );
+    }
+
+    #[test]
+    fn from_path_resolves_against_caller_cwd() {
+        let fx = fx();
+        world(&fx);
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("rel.md"), "from the caller cwd\n").unwrap();
+        let caller = CallerInfo {
+            cwd: Some(d.path().to_path_buf()),
+            ..Default::default()
+        };
+        let change = "instructions set seat a1 rules/r.md --from rel.md";
+        let v = create_plan(&fx.deps, &caller, words(change)).expect("resolved against cwd");
+        let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
+        let sp = fx.deps.plans.get(&id).unwrap().unwrap();
+        let diff = sp.plan.effects[0].detail["diff"].as_str().unwrap();
+        assert!(diff.contains("+from the caller cwd"), "{diff}");
+
+        let e = create_plan(&fx.deps, &CallerInfo::default(), words(change))
+            .expect_err("no caller cwd: relative to the process cwd, where rel.md is absent")
+            .message;
+        assert!(e.contains("cannot read"), "{e}");
+    }
+
+    #[test]
+    fn crlf_content_is_admissible_for_set() {
+        let fx = fx();
+        world(&fx);
+        let f = src(&fx, "crlf.md", b"a\r\nb\r\n");
+        commit(
+            &fx,
+            &format!("instructions set seat a1 AGENTS.md --from {f}"),
+        );
+        assert_eq!(read(&fx, &a1_agents(&fx)).unwrap(), b"a\r\nb\r\n");
+    }
 }
 
 #[test]
