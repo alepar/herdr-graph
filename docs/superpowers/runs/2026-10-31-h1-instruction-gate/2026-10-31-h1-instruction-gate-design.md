@@ -250,4 +250,11 @@ Digest:
 
 ## Post-Implementation Notes
 
+**Changes vs. original design (2026-11-01):**
+- Admissibility (§2.2a) also rejects Unicode variation selectors (FE00-FE0F outside emoji context, E0100-E01EF) and filler code points; renderer and doctor share one list of render parts.
+- Every plan kind that overwrites an instruction file (instructions set/clear, template edit, seat override --section) records raw before bytes and undo restores them; legacy template-edit records without raw bytes fall back to the recorded text when it is exact (no U+FFFD, passes check_content), else refuse with repair_required.
+- Instruction plan diffs vet the before side: inadmissible or non-UTF-8 before text shows a placeholder, and line-ending-only changes carry an explicit note.
+- setup never overwrites or deletes pre-existing harness artifacts and recomputes ownership on every run; setup codex refuses a pre-existing, different rules file.
+- Codex 0.163.0 fires no SessionStart on compaction; the seat skill tells Codex agents to run `herdr-graph seat --instructions` after a clear or compaction (open human disposition, see report.md).
+
 > *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
