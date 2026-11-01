@@ -1,0 +1,2 @@
+[Should-fix] src/undo/preview.rs:760; src/undo/preview.rs:752
+[Nit] src/templates/kinds.rs:1405
