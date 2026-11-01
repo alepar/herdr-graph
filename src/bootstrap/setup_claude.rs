@@ -8,7 +8,8 @@
 //! small manifest beside `settings.json` records what the installer did. Install is idempotent: a second run
 //! changes nothing. Install never overwrites a rules file it did not write (it refuses instead), and
 //! anything it would own that already exists byte-identical (hook group, ask entries, rules file) is recorded
-//! as pre-existing: uninstall leaves those in place. Uninstall removes exactly what setup added, and the two skill directories. When
+//! as pre-existing: uninstall leaves those in place until a later run writes them. Uninstall removes what setup
+//! added (and the two skill directories) and leaves pre-existing artifacts in place. When
 //! `settings.json` is still byte-for-byte what the installer wrote, it is restored to its exact prior bytes
 //! (or removed when the installer created it); when someone edited it since, only the owned group is taken
 //! out of the parsed document and every other hook and setting stays.
@@ -245,8 +246,8 @@ struct Manifest {
     gate_file: bool,
     /// The installer created the `rules/` directory.
     created_rules_dir: bool,
-    /// The owned hook group was already present, byte-identical to what setup would install, when setup
-    /// first ran; it is not ours.
+    /// The owned hook group was present, byte-identical to what setup would install, before setup first
+    /// ran, and no setup run has written it since; any run that installs or updates the group clears it.
     hook_preexisting: bool,
 }
 
@@ -454,6 +455,9 @@ pub fn install_for(target: &Target, config: &Path, binary: &Path) -> anyhow::Res
             ..Manifest::default()
         };
     }
+    if hook != HookChange::Unchanged {
+        m.hook_preexisting = false;
+    }
     for entry in added {
         if !m.gate_entries.contains(&entry) {
             m.gate_entries.push(entry);
@@ -499,12 +503,12 @@ fn write_skills(config: &Path) -> anyhow::Result<Vec<String>> {
     Ok(written)
 }
 
-/// Remove exactly what `install` added.
+/// Remove what `install` added; pre-existing artifacts stay.
 pub fn uninstall(config: &Path) -> anyhow::Result<UninstallReport> {
     uninstall_for(&CLAUDE, config)
 }
 
-/// Remove exactly what `install_for(target, ..)` added.
+/// Remove what `install_for(target, ..)` added; pre-existing artifacts stay.
 pub fn uninstall_for(target: &Target, config: &Path) -> anyhow::Result<UninstallReport> {
     let settings = config.join(target.settings);
     let manifest_path = config.join(MANIFEST);

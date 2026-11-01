@@ -1460,6 +1460,121 @@ fn setup_claude_keeps_a_preexisting_identical_hook_group() {
 }
 
 #[test]
+fn setup_rewritten_preexisting_hook_is_removed_on_uninstall() {
+    let owned_for = |bin: &str| {
+        let scratch = tempfile::tempdir().unwrap();
+        setup_claude::install(scratch.path(), Path::new(bin)).unwrap();
+        owned_groups(&read_json(&scratch.path().join("settings.json")))
+            .pop()
+            .unwrap()
+    };
+    let owned = owned_for(BIN);
+    let other = owned_for("/other/herdr-graph");
+    assert_ne!(owned, other);
+    for case in ["removed", "changed"] {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("claude");
+        std::fs::create_dir_all(&config).unwrap();
+        let settings = config.join("settings.json");
+        let doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
+        std::fs::write(&settings, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+
+        let first = setup_claude::install(&config, Path::new(BIN)).unwrap();
+        assert_eq!(first.hook, HookChange::Unchanged, "{case}");
+
+        let mut edited = read_json(&settings);
+        edited["theme"] = json!("dark");
+        let expected = if case == "removed" {
+            edited["hooks"] = json!({"SessionStart": []});
+            HookChange::Installed
+        } else {
+            edited["hooks"] = json!({"SessionStart": [other.clone()]});
+            HookChange::Updated
+        };
+        std::fs::write(&settings, serde_json::to_string_pretty(&edited).unwrap() + "\n").unwrap();
+        let second = setup_claude::install(&config, Path::new(BIN)).unwrap();
+        assert_eq!(second.hook, expected, "{case}");
+        assert_eq!(owned_groups(&read_json(&settings)), vec![owned.clone()], "{case}");
+
+        let removed = setup_claude::uninstall(&config).unwrap();
+        assert!(removed.hook_removed, "{case}");
+        assert!(!removed.hook_kept, "{case}");
+        let after = read_json(&settings);
+        assert!(owned_groups(&after).is_empty(), "{case}: {after}");
+        assert_eq!(after["theme"], "dark", "{case}");
+    }
+}
+
+#[test]
+fn setup_codex_rewritten_preexisting_hook_and_rules_are_removed() {
+    let owned = {
+        let scratch = tempfile::tempdir().unwrap();
+        setup_claude::install_for(&setup_claude::CODEX, scratch.path(), Path::new(BIN)).unwrap();
+        owned_groups(&read_json(&scratch.path().join("hooks.json")))
+            .pop()
+            .unwrap()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("codex");
+    std::fs::create_dir_all(config.join("rules")).unwrap();
+    let hooks = config.join("hooks.json");
+    let rules = config.join("rules/herdr-graph.rules");
+    let doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
+    std::fs::write(&hooks, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+    std::fs::write(&rules, setup_claude::rules_text(Path::new(BIN))).unwrap();
+
+    let first = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(first.hook, HookChange::Unchanged);
+    assert_eq!(first.gate, HookChange::Unchanged);
+
+    std::fs::write(&hooks, r#"{"hooks":{"SessionStart":[]}}"#).unwrap();
+    std::fs::remove_file(&rules).unwrap();
+    let second = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
+    assert_eq!(second.hook, HookChange::Installed);
+    assert_eq!(second.gate, HookChange::Installed);
+
+    let removed = setup_claude::uninstall_for(&setup_claude::CODEX, &config).unwrap();
+    assert!(removed.hook_removed && removed.gate_removed);
+    assert!(owned_groups(&read_json(&hooks)).is_empty());
+    assert!(!rules.exists());
+}
+
+#[test]
+fn setup_non_exact_uninstall_keeps_preexisting_hook_group() {
+    let owned = {
+        let scratch = tempfile::tempdir().unwrap();
+        setup_claude::install(scratch.path(), Path::new(BIN)).unwrap();
+        owned_groups(&read_json(&scratch.path().join("settings.json")))
+            .pop()
+            .unwrap()
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("claude");
+    std::fs::create_dir_all(&config).unwrap();
+    let settings = config.join("settings.json");
+    let doc = serde_json::json!({"hooks": {"SessionStart": [owned.clone()]}});
+    std::fs::write(&settings, serde_json::to_string_pretty(&doc).unwrap() + "\n").unwrap();
+
+    let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
+    assert_eq!(report.hook, HookChange::Unchanged);
+    let manifest = read_json(&config.join("herdr-graph-setup.json"));
+    assert_eq!(manifest["hook_preexisting"], true);
+    assert_eq!(manifest["restorable"], true);
+
+    let mut edited = read_json(&settings);
+    edited["theme"] = json!("dark");
+    std::fs::write(&settings, serde_json::to_string_pretty(&edited).unwrap() + "\n").unwrap();
+
+    let removed = setup_claude::uninstall(&config).unwrap();
+    assert!(!removed.hook_removed);
+    assert!(removed.hook_kept);
+    let after = read_json(&settings);
+    assert_eq!(owned_groups(&after), vec![owned]);
+    assert!(after["permissions"]["ask"].is_null(), "{after}");
+    assert_eq!(after["theme"], "dark");
+}
+
+#[test]
 fn gate_presence_reports_missing() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("cfg");
