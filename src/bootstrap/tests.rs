@@ -2633,6 +2633,196 @@ mod instructions {
         assert_eq!(seat.findings.len(), 4);
     }
 
+    /// Every render part, poisoned alone: the render shows the placeholder for exactly that part (a member
+    /// part only for the poisoned half) and the doctor reports exactly that file, from the same part list.
+    #[test]
+    fn each_render_part_placeholder_and_doctor_flag() {
+        enum Poison {
+            /// Replace the committed file at `Case::path`.
+            File(&'static [u8]),
+            /// Rewrite `.0` to `.1` in the committed record TOML at `record`.
+            Record(String, &'static str, &'static str),
+        }
+        struct Case {
+            name: &'static str,
+            label: &'static str,
+            /// The path the placeholder and the doctor detail name.
+            path: String,
+            /// What follows the path in the doctor detail.
+            reason: &'static str,
+            /// Text of the same part that must survive verbatim (the other half of a member part).
+            kept: Option<&'static str>,
+            poison: Poison,
+        }
+        const TAG: &[u8] = "tag \u{E0041} x".as_bytes();
+        const CR: &[u8] = b"a\rb";
+
+        fn cases(l: &Lead) -> Vec<Case> {
+            let v = view(&l.fx);
+            let record_of = |id: &crate::model::AnyId| {
+                layout::locate(&v, id)
+                    .unwrap()
+                    .unwrap()
+                    .record_path
+                    .as_str()
+                    .to_owned()
+            };
+            let pair = layout::list_templates(&v)
+                .unwrap()
+                .into_iter()
+                .find(|(_, t)| t.name == "pair")
+                .unwrap()
+                .1;
+            let member_md = layout::member_agents_md(&RepoPath::new(&l.pair_dir).unwrap(), "lead")
+                .as_str()
+                .to_owned();
+            let seat_rec = record_of(&l.seat.id.to_any());
+            vec![
+                Case {
+                    name: "team template AGENTS.md",
+                    label: "template pair",
+                    path: format!("{}/AGENTS.md", l.pair_dir),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(TAG),
+                },
+                Case {
+                    name: "shared seat template AGENTS.md",
+                    label: "seat template engineer",
+                    path: format!("{}/AGENTS.md", l.shared_dir),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(CR),
+                },
+                Case {
+                    name: "member AGENTS.md",
+                    label: "template pair member lead",
+                    path: member_md.clone(),
+                    reason: "",
+                    kept: Some("responsibility: ship it\n"),
+                    poison: Poison::File(TAG),
+                },
+                Case {
+                    name: "member responsibility",
+                    label: "template pair member lead",
+                    path: member_md,
+                    reason: "responsibility",
+                    kept: Some("lead specialization"),
+                    poison: Poison::Record(
+                        record_of(&pair.id.to_any()),
+                        "ship it",
+                        "ship \\U000E0041 it",
+                    ),
+                },
+                Case {
+                    name: "seat section",
+                    label: "seat sections",
+                    path: seat_rec.clone(),
+                    reason: "instructions_sections",
+                    kept: None,
+                    poison: Poison::Record(seat_rec, "CLEAN", "BAD\\rX"),
+                },
+                Case {
+                    name: "global rules file",
+                    label: "global rules/x.md",
+                    path: "rules/x.md".into(),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(TAG),
+                },
+                Case {
+                    name: "teamspace rules file",
+                    label: "teamspace rules/x.md",
+                    path: format!("{}/rules/x.md", l.team_dir),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(CR),
+                },
+                Case {
+                    name: "seat rules file",
+                    label: "seat rules/x.md",
+                    path: format!("{}/rules/x.md", l.seat_dir),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(TAG),
+                },
+                Case {
+                    name: "seat AGENTS.md",
+                    label: "seat AGENTS.md",
+                    path: format!("{}/AGENTS.md", l.seat_dir),
+                    reason: "",
+                    kept: None,
+                    poison: Poison::File(CR),
+                },
+            ]
+        }
+
+        let count = {
+            let l = lead();
+            set_section(&l, "CLEAN\n");
+            cases(&l).len()
+        };
+        for i in 0..count {
+            let l = lead();
+            set_section(&l, "CLEAN\n");
+            let case = cases(&l).remove(i);
+            let n = case.name;
+            match &case.poison {
+                Poison::File(bytes) => put_files(&l.fx, &[(case.path.as_str(), *bytes)]),
+                Poison::Record(record, from, to) => {
+                    let toml = String::from_utf8(
+                        view(&l.fx)
+                            .read_file(&RepoPath::new(record).unwrap())
+                            .unwrap()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    assert!(toml.contains(from), "{n}: {toml}");
+                    put_files(
+                        &l.fx,
+                        &[(record.as_str(), toml.replace(from, to).as_bytes())],
+                    );
+                }
+            }
+
+            let r = render(&l);
+            let body = &part(&r, case.label).body;
+            let placeholder = format!("({}: {SKIPPED} — see herdr-graph doctor)\n", case.path);
+            match case.kept {
+                None => assert_eq!(body, &placeholder, "{n}"),
+                Some(kept) => {
+                    assert_eq!(body.matches(SKIPPED).count(), 1, "{n}: {body:?}");
+                    assert!(body.contains(&placeholder), "{n}: {body:?}");
+                    assert!(body.contains(kept), "{n}: {body:?}");
+                }
+            }
+            assert_eq!(part(&r, case.label).path, case.path, "{n}");
+            assert_eq!(r.text.matches(SKIPPED).count(), 1, "{n}: only this part");
+            for leak in ['\u{E0041}', '\r'] {
+                assert!(!r.text.contains(leak), "{n}: {leak:?}");
+            }
+
+            let checks = crate::daemon::doctor::instruction_files_check(&view(&l.fx));
+            assert_eq!(checks.len(), 1, "{n}: {checks:?}");
+            assert!(
+                checks[0].warn && checks[0].name == "instruction_files",
+                "{n}"
+            );
+            assert!(
+                checks[0]
+                    .detail
+                    .starts_with(&format!("{}: {}", case.path, case.reason)),
+                "{n}: {:?}",
+                checks[0].detail
+            );
+            assert_eq!(
+                seat_parts(&view(&l.fx), &l.seat.id).unwrap().findings.len(),
+                1,
+                "{n}"
+            );
+        }
+    }
+
     #[test]
     fn dirty_working_tree_does_not_change_render() {
         let l = lead();
