@@ -70,9 +70,9 @@ pub const HOOK_PROMPT: &str = "herdr-graph: this pane is a graph seat. Before re
 /// The hook's stdout: plain text for Claude, `additionalContext` JSON for Codex.
 ///
 /// Trigger coverage. Claude: the installed group has an empty matcher, so it fires on startup, resume, clear and
-/// compact. Codex (0.163.0 binary, read-only check): `SessionStart` sources include startup and clear;
-/// compaction has its own `PostCompact` event and no `SessionStart` source, so after compaction Codex agents
-/// must run `herdr-graph seat --instructions` (skills/seat/SKILL.md says so).
+/// compact. Codex (0.163.0 and 0.166.0, live `/compact` runs): the matcher-less group fires on startup, resume,
+/// clear and compact as well; the hook runs only after the user trusts it. If it did not fire, the seat
+/// skill tells Codex agents to run `herdr-graph seat --instructions`.
 /// Size: no documented Claude Code hook output limit was found in `claude --help` or the installed binary, so
 /// `HOOK_RENDER_CAP` keeps its conservative 9000 bytes.
 pub fn hook_output_text(codex: bool, text: &str) -> String {

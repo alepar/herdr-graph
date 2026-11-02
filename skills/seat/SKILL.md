@@ -5,7 +5,7 @@ description: Resolve this pane's graph identity (teamspace, seat, clone) and loa
 
 # /seat
 
-Codex: after a clear or compaction, run `herdr-graph seat --instructions` and follow its output.
+Codex: if no herdr-graph hook text arrived after a clear or compaction (for example, the hook is not trusted yet), run `herdr-graph seat --instructions` and follow its output.
 
 Find out who you are in the graph, then read what applies to you.
 

@@ -3334,7 +3334,7 @@ mod h1_untested {
     fn seat_skill_has_instruction_steps() {
         let s = include_str!("../../skills/seat/SKILL.md");
         assert!(
-            s.contains("Codex: after a clear or compaction, run `herdr-graph seat --instructions` and follow its output."),
+            s.contains("Codex: if no herdr-graph hook text arrived after a clear or compaction (for example, the hook is not trusted yet), run `herdr-graph seat --instructions` and follow its output."),
             "Codex fallback line missing"
         );
         assert!(s.contains("Follow `instructions.text`"));
