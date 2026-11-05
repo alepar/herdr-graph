@@ -410,12 +410,14 @@ fn clone_record_roundtrip() {
             epoch: epoch.clone(),
             threads_done: true,
             launched: true,
+            last_refusal: None,
         },
         SeatIntent::Restore {
             seat: "seat-b".into(),
             epoch,
             threads_done: false,
             launched: false,
+            last_refusal: None,
         },
         SeatIntent::Finalize {
             seat: "seat-b".into(),

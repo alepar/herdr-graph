@@ -1180,6 +1180,25 @@ pub struct ThreadsExecutor {
     cache: Arc<GraphCache>,
 }
 
+/// Remember the threads refusal of a pending Restore's step on the intent, for status (§14.7). Best effort:
+/// a writer error changes nothing, and an unchanged reason is not written again.
+fn record_refusal(cx: &ExecCx<'_>, clone: &CloneRecord, epoch: &OpId, reason: &str) {
+    if matches!(
+        &clone.seat_intent,
+        Some(SeatIntent::Restore { last_refusal: Some(r), .. }) if r == reason
+    ) {
+        return;
+    }
+    let _ = admit_threads_seat(
+        cx.writer,
+        &clone.id,
+        &SeatTransition::RecordRefusal {
+            epoch: epoch.clone(),
+            reason: reason.to_owned(),
+        },
+    );
+}
+
 fn port_outcome(e: ThreadsError) -> ExecOutcome {
     match e {
         // Backoff, never takeover: the reconciler schedules the retry.
@@ -1352,8 +1371,16 @@ impl ThreadsExecutor {
         ));
         let seat = match self.mapping.resolve_seat(pane, &key).await {
             Ok(SeatResolution::Seat(seat)) => seat,
-            Ok(SeatResolution::NotYet(reason)) => return ExecOutcome::Deferred(reason),
-            Err(err) => return port_outcome(err),
+            Ok(SeatResolution::NotYet(reason)) => {
+                record_refusal(cx, clone, epoch, &reason);
+                return ExecOutcome::Deferred(reason);
+            }
+            Err(err) => {
+                if let ThreadsError::Rejected(msg) = &err {
+                    record_refusal(cx, clone, epoch, msg);
+                }
+                return port_outcome(err);
+            }
         };
         if seat.0 == from {
             return ExecOutcome::NeedsRevision(format!(

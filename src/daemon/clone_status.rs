@@ -2,7 +2,7 @@
 use crate::journal::Journal;
 use crate::model::clone::SeatIntent;
 use crate::model::common::CloneLifecycle;
-use crate::reconcile::planner::resume_blocked_key;
+use crate::reconcile::planner::{restore_mark_failed_key, restore_stuck_key, resume_blocked_key};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
 use serde_json::json;
@@ -27,8 +27,9 @@ pub fn clone_status(tree: &dyn TreeRead) -> serde_json::Value {
     json!({ "retired_unpurged": retired_unpurged })
 }
 
-/// `clone_status` plus the resume driver's two stuck lists (spec §9, §14.4):
-/// `"stuck_restores": [{clone, epoch, remedy}]` for a Restore whose one launch was already attempted, and
+/// `clone_status` plus the resume driver's two stuck lists (spec §9, §14.4, §14.7):
+/// `"stuck_restores": [{clone, epoch, reason, remedy, last_refusal?}]` for every pending Restore that cannot
+/// make progress (`launched_no_reattach`, `mark_failed`, `not_launchable`, `threads_pending`), and
 /// `"resume_blocked": [{clone, pane, remedy}]` for a clone whose last pane no longer exists after a restart.
 pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serde_json::Value {
     let mut v = clone_status(tree);
@@ -38,19 +39,65 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
         .map(|(_, c)| c)
         .filter(|c| c.lifecycle == CloneLifecycle::Active)
         .collect();
+    let meta = |key: String| -> Option<serde_json::Value> {
+        let raw = journal.meta_get(&key).ok().flatten()?;
+        serde_json::from_str(&raw).ok()
+    };
     let stuck_restores: Vec<_> = clones
         .iter()
-        .filter_map(|c| match &c.seat_intent {
-            Some(SeatIntent::Restore {
+        .filter_map(|c| {
+            let Some(SeatIntent::Restore {
                 epoch,
-                launched: true,
+                threads_done,
+                launched,
+                last_refusal,
                 ..
-            }) => Some(json!({
+            }) = &c.seat_intent
+            else {
+                return None;
+            };
+            let mark_failed = meta(restore_mark_failed_key(&c.id))
+                .filter(|m| m["epoch"] == epoch.to_string());
+            let (reason, remedy, error) = if *launched {
+                (
+                    "launched_no_reattach",
+                    "start the agent in the pane manually or retire the clone",
+                    None,
+                )
+            } else if let Some(m) = mark_failed {
+                (
+                    "mark_failed",
+                    "the launch mark could not be written; it is retried automatically; retire the clone to give up",
+                    Some(m["error"].clone()),
+                )
+            } else if *threads_done && meta(restore_stuck_key(&c.id)).is_some() {
+                (
+                    "not_launchable",
+                    "no resumable session; start an agent manually in the reopened pane or retire the clone",
+                    None,
+                )
+            } else if !*threads_done && last_refusal.is_some() {
+                (
+                    "threads_pending",
+                    "threads refused the restore step; it is retried; retire the clone to give up",
+                    None,
+                )
+            } else {
+                return None;
+            };
+            let mut entry = json!({
                 "clone": c.id.to_string(),
                 "epoch": epoch.to_string(),
-                "remedy": "start the agent in the pane manually or retire the clone",
-            })),
-            _ => None,
+                "reason": reason,
+                "remedy": remedy,
+            });
+            if let Some(r) = last_refusal {
+                entry["last_refusal"] = json!(r);
+            }
+            if let Some(e) = error {
+                entry["error"] = e;
+            }
+            Some(entry)
         })
         .collect();
     let resume_blocked: Vec<_> = clones
