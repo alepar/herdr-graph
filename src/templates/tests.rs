@@ -93,12 +93,26 @@ struct Fx {
     n: std::cell::Cell<u32>,
 }
 
+/// Fixture whose graph already names a node manager (a seat that does not exist), so the first seat created is
+/// not auto-assigned (and not forced Active). For tests about unrelated behaviour.
 fn fx() -> Fx {
+    fx_with_opt_out(true)
+}
+
+/// Fixture on a pristine graph: no node manager, no seats. Node-manager tests use this one.
+fn fx_fresh() -> Fx {
+    fx_with_opt_out(false)
+}
+
+fn fx_with_opt_out(opt_out: bool) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     let docs = tmp.path().join("docs");
     std::fs::create_dir_all(&docs).unwrap();
     init_instance(&root).unwrap();
+    if opt_out {
+        crate::plan::managers::testing::opt_out(&root);
+    }
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     register_kinds(&mut kinds);
@@ -1149,6 +1163,185 @@ fn hydrate_creates_dormant_and_active_per_startup() {
         1
     );
     assert!(act.affected.iter().any(|a| a.object == one.id.to_any()));
+}
+
+fn node_manager(fx: &Fx) -> Option<SeatId> {
+    layout::read_graph(&view(fx)).unwrap().node_manager_seat
+}
+
+fn set_role(fx: &Fx, seat: Option<&SeatId>) {
+    let op =
+        crate::ports::writer::Writer::admit(&*fx.w, crate::plan::managers::testing::request(seat))
+            .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+fn assignments(sp: &StoredPlan) -> Vec<&crate::plan::types::PlanEffect> {
+    sp.plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "graph.node_manager_seat")
+        .collect()
+}
+
+fn has_graph_blob(fx: &Fx, sp: &StoredPlan) -> bool {
+    let graph = layout::graph_id(&view(fx)).unwrap().to_any();
+    sp.plan
+        .relied_on
+        .iter()
+        .any(|r| r.object == graph && matches!(r.version, crate::model::change::Version::Blob(_)))
+}
+
+#[test]
+fn application_apply_assigns_first_member() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let (a, b) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
+    let sp = plan(&fx, "application apply pair --teamspace alpha --name one");
+    let eff = assignments(&sp);
+    assert_eq!(eff.len(), 1, "{:?}", kinds_of(&sp));
+    assert_eq!(eff[0].detail["from"], json!(null));
+    assert!(has_graph_blob(&fx, &sp), "{:?}", sp.plan.relied_on);
+    let lifecycles: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.create")
+        .map(|e| (e.object.clone(), e.detail["lifecycle"].clone()))
+        .collect();
+    assert_eq!(lifecycles.len(), 2);
+    assert_eq!(eff[0].detail["to"], json!(lifecycles[0].0));
+    assert_eq!(lifecycles[0].1, json!("active"));
+    assert_eq!(lifecycles[1].1, json!("dormant"));
+    assert_eq!(count(&sp, "clone.add"), 1);
+    assert_eq!(count(&sp, "teamspace.activate"), 1);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+
+    let one = app(&fx, "one");
+    let (lead, dev) = (one.member_map[&a].clone(), one.member_map[&b].clone());
+    assert_eq!(node_manager(&fx), Some(lead.clone()));
+    assert_eq!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Active);
+    assert_eq!(seat_by_id(&fx, &dev).lifecycle, Lifecycle::Dormant);
+    let clones = layout::list_clones(&view(&fx), &seat_dir_of(&fx, &lead)).unwrap();
+    assert_eq!(clones.len(), 1);
+    assert_eq!(clones[0].1.lifecycle, CloneLifecycle::Active);
+    let ts = crate::store::record::read_toml::<crate::model::teamspace::TeamspaceRecord>(
+        &view(&fx),
+        &layout::locate(&view(&fx), &one.teamspace.to_any())
+            .unwrap()
+            .unwrap()
+            .record_path,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(ts.lifecycle, Lifecycle::Active);
+}
+
+#[test]
+fn application_apply_no_auto_assign_when_live_seats_exist() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create first --teamspace alpha");
+    set_role(&fx, None);
+    let (a, b) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
+    let sp = plan(&fx, "application apply pair --teamspace alpha --name one");
+    assert!(assignments(&sp).is_empty(), "{:?}", kinds_of(&sp));
+    assert_eq!(count(&sp, "clone.add"), 0);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), None);
+    let one = app(&fx, "one");
+    for mem in [&a, &b] {
+        assert_eq!(
+            seat_by_id(&fx, &one.member_map[mem]).lifecycle,
+            Lifecycle::Dormant
+        );
+    }
+}
+
+#[test]
+fn template_edit_addition_assigns_when_graph_has_no_live_seat() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let (a, b) = (MemberId::new(), MemberId::new());
+    create_template(&fx, "pair", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "pair", "one");
+    let old = member_seat(&fx, "one", &a);
+    set_role(&fx, None);
+    commit(&fx, &format!("seat retire {old}"));
+    assert_eq!(seat_by_id(&fx, &old).lifecycle, Lifecycle::Retired);
+
+    let sp = edit_plan(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
+    let eff = assignments(&sp);
+    assert_eq!(eff.len(), 1, "{:?}", kinds_of(&sp));
+    assert!(has_graph_blob(&fx, &sp), "{:?}", sp.plan.relied_on);
+    let create: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.create")
+        .collect();
+    assert_eq!(create.len(), 1, "{:?}", kinds_of(&sp));
+    assert_eq!(eff[0].detail["to"], json!(create[0].object));
+    assert_eq!(create[0].detail["lifecycle"], json!("active"));
+    assert_eq!(count(&sp, "clone.add"), 1);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+
+    let added = member_seat(&fx, "one", &b);
+    assert_eq!(node_manager(&fx), Some(added.clone()));
+    assert_eq!(seat_by_id(&fx, &added).lifecycle, Lifecycle::Active);
+    assert_eq!(
+        layout::list_clones(&view(&fx), &seat_dir_of(&fx, &added))
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn template_edit_addition_no_auto_assign_when_live_seats_exist() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let (a, b) = (MemberId::new(), MemberId::new());
+    create_template(&fx, "pair", &[m(&a, "lead", "deferred")], &[]);
+    apply_app(&fx, "pair", "one");
+    set_role(&fx, None);
+    let sp = edit_plan(
+        &fx,
+        "pair",
+        &[m(&a, "lead", "deferred"), m(&b, "dev", "deferred")],
+        &[],
+    );
+    assert!(assignments(&sp).is_empty(), "{:?}", kinds_of(&sp));
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    assert_eq!(node_manager(&fx), None);
+    assert_eq!(
+        seat_by_id(&fx, &member_seat(&fx, "one", &b)).lifecycle,
+        Lifecycle::Dormant
+    );
 }
 
 #[test]
