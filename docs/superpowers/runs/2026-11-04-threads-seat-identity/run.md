@@ -111,3 +111,6 @@ codeBuckets:
   processSweep: stopped 0 · survived 0 · unknown 72 · kept 0
 roastCodeRound: 1
 roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md
+redesignCycles-code: 1
+redesign-code-1: round 1 · triggers shared-cause, defect-type · amended - · lastGood 855a59fea7c7d2ed099655dd783a8686d339747d · designRoast - · state started
+stepBackCode-round-1: redesign — applied: purge always keeps a Finalize tombstone before D2 → purge deletes the record outright until the finalize want exists (D2), per spec §8 (dissolves 5)
