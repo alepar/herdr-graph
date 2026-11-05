@@ -4030,6 +4030,40 @@ fn reparent_teamspace_default_on_retire() {
     );
 }
 
+#[test]
+fn teamspace_retire_keeps_own_default_rewrite() {
+    use super::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "alpha", &["nm"]);
+    dormant_seats(&fx, "beta", &["r"]);
+    set_nm(&fx, "nm");
+    let (nm, r) = (seat_id(&fx, "nm"), seat_id(&fx, "r"));
+    let beta = teamspace(&fx, "beta").1.id;
+    commit_request(&fx, teamspace_request(&beta, Some(&r)));
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, Some(r.clone()));
+
+    let row = commit(&fx, "teamspace retire beta");
+    let stored = teamspace(&fx, "beta").1;
+    assert_eq!(stored.lifecycle, Lifecycle::Retired);
+    assert_eq!(
+        stored.default_manager,
+        Some(nm.clone()),
+        "the archived record keeps the reparented default"
+    );
+    let act = action_of(&fx, &row);
+    assert_eq!(
+        recorded(&act),
+        vec![super::managers::reparent::Rewrite {
+            holder: beta.to_any(),
+            field: "default_manager".into(),
+            old: r,
+            new: Some(nm),
+        }]
+    );
+}
+
 /// Set (or clear) graph.toml's node manager through the test-only bookkeeping mutation.
 fn set_role(fx: &Fx, seat: Option<&SeatId>) {
     let op = fx.w.admit(super::managers::testing::request(seat)).unwrap();

@@ -1936,3 +1936,32 @@ fn pointer_restores_collapses_chained_rows() {
     assert_eq!(effects[0].detail["from"], json!(nm));
     assert_eq!(effects[0].detail["to"], json!(a));
 }
+
+#[test]
+fn undo_of_teamspace_retire_restores_reparented_default() {
+    use crate::plan::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create nm --teamspace alpha");
+    commit(&fx, "seat create r --teamspace beta");
+    let (nm, r) = (seat_named(&fx, "nm").id, seat_named(&fx, "r").id);
+    commit_request(&fx, crate::plan::managers::testing::request(Some(&nm)));
+    let beta = ts_named(&fx, "beta").id;
+    commit_request(&fx, teamspace_request(&beta, Some(&r)));
+
+    let row = commit(&fx, "teamspace retire beta");
+    let act = action_of(&fx, &row);
+    assert_eq!(recorded(&act).len(), 1);
+    assert_eq!(ts_named(&fx, "beta").default_manager, Some(nm));
+
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    assert!(
+        sp.plan.warnings.is_empty(),
+        "no changed-since warning: {:?}",
+        sp.plan.warnings
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(ts_named(&fx, "beta").default_manager, Some(r));
+}
