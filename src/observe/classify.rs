@@ -191,19 +191,6 @@ fn live_clones<'a>(
         .filter(move |c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
 }
 
-/// The node manager's disappearances are explained bookkeeping, never retirement: the seat stays Active with
-/// its runtime absent, and the planner reopens it. Covers the seat (when `include_seat`) and its live clones.
-fn node_manager_gone(d: &DesiredRuntime, out: &mut Classified, seat: &SeatId, include_seat: bool) {
-    if include_seat {
-        out.gone.push(seat.to_any());
-    }
-    for c in live_clones(d, seat) {
-        out.gone.push(c.id.to_any());
-        out.gone_ends
-            .extend(ended_of(c, SessionEndReason::PaneClosed));
-    }
-}
-
 fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool) -> Cascade {
     let mut retire = Vec::new();
     let mut ends = Vec::new();
@@ -274,27 +261,25 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         }
     }
 
-    // Containment grouping: workspace > tab > pane.
+    // Containment grouping: workspace > tab > pane. The node manager is not special-cased here: `CascadeMutation`
+    // decides keep-or-retire against the live node manager when it applies (spec 4.9), so classification, made
+    // from a head read before the awaited snapshot, cannot disagree with a concurrent `node-manager set`.
     let seat_ts = |s: &SeatId| d.seats.get(s).map(|r| r.teamspace.clone());
     let nm = d.node_manager.as_ref();
     for ts in &ws_gone {
         let mut retire = Vec::new();
         let mut group_ends = Vec::new();
-        let nm_here = nm.filter(|n| seat_ts(n).as_ref() == Some(ts));
-        if let Some(n) = nm_here {
-            // The node manager's teamspace stays Active and reopens; its other seats retire one by one.
-            out.gone.push(ts.to_any());
-            node_manager_gone(d, &mut out, n, true);
-        } else if d
-            .teamspaces
+        if d.teamspaces
             .get(ts)
             .is_some_and(|t| t.lifecycle != Lifecycle::Retired)
         {
             retire.push(ts.to_any());
         }
-        for seat in d.seats.values().filter(|s| {
-            &s.teamspace == ts && s.lifecycle != Lifecycle::Retired && Some(&s.id) != nm_here
-        }) {
+        for seat in d
+            .seats
+            .values()
+            .filter(|s| &s.teamspace == ts && s.lifecycle != Lifecycle::Retired)
+        {
             let g = seat_group(d, &seat.id, CascadeRule::Workspace, true);
             retire.extend(g.retire);
             group_ends.extend(g.ends);
@@ -327,10 +312,6 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             continue;
         }
         absorbed_seats.insert(seat.clone());
-        if nm == Some(seat) {
-            node_manager_gone(d, &mut out, seat, true);
-            continue;
-        }
         let g = seat_group(d, seat, CascadeRule::Tab, true);
         if !g.retire.is_empty() {
             out.cascades.push(g);
@@ -346,12 +327,6 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             continue;
         }
         if rec.lifecycle == CloneLifecycle::Retired {
-            continue;
-        }
-        if nm == Some(&rec.seat) {
-            out.gone.push(clone.to_any());
-            out.gone_ends
-                .extend(ended_of(rec, SessionEndReason::PaneClosed));
             continue;
         }
         out.cascades.push(Cascade {
