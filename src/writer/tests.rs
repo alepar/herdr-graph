@@ -39,6 +39,7 @@ impl Mutation for TestSeed {
             retired: None,
             runtime: Default::default(),
             project_repo: None,
+            default_manager: None,
             channel: Default::default(),
         };
         cx.tree
@@ -55,6 +56,7 @@ impl Mutation for TestSeed {
                 retired: None,
                 system_duty: None,
                 template_ref: None,
+                manager: None,
                 applications: vec![],
                 overrides: Default::default(),
                 participation: Default::default(),

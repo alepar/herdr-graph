@@ -82,6 +82,7 @@ mod ids {
             instance_id: ulid::Ulid::new().to_string(),
             schema_version: 1,
             summarizer_seat: None,
+            node_manager_seat: None,
             defaults: GraphDefaults::default(),
         };
         assert_eq!(
@@ -210,6 +211,7 @@ fn graph_record_roundtrip() {
         instance_id: "inst".into(),
         schema_version: 1,
         summarizer_seat: Some(SeatId::new()),
+        node_manager_seat: Some(SeatId::new()),
         defaults: GraphDefaults {
             args: None,
             summaries: None,
@@ -222,6 +224,7 @@ fn graph_record_roundtrip() {
         instance_id: "inst".into(),
         schema_version: 1,
         summarizer_seat: None,
+        node_manager_seat: None,
         defaults: GraphDefaults::default(),
     });
 }
@@ -238,6 +241,7 @@ fn teamspace_record_roundtrip() {
         retired: Some(retirement()),
         runtime: full_runtime(),
         project_repo: Some(PathBuf::from("/repo")),
+        default_manager: Some(SeatId::new()),
         channel: Channel {
             thread_id: Some("th1".into()),
         },
@@ -252,6 +256,7 @@ fn teamspace_record_roundtrip() {
         retired: None,
         runtime: minimal_runtime(),
         project_repo: None,
+        default_manager: None,
         channel: Channel::default(),
     });
 }
@@ -272,6 +277,7 @@ fn seat_record_roundtrip() {
             template: TemplateId::new(),
             member: MemberId::new(),
         }),
+        manager: Some(SeatId::new()),
         applications: vec![AppId::new()],
         overrides: SeatOverrides {
             harness: Some(Harness::Claude),
@@ -308,6 +314,7 @@ fn seat_record_roundtrip() {
         retired: None,
         system_duty: None,
         template_ref: None,
+        manager: None,
         applications: vec![],
         overrides: SeatOverrides::default(),
         participation: Participation::default(),
@@ -1122,4 +1129,38 @@ fn cwd_rule_precedence() {
     let (p, s) = resolve_cwd(None, None, inst, &seat);
     assert_eq!(s, CwdSource::InstanceFallback);
     assert_eq!(p, PathBuf::from(format!("/inst/.graph-local/cwd/{seat}")));
+}
+
+#[test]
+fn manager_fields_default_and_skip() {
+    let ts_id = TeamspaceId::new();
+    let seat_toml = format!(
+        "schema = 1\nid = \"{}\"\nrev = 1\nname = \"s\"\nteamspace = \"{ts_id}\"\nlifecycle = \"dormant\"\n",
+        SeatId::new()
+    );
+    let seat: SeatRecord = toml::from_str(&seat_toml).unwrap();
+    assert_eq!(seat.manager, None);
+    assert!(!toml::to_string(&seat).unwrap().contains("manager"));
+
+    let ts_toml =
+        format!("schema = 1\nid = \"{ts_id}\"\nrev = 1\nname = \"t\"\nlifecycle = \"dormant\"\n");
+    let ts: TeamspaceRecord = toml::from_str(&ts_toml).unwrap();
+    assert_eq!(ts.default_manager, None);
+    assert!(!toml::to_string(&ts).unwrap().contains("manager"));
+
+    let g: GraphRecord =
+        toml::from_str("schema = 1\ninstance_id = \"i\"\nschema_version = 1\n").unwrap();
+    assert_eq!(g.node_manager_seat, None);
+    assert!(!toml::to_string(&g).unwrap().contains("node_manager_seat"));
+}
+
+#[test]
+fn manager_fields_round_trip() {
+    let m = SeatId::new();
+    let mut g: GraphRecord =
+        toml::from_str("schema = 1\ninstance_id = \"i\"\nschema_version = 1\n").unwrap();
+    g.node_manager_seat = Some(m.clone());
+    let s = toml::to_string(&g).unwrap();
+    assert!(s.contains(&format!("node_manager_seat = \"{m}\"")), "{s}");
+    toml_rt(&g);
 }

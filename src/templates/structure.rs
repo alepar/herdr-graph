@@ -92,6 +92,7 @@ pub fn member_seat_record(
             template: tpl.clone(),
             member: member.id.clone(),
         }),
+        manager: None,
         applications: vec![app.clone()],
         overrides: Default::default(),
         participation: Default::default(),

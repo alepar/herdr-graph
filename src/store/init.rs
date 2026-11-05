@@ -31,6 +31,7 @@ pub fn init_instance(path: &Path) -> Result<CommitId, StoreError> {
         instance_id: ulid::Ulid::new().to_string(),
         schema_version: 1,
         summarizer_seat: None,
+        node_manager_seat: None,
         defaults: GraphDefaults::default(),
     };
     let graph_toml = toml::to_string(&graph).map_err(|e| StoreError::Corrupt {

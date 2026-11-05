@@ -1,0 +1,492 @@
+//! Manager pointers over one tree (spec §4.6; Key abstractions model::manager).
+//!
+//! Owns the effective-manager rule — the node manager has none; else the seat's explicit `manager`; else its
+//! teamspace's `default_manager` unless that is the seat itself; else graph.toml's `node_manager_seat` — and
+//! everything built on it: the chain walk with cycle detection, the nearest surviving manager for seats
+//! retiring together, the would-create-cycle check, and `live_node_manager`. A new pointer source (e.g. a
+//! template-level default) goes here, in `Pointers::effective_manager`.
+//! Does not own: writing pointers or building plan effects (plan::managers), rendering (WhoReply, show,
+//! seat.resolve), or error classification (CommandError). Callers never read `manager`, `default_manager` or
+//! `node_manager_seat` themselves to decide who someone's manager is.
+//! Errors: a cycle or a pointer naming a missing seat is `StoreError::Integrity` (built by `unresolved`); a
+//! missing or retired `node_manager_seat` is "unassigned", not an error; plain read failures pass through.
+use crate::model::common::Lifecycle;
+use crate::model::ids::{SeatId, TeamspaceId};
+use crate::ports::store::{StoreError, unresolved};
+use crate::store::{TreeRead, layout};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeatPointer {
+    pub name: String,
+    pub teamspace: TeamspaceId,
+    pub manager: Option<SeatId>,
+    pub retired: bool,
+}
+
+/// Every seat (retired and archived included), every teamspace's default and graph.toml's node manager, at one tree.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Pointers {
+    pub seats: BTreeMap<SeatId, SeatPointer>,
+    pub default_managers: BTreeMap<TeamspaceId, Option<SeatId>>,
+    pub node_manager_seat: Option<SeatId>,
+}
+
+/// A hypothetical change, for validation before a plan writes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PointerEdit {
+    SeatManager {
+        seat: SeatId,
+        manager: Option<SeatId>,
+    },
+    DefaultManager {
+        teamspace: TeamspaceId,
+        manager: Option<SeatId>,
+    },
+    NodeManager(Option<SeatId>),
+    /// A seat a plan creates or resurrects, live in `teamspace` (manager unset unless a SeatManager edit follows).
+    Live {
+        seat: SeatId,
+        name: String,
+        teamspace: TeamspaceId,
+    },
+    Retire(SeatId),
+}
+
+impl Pointers {
+    pub fn load(tree: &dyn TreeRead) -> Result<Self, StoreError> {
+        let mut p = Pointers::default();
+        for (_, ts) in layout::list_teamspaces(tree)? {
+            p.default_managers.insert(ts.id, ts.default_manager);
+        }
+        for (_, s) in layout::all_seats(tree)? {
+            p.seats.insert(
+                s.id,
+                SeatPointer {
+                    name: s.name,
+                    teamspace: s.teamspace,
+                    manager: s.manager,
+                    retired: s.lifecycle == Lifecycle::Retired,
+                },
+            );
+        }
+        p.node_manager_seat = layout::read_graph(tree)?.node_manager_seat;
+        Ok(p)
+    }
+
+    pub fn apply(&mut self, e: &PointerEdit) {
+        match e {
+            PointerEdit::SeatManager { seat, manager } => {
+                if let Some(s) = self.seats.get_mut(seat) {
+                    s.manager = manager.clone();
+                }
+            }
+            PointerEdit::DefaultManager { teamspace, manager } => {
+                self.default_managers
+                    .insert(teamspace.clone(), manager.clone());
+            }
+            PointerEdit::NodeManager(m) => self.node_manager_seat = m.clone(),
+            PointerEdit::Live {
+                seat,
+                name,
+                teamspace,
+            } => {
+                self.seats.insert(
+                    seat.clone(),
+                    SeatPointer {
+                        name: name.clone(),
+                        teamspace: teamspace.clone(),
+                        manager: None,
+                        retired: false,
+                    },
+                );
+            }
+            PointerEdit::Retire(seat) => {
+                if let Some(s) = self.seats.get_mut(seat) {
+                    s.retired = true;
+                }
+            }
+        }
+    }
+
+    pub fn name(&self, seat: &SeatId) -> Option<&str> {
+        self.seats.get(seat).map(|s| s.name.as_str())
+    }
+
+    /// node_manager_seat when it names an existing, non-retired seat; None otherwise (unassigned).
+    pub fn live_node_manager(&self) -> Option<SeatId> {
+        let nm = self.node_manager_seat.as_ref()?;
+        self.seats
+            .get(nm)
+            .filter(|s| !s.retired)
+            .map(|_| nm.clone())
+    }
+
+    /// One step of the precedence rule (does not skip retired seats). Integrity when the seat is unknown, or an
+    /// explicit manager / teamspace default names a seat that does not exist.
+    pub fn effective_manager(&self, seat: &SeatId) -> Result<Option<SeatId>, StoreError> {
+        if self.live_node_manager().as_ref() == Some(seat) {
+            return Ok(None);
+        }
+        let s = self
+            .seats
+            .get(seat)
+            .ok_or_else(|| unresolved(seat, "seat", seat))?;
+        if let Some(m) = &s.manager {
+            if !self.seats.contains_key(m) {
+                return Err(unresolved(seat, "manager", m));
+            }
+            return Ok(Some(m.clone()));
+        }
+        if let Some(Some(d)) = self.default_managers.get(&s.teamspace)
+            && d != seat
+        {
+            if !self.seats.contains_key(d) {
+                return Err(unresolved(&s.teamspace, "default_manager", d));
+            }
+            return Ok(Some(d.clone()));
+        }
+        Ok(self.live_node_manager())
+    }
+
+    /// Every seat above `seat` nearest first, retired ones included. Integrity on a cycle or unresolvable pointer.
+    fn ancestors(&self, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
+        let mut path = vec![seat.clone()];
+        let mut visited: BTreeSet<SeatId> = path.iter().cloned().collect();
+        let mut cur = seat.clone();
+        while let Some(n) = self.effective_manager(&cur)? {
+            if !visited.insert(n.clone()) {
+                let walk: Vec<String> = path
+                    .iter()
+                    .chain(std::iter::once(&n))
+                    .map(|id| self.name(id).map_or_else(|| id.to_string(), str::to_string))
+                    .collect();
+                return Err(unresolved(seat, "manager", &n)
+                    .because(format!("forms a manager cycle: {}", walk.join(" -> "))));
+            }
+            path.push(n.clone());
+            cur = n;
+        }
+        path.remove(0);
+        Ok(path)
+    }
+
+    fn is_retired(&self, seat: &SeatId) -> bool {
+        self.seats.get(seat).is_some_and(|s| s.retired)
+    }
+
+    /// The live managers above `seat`, nearest first, ending at the root (empty when none). Retired seats on the way
+    /// are transparent (walked through, not listed). Integrity on a cycle (visited set) or an unresolvable pointer.
+    pub fn manager_chain(&self, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
+        Ok(self
+            .ancestors(seat)?
+            .into_iter()
+            .filter(|n| !self.is_retired(n))
+            .collect())
+    }
+
+    /// The first live seat above `seat` that is not in `retiring`.
+    pub fn nearest_surviving_manager(
+        &self,
+        seat: &SeatId,
+        retiring: &BTreeSet<SeatId>,
+    ) -> Result<Option<SeatId>, StoreError> {
+        Ok(self
+            .ancestors(seat)?
+            .into_iter()
+            .find(|n| !self.is_retired(n) && !retiring.contains(n)))
+    }
+
+    /// The first cycle reachable from any of `subjects`, as the seats on it in walk order; None when every walk ends.
+    /// Pointers naming missing seats end a walk here (they are reported by `manager_chain`).
+    pub fn cycle_from(&self, subjects: &[SeatId]) -> Option<Vec<SeatId>> {
+        for subject in subjects {
+            let mut path = vec![subject.clone()];
+            let mut cur = subject.clone();
+            while let Ok(Some(n)) = self.effective_manager(&cur) {
+                if let Some(at) = path.iter().position(|p| *p == n) {
+                    return Some(path.split_off(at));
+                }
+                path.push(n.clone());
+                cur = n;
+            }
+        }
+        None
+    }
+}
+
+pub fn live_node_manager(tree: &dyn TreeRead) -> Result<Option<SeatId>, StoreError> {
+    Ok(Pointers::load(tree)?.live_node_manager())
+}
+
+pub fn effective_manager(tree: &dyn TreeRead, seat: &SeatId) -> Result<Option<SeatId>, StoreError> {
+    Pointers::load(tree)?.effective_manager(seat)
+}
+
+pub fn manager_chain(tree: &dyn TreeRead, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
+    Pointers::load(tree)?.manager_chain(seat)
+}
+
+pub fn nearest_surviving_manager(
+    tree: &dyn TreeRead,
+    seat: &SeatId,
+    retiring: &BTreeSet<SeatId>,
+) -> Result<Option<SeatId>, StoreError> {
+    Pointers::load(tree)?.nearest_surviving_manager(seat, retiring)
+}
+
+/// Load, apply `edits`, then `cycle_from(subjects)`: the would-create-cycle check (ManagerEdit, the make_plan guard).
+pub fn would_create_cycle(
+    tree: &dyn TreeRead,
+    edits: &[PointerEdit],
+    subjects: &[SeatId],
+) -> Result<Option<Vec<SeatId>>, StoreError> {
+    let mut p = Pointers::load(tree)?;
+    for e in edits {
+        p.apply(e);
+    }
+    Ok(p.cycle_from(subjects))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct B {
+        p: Pointers,
+        ts: TeamspaceId,
+        ids: BTreeMap<String, SeatId>,
+    }
+
+    impl B {
+        fn new() -> Self {
+            Self {
+                p: Pointers::default(),
+                ts: TeamspaceId::new(),
+                ids: BTreeMap::new(),
+            }
+        }
+        fn seat(mut self, name: &str, manager: Option<&str>, retired: bool) -> Self {
+            let id = self.id_of(name);
+            let manager = manager.map(|m| self.id_of(m));
+            let ts = self.ts.clone();
+            self.p.seats.insert(
+                id,
+                SeatPointer {
+                    name: name.to_string(),
+                    teamspace: ts,
+                    manager,
+                    retired,
+                },
+            );
+            self
+        }
+        fn id_of(&mut self, name: &str) -> SeatId {
+            self.ids
+                .entry(name.to_string())
+                .or_insert_with(SeatId::new)
+                .clone()
+        }
+        fn default(mut self, name: &str) -> Self {
+            let id = self.id_of(name);
+            self.p.default_managers.insert(self.ts.clone(), Some(id));
+            self
+        }
+        fn node(mut self, name: &str) -> Self {
+            let id = self.id_of(name);
+            self.p.node_manager_seat = Some(id);
+            self
+        }
+        fn id(&self, name: &str) -> SeatId {
+            self.ids[name].clone()
+        }
+        fn names(&self, ids: &[SeatId]) -> Vec<String> {
+            ids.iter()
+                .map(|i| self.p.name(i).unwrap().to_string())
+                .collect()
+        }
+    }
+
+    fn integrity(e: StoreError) -> (String, String, String, String) {
+        match e {
+            StoreError::Integrity {
+                holder,
+                field,
+                target,
+                reason,
+            } => (holder, field, target, reason),
+            other => panic!("expected Integrity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn precedence_explicit_then_default_then_node_manager() {
+        let b = B::new()
+            .seat("nm", None, false)
+            .seat("dflt", None, false)
+            .seat("exp", None, false)
+            .seat("a", Some("exp"), false)
+            .seat("b", None, false)
+            .node("nm")
+            .default("dflt");
+        assert_eq!(
+            b.p.effective_manager(&b.id("a")).unwrap(),
+            Some(b.id("exp"))
+        );
+        assert_eq!(
+            b.p.effective_manager(&b.id("b")).unwrap(),
+            Some(b.id("dflt"))
+        );
+        let mut b = b;
+        b.p.default_managers.clear();
+        assert_eq!(b.p.effective_manager(&b.id("b")).unwrap(), Some(b.id("nm")));
+        assert_eq!(
+            b.p.manager_chain(&b.id("a")).unwrap(),
+            vec![b.id("exp"), b.id("nm")]
+        );
+    }
+
+    #[test]
+    fn self_default_is_skipped() {
+        let b = B::new()
+            .seat("nm", None, false)
+            .seat("d", None, false)
+            .node("nm")
+            .default("d");
+        assert_eq!(b.p.effective_manager(&b.id("d")).unwrap(), Some(b.id("nm")));
+    }
+
+    #[test]
+    fn node_manager_has_no_manager() {
+        let b = B::new()
+            .seat("other", None, false)
+            .seat("nm", Some("other"), false)
+            .node("nm")
+            .default("other");
+        assert_eq!(b.p.effective_manager(&b.id("nm")).unwrap(), None);
+        assert!(b.p.manager_chain(&b.id("nm")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn retired_pointer_is_transparent() {
+        let b = B::new()
+            .seat("m", None, false)
+            .seat("r", Some("m"), true)
+            .seat("a", Some("r"), false)
+            .node("m");
+        assert_eq!(b.p.effective_manager(&b.id("a")).unwrap(), Some(b.id("r")));
+        assert_eq!(b.p.manager_chain(&b.id("a")).unwrap(), vec![b.id("m")]);
+    }
+
+    #[test]
+    fn node_manager_missing_or_retired_is_unassigned() {
+        let mut b = B::new()
+            .seat("a", None, false)
+            .seat("nm", None, true)
+            .node("nm");
+        assert_eq!(b.p.live_node_manager(), None);
+        assert_eq!(b.p.effective_manager(&b.id("a")).unwrap(), None);
+        assert!(b.p.manager_chain(&b.id("a")).unwrap().is_empty());
+        b.p.node_manager_seat = Some(SeatId::new());
+        assert_eq!(b.p.live_node_manager(), None);
+        assert!(b.p.manager_chain(&b.id("a")).unwrap().is_empty());
+    }
+
+    #[test]
+    fn live_node_manager_cases() {
+        let mut b = B::new().seat("nm", None, false).node("nm");
+        assert_eq!(b.p.live_node_manager(), Some(b.id("nm")));
+        b.p.apply(&PointerEdit::Retire(b.id("nm")));
+        assert_eq!(b.p.live_node_manager(), None);
+        b.p.apply(&PointerEdit::NodeManager(None));
+        assert_eq!(b.p.live_node_manager(), None);
+    }
+
+    #[test]
+    fn live_node_manager_reads_a_real_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("inst");
+        let head = crate::store::init::init_instance(&dir).unwrap();
+        let store = crate::store::GitStore::open(&dir).unwrap();
+        let view = store.at(&head);
+        assert_eq!(live_node_manager(&view).unwrap(), None);
+        assert!(Pointers::load(&view).unwrap().seats.is_empty());
+    }
+
+    #[test]
+    fn explicit_manager_missing_is_integrity() {
+        let mut b = B::new().seat("a", None, false);
+        let ghost = SeatId::new();
+        b.p.seats.get_mut(&b.id("a")).unwrap().manager = Some(ghost.clone());
+        let (holder, field, target, _) = integrity(b.p.manager_chain(&b.id("a")).unwrap_err());
+        assert_eq!(
+            (holder, field, target),
+            (b.id("a").to_string(), "manager".into(), ghost.to_string())
+        );
+    }
+
+    #[test]
+    fn missing_default_is_integrity() {
+        let mut b = B::new().seat("a", None, false);
+        let ghost = SeatId::new();
+        b.p.default_managers.insert(b.ts.clone(), Some(ghost));
+        let (holder, field, _, _) = integrity(b.p.effective_manager(&b.id("a")).unwrap_err());
+        assert_eq!(
+            (holder, field),
+            (b.ts.to_string(), "default_manager".into())
+        );
+    }
+
+    #[test]
+    fn cycle_is_integrity() {
+        let b = B::new()
+            .seat("a", Some("b"), false)
+            .seat("b", Some("a"), false);
+        let (_, field, _, reason) = integrity(b.p.manager_chain(&b.id("a")).unwrap_err());
+        assert_eq!(field, "manager");
+        assert!(reason.contains("manager cycle: a -> b -> a"), "{reason}");
+    }
+
+    #[test]
+    fn nearest_surviving_skips_retiring_set() {
+        let b = B::new()
+            .seat("nm", None, false)
+            .seat("c", None, false)
+            .seat("bb", Some("c"), false)
+            .seat("a", Some("bb"), false)
+            .node("nm")
+            .default("c");
+        let retiring: BTreeSet<_> = [b.id("bb"), b.id("c")].into();
+        assert_eq!(
+            b.p.nearest_surviving_manager(&b.id("a"), &retiring)
+                .unwrap(),
+            Some(b.id("nm"))
+        );
+        let none = BTreeSet::new();
+        assert_eq!(
+            b.p.nearest_surviving_manager(&b.id("a"), &none).unwrap(),
+            Some(b.id("bb"))
+        );
+    }
+
+    #[test]
+    fn would_create_cycle_reports_the_loop() {
+        let b = B::new()
+            .seat("a", Some("b"), false)
+            .seat("b", None, false)
+            .seat("c", None, false);
+        let mut p = b.p.clone();
+        p.apply(&PointerEdit::SeatManager {
+            seat: b.id("b"),
+            manager: Some(b.id("a")),
+        });
+        let cyc = p.cycle_from(&[b.id("a")]).expect("cycle");
+        assert_eq!(b.names(&cyc), vec!["a", "b"]);
+        let mut ok = b.p.clone();
+        ok.apply(&PointerEdit::SeatManager {
+            seat: b.id("b"),
+            manager: Some(b.id("c")),
+        });
+        assert_eq!(ok.cycle_from(&[b.id("a"), b.id("b")]), None);
+    }
+}

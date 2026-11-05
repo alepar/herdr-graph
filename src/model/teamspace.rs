@@ -1,6 +1,6 @@
 //! `teamspaces/<slug>/teamspace.toml` (spec §2.4).
 use crate::model::common::{Channel, Lifecycle, NameChange, Retirement, Runtime};
-use crate::model::ids::TeamspaceId;
+use crate::model::ids::{SeatId, TeamspaceId};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -19,6 +19,9 @@ pub struct TeamspaceRecord {
     pub runtime: Runtime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_repo: Option<PathBuf>,
+    /// Default manager seat for the teamspace's seats (spec §4.6); read through model::manager only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_manager: Option<SeatId>,
     #[serde(default)]
     pub channel: Channel,
 }

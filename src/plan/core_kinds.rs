@@ -263,6 +263,7 @@ fn new_seat_record(
         retired: None,
         system_duty: a.system_duty,
         template_ref: None,
+        manager: None,
         applications: vec![],
         overrides: Default::default(),
         participation: Default::default(),
@@ -638,6 +639,7 @@ impl OrgKind for TeamspaceCreate {
             retired: None,
             runtime: absent(),
             project_repo: a.project_repo.map(PathBuf::from),
+            default_manager: None,
             channel: Default::default(),
         };
         cx.tree
