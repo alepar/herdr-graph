@@ -3683,3 +3683,235 @@ fn resolve_error_appends_suffix_after_semicolon() {
     let plain = resolve_error(StoreError::Git("boom".into()), &head, Some("x"));
     assert_eq!(plain.code, IpcErrorCode::Internal);
 }
+
+// ---- seat.resolve manager fields and the node-manager suffix (hg-k4l.11) ----
+
+/// Rewrite the committed graph.toml with `node_manager_seat` set (or cleared).
+fn set_graph_node_manager(fx: &Fx, seat: Option<&SeatId>) {
+    let mut g = layout::read_graph(&view(fx)).unwrap();
+    g.node_manager_seat = seat.cloned();
+    let bytes = crate::store::record::to_toml_bytes(&g).unwrap();
+    assert_eq!(put_path(fx, "graph.toml", &bytes).state, OpState::Committed);
+}
+
+fn set_manager(fx: &Fx, seat: &SeatRecord, manager: &SeatRecord) {
+    edit_seat(fx, seat, |s| s.manager = Some(manager.id.clone()));
+}
+
+/// `one` (bound to p1), `boss` and `nm` in alpha, with `one` broken by a missing teamspace.
+fn managed_fixture() -> (Fx, SeatRecord, SeatRecord, SeatRecord) {
+    let fx = fx();
+    let (one, _) = bound_seat(&fx, "p1");
+    commit(&fx, "seat create boss --teamspace alpha --active");
+    commit(&fx, "seat create nm --teamspace alpha --active");
+    let (boss, nm) = (seat_rec(&fx, "boss"), seat_rec(&fx, "nm"));
+    (fx, one, boss, nm)
+}
+
+fn break_seat(fx: &Fx, seat: &SeatRecord) -> TeamspaceId {
+    let ghost = TeamspaceId::new();
+    edit_seat(fx, seat, |s| s.teamspace = ghost.clone());
+    ghost
+}
+
+#[test]
+fn reply_has_manager_and_node_manager() {
+    let (fx, one, boss, nm) = managed_fixture();
+    set_manager(&fx, &one, &boss);
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["seat"], json!(boss.id));
+    assert_eq!(reply["manager"]["name"], "boss");
+    assert_eq!(reply["manager"]["threads_seat"], Value::Null);
+    assert_eq!(reply["node_manager"]["seat"], json!(nm.id));
+    assert_eq!(reply["node_manager"]["name"], "nm");
+
+    let clone = clone_of(&fx, &boss.id);
+    patch_clone(&fx, &clone.id, json!({ "invite": true }));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["threads_seat"], "ts-seat");
+    assert_eq!(reply["node_manager"]["threads_seat"], Value::Null);
+    let typed: SeatRef = serde_json::from_value(reply["manager"].clone()).unwrap();
+    assert_eq!(typed.threads_seat.as_deref(), Some("ts-seat"));
+    // `threads_seat` is #[serde(default)]: an old reply without it still parses.
+    let old: SeatRef = serde_json::from_value(json!({ "seat": boss.id, "name": "boss" })).unwrap();
+    assert_eq!(old.threads_seat, None);
+}
+
+#[test]
+fn manager_falls_back_to_node_manager_and_node_manager_has_none() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["seat"], json!(nm.id));
+    assert_eq!(reply["node_manager"]["seat"], json!(nm.id));
+}
+
+#[test]
+fn reply_fields_null_when_unassigned() {
+    let (fx, _one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+}
+
+#[test]
+fn unbound_caller_gets_null_fields_even_with_a_node_manager() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+}
+
+#[test]
+fn integrity_suffix_names_node_manager() {
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message.ends_with(&format!(
+            "; report it to the node manager seat nm ({})",
+            nm.id
+        )),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_unassigned() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_node_manager_missing() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&SeatId::new()));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_node_manager_retired() {
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    edit_seat(&fx, &nm, |s| {
+        s.lifecycle = crate::model::common::Lifecycle::Retired;
+    });
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_when_caller_is_node_manager() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&one.id));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; you are the node manager seat; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn manager_cycle_is_integrity() {
+    let (fx, one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    set_manager(&fx, &one, &boss);
+    set_manager(&fx, &boss, &one);
+    let err = integrity_err(&fx, &["manager cycle"]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn full_exit_6_text_end_to_end() {
+    use crate::cli::seat::{SEAT_INTEGRITY, seat_failure};
+    use crate::daemon::client::ClientError;
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let ghost = break_seat(&fx, &one);
+    let head = fx.store.head().unwrap();
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    let message = format!(
+        "{}: teamspace {ghost} not found at the committed revision (HEAD {}); report it to the node manager seat nm ({})",
+        one.id,
+        crate::bootstrap::instructions::short_rev(&head.0),
+        nm.id
+    );
+    assert_eq!(err.message, message);
+    let remote = ClientError::Remote {
+        code: err.code,
+        message: err.message.clone(),
+    };
+    assert_eq!(
+        seat_failure(&remote, true),
+        (
+            6,
+            format!(
+                "herdr-graph: graph integrity error: {message}. This is not transient; retrying will not help. {SEAT_INTEGRITY}"
+            )
+        )
+    );
+}
+
+#[test]
+fn render_seat_prints_manager_lines() {
+    let seat = SeatId::new();
+    let nm = SeatId::new();
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "manager": { "seat": seat, "name": "boss", "threads_seat": null },
+        "node_manager": { "seat": nm, "name": "nm", "threads_seat": "ts" },
+    }));
+    assert!(out.contains(&format!("manager: boss ({seat})\n")), "{out}");
+    assert!(out.contains(&format!("node manager: nm ({nm})\n")), "{out}");
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "manager": null,
+        "node_manager": null,
+    }));
+    assert!(out.contains("manager: none assigned\n"), "{out}");
+    assert!(out.contains("node manager: none assigned\n"), "{out}");
+}
+
+#[test]
+fn old_reply_without_fields_renders() {
+    let out = render_seat(&json!({ "resolution": { "status": "bound" } }));
+    assert!(out.contains("\nmanager: none assigned\n"), "{out}");
+    assert!(out.contains("\nnode manager: none assigned\n"), "{out}");
+}
