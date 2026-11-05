@@ -381,3 +381,79 @@ impl ThreadsPort for FakeThreads {
         Ok(st.capability.unwrap_or(DeliveryCapability::NotifyFallback))
     }
 }
+
+/// Transport failure a `FakeThreadsSeatView` can be told to report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FakeSeatViewError {
+    Disconnected,
+    Busy,
+    Rejected,
+    Unsupported,
+}
+
+impl FakeSeatViewError {
+    fn to_error(self) -> ThreadsError {
+        match self {
+            Self::Disconnected => ThreadsError::Disconnected("fake seat view unavailable".into()),
+            Self::Busy => ThreadsError::ServiceBusy,
+            Self::Rejected => ThreadsError::Rejected("fake seat view rejected".into()),
+            Self::Unsupported => ThreadsError::Unsupported,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SeatViewState {
+    seats: BTreeMap<ThreadsSeatRef, SeatStatus>,
+    error: Option<FakeSeatViewError>,
+    reads: usize,
+}
+
+/// In-memory `ThreadsSeatView`. A seat never `set` reads `Unresolved`, so an unconfigured fake never makes
+/// threads speak; an injected error fails the whole read like the real view.
+#[derive(Default)]
+pub struct FakeThreadsSeatView {
+    state: Mutex<SeatViewState>,
+}
+
+impl FakeThreadsSeatView {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn set(&self, seat: &ThreadsSeatRef, status: SeatStatus) {
+        self.lock().seats.insert(seat.clone(), status);
+    }
+    pub fn set_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().error = error;
+    }
+    /// Number of `inspect` calls so far, failed ones included.
+    pub fn reads(&self) -> usize {
+        self.lock().reads
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, SeatViewState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadsSeatView for FakeThreadsSeatView {
+    async fn inspect(
+        &self,
+        seats: &[ThreadsSeatRef],
+    ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
+        let mut st = self.lock();
+        st.reads += 1;
+        if let Some(e) = st.error {
+            return Err(e.to_error());
+        }
+        Ok(seats
+            .iter()
+            .map(|s| {
+                (
+                    s.clone(),
+                    st.seats.get(s).cloned().unwrap_or(SeatStatus::Unresolved),
+                )
+            })
+            .collect())
+    }
+}

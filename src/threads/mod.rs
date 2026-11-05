@@ -20,7 +20,7 @@ mod tests;
 
 pub use adapter::{Discovered, ServiceThreads, discover};
 pub use effects::{ThreadsExecutor, ThreadsSource};
-pub use fake::FakeThreads;
+pub use fake::{FakeSeatViewError, FakeThreads, FakeThreadsSeatView};
 pub use mapping::{FakePaneSeatMap, PaneSeatMap, ThreadsSeatMap};
 
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};

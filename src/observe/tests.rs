@@ -105,6 +105,7 @@ fn new_loop(
         Duration::from_secs(60),
         None,
         root.join("claude"),
+        Arc::new(crate::threads::FakeThreadsSeatView::new()),
     );
     lp.set_tuning(LoopTuning {
         commit_timeout: Duration::from_secs(5),
@@ -1394,6 +1395,7 @@ async fn run_loop_reacts_to_events_and_ticks() {
         Duration::from_millis(40),
         Some(fx.w.subscribe()),
         fx.root.join("claude"),
+        Arc::new(crate::threads::FakeThreadsSeatView::new()),
     );
     lp.set_tuning(LoopTuning {
         commit_timeout: Duration::from_secs(5),

@@ -2458,3 +2458,120 @@ async fn resolve_rejected_by_assignment_needs_revision() {
         "never retried under another op id: {mine:?}"
     );
 }
+
+// --- ThreadsSeatView: wire -> SeatStatus (hg-66u.6) ---
+
+/// A v3.0.0 `SeatInspect` result as the daemon serializes it, for one seat in the given state.
+fn inspection_fixture(
+    continuity: &str,
+    target: Option<&str>,
+    retired_at: Option<i64>,
+) -> herdr_threads::protocol::results::SeatInspection {
+    serde_json::from_value(json!({
+        "summary": {
+            "seat": "seat-a",
+            "continuity": continuity,
+            "target": target,
+            "generation": 2,
+            "created_at": 1_000,
+            "retired_at": retired_at,
+        },
+        "mapping": { "state": continuity, "target": target, "detail_argv": null },
+        "hold": null,
+        "retirement": null,
+        "history": {
+            "items": [],
+            "next_cursor": null,
+            "next_argv": null,
+            "high_water_ordinal": 0,
+            "scope_revision": null,
+            "has_more": false,
+            "stop_reason": "complete",
+            "consistency": "bounded_live",
+        },
+    }))
+    .unwrap()
+}
+
+#[test]
+fn seat_status_maps_v3_inspection_fixtures() {
+    use super::mapping::seat_status;
+    let pane = |p: &str| HerdrPaneId(p.into());
+    assert_eq!(
+        seat_status(&inspection_fixture("resolved", Some("w1:p2"), None)),
+        SeatStatus::Resolved {
+            pane: pane("w1:p2")
+        }
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("resolved", None, None)),
+        SeatStatus::Unresolved,
+        "resolved without a target names no pane"
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("unresolved", None, None)),
+        SeatStatus::Unresolved
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("retired", None, Some(5_000))),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final
+        }
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("retired", Some("w1:p2"), Some(5_000))),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final
+        },
+        "a retired seat is never reported as bound to its old pane"
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("remote", Some("w9:p9"), None)),
+        SeatStatus::Unresolved,
+        "a remote seat is never bound here"
+    );
+}
+
+#[tokio::test]
+async fn fake_seat_view_errors_are_errors() {
+    use super::fake::{FakeSeatViewError, FakeThreadsSeatView};
+    let view = FakeThreadsSeatView::new();
+    let (a, b) = (seat_ref("a"), seat_ref("b"));
+    view.set(
+        &a,
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    let read = view.inspect(&[a.clone(), b.clone()]).await.unwrap();
+    assert_eq!(
+        read[&a],
+        SeatStatus::Retired {
+            kind: RetirementKind::Final
+        }
+    );
+    assert_eq!(
+        read[&b],
+        SeatStatus::Unresolved,
+        "an unset seat reads Unresolved"
+    );
+    for (injected, check) in [
+        (FakeSeatViewError::Disconnected, "disconnected"),
+        (FakeSeatViewError::Busy, "busy"),
+        (FakeSeatViewError::Rejected, "rejected"),
+        (FakeSeatViewError::Unsupported, "unsupported"),
+    ] {
+        view.set_error(Some(injected));
+        let err = view.inspect(std::slice::from_ref(&a)).await.unwrap_err();
+        let kind = match err {
+            ThreadsError::Disconnected(_) => "disconnected",
+            ThreadsError::ServiceBusy => "busy",
+            ThreadsError::Rejected(_) => "rejected",
+            ThreadsError::Unsupported => "unsupported",
+        };
+        assert_eq!(kind, check);
+    }
+    view.set_error(None);
+    assert!(view.inspect(&[a]).await.is_ok());
+    assert_eq!(view.reads(), 6);
+}
