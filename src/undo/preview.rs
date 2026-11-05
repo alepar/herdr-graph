@@ -7,10 +7,13 @@ use crate::model::application::ApplicationRecord;
 use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, Retirement};
+use crate::model::manager::Pointers;
 use crate::model::seat::SeatRecord;
 use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateId};
 use crate::plan::core_kinds::{open_clone_effects, read_seat, read_ts, rev_of};
 use crate::plan::kind::{PlanBody, PlanCx, PlanError};
+use crate::plan::managers::reparent::{REPARENTED_KEY, Rewrite};
+use crate::plan::managers::{default_manager_effect, seat_manager_effect};
 use crate::plan::types::{PlanEffect, Reserved};
 use crate::store::instruction_source::{
     self as source, InstructionError, InstructionFile, InstructionTarget, ScopeKind,
@@ -305,6 +308,7 @@ pub fn restore_preview(
 ) -> Result<PlanBody, PlanError> {
     let tree = cx.tree;
     let r = compute_restore(tree, act, reserved)?;
+    let (pointer_effects, pointer_warnings) = pointer_restores(tree, act)?;
     let mut effects = Vec::new();
     let mut relied_on = Vec::new();
     let mut warnings = r.warnings.clone();
@@ -425,6 +429,9 @@ pub fn restore_preview(
         ));
     }
 
+    effects.extend(pointer_effects);
+    warnings.extend(pointer_warnings);
+
     if let Some(a) = &adopt
         && let Some((x, _)) = &a.displaced
     {
@@ -463,6 +470,71 @@ pub fn restore_preview(
         repair_required: repair,
         summary: format!("undo {}", act.id),
     })
+}
+
+/// The pointer restores an undo of `act` performs: for each `reparented` row whose holder still exists and still
+/// holds the reparent value (`new`), an effect back to `old`; for each other row, a warning listing it.
+pub(crate) fn pointer_restores(
+    tree: &dyn TreeRead,
+    act: &ActionRecord,
+) -> Result<(Vec<PlanEffect>, Vec<String>), PlanError> {
+    let Some(rows) = act
+        .compensation
+        .get(REPARENTED_KEY)
+        .and_then(|v| v.as_array())
+    else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let pointers = Pointers::load(tree)?;
+    let (mut effects, mut warnings) = (Vec::new(), Vec::new());
+    for row in rows {
+        let Some(rw) = Rewrite::from_toml(row) else {
+            warnings.push(format!(
+                "unreadable manager pointer rewrite {row}; left unchanged"
+            ));
+            continue;
+        };
+        // `Some(current)` when the holder exists; the pointer it holds is `current`.
+        let current: Option<Option<SeatId>> = match (rw.field.as_str(), &rw.holder) {
+            ("manager", id) => SeatId::try_from(id.clone())
+                .ok()
+                .and_then(|s| pointers.seats.get(&s).map(|p| p.manager.clone())),
+            ("default_manager", id) => TeamspaceId::try_from(id.clone())
+                .ok()
+                .and_then(|t| pointers.default_managers.get(&t).cloned()),
+            _ => None,
+        };
+        let Some(current) = current else {
+            warnings.push(format!(
+                "manager pointer of {} no longer exists; left unchanged",
+                rw.holder
+            ));
+            continue;
+        };
+        if current != rw.new {
+            warnings.push(format!(
+                "manager pointer of {} changed since the retirement (now {}); left unchanged",
+                rw.holder,
+                current.map_or("none".to_string(), |c| c.to_string())
+            ));
+            continue;
+        }
+        let effect = if rw.field == "manager" {
+            seat_manager_effect(
+                &SeatId::try_from(rw.holder.clone()).map_err(|e| invalid(e.to_string()))?,
+                rw.new.as_ref(),
+                Some(&rw.old),
+            )
+        } else {
+            default_manager_effect(
+                &TeamspaceId::try_from(rw.holder.clone()).map_err(|e| invalid(e.to_string()))?,
+                rw.new.as_ref(),
+                Some(&rw.old),
+            )
+        };
+        effects.push(effect);
+    }
+    Ok((effects, warnings))
 }
 
 /// Pane effects for the clones `own` of one restored active seat: the caller's pane replaces the adopted
