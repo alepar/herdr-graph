@@ -133,6 +133,15 @@ pub fn compute_restore(
 ) -> Result<Restore, PlanError> {
     let mut r = Restore::default();
     let mut standalone: Vec<CloneId> = Vec::new();
+    // A purged clone's undo window has ended: refuse rather than restore the rest around it.
+    for id in act.retired.iter().filter(|id| id.kind() == IdKind::Clone) {
+        let c = CloneId::parse(id.as_str()).map_err(|e| invalid(e.to_string()))?;
+        if read_clone(tree, &c)?.is_none_or(|rec| rec.is_tombstone()) {
+            return Err(invalid(format!(
+                "clone {c} was purged; its undo window has ended"
+            )));
+        }
+    }
     for id in &act.retired {
         match id.kind() {
             IdKind::Teamspace => {

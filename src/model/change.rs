@@ -20,6 +20,7 @@ pub enum RequestKind {
     SeatOverride,
     CloneAdd,
     CloneRetire,
+    ClonePurge,
     CloneRebind,
     ParticipationJoin,
     ParticipationLeave,

@@ -46,6 +46,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(SeatResurrect));
     reg.register(Arc::new(CloneAdd));
     reg.register(Arc::new(CloneRetire));
+    reg.register(Arc::new(ClonePurge));
     reg.register(Arc::new(crate::plan::instructions::InstructionsKind));
 }
 
@@ -509,6 +510,7 @@ pub(crate) fn do_resurrect_seat(
     let mut clone_ids = Vec::new();
     for (loc, c) in &f.clones {
         if c.lifecycle != CloneLifecycle::Retired
+            || c.is_tombstone()
             || !retired_with(set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
         {
             continue;
@@ -1828,6 +1830,103 @@ impl OrgKind for CloneRetire {
         Ok(Applied {
             summary: format!("retire clone {}", f.clone.name),
             action: Some(act),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// clone purge (spec §14.1-3): ends a retired clone's undo window
+// ---------------------------------------------------------------------------------------------
+
+struct ClonePurge;
+impl ClonePurge {
+    /// The clone and its location; it must be retired and not already a tombstone.
+    fn facts(
+        tree: &dyn TreeRead,
+        clone_ref: &str,
+    ) -> Result<(CloneRecord, ObjectLocation), PlanError> {
+        let id = match CloneId::parse(clone_ref) {
+            Ok(id) => id,
+            Err(_) => match grammar::resolve_clone(tree, clone_ref, Scope::Retired) {
+                Ok(id) => id,
+                // A live clone of that name gets the "retire it first" refusal below.
+                Err(e) => grammar::resolve_clone(tree, clone_ref, Scope::Live).map_err(|_| e)?,
+            },
+        };
+        let loc = layout::locate(tree, &id.to_any())?
+            .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+        let clone = read_toml::<CloneRecord>(tree, &loc.record_path)?
+            .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+        if clone.lifecycle != CloneLifecycle::Retired {
+            return Err(PlanError::Invalid(format!(
+                "clone {id} is not retired; retire it first"
+            )));
+        }
+        if clone.is_tombstone() {
+            return Err(PlanError::Invalid(format!("clone {id} is already purged")));
+        }
+        Ok((clone, loc))
+    }
+}
+impl OrgKind for ClonePurge {
+    fn kind(&self) -> RequestKind {
+        RequestKind::ClonePurge
+    }
+    fn verbs(&self) -> &'static [(&'static str, &'static str)] {
+        &[("clone", "purge")]
+    }
+    fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
+        let c =
+            positional(words, 0).ok_or_else(|| PlanError::Usage("clone purge <clone>".into()))?;
+        Ok(json!({ "clone": c }))
+    }
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
+        let a: CloneRef = parse_args(args)?;
+        let (clone, _) = Self::facts(cx.tree, &a.clone)?;
+        // hg-66u.13 passes the recorded key reservation.
+        let tombstone = match crate::threads::assignment::purge_tombstone(&clone, None) {
+            Some(t) => match t.seat_intent {
+                Some(crate::model::clone::SeatIntent::ReleaseKey { .. }) => "release_key",
+                _ => "finalize",
+            },
+            None => "none",
+        };
+        Ok(PlanBody {
+            effects: vec![PlanEffect::new(
+                "clone.purge",
+                clone.id.clone(),
+                json!({ "seat": clone.threads_seat, "name": clone.name, "tombstone": tombstone }),
+            )],
+            relied_on: vec![rev_of(clone.id.clone(), clone.rev)],
+            warnings: vec![format!(
+                "purging clone {} ends its undo window; it cannot be restored",
+                clone.name
+            )],
+            repair_required: None,
+            summary: format!("purge clone {}", clone.name),
+        })
+    }
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
+        let a: CloneRef = parse_args(args).map_err(mm)?;
+        let (clone, loc) = Self::facts(&cx.tree, &a.clone).map_err(mm)?;
+        // hg-66u.13 passes the recorded key reservation.
+        match crate::threads::assignment::purge_tombstone(&clone, None) {
+            Some(mut t) => cx.tree.put_record(loc.record_path.clone(), &mut t)?,
+            None => cx.tree.delete_file(&loc.record_path),
+        }
+        Ok(Applied {
+            summary: format!("purge clone {}", clone.name),
+            action: None,
         })
     }
 }
