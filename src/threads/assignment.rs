@@ -64,7 +64,7 @@ pub fn write_restore_intent(rec: &mut CloneRecord, epoch: &OpId) {
             seat: seat.clone(),
             epoch: epoch.clone(),
             threads_done: false,
-            launched: false,
+            launched: None,
             last_refusal: None,
         });
     }
@@ -228,7 +228,7 @@ impl Mutation for ThreadsSeatMutation {
                         seat: seat.clone(),
                         epoch: epoch.clone(),
                         threads_done: true,
-                        launched: false,
+                        launched: None,
                         last_refusal: None,
                     });
                 }
@@ -261,7 +261,7 @@ impl Mutation for ThreadsSeatMutation {
             SeatTransition::MarkLaunched { epoch } => match &mut rec.seat_intent {
                 Some(SeatIntent::Restore {
                     epoch: e,
-                    launched: true,
+                    launched: Some(_),
                     ..
                 }) if e == epoch => {
                     return Err(reject(
@@ -274,7 +274,7 @@ impl Mutation for ThreadsSeatMutation {
                     threads_done: true,
                     launched,
                     ..
-                }) if e == epoch => *launched = true,
+                }) if e == epoch => *launched = Some(cx.now),
                 _ => {
                     return Err(reject(
                         "seat_intent_mismatch",

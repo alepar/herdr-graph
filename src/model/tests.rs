@@ -410,14 +410,14 @@ fn clone_record_roundtrip() {
             seat: "seat-b".into(),
             epoch: epoch.clone(),
             threads_done: true,
-            launched: true,
+            launched: Some(LEGACY_LAUNCHED_AT),
             last_refusal: None,
         },
         SeatIntent::Restore {
             seat: "seat-b".into(),
             epoch,
             threads_done: false,
-            launched: false,
+            launched: None,
             last_refusal: None,
         },
         SeatIntent::Finalize {
@@ -1225,4 +1225,38 @@ fn cwd_rule_precedence() {
     let (p, s) = resolve_cwd(None, None, inst, &seat);
     assert_eq!(s, CwdSource::InstanceFallback);
     assert_eq!(p, PathBuf::from(format!("/inst/.graph-local/cwd/{seat}")));
+}
+
+#[test]
+fn restore_launched_reads_legacy_bool() {
+    let parse = |launched: &str| -> SeatIntent {
+        serde_json::from_str(&format!(
+            r#"{{"kind":"restore","seat":"s","epoch":"{}","threads_done":true{launched}}}"#,
+            OpId::new()
+        ))
+        .unwrap()
+    };
+    let launched = |i: SeatIntent| match i {
+        SeatIntent::Restore { launched, .. } => launched,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        launched(parse(r#","launched":true"#)),
+        Some(LEGACY_LAUNCHED_AT)
+    );
+    assert_eq!(launched(parse(r#","launched":false"#)), None);
+    assert_eq!(launched(parse("")), None);
+    let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let rt = launched(parse(&format!(r#","launched":"{}""#, at.to_rfc3339())));
+    assert_eq!(rt, Some(at));
+    let written = serde_json::to_value(SeatIntent::Restore {
+        seat: "s".into(),
+        epoch: OpId::new(),
+        threads_done: true,
+        launched: Some(at),
+        last_refusal: None,
+    })
+    .unwrap();
+    assert_eq!(launched(serde_json::from_value(written).unwrap()), Some(at));
+    assert!(LEGACY_LAUNCHED_AT < at);
 }

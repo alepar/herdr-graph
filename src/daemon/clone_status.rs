@@ -1,6 +1,6 @@
 //! The `clones` status component: clone facts an operator may need to act on.
 use crate::journal::Journal;
-use crate::model::clone::SeatIntent;
+use crate::model::clone::{LEGACY_LAUNCHED_AT, SeatIntent};
 use crate::model::common::CloneLifecycle;
 use crate::reconcile::planner::{restore_mark_failed_key, restore_stuck_key, resume_blocked_key};
 use crate::store::layout;
@@ -58,7 +58,7 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
             };
             let mark_failed = meta(restore_mark_failed_key(&c.id))
                 .filter(|m| m["epoch"] == epoch.to_string());
-            let (reason, remedy, error) = if *launched {
+            let (reason, remedy, error) = if launched.is_some() {
                 (
                     "launched_no_reattach",
                     "start the agent in the pane manually or retire the clone",
@@ -91,6 +91,9 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
                 "reason": reason,
                 "remedy": remedy,
             });
+            if let Some(at) = launched.filter(|t| *t != LEGACY_LAUNCHED_AT) {
+                entry["launched_at"] = json!(at.to_rfc3339());
+            }
             if let Some(r) = last_refusal {
                 entry["last_refusal"] = json!(r);
             }

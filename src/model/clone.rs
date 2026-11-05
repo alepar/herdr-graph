@@ -65,6 +65,28 @@ pub enum SeatFactState {
     Retired { reversible: bool },
 }
 
+/// A `Restore` launch mark written as `launched = true` by older code: launched at an unknown time, earlier
+/// than any incarnation change.
+pub const LEGACY_LAUNCHED_AT: Timestamp = chrono::DateTime::UNIX_EPOCH;
+
+/// Reads `launched` as the legacy bool (`true` is `LEGACY_LAUNCHED_AT`, `false` is unlaunched) or a timestamp.
+fn launched_compat<'de, D>(d: D) -> Result<Option<Timestamp>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Legacy(bool),
+        At(Option<Timestamp>),
+    }
+    Ok(match Wire::deserialize(d)? {
+        Wire::Legacy(true) => Some(LEGACY_LAUNCHED_AT),
+        Wire::Legacy(false) => None,
+        Wire::At(at) => at,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SeatIntent {
@@ -74,8 +96,14 @@ pub enum SeatIntent {
         epoch: OpId,
         #[serde(default)]
         threads_done: bool,
-        #[serde(default)]
-        launched: bool,
+        /// When the launch mark was written; `None` until the epoch's one launch is marked. Records written as
+        /// `launched = true` by older code read as `LEGACY_LAUNCHED_AT`.
+        #[serde(
+            default,
+            deserialize_with = "launched_compat",
+            skip_serializing_if = "Option::is_none"
+        )]
+        launched: Option<Timestamp>,
         /// The last threads refusal of this epoch's threads step, for status (§14.7).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         last_refusal: Option<String>,
