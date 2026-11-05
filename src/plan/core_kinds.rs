@@ -238,6 +238,9 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR
         opt_outs: vec![],
         invitations: vec![],
         reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
     }
 }
 
@@ -417,6 +420,7 @@ pub(crate) fn do_retire_seat(
         }
         let mut c = c.clone();
         c.lifecycle = CloneLifecycle::Retired;
+        crate::threads::assignment::clear_restore_on_retire(&mut c);
         c.retired = Some(retirement(cx));
         cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         acc.retired.push(c.id.to_any());
@@ -1802,6 +1806,7 @@ impl OrgKind for CloneRetire {
         } else {
             let mut c = f.clone.clone();
             c.lifecycle = CloneLifecycle::Retired;
+            crate::threads::assignment::clear_restore_on_retire(&mut c);
             c.retired = Some(Retirement {
                 op: cx.op.clone(),
                 action: Some(act.clone()),

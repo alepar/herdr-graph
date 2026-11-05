@@ -2077,6 +2077,9 @@ mod effective {
             opt_outs: vec![],
             invitations: vec![],
             reload_required: false,
+            threads_seat: None,
+            threads_seat_history: vec![],
+            seat_intent: None,
         }
     }
 

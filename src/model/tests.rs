@@ -378,6 +378,9 @@ fn clone_record_roundtrip() {
             }),
         }],
         reload_required: true,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
     });
     toml_rt(&CloneRecord {
         schema: 1,
@@ -394,7 +397,50 @@ fn clone_record_roundtrip() {
         opt_outs: vec![],
         invitations: vec![],
         reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
     });
+    let epoch = OpId::new();
+    for intent in [
+        SeatIntent::Restore {
+            seat: "seat-b".into(),
+            epoch: epoch.clone(),
+            threads_done: true,
+            launched: true,
+        },
+        SeatIntent::Restore {
+            seat: "seat-b".into(),
+            epoch,
+            threads_done: false,
+            launched: false,
+        },
+        SeatIntent::Finalize {
+            seat: "seat-b".into(),
+        },
+        SeatIntent::ReleaseKey { key: "k1".into() },
+    ] {
+        let rec = CloneRecord {
+            schema: 1,
+            id: CloneId::new(),
+            rev: 2,
+            seat: SeatId::new(),
+            name: "c".into(),
+            name_history: vec![],
+            lifecycle: CloneLifecycle::Retired,
+            retired: Some(retirement()),
+            runtime: minimal_runtime(),
+            occupant: None,
+            sessions: vec![],
+            opt_outs: vec![],
+            invitations: vec![],
+            reload_required: false,
+            threads_seat: Some("seat-b".into()),
+            threads_seat_history: vec!["seat-a".into()],
+            seat_intent: Some(intent),
+        };
+        toml_rt(&rec);
+    }
 }
 
 fn full_defaults() -> MemberDefaults {
