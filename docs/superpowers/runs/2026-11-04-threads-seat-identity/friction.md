@@ -9,3 +9,5 @@ Profile: context — agents 308 (measured 308) · peak≥80% 0 · tasks>1 1 · c
 Profile: context agent — coordinator peak 569K/1000K (57%) · first 96K · compactions 0
 Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg-66u.4, hg-66u.7, hg-66u.6, hg-66u.8; Claude context windows from the model table: claude-opus-5-5 1000K, claude-sonnet-5-5 1000K
 - [2026-11-05] super-code: host has no C toolchain after the 2026-11-03 reboot; all 6 first-round merges failed mergeCheck; unplanned coordinator stop (in-flight work lost), relaunched with toolbox-wrapped commands (ht-build).
+- [2026-11-05] super-code: two invocations ended ready-drained/stalled while a review bead closed just after the round's readiness query (hg-66u.28 became ready after Finish began); re-entered each time.
+- [2026-11-05] super-code final review: cluster 4 over the 200K window, never written; collection gap recorded, re-entry proceeds (the review is not an input to the next invocation).
