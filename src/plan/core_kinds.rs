@@ -319,6 +319,9 @@ pub(crate) struct Acc {
     pub(crate) exclusions_added: Vec<(SeatId, AppId, MemberId)>,
     /// Manager pointers `do_retire_seat` rewrote (plan::managers::reparent); recorded in the compensation.
     pub(crate) reparented: Vec<Rewrite>,
+    /// Every seat this mutation retires (routes that retire several seats fill it before their loop); reparent
+    /// skips them all (spec §4.11).
+    pub(crate) retiring: BTreeSet<SeatId>,
     /// Observed cascades: an integrity error computing the reparent target falls back instead of failing.
     pub(crate) lenient_reparent: bool,
     /// Fallback notes from lenient reparenting.
@@ -424,7 +427,7 @@ pub(crate) fn do_retire_seat(
         acc.already.push(f.rec.id.to_any());
         return Ok(());
     }
-    let (rewrites, note) = reparent(&mut cx.tree, seat, acc.lenient_reparent)?;
+    let (rewrites, note) = reparent(&mut cx.tree, seat, &acc.retiring, acc.lenient_reparent)?;
     acc.reparented.extend(rewrites);
     acc.notes.extend(note);
     let retirement = |cx: &MutationCx<'_>| Retirement {
@@ -790,7 +793,13 @@ impl OrgKind for TeamspaceRetire {
         let ts = read_ts(&cx.tree, &id).map_err(mm)?;
         let mech = mechanism(cx);
         let mut acc = Acc::default();
-        for (_, seat) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
+        let seats = layout::list_seats(&cx.tree, &ts.loc.folder)?;
+        acc.retiring = seats
+            .iter()
+            .filter(|(_, s)| s.lifecycle != Lifecycle::Retired)
+            .map(|(_, s)| s.id.clone())
+            .collect();
+        for (_, seat) in seats {
             do_retire_seat(cx, &seat.id, &act, mech, &mut acc, false)?;
         }
         let mut rec = ts.rec.clone();

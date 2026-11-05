@@ -4055,17 +4055,50 @@ fn reparent_skips_seats_retired_in_same_mutation() {
     let nm = seat_id(&fx, "nm");
 
     let row = commit(&fx, "teamspace retire alpha");
-    // Whichever of mid and boss retires first, r ends at the nearest manager outside the teamspace.
+    // r ends at the nearest manager outside the teamspace, in one row whose old is its original pointer.
     assert_eq!(manager_of(&fx, "r"), Some(nm.clone()));
     let rewrites = recorded(&action_of(&fx, &row));
     let r = seat_id(&fx, "r").to_any();
     assert_eq!(
-        rewrites
-            .iter()
-            .rfind(|w| w.holder == r)
-            .map(|w| w.new.clone()),
-        Some(Some(nm)),
-        "{rewrites:?}"
+        rewrites,
+        vec![super::managers::reparent::Rewrite {
+            holder: r,
+            field: "manager".into(),
+            old: seat_id(&fx, "boss"),
+            new: Some(nm),
+        }]
+    );
+}
+
+/// x -> a -> b -> nm with a listed before b in the retiring teamspace: one row for x, equal to the preview.
+#[test]
+fn reparent_two_hop_teamspace_retire_records_one_row() {
+    use super::managers::reparent::{Rewrite, testing::recorded};
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "beta", &["nm", "x"]);
+    dormant_seats(&fx, "alpha", &["a", "b"]);
+    set_nm(&fx, "nm");
+    point(&fx, "b", Some("nm"));
+    point(&fx, "a", Some("b"));
+    point(&fx, "x", Some("a"));
+
+    let sp = plan(&fx, "teamspace retire alpha");
+    assert_eq!(
+        pointer_effects(&sp),
+        vec![seat_pointer(&fx, "x", "a", "nm")]
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(manager_of(&fx, "x"), Some(seat_id(&fx, "nm")));
+    assert_eq!(
+        recorded(&action_of(&fx, &row)),
+        vec![Rewrite {
+            holder: seat_id(&fx, "x").to_any(),
+            field: "manager".into(),
+            old: seat_id(&fx, "a"),
+            new: Some(seat_id(&fx, "nm")),
+        }]
     );
 }
 

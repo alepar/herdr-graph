@@ -2454,6 +2454,55 @@ async fn reparent_on_observed_cascade() {
 }
 
 #[tokio::test]
+async fn reparent_two_hop_on_observed_workspace_close() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, seat_request},
+    };
+    let fx = fx();
+    activate(&fx, "shell");
+    for n in ["a", "b"] {
+        commit(
+            &fx,
+            &format!("seat create {n} --teamspace alpha --active --harness shell"),
+        );
+    }
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create nm --teamspace beta");
+    commit(&fx, "seat create x --teamspace beta");
+    settle(&fx).await;
+    let (nm, x) = (seat(&fx, "nm").id, seat(&fx, "x").id);
+    let (a, b) = (seat(&fx, "a").id, seat(&fx, "b").id);
+    make_node_manager(&fx, &nm);
+    for req in [
+        seat_request(&b, Some(&nm)),
+        seat_request(&a, Some(&b)),
+        seat_request(&x, Some(&a)),
+    ] {
+        fx.w.admit(req).unwrap();
+        fx.w.drain().unwrap();
+    }
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    step(&fx).await;
+
+    assert_eq!(seat(&fx, "a").lifecycle, Lifecycle::Retired);
+    assert_eq!(seat(&fx, "b").lifecycle, Lifecycle::Retired);
+    assert_eq!(seat(&fx, "x").manager, Some(nm.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: x.to_any(),
+            field: "manager".into(),
+            old: a,
+            new: Some(nm),
+        }]
+    );
+}
+
+#[tokio::test]
 async fn reparent_fallback_on_integrity() {
     use crate::plan::managers::reparent::{REPARENT_FALLBACK_KEY, Rewrite, testing::recorded};
     let fx = fx();

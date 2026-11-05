@@ -1270,7 +1270,16 @@ impl OrgKind for TemplateEdit {
             cx.tree.put_file(file, bytes.clone());
         }
 
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            retiring: edit
+                .apps
+                .iter()
+                .flat_map(|ae| &ae.withdraw)
+                .filter(|w| matches!(w.outcome, Outcome::Retire))
+                .map(|w| w.seat.clone())
+                .collect(),
+            ..Acc::default()
+        };
         let mut created: Vec<AnyId> = Vec::new();
         let mut resurrected: Vec<AnyId> = Vec::new();
         for ae in edit.apps {
@@ -2025,7 +2034,10 @@ impl OrgKind for ApplicationRetire {
         let (loc, mut app) = resolve_application(&cx.tree, &a.application).map_err(mm)?;
         let act: ActionId = reserved_id(plan, "act")?;
         let preview = withdraw_plan(&cx.tree, &app)?;
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            retiring: preview.retire.iter().cloned().collect(),
+            ..Acc::default()
+        };
         for seat in &preview.retire {
             do_retire_seat(
                 cx,
