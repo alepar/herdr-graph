@@ -19,6 +19,7 @@ use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{AnyId, CommitId, OpId, PlanId, SeatId};
 use crate::ports::clock::ManualClock;
 use crate::ports::store::{ObjectLocation, Store};
+use crate::ports::writer::Writer;
 use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::store::layout;
@@ -81,10 +82,24 @@ struct Fx {
     store: Arc<GitStore>,
 }
 
+/// Fixture whose graph already names a node manager (a seat that does not exist), so the first seat created is
+/// not auto-assigned (and not forced Active). For tests about unrelated behaviour.
 fn fx() -> Fx {
+    fx_with_opt_out(true)
+}
+
+/// Fixture on a pristine graph: no node manager, no seats. Node-manager tests use this one.
+fn fx_fresh() -> Fx {
+    fx_with_opt_out(false)
+}
+
+fn fx_with_opt_out(opt_out: bool) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    if opt_out {
+        super::managers::testing::opt_out(&root);
+    }
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     super::kinds_extra::register_kinds(&mut kinds);
@@ -3894,6 +3909,10 @@ fn set_manager(fx: &Fx, seat: &SeatId, manager: &SeatId) {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// First seat becomes the node manager (hg-k4l.23)
+// ---------------------------------------------------------------------------------------------
+
 fn node_manager(fx: &Fx) -> Option<SeatId> {
     layout::read_graph(&view(fx)).unwrap().node_manager_seat
 }
@@ -3956,6 +3975,16 @@ fn reparent_teamspace_default_on_retire() {
             old: boss,
             new: Some(nm),
         }]
+    );
+}
+
+/// Set (or clear) graph.toml's node manager through the test-only bookkeeping mutation.
+fn set_role(fx: &Fx, seat: Option<&SeatId>) {
+    let op = fx.w.admit(super::managers::testing::request(seat)).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
     );
 }
 
@@ -4204,4 +4233,128 @@ fn node_manager_set_stale_graph_is_rejected() {
     assert_eq!(row.state, OpState::Rejected);
     assert_eq!(row.rejection.unwrap().reason, "stale_plan");
     assert_eq!(node_manager(&fx), Some(b));
+}
+
+#[test]
+fn first_seat_create_assigns_node_manager() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let sp = plan(
+        &fx,
+        "seat create one --teamspace alpha --active --harness shell",
+    );
+    let eff: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "graph.node_manager_seat")
+        .collect();
+    assert_eq!(eff.len(), 1, "{:?}", kinds_of(&sp));
+    let seat_id: SeatId = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.create")
+        .unwrap()
+        .object
+        .clone()
+        .try_into()
+        .unwrap();
+    assert_eq!(eff[0].detail["from"], json!(null));
+    assert_eq!(eff[0].detail["to"], json!(seat_id));
+    assert!(eff[0].detail["graph_sha"].is_string());
+    let graph = layout::graph_id(&view(&fx)).unwrap().to_any();
+    assert!(
+        sp.plan
+            .relied_on
+            .iter()
+            .any(|r| r.object == graph
+                && matches!(r.version, crate::model::change::Version::Blob(_))),
+        "{:?}",
+        sp.plan.relied_on
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), Some(seat_id));
+}
+
+#[test]
+fn first_dormant_seat_is_created_active() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create one --teamspace alpha");
+    let seat_create = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.create")
+        .unwrap();
+    assert_eq!(seat_create.detail["lifecycle"], json!("active"));
+    assert_eq!(count(&sp, "clone.add"), 1);
+    assert_eq!(count(&sp, "teamspace.activate"), 1);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let (_, s) = seat(&fx, "one", None);
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(teamspace(&fx, "alpha").1.lifecycle, Lifecycle::Active);
+    assert_eq!(clones_of(&fx, &s.id).len(), 1);
+    assert_eq!(node_manager(&fx), Some(s.id));
+}
+
+#[test]
+fn no_auto_assign_when_live_seats_exist() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    set_role(&fx, None);
+    let sp = plan(&fx, "seat create two --teamspace alpha");
+    assert_eq!(count(&sp, "graph.node_manager_seat"), 0);
+    assert_eq!(
+        sp.plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "seat.create")
+            .unwrap()
+            .detail["lifecycle"],
+        json!("dormant")
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), None);
+    assert_eq!(seat(&fx, "two", None).1.lifecycle, Lifecycle::Dormant);
+}
+
+#[test]
+fn first_seat_assigns_again_when_every_seat_is_retired() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    set_role(&fx, None);
+    commit(&fx, "seat retire one");
+    let sp = plan(&fx, "seat create two --teamspace alpha");
+    assert_eq!(count(&sp, "graph.node_manager_seat"), 1);
+}
+
+#[test]
+fn no_auto_assign_when_set_but_dangling() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let ghost = SeatId::new();
+    set_role(&fx, Some(&ghost));
+    let sp = plan(&fx, "seat create one --teamspace alpha");
+    assert_eq!(count(&sp, "graph.node_manager_seat"), 0);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), Some(ghost));
+}
+
+#[test]
+fn stale_graph_toml_rejects_first_seat_plan() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    let sp = plan(&fx, "seat create one --teamspace alpha");
+    set_role(&fx, Some(&SeatId::new()));
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Rejected);
+    assert_eq!(row.rejection.unwrap().reason, "stale_plan");
 }
