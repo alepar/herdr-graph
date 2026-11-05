@@ -10,4 +10,8 @@ idea: Implement what was scoped in this session: Beads hg-qam (H3 /seat failure 
 branch: super-auto/seat-failure-manager-seats
 base: main
 spec: 2026-11-05-seat-failure-manager-seats-design.md
+epic: hg-k4l
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
+
+approvals:
+- top-split · auto · hg-k4l.1 LEAF, hg-k4l.2 LEAF, hg-k4l.3 LEAF, hg-k4l.4 LEAF, hg-k4l.5 LEAF, hg-k4l.6 LEAF, hg-k4l.7 LEAF, hg-k4l.8 LEAF, hg-k4l.9 LEAF, hg-k4l.10 LEAF, hg-k4l.11 LEAF, hg-k4l.12 LEAF, hg-k4l.13 LEAF, hg-k4l.14 LEAF, hg-k4l.15 LEAF, hg-k4l.16 LEAF · promotion review: SPLIT .1/.5 applied; PROMOTE .7/.8/.11 resolved by splitting into leaves (sp:demoted-by-session, spec answers the design)
