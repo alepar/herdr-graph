@@ -116,6 +116,7 @@ fn fx_with_opt_out(opt_out: bool) -> Fx {
         Arc::new(super::managers::testing::SetNodeManager),
     );
     reg.register(TEST_POINTERS_KEY, Arc::new(TestPointers));
+    reg.register(SET_POINTERS_KEY, Arc::new(SetPointers));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -3498,6 +3499,37 @@ impl crate::writer::Mutation for TestPointers {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Manager-chain cycle guard (hg-k4l.21)
+// ---------------------------------------------------------------------------------------------
+
+const SET_POINTERS_KEY: &str = "bookkeeping.set_pointers";
+
+/// Test-only mutation writing raw pointers, out of band of any kind's own checks. Args:
+/// `{"sub": "test_pointers", "seat_manager": [seat, manager|null]?, "default_manager": [teamspace, seat|null]?}`.
+struct SetPointers;
+impl crate::writer::Mutation for SetPointers {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<crate::writer::Applied, MutationError> {
+        let bug = |e: String| MutationError::Bug(format!("test_pointers: {e}"));
+        let seat_id = |v: &serde_json::Value| -> Result<Option<SeatId>, MutationError> {
+            serde_json::from_value(v.clone()).map_err(|e| bug(e.to_string()))
+        };
+        let args = cx.request.args.clone();
+        if let Some(p) = args.get("seat_manager") {
+            let seat = seat_id(&p[0])?.ok_or_else(|| bug("seat".into()))?;
+            super::managers::set_seat_manager(&mut cx.tree, &seat, seat_id(&p[1])?)?;
+        }
+        if let Some(p) = args.get("default_manager") {
+            let ts = serde_json::from_value(p[0].clone()).map_err(|e| bug(e.to_string()))?;
+            super::managers::set_default_manager(&mut cx.tree, &ts, seat_id(&p[1])?)?;
+        }
+        Ok(crate::writer::Applied {
+            summary: "set pointers".into(),
+            action: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // manager set|clear
 // ---------------------------------------------------------------------------------------------
 
@@ -3531,6 +3563,26 @@ fn managers_fx() -> Fx {
         commit(&fx, &format!("seat create {s} --teamspace beta"));
     }
     fx
+}
+
+fn set_pointers(fx: &Fx, args: serde_json::Value) {
+    let mut args = args;
+    args["sub"] = json!("set_pointers");
+    let op = crate::ports::writer::Writer::admit(
+        &*fx.w,
+        ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args,
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
 }
 
 fn seat_id(fx: &Fx, name: &str) -> SeatId {
@@ -4357,4 +4409,100 @@ fn stale_graph_toml_rejects_first_seat_plan() {
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Rejected);
     assert_eq!(row.rejection.unwrap().reason, "stale_plan");
+}
+
+fn manager_of(fx: &Fx, seat_name: &str, manager: &str) {
+    set_pointers(
+        fx,
+        json!({ "seat_manager": [seat_id(fx, seat_name), seat_id(fx, manager)] }),
+    );
+}
+
+fn default_of(fx: &Fx, ts: &str, seat_name: &str) {
+    set_pointers(
+        fx,
+        json!({ "default_manager": [teamspace(fx, ts).1.id, seat_id(fx, seat_name)] }),
+    );
+}
+
+fn refusal(fx: &Fx, change: &str) -> String {
+    match create_plan(&fx.deps, &CallerInfo::default(), words(change)) {
+        Ok(v) => panic!("{change} should be refused, got {v}"),
+        Err(e) => e.message,
+    }
+}
+
+#[test]
+fn cycle_guard_seat_create_into_cyclic_default() {
+    let fx = fx();
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create a --teamspace beta");
+    commit(&fx, "seat create b --teamspace beta");
+    default_of(&fx, "beta", "a");
+    manager_of(&fx, "a", "b");
+    manager_of(&fx, "b", "a");
+
+    let msg = refusal(&fx, "seat create s --teamspace beta");
+    assert!(msg.contains("would make a manager cycle"), "{msg}");
+    assert!(msg.contains("a (st_") && msg.contains("b (st_"), "{msg}");
+    assert!(!msg.contains("s (st_"), "s is not on the loop: {msg}");
+}
+
+#[test]
+fn cycle_guard_default_change_closes_loop() {
+    let fx = fx();
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create x --teamspace beta");
+    commit(&fx, "seat create a --teamspace beta");
+    manager_of(&fx, "a", "x");
+    let (x, a) = (seat_id(&fx, "x"), seat_id(&fx, "a"));
+    let ts = teamspace(&fx, "beta").1.id;
+
+    let err = super::managers::cycle_guard::refuse_cyclic_chains(
+        &view(&fx),
+        &[super::managers::default_manager_effect(&ts, None, Some(&a))],
+    )
+    .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains(&format!("x ({x}) -> a ({a})")),
+        "walk order names both: {msg}"
+    );
+
+    // The same default pointing somewhere harmless is fine.
+    super::managers::cycle_guard::refuse_cyclic_chains(
+        &view(&fx),
+        &[super::managers::default_manager_effect(&ts, None, Some(&x))],
+    )
+    .unwrap();
+}
+
+#[test]
+fn cycle_guard_resurrection_closes_loop() {
+    let fx = fx();
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create s --teamspace beta");
+    commit(&fx, "seat create x --teamspace beta");
+    commit(&fx, "seat retire s");
+    // Stale pointer to the retired seat (retired seats are transparent), then a default that leads back.
+    manager_of(&fx, "x", "s");
+    default_of(&fx, "beta", "x");
+
+    let msg = refusal(&fx, "seat resurrect s");
+    assert!(msg.contains("would make a manager cycle"), "{msg}");
+    assert!(msg.contains("s (st_") && msg.contains("x (st_"), "{msg}");
+}
+
+#[test]
+fn cycle_guard_ignores_plans_without_pointer_impact() {
+    let fx = fx();
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create a --teamspace beta");
+    commit(&fx, "seat create b --teamspace beta");
+    manager_of(&fx, "a", "b");
+    manager_of(&fx, "b", "a");
+
+    // An existing out-of-band cycle elsewhere does not block plans that touch no pointer.
+    plan(&fx, "seat rename a c");
+    plan(&fx, "teamspace create gamma");
 }
