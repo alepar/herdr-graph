@@ -5,6 +5,7 @@ use super::adopt::{Adoption, adoption};
 use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
 use crate::model::b64::{b64_decode, b64_encode};
+use crate::model::change::ReliedOn;
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, Retirement};
 use crate::model::manager::Pointers;
@@ -12,6 +13,7 @@ use crate::model::seat::SeatRecord;
 use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateId};
 use crate::plan::core_kinds::{open_clone_effects, read_seat, read_ts, rev_of};
 use crate::plan::kind::{PlanBody, PlanCx, PlanError};
+use crate::plan::managers::first_seat;
 use crate::plan::managers::reparent::{REPARENTED_KEY, Rewrite};
 use crate::plan::managers::{default_manager_effect, seat_manager_effect};
 use crate::plan::types::{PlanEffect, Reserved};
@@ -91,6 +93,9 @@ pub struct Restore {
     pub new_clones: Vec<(SeatId, CloneId)>,
     pub warnings: Vec<String>,
     pub repair: Option<String>,
+    /// The first-seat assignment (spec §4.8) when the graph has no live seat and no node manager: the first
+    /// restored seat comes back Active and becomes the node manager. Decided at plan time only.
+    pub assignment: Option<(PlanEffect, ReliedOn)>,
 }
 
 impl Restore {
@@ -129,10 +134,13 @@ impl Restore {
     }
 }
 
+/// `listed` is the confirmed plan's effects at apply time: the first-seat decision is read from them (never
+/// re-decided); at plan time it is `None` and `first_seat::assignment` decides.
 pub fn compute_restore(
     tree: &dyn TreeRead,
     act: &ActionRecord,
     reserved: &mut Reserved,
+    listed: Option<&[PlanEffect]>,
 ) -> Result<Restore, PlanError> {
     let mut r = Restore::default();
     let mut standalone: Vec<CloneId> = Vec::new();
@@ -244,6 +252,25 @@ pub fn compute_restore(
             });
         }
     }
+    // The first restored seat becomes the node manager, so it and its teamspace come back Active (C3).
+    if let Some((first, active)) = r.seats.first().cloned() {
+        let forced = match listed {
+            Some(effects) => first_seat::forces_active(effects, &first),
+            None => {
+                r.assignment = first_seat::assignment(tree, Some(&first))?;
+                r.assignment.is_some()
+            }
+        };
+        if forced {
+            if !active {
+                r.seats[0].1 = true;
+            }
+            let ts = read_seat(tree, &first)?.ts.rec.id;
+            if let Some(t) = r.teamspaces.iter_mut().find(|(t, _)| t == &ts) {
+                t.1 = true;
+            }
+        }
+    }
     // An active seat that gets no clone back still needs one.
     for (seat, active) in r.seats.clone() {
         if !active {
@@ -307,7 +334,7 @@ pub fn restore_preview(
     reserved: &mut Reserved,
 ) -> Result<PlanBody, PlanError> {
     let tree = cx.tree;
-    let r = compute_restore(tree, act, reserved)?;
+    let r = compute_restore(tree, act, reserved, None)?;
     let (pointer_effects, pointer_warnings) = pointer_restores(tree, act)?;
     let mut effects = Vec::new();
     let mut relied_on = Vec::new();
@@ -431,6 +458,10 @@ pub fn restore_preview(
 
     effects.extend(pointer_effects);
     warnings.extend(pointer_warnings);
+    if let Some((effect, graph)) = &r.assignment {
+        effects.push(effect.clone());
+        relied_on.push(graph.clone());
+    }
 
     if let Some(a) = &adopt
         && let Some((x, _)) = &a.displaced

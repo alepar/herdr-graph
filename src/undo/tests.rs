@@ -109,13 +109,25 @@ struct Fx {
     n: std::cell::Cell<u32>,
 }
 
+/// Fixture whose graph already names a (nonexistent) node manager, so first-seat assignment never fires.
 fn fx() -> Fx {
+    fx_with_opt_out(true)
+}
+
+/// Fixture on a pristine graph: no node manager, no seats.
+fn fx_fresh() -> Fx {
+    fx_with_opt_out(false)
+}
+
+fn fx_with_opt_out(opt_out: bool) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     let docs = tmp.path().join("docs");
     std::fs::create_dir_all(&docs).unwrap();
     init_instance(&root).unwrap();
-    crate::plan::managers::testing::opt_out(&root);
+    if opt_out {
+        crate::plan::managers::testing::opt_out(&root);
+    }
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     register_template_kinds(&mut kinds);
@@ -556,6 +568,55 @@ fn undo_plan_applied_seat_retirement_previews_and_applies_resurrection() {
             .iter()
             .all(|c| c.lifecycle == CloneLifecycle::Active)
     );
+}
+
+#[test]
+fn undo_restore_assigns_first_restored_seat() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    let one = seat_named(&fx, "one");
+    assert_eq!(graph_node_manager(&fx), Some(one.id.clone()));
+    // Clear the role so retiring the only seat is not guarded, then restore it with an undo.
+    let op =
+        fx.w.admit(crate::plan::managers::testing::request(None))
+            .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+    let retire = commit(&fx, "seat retire one");
+    let act = action_of(&fx, &retire);
+    assert_eq!(graph_node_manager(&fx), None);
+
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    let listed: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "graph.node_manager_seat")
+        .collect();
+    assert_eq!(listed.len(), 1, "{:?}", sp.plan.effects);
+    assert_eq!(listed[0].detail["to"], json!(one.id));
+    assert!(
+        sp.plan
+            .relied_on
+            .iter()
+            .any(|r| matches!(r.version, crate::model::change::Version::Blob(_)))
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let back = seat_by_id(&fx, &one.id);
+    assert_eq!(back.lifecycle, Lifecycle::Active);
+    assert_eq!(ts_named(&fx, "alpha").lifecycle, Lifecycle::Active);
+    assert_eq!(graph_node_manager(&fx), Some(one.id));
+}
+
+fn graph_node_manager(fx: &Fx) -> Option<SeatId> {
+    crate::store::layout::read_graph(&view(fx))
+        .unwrap()
+        .node_manager_seat
 }
 
 // ---------------------------------------------------------------------------------------------

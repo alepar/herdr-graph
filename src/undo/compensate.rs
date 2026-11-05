@@ -321,7 +321,7 @@ fn restore_mutate(
         .and_then(|c| c.observed.get(ADOPT_BINDING_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok());
     let mut reserved = plan.reserved.clone();
-    let r = compute_restore(&cx.tree, orig, &mut reserved).map_err(mm)?;
+    let r = compute_restore(&cx.tree, orig, &mut reserved, Some(&plan.effects)).map_err(mm)?;
     let runtime = r.runtime_clones(&cx.tree).map_err(mm)?;
     let adopt = match caller_pane {
         Some(p) => adoption(&cx.tree, p, &runtime)?,
@@ -371,6 +371,8 @@ fn restore_mutate(
             )?;
         }
     }
+
+    crate::plan::managers::first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
 
     // After the seats are back, so a pointer restored to a resurrected seat is valid.
     let (pointer_effects, _) = pointer_restores(&cx.tree, orig).map_err(mm)?;
