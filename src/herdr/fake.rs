@@ -509,6 +509,27 @@ impl FakeHerdr {
         self.disconnect_subscribers();
     }
 
+    /// Simulate `herdr update --handoff`: new generation and server pid, but every workspace, tab and pane id,
+    /// agent, env and process survives; terminal ids are reallocated, pane/workspace metadata tokens are dropped,
+    /// and subscribers disconnect. `restart` models a cold restart (new pane ids) and is not this.
+    pub fn live_handoff(&self) {
+        {
+            let mut st = self.state.lock().unwrap();
+            st.generation += 1;
+            st.restarts += 1;
+            let mut workspaces = std::mem::take(&mut st.workspaces);
+            for ws in &mut workspaces {
+                ws.metadata.clear();
+                for pane in ws.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+                    pane.metadata.clear();
+                    pane.terminal_id = Some(st.term_id());
+                }
+            }
+            st.workspaces = workspaces;
+        }
+        self.disconnect_subscribers();
+    }
+
     /// Subscribers' streams end (reconnect test).
     pub fn disconnect_subscribers(&self) {
         self.events.lock().unwrap().clear();

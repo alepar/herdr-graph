@@ -1896,3 +1896,124 @@ async fn composed_daemon_status_shows_threads_discovery_error() {
     );
     d.stop().await;
 }
+
+// ---------------------------------------------------------------------------------------------
+// live handoff (`herdr update --handoff`): same ids, new incarnation, no operator step (hg-66u.25)
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_handoff_under_a_running_loop_reconnects_and_creates_nothing() {
+    use herdr_graph::model::common::{CloneLifecycle, Lifecycle};
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    for (name, harness) in [("sh", "shell"), ("cl", "claude")] {
+        d.committed(&[
+            "seat",
+            "create",
+            name,
+            "--teamspace",
+            "t",
+            "--active",
+            "--harness",
+            harness,
+        ])
+        .await;
+    }
+    eventually("both panes bound and the claude agent started", || {
+        bound_pane(&d, "sh").is_some()
+            && bound_pane(&d, "cl").is_some()
+            && d.fakes
+                .herdr
+                .calls()
+                .iter()
+                .any(|c| matches!(c, FakeCall::StartAgent(_)))
+    })
+    .await;
+    settle(&d).await;
+
+    let journal = Journal::open(&Journal::path_in(&root)).unwrap();
+    let before = journal.meta_get("incarnation:changed_at").unwrap();
+    let last_before = journal.meta_get("incarnation:last").unwrap();
+    // The manual clock stamps `changed_at`: move it so a new stamp is distinguishable from the old one.
+    d.fakes.clock.advance(chrono::Duration::seconds(5));
+    d.fakes.herdr.clear_calls();
+
+    d.fakes.herdr.live_handoff();
+
+    eventually("the loop to see the new incarnation", || {
+        journal.meta_get("incarnation:changed_at").unwrap() != before
+    })
+    .await;
+    assert_ne!(
+        journal.meta_get("incarnation:last").unwrap(),
+        last_before,
+        "the new incarnation is recorded"
+    );
+    // The loop continues: it resubscribed to the new server, so a second swap is seen and recorded too.
+    let second = journal.meta_get("incarnation:changed_at").unwrap();
+    let last_after_first = journal.meta_get("incarnation:last").unwrap();
+    d.fakes.clock.advance(chrono::Duration::seconds(5));
+    d.fakes.herdr.live_handoff();
+    eventually("the second swap", || {
+        journal.meta_get("incarnation:changed_at").unwrap() != second
+    })
+    .await;
+    assert_ne!(
+        journal.meta_get("incarnation:last").unwrap(),
+        last_after_first
+    );
+    // A change committed after the swaps is admitted and does not re-create anything that already exists.
+    // (Whether its pane is created is hg-66u.28's rebind: tokens are dropped, so the workspace and the seat's
+    // tab are `unknown` and get no create effects, spec §4.3.2.)
+    d.committed(&["clone", "add", "sh"]).await;
+    settle(&d).await;
+
+    let calls = d.fakes.herdr.calls();
+    let count = |f: fn(&FakeCall) -> bool| calls.iter().filter(|c| f(c)).count();
+    assert!(
+        count(|c| matches!(c, FakeCall::SplitPane(_))) <= 1,
+        "at most the new clone's pane: {calls:?}"
+    );
+    assert_eq!(
+        count(|c| matches!(
+            c,
+            FakeCall::CreateWorkspace(_) | FakeCall::CreateTab(_) | FakeCall::StartAgent(_)
+        )),
+        0,
+        "nothing pre-existing is launched again: {calls:?}"
+    );
+    assert_eq!(
+        count(|c| matches!(
+            c,
+            FakeCall::CloseWorkspace(_) | FakeCall::CloseTab(_) | FakeCall::ClosePane(_)
+        )),
+        0,
+        "nothing is closed: {calls:?}"
+    );
+    d.with_view(|v| {
+        assert!(
+            layout::list_actions(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, a)| a.kind != herdr_graph::model::action::ActionKind::ClosureCascade),
+            "no closure cascade recorded"
+        );
+        assert!(
+            layout::list_teamspaces(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, t)| t.lifecycle != Lifecycle::Retired)
+        );
+        assert!(
+            layout::all_clones(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, c)| c.lifecycle != CloneLifecycle::Retired)
+        );
+    });
+    for seat in ["sh", "cl"] {
+        assert_ne!(seat_lifecycle(&d, seat), Lifecycle::Retired);
+    }
+    d.stop().await;
+}

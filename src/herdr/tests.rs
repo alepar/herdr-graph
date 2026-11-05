@@ -866,6 +866,56 @@ async fn fake_restart_changes_pane_ids_keeps_terminal_ids() {
 }
 
 #[tokio::test]
+async fn fake_live_handoff_keeps_ids_reallocates_terminals_and_drops_tokens() {
+    let fake = FakeHerdr::new();
+    let made = fake.create_workspace(ws_req("ws")).await.unwrap();
+    let p = made.pane.unwrap();
+    fake.report_pane_metadata(&p, "hg", "cl_1").await.unwrap();
+    fake.report_workspace_metadata(made.workspace.as_ref().unwrap(), "hg", "ts_1")
+        .await
+        .unwrap();
+    let agent = Some(AgentInfo {
+        kind: "claude".into(),
+        status: AgentStatus::Idle,
+        session: None,
+    });
+    fake.set_agent(&p, agent.clone());
+    let mut events = fake.subscribe().await.unwrap();
+    let before = fake.snapshot().await.unwrap();
+    fake.live_handoff();
+    let after = fake.snapshot().await.unwrap();
+    let (old, new) = (
+        &before.workspaces[0].tabs[0].panes[0],
+        &after.workspaces[0].tabs[0].panes[0],
+    );
+    assert_eq!(before.workspaces[0].id, after.workspaces[0].id);
+    assert_eq!(
+        before.workspaces[0].tabs[0].id,
+        after.workspaces[0].tabs[0].id
+    );
+    assert_eq!(old.id, new.id, "public pane ids are preserved");
+    assert_ne!(
+        old.terminal_id, new.terminal_id,
+        "terminal ids are reallocated"
+    );
+    assert!(new.metadata.is_empty(), "pane tokens are dropped");
+    assert!(
+        after.workspaces[0].metadata.is_empty(),
+        "workspace tokens are dropped"
+    );
+    assert_ne!(before.incarnation, after.incarnation);
+    assert_eq!(
+        fake.agent(&new.id).await.unwrap(),
+        agent,
+        "the agent keeps running"
+    );
+    assert!(
+        events.recv().await.is_none(),
+        "the subscriber's stream ends"
+    );
+}
+
+#[tokio::test]
 async fn fake_metadata_stamps_visible_in_snapshot() {
     let fake = FakeHerdr::new();
     let made = fake.create_workspace(ws_req("ws")).await.unwrap();
