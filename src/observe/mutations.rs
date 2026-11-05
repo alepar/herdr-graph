@@ -157,6 +157,24 @@ struct CascadeArgs {
 
 struct CascadeMutation;
 
+/// The live node manager's last live pane closed after an observed move: it no longer lives elsewhere, so it is
+/// no longer moved out and the planner reopens it in its own tab (spec §4.9, B11). The move itself was not reverted.
+fn node_manager_closed(cx: &mut MutationCx<'_>, seat: &SeatId) -> Result<(), MutationError> {
+    let f = read_seat(&cx.tree, seat).map_err(mm)?;
+    let still_bound = f
+        .clones
+        .iter()
+        .any(|(_, c)| c.lifecycle != CloneLifecycle::Retired && c.runtime.bound.is_some());
+    if !f.rec.moved_out || still_bound {
+        return Ok(());
+    }
+    let mut rec = f.rec.clone();
+    rec.moved_out = false;
+    rec.runtime = absent();
+    cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
+    Ok(())
+}
+
 impl CascadeMutation {
     #[allow(clippy::too_many_arguments)]
     fn retire_seat(
@@ -190,6 +208,7 @@ impl CascadeMutation {
         // The node manager is never retired by an observed closure: the live answer at apply time decides, so a
         // closure is recorded for it (runtime absent, sessions ended; the planner reopens it) and nothing more.
         if nm == Some(seat) {
+            node_manager_closed(cx, seat)?;
             return Ok(true);
         }
         do_retire_seat(cx, seat, act, mech, acc, exclusions)?;
@@ -273,7 +292,9 @@ impl CascadeMutation {
         rec.runtime = absent();
         // A node manager's clone is kept: the closure is recorded, nothing is retired.
         if nm == Some(&rec.seat) {
+            let seat = rec.seat.clone();
             cx.tree.put_record(loc.record_path, &mut rec)?;
+            node_manager_closed(cx, &seat)?;
             return Ok(true);
         }
         rec.lifecycle = CloneLifecycle::Retired;
