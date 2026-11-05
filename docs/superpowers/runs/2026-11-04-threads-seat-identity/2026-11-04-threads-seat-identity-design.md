@@ -336,6 +336,31 @@ run against the user's live graph instance or live Herdr layout: private rigs on
 
 All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager seats (hg-au7).
 
+### 13. Clarifications from the amendment's coverage round (coverage-amend-design-1)
+
+- **Clearing a Restore intent on re-retirement.** When a clone with a Restore intent whose threads
+  step is acknowledged is retired again (a fresh pane close), the retire commit clears the intent
+  through ThreadsSeatAssignment. SeatObservation only decides to retire; it never writes the intent.
+- **No early resolve during a restore.** While a Restore intent is pending, no ResolveSeat is issued
+  for the clone except by the succession want, so the reopened pane never gets its own seat ahead of
+  un-retire (§2's early-resolve rule).
+- **Key relink on succession.** After succession, a clone with a recorded key reservation has its
+  key bound to the successor seat (`ReserveContinuityKey{key, seat: successor}`) before the restore
+  launch. Whether threads releases the key binding of a final-retired seat is being confirmed with
+  threads (message mnSG57YUhprU); the relink path follows its answer.
+- **Key release at purge.** Purge releases the reservation (`ReleaseContinuityKey`) of every clone
+  whose seat is final-retired or absent; a reversibly retired seat releases through
+  `FinalizeRetirement` from the tombstone.
+- **Launch ownership.** The ordinary start rule launches a clone that has never had an agent
+  (including a new post-D1 clone with a reservation and no seat); the resume driver launches only on
+  its restart and restore triggers. The unseated restart arm fires only for a clone that had an
+  agent before the incarnation change. A restore gets one launch attempt per Restore epoch; a failed
+  attempt is surfaced in status, not retried.
+- **Shell export failure is visible.** A pane shell that rejects the export is named in status with
+  its remedy; if the graph retires a clone whose pane stays open, the key is unset in that shell.
+- **Tombstones are inert.** A Finalize tombstone is not planned, listed, undone, resurrected or
+  invited; it exists only to drive the finalize want.
+
 ## Key abstractions
 
 **SeatStatus** — new enum (graph-local value type beside the threads port types), what threads says about one clone's seat.

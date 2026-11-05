@@ -46,3 +46,22 @@ cov-43 · r2 · UNOWNED-SEAM · reservation holder · applied — holder is the 
 cov-44 · r2 · UNOWNED-SEAM · shared matcher code · applied — hg-66u.14 depends on hg-66u.11, ownership split stated
 cov-45 · r2 · ORPHAN · hg-66u.5 · applied — kept as baseline-only requirement (B11/R11), no Goal edit
 cov-46 · r2 · GAP · R4 attended cold restart · applied — hg-66u.12 acceptance (C1, grace avoids auto-resume race); spec §9 defines C1
+cov-47 · amend-design-1 · GAP · amended beads' acceptance copied from superseded beads · applied — new acceptance on .27 .28 .30 .31 .34
+cov-48 · amend-design-1 · GAP · .31 acceptance contradicted intent-gated unretire · applied — line replaced
+cov-49 · amend-design-1 · GAP · .34 acceptance named the impossible argv prefix · applied — rewritten around shell export, status on rejection, unset on kept pane
+cov-50 · amend-design-1 · GAP · matcher/rebind deletion before unseated key path · applied — .14 .15 .18 depend on .33; .18 config added
+cov-51 · amend-design-1 · GAP · key relink on succession · applied — .29 owns, .32 acceptance; spec §13; threads asked (mnSG57YUhprU)
+cov-52 · amend-design-1 · GAP · key release at purge · applied — .13 acceptance; spec §13
+cov-53 · amend-design-1 · UNOWNED-SEAM · Restore clear on re-retirement · applied — .27 owns; spec §13
+cov-54 · amend-design-1 · UNOWNED-SEAM · key-conflict alert storage · applied — .28 owns the level, .13 production + status text; .21 restated on KeyConflict status
+cov-55 · amend-design-1 · GAP · .32 missing dep on .29, stale ref · applied
+cov-56 · amend-design-1 · ORPHAN · superseded beads still open · rejected — evidence does not hold: hg-66u.9/.10/.12/.16/.19/.20/.22 are closed (superseded); the dump included closed beads
+cov-57 · amend-design-1 · GAP · re-issued ReserveContinuityKey returns no seat (unconfirmed shape) · rejected — evidence does not hold: shapes doc ContinuityKeyReserved{key, owner, seat?, reserved_at} "seat? gives the binding once an agent has checked in"
+cov-58 · amend-design-1 · GAP · pane keeps key after graph retire · applied — .34 acceptance
+cov-59 · amend-design-1 · GAP · shell rejecting export is silent · applied — .34 acceptance; spec §13
+cov-60 · amend-design-1 · GAP · R19 restore trigger unbounded, unseated arm in steady state · applied — .30 acceptance; spec §13
+cov-61 · amend-design-1 · UNOWNED-SEAM · first launch of a new post-D1 clone · applied — .30 owns; spec §13
+cov-62 · amend-design-1 · UNOWNED-SEAM · tombstone shape and reader exclusion · applied — .27 owns shape, .31 owns exclusion
+cov-63 · amend-design-1 · UNOWNED-SEAM · .31/.29 owns lines lost on supersession · applied — literal owns: lines added
+cov-64 · amend-design-1 · GAP · .29 cannot assert the restore launch without .30 · applied — .29 depends on .30
+cov-65 · amend-design-1 · GAP · early resolve during restore · applied — .7 .29 .32 acceptance; spec §13
