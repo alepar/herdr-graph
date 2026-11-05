@@ -1587,6 +1587,41 @@ async fn close_effects_predict_induced_closures() {
 }
 
 #[tokio::test]
+async fn graph_retire_of_a_clone_with_an_open_pane_closes_it() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = c
+        .runtime
+        .bound
+        .as_ref()
+        .and_then(|b| b.pane_id.clone())
+        .expect("the clone is bound to a live pane");
+    let live = |snap: &crate::ports::herdr::HerdrSnapshot| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.id == pane)
+    };
+    assert!(live(&fx.herdr.snapshot().await.unwrap()));
+    commit(&fx, &format!("clone retire {}", c.id));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(p) if *p == pane)),
+        1,
+        "{:?}",
+        calls(&fx)
+    );
+    assert!(
+        !live(&fx.herdr.snapshot().await.unwrap()),
+        "the pane is gone"
+    );
+}
+
+#[tokio::test]
 async fn deactivated_seat_closes_its_tab() {
     let fx = fx();
     activate(&fx, "claude");

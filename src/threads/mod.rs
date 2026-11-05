@@ -134,9 +134,9 @@ struct InvitationArgs {
     state: InvitationState,
     #[serde(default)]
     link: Option<ThreadsLink>,
-    /// Apply only while the stored invitation still belongs to this occupant; absent = unconditional.
+    /// Apply only while the stored invitation still belongs to this threads seat; absent = unconditional.
     #[serde(default)]
-    expect_occupant: Option<String>,
+    expect_seat: Option<String>,
 }
 
 /// `bookkeeping.invitation`: record what threads reported about one invitation of a clone.
@@ -149,8 +149,8 @@ impl Mutation for SetInvitation {
                 .invitations
                 .iter_mut()
                 .find(|i| i.thread == a.thread && i.constraint == a.constraint);
-            if let (Some(expect), Some(i)) = (&a.expect_occupant, &existing)
-                && i.link.as_ref().and_then(|l| l.occupant.as_ref()) != Some(expect)
+            if let (Some(expect), Some(i)) = (&a.expect_seat, &existing)
+                && i.link.as_ref().map(|l| &l.seat) != Some(expect)
             {
                 return Ok(());
             }
