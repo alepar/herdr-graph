@@ -2455,6 +2455,7 @@ fn reconnect_preserves_history_requests_external_refs_and_pending_intents() {
             requirement: None,
             revision: Some(7),
         }),
+        migration_reinvite: false,
     }];
     let rq = ProcessingRequest {
         schema: 1,

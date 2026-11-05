@@ -133,6 +133,10 @@ impl Mutation for SeatFixture {
                     last_refusal: None,
                 });
             }
+            "activate" => {
+                rec.lifecycle = CloneLifecycle::Active;
+                rec.retired = None;
+            }
             "fact" => {
                 rec.seat_fact = Some(crate::model::clone::SeatFact {
                     seat: cx.request.args["seat"].as_str().unwrap().into(),
@@ -919,6 +923,189 @@ async fn upgrade_with_links_on_the_backfilled_seat_causes_no_reinvite() {
     );
     assert_eq!(fx.threads.call_count("release_requirement"), 0);
     assert_eq!(inv(&c, &st).state, InvitationState::Accepted);
+}
+
+/// Write one Required row of the clone the way the poll/release path would.
+fn write_required(fx: &Fx, clone: &CloneId, t: &ThreadRef, state: &str, seat: &str) {
+    bookkeeping(
+        fx,
+        "invitation",
+        json!({
+            "clone": clone, "thread": t.0, "constraint": "required", "state": state,
+            "link": { "seat": seat },
+        }),
+    );
+}
+
+/// A pre-upgrade clone: its seat channel row is `released` (the old occupant-keyed path released it) and its
+/// teamspace row `accepted`, both naming `seat-A`, and no `threads_seat` yet.
+async fn pre_upgrade_clone(fx: &Fx) -> (CloneRecord, ThreadRef, ThreadRef) {
+    let clone = base(fx).await;
+    steps(fx, 2).await;
+    let (st, ts) = (thread_of_seat(fx, "foreman"), thread_of_ts(fx));
+    write_required(fx, &clone.id, &st, "released", "seat-A");
+    write_required(fx, &clone.id, &ts, "accepted", "seat-A");
+    steps(fx, 3).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        0,
+        "no threads_seat, no wants"
+    );
+    (clone, st, ts)
+}
+
+#[tokio::test]
+async fn migration_reinvites_a_released_required_link_once() {
+    let fx = fx();
+    let (clone, st, ts) = pre_upgrade_clone(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    assert!(inv(&clone_rec(&fx, &clone.id), &st).migration_reinvite);
+    assert!(!inv(&clone_rec(&fx, &clone.id), &ts).migration_reinvite);
+    steps(&fx, 4).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        1,
+        "exactly the released row"
+    );
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(inv(&c, &st).state, InvitationState::Pending);
+    assert!(
+        !inv(&c, &st).migration_reinvite,
+        "the write-back clears the mark"
+    );
+    assert_eq!(inv(&c, &ts).state, InvitationState::Accepted, "no churn");
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("invite"), 1, "once");
+}
+
+#[tokio::test]
+async fn deliberately_released_link_after_migration_is_not_reinvited() {
+    let fx = fx();
+    let (clone, st, _) = pre_upgrade_clone(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    steps(&fx, 4).await;
+    assert_eq!(fx.threads.call_count("invite"), 1);
+    write_required(&fx, &clone.id, &st, "released", "seat-A");
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        1,
+        "a later release stays released"
+    );
+    assert_eq!(
+        inv(&clone_rec(&fx, &clone.id), &st).state,
+        InvitationState::Released
+    );
+}
+
+#[tokio::test]
+async fn declined_migration_reinvite_is_not_repeated() {
+    let fx = fx();
+    let (clone, st, _) = pre_upgrade_clone(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    steps(&fx, 4).await;
+    assert_eq!(fx.threads.call_count("invite"), 1);
+    // Threads reports the re-invited episode retired (declined).
+    write_required(&fx, &clone.id, &st, "retired", "seat-A");
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        1,
+        "no second migration invite"
+    );
+}
+
+#[tokio::test]
+async fn optional_released_link_on_the_backfilled_seat_is_not_reinvited() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    steps(&fx, 2).await;
+    let st = thread_of_seat(&fx, "foreman");
+    bookkeeping(
+        &fx,
+        "invitation",
+        json!({
+            "clone": clone.id, "thread": st.0, "constraint": "ordinary", "state": "released",
+            "link": { "seat": "seat-A" },
+        }),
+    );
+    seat_the_clone(&fx, &clone, "seat-A");
+    assert!(
+        clone_rec(&fx, &clone.id)
+            .invitations
+            .iter()
+            .all(|i| !i.migration_reinvite),
+        "only Required rows are marked"
+    );
+}
+
+/// A seated clone with a migration-marked Released seat-channel link and a Pending teamspace link, then retired.
+async fn retired_marked_clone(fx: &Fx) -> (CloneRecord, ThreadRef, ThreadRef) {
+    let clone = base(fx).await;
+    // A second clone keeps the seat active when the first is retired.
+    plan_and_apply(fx, "clone add foreman --name second");
+    steps(fx, 3).await;
+    let (st, ts) = (thread_of_seat(fx, "foreman"), thread_of_ts(fx));
+    write_required(fx, &clone.id, &st, "released", "seat-A");
+    write_required(fx, &clone.id, &ts, "pending", "seat-A");
+    seat_the_clone(fx, &clone, "seat-A");
+    assert!(inv(&clone_rec(fx, &clone.id), &st).migration_reinvite);
+    plan_and_apply(fx, &format!("clone retire {}", clone.id));
+    assert_eq!(clone_rec(fx, &clone.id).lifecycle, CloneLifecycle::Retired);
+    (clone, st, ts)
+}
+
+#[tokio::test]
+async fn retired_clone_links_are_not_reinvited_across_passes() {
+    let fx = fx();
+    let (clone, st, ts) = retired_marked_clone(&fx).await;
+    steps(&fx, 5).await;
+    later(&fx).await;
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        0,
+        "a retired clone is not re-invited"
+    );
+    assert_eq!(
+        fx.threads.call_count("release_requirement"),
+        0,
+        "its Pending links are kept, not released"
+    );
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(inv(&c, &st).state, InvitationState::Released);
+    assert_eq!(inv(&c, &ts).state, InvitationState::Pending);
+}
+
+#[tokio::test]
+async fn undo_reactivated_clone_gets_the_migration_reinvite_once() {
+    let fx = fx();
+    let (clone, st, ts) = retired_marked_clone(&fx).await;
+    steps(&fx, 4).await;
+    assert_eq!(fx.threads.call_count("invite"), 0);
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": clone.id, "op": "activate" }),
+    );
+    steps(&fx, 4).await;
+    later(&fx).await;
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        1,
+        "once, on the recorded seat"
+    );
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(inv(&c, &st).state, InvitationState::Pending);
+    assert_eq!(inv(&c, &st).link.as_ref().unwrap().seat, "seat-A");
+    assert_eq!(inv(&c, &ts).state, InvitationState::Pending);
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
 }
 
 #[tokio::test]

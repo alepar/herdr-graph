@@ -157,6 +157,7 @@ impl Mutation for SetInvitation {
             match existing {
                 Some(i) => {
                     i.state = a.state;
+                    i.migration_reinvite = false;
                     if a.link.is_some() {
                         i.link = a.link.clone();
                     }
@@ -166,6 +167,7 @@ impl Mutation for SetInvitation {
                     constraint: a.constraint,
                     state: a.state,
                     link: a.link.clone(),
+                    migration_reinvite: false,
                 }),
             }
             Ok(())

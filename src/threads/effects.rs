@@ -540,19 +540,18 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 .find(|i| i.thread == thread && i.constraint == constraint);
             let same_seat =
                 |i: &Invitation| i.link.as_ref().map(|l| &l.seat) == threads_seat.as_ref();
-            let satisfied = match (held, constraint) {
-                // A Required episode is settled for the seat it was issued for, whatever became of it.
-                (Some(i), InviteConstraint::Required) => same_seat(i),
-                (Some(i), InviteConstraint::Ordinary) => {
-                    same_seat(i)
-                        && matches!(
-                            i.state,
-                            InvitationState::Pending | InvitationState::Accepted
-                        )
-                }
-                (None, _) => false,
-            };
-            if !satisfied {
+            // Spec §3: a link satisfies the want on the recorded seat, Pending or Accepted; a Released or
+            // Retired row there stays settled (deliberate release, decline) unless the backfill marked it
+            // for its one migration re-invite.
+            let satisfied = held.is_some_and(|i| {
+                same_seat(i)
+                    && (matches!(
+                        i.state,
+                        InvitationState::Pending | InvitationState::Accepted
+                    ) || !i.migration_reinvite)
+            });
+            // Invitations are for an active clone; a retired one keeps what it holds and gains nothing.
+            if !satisfied && g.clone_active(c) {
                 let mut w = want(
                     g,
                     EffectKind::Invite,
@@ -1551,6 +1550,9 @@ impl ThreadsExecutor {
         };
         if clone.threads_seat.is_none() {
             return ExecOutcome::Deferred("no threads seat yet".into());
+        }
+        if !g.clone_active(clone) {
+            return ExecOutcome::Obsolete;
         }
         let Some(seat) = g.membership_seat(clone).map(ThreadsSeatRef) else {
             return ExecOutcome::Obsolete;
