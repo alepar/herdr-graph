@@ -20,3 +20,10 @@ Source: herdr-threads coordinator (seat snSGTpBk7xGd), message mnSGy0OTGAUK on t
   - UnretireSeat before relaunching a reversible seat's agent; relaunching first gives a key_retired_reversibly conflict and a held pane until the next check-in after un-retire.
   - No timer on the reversible window: the graph finalizes when its undo window ends.
   - No re-invite after un-retire: memberships and requirement episodes are never released while reversible. Release any stale requirement after reattach.
+
+## Update 2026-11-05 (message mnSGt9sPAujE, threads worker #7 mnSGxCJnHC0D)
+
+- ReserveContinuityKey{key, seat?, operation}. With seat: binds at once, moves nothing, places nothing. Accepted only when the seat is local, resolved, on a Herdr host and unnamed, holds no other key, and the key is unbound or already bound to that seat. A key bound elsewhere or a seat holding another key is Conflict; any other seat state is refused. Idempotent.
+- No "service resolved it" guard: the graph must name the right seat (its recorded threads_seat); naming a wrong seat makes that seat reversible and reattachable by the key (accepted limit).
+- SeatInspection.continuity_key gains bound_by: "check_in" | "service_reservation".
+- Confirmed: no seat needed to reserve for a brand-new clone (bound at first keyed check-in). No threads-side timer finalizes; the reversible window lasts until the service's FinalizeRetirement or an operator retire.
