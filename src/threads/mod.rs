@@ -190,35 +190,9 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 pub struct PendingInvitation {
     pub thread: String,
     pub constraint: InviteConstraint,
-    /// The exact command line the clone's agent runs in its own pane.
-    pub accept_command: String,
 }
 
-fn accept_command(
-    thread: &str,
-    constraint: InviteConstraint,
-    link: Option<&ThreadsLink>,
-) -> String {
-    match constraint {
-        InviteConstraint::Ordinary => format!("herdr-threads accept {thread}"),
-        InviteConstraint::Required => match link {
-            Some(ThreadsLink {
-                invitation: Some(inv),
-                requirement: Some(req),
-                revision: Some(rev),
-                ..
-            }) => {
-                format!(
-                    "herdr-threads accept-required {thread} --invitation {inv} --requirement {req} --revision {rev}"
-                )
-            }
-            // The episode ids are not recorded yet: the agent reads them from the thread.
-            _ => format!("herdr-threads thread participants {thread}"),
-        },
-    }
-}
-
-/// The clone's invitations that are still waiting for its agent, with the command that answers each.
+/// The clone's invitations that are still waiting for its agent. Acceptance belongs to herdr-threads.
 /// An unreadable clone has none.
 pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingInvitation> {
     let Ok(Some(loc)) = crate::store::layout::locate(tree, &clone.to_any()) else {
@@ -234,7 +208,6 @@ pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingI
         .map(|i| PendingInvitation {
             thread: i.thread.clone(),
             constraint: i.constraint,
-            accept_command: accept_command(&i.thread, i.constraint, i.link.as_ref()),
         })
         .collect()
 }
