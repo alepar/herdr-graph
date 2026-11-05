@@ -530,6 +530,20 @@ impl FakeHerdr {
         self.disconnect_subscribers();
     }
 
+    /// Test-only: every workspace and tab gets a fresh id (panes, labels and metadata kept), modelling ids that
+    /// do not survive a restart. `restart` itself keeps tab and workspace ids, as Herdr does.
+    pub fn renumber_tabs_and_workspaces(&self) {
+        let mut st = self.state.lock().unwrap();
+        let mut workspaces = std::mem::take(&mut st.workspaces);
+        for ws in &mut workspaces {
+            ws.id = st.ws_id();
+            for tab in &mut ws.tabs {
+                tab.id = st.tab_id();
+            }
+        }
+        st.workspaces = workspaces;
+    }
+
     /// Subscribers' streams end (reconnect test).
     pub fn disconnect_subscribers(&self) {
         self.events.lock().unwrap().clear();

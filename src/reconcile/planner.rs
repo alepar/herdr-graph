@@ -100,9 +100,10 @@ impl Surplus<'_> {
     }
 }
 
-/// Matches graph objects to live Herdr objects: by token, else by binding in the same incarnation, else by
-/// the journal's live refs. Tabs have no tokens (Herdr 0.9.1): a seat's tab is its bound tab id, else the tab
-/// holding its token-matched panes.
+/// Matches graph objects to live Herdr objects: by token, else by bound Herdr id (tabs and workspaces in any
+/// incarnation, as Herdr preserves their ids; panes in the same incarnation only), else by the journal's live
+/// refs. Tabs have no tokens (Herdr 0.9.1): a seat's tab is its bound tab id (absent in a newer incarnation:
+/// none), else the tab holding its token-matched panes.
 pub struct LiveIndex<'a> {
     pub snap: &'a HerdrSnapshot,
     desired: &'a DesiredRuntime,
@@ -159,12 +160,17 @@ impl<'a> LiveIndex<'a> {
             .teamspaces
             .get(ts)
             .and_then(|t| t.runtime.bound.as_ref());
+        // Herdr preserves workspace ids across restore and handoff: a bound id matches in any incarnation, and
+        // one bound in an older incarnation that is now absent leaves the workspace unplaced (no fallback).
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.workspace_id
-            && let Some(ws) = self.ws_by_id(id)
         {
-            return Some(LiveWorkspace { ws, stamped: false });
+            if let Some(ws) = self.ws_by_id(id) {
+                return Some(LiveWorkspace { ws, stamped: false });
+            }
+            if b.incarnation != self.snap.incarnation {
+                return None;
+            }
         }
         let live = live_ref(self.journal, &any).filter(|l| l.incarnation == self.snap.incarnation);
         if let Some(ws) = live
@@ -287,11 +293,10 @@ impl<'a> LiveIndex<'a> {
             .map(|q| q.clone.clone())
     }
 
-    /// The seat whose committed binding (same incarnation) or journal live ref names this tab.
+    /// The seat whose committed binding (any incarnation) or journal live ref names this tab.
     pub fn tab_owner(&self, tab: &HerdrTabId) -> Option<SeatId> {
         for (seat, d) in &self.desired.seats {
             if let Some(b) = d.runtime.bound.as_ref()
-                && b.incarnation == self.snap.incarnation
                 && b.tab_id.as_ref() == Some(tab)
             {
                 return Some(seat.clone());
@@ -317,12 +322,17 @@ impl<'a> LiveIndex<'a> {
             .get(seat)
             .and_then(|s| s.runtime.bound.as_ref());
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.tab_id
-            && !self.owned_by_other(id, seat)
-            && let Some(found) = self.tab_by_id(id)
         {
-            return Some(found);
+            if !self.owned_by_other(id, seat)
+                && let Some(found) = self.tab_by_id(id)
+            {
+                return Some(found);
+            }
+            // Bound in an older incarnation and absent now: unplaced, never re-found by tokens or panes.
+            if b.incarnation != self.snap.incarnation && self.tab_by_id(id).is_none() {
+                return None;
+            }
         }
         if let Some(live) = live_ref(self.journal, &seat.to_any())
             && live.incarnation == self.snap.incarnation
