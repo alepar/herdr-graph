@@ -78,15 +78,14 @@ pub fn clear_restore_on_retire(rec: &mut CloneRecord) {
 }
 
 /// Called by the purge commit: the inert tombstone to keep in place of `rec`, or None to delete the record.
-/// A clone holding a seat always keeps a Finalize (§14.2); a seatless one keeps a ReleaseKey only when it
-/// has a key reservation (§14.3).
+/// Before D2 (hg-66u.31) a seated clone is deleted outright (every seat is final, §14.2); hg-66u.31 restores
+/// the Finalize tombstone. A seatless one keeps a ReleaseKey only when it has a key reservation (§14.3).
 pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<CloneRecord> {
     let seat_intent = match (&rec.threads_seat, reservation) {
-        (Some(seat), _) => SeatIntent::Finalize { seat: seat.clone() },
+        (Some(_), _) | (None, None) => return None,
         (None, Some(key)) => SeatIntent::ReleaseKey {
             key: key.to_owned(),
         },
-        (None, None) => return None,
     };
     Some(CloneRecord {
         schema: rec.schema,

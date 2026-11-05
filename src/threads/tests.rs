@@ -123,6 +123,17 @@ impl Mutation for SeatFixture {
                     }
                 }
             }
+            "raw_finalize" => {
+                // The tombstone shape an earlier build wrote when it purged a seated clone.
+                let seat = rec.threads_seat.clone().expect("raw_finalize needs a seat");
+                rec.lifecycle = CloneLifecycle::Retired;
+                rec.runtime = crate::model::common::Runtime::default();
+                rec.occupant = None;
+                rec.sessions = vec![];
+                rec.invitations = vec![];
+                rec.seat_fact = None;
+                rec.seat_intent = Some(crate::model::clone::SeatIntent::Finalize { seat });
+            }
             "raw_restore" => {
                 rec.threads_seat = None;
                 rec.seat_intent = Some(crate::model::clone::SeatIntent::Restore {
@@ -1223,7 +1234,7 @@ async fn tombstone_gets_no_wants() {
     bookkeeping(
         &fx,
         "test_seat_fixture",
-        json!({ "clone": clone.id, "op": "tombstone" }),
+        json!({ "clone": clone.id, "op": "raw_finalize" }),
     );
     let t = clone_rec(&fx, &clone.id);
     assert!(t.is_tombstone());
@@ -2387,18 +2398,28 @@ async fn pane_close_after_threads_done_retires_and_clears_the_restore_intent() {
 }
 
 #[tokio::test]
-async fn purge_tombstone_keeps_identity_and_finalize() {
+async fn purge_tombstone_of_a_seated_clone_is_none() {
     let fx = fx();
     let c = base(&fx).await;
-    bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
     transition(&fx, &c.id, assign("seat-a"));
     retire_clone_observed(&fx, &c.id);
-    let live = clone_rec(&fx, &c.id);
-    assert!(!live.sessions.is_empty(), "fixture has history to strip");
+    let rec = clone_rec(&fx, &c.id);
+    assert_eq!(rec.threads_seat.as_deref(), Some("seat-a"));
+    // Before D2 every seat is final: the record is deleted outright, with or without a reservation.
+    assert!(assignment::purge_tombstone(&rec, None).is_none());
+    assert!(assignment::purge_tombstone(&rec, Some("key-1")).is_none());
+}
+
+#[tokio::test]
+async fn pre_existing_finalize_tombstone_is_deleted_on_load() {
+    let fx = fx();
+    let c = base(&fx).await;
+    transition(&fx, &c.id, assign("seat-a"));
+    retire_clone_observed(&fx, &c.id);
     bookkeeping(
         &fx,
         "test_seat_fixture",
-        json!({ "clone": c.id, "op": "tombstone" }),
+        json!({ "clone": c.id, "op": "raw_finalize" }),
     );
     let t = clone_rec(&fx, &c.id);
     assert!(t.is_tombstone());
@@ -2408,16 +2429,25 @@ async fn purge_tombstone_keeps_identity_and_finalize() {
             seat: "seat-a".into()
         })
     );
-    assert_eq!(
-        (&t.id, &t.seat, &t.name),
-        (&live.id, &live.seat, &live.name)
+    let before = fx.threads.calls().len();
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert!(
+        layout::all_clones(&view(&fx))
+            .unwrap()
+            .iter()
+            .all(|(_, r)| r.id != c.id),
+        "the pre-existing tombstone is deleted"
     );
-    assert_eq!(t.lifecycle, CloneLifecycle::Retired);
-    assert_eq!(t.retired, live.retired);
-    assert_eq!(t.threads_seat.as_deref(), Some("seat-a"));
-    assert!(t.sessions.is_empty() && t.occupant.is_none() && t.invitations.is_empty());
-    assert!(t.opt_outs.is_empty() && !t.reload_required);
-    assert_eq!(t.runtime, crate::model::common::Runtime::default());
+    let new: Vec<_> = fx.threads.calls().split_off(before);
+    assert!(
+        new.iter().all(|c| !c.contains("seat-a")),
+        "no threads call for the dropped tombstone: {new:?}"
+    );
+    // A second pass plans nothing for it.
+    let head = fx.store.head().unwrap();
+    steps(&fx, 2).await;
+    assert_eq!(fx.store.head().unwrap(), head, "nothing left to do");
 }
 
 #[tokio::test]
@@ -2433,15 +2463,9 @@ async fn purge_tombstone_of_a_seatless_clone_with_a_reservation_is_release_key()
     );
     assert!(t.is_tombstone());
     assert_eq!(t.threads_seat, None);
-    // A held seat wins over a reservation: Finalize, never ReleaseKey.
+    // A held seat wins over a reservation: no ReleaseKey, the record is deleted (pre-D2).
     transition(&fx, &c.id, assign("seat-a"));
-    let t = assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).unwrap();
-    assert_eq!(
-        t.seat_intent,
-        Some(SeatIntent::Finalize {
-            seat: "seat-a".into()
-        })
-    );
+    assert!(assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).is_none());
 }
 
 #[tokio::test]
@@ -2464,7 +2488,7 @@ async fn tombstone_done_deletes_only_tombstones() {
     bookkeeping(
         &fx,
         "test_seat_fixture",
-        json!({ "clone": c.id, "op": "tombstone" }),
+        json!({ "clone": c.id, "op": "raw_finalize" }),
     );
     assert!(clone_rec(&fx, &c.id).is_tombstone());
     assert_eq!(transition(&fx, &c.id, SeatTransition::TombstoneDone), None);
