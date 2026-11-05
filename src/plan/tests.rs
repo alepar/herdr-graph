@@ -4411,6 +4411,122 @@ fn stale_graph_toml_rejects_first_seat_plan() {
     assert_eq!(row.rejection.unwrap().reason, "stale_plan");
 }
 
+#[test]
+fn seat_resurrect_first_seat_assigns() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    set_role(&fx, None);
+    commit(&fx, "seat retire one");
+    let sp = plan(&fx, "seat resurrect one");
+    let (_, retired) = seat(&fx, "one", Some(Lifecycle::Retired));
+    let eff: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "graph.node_manager_seat")
+        .collect();
+    assert_eq!(eff.len(), 1, "{:?}", kinds_of(&sp));
+    assert_eq!(eff[0].detail["to"], json!(retired.id));
+    let resurrect = sp
+        .plan
+        .effects
+        .iter()
+        .find(|e| e.kind == "seat.resurrect")
+        .unwrap();
+    assert_eq!(resurrect.detail["to"], json!("active"));
+    assert_eq!(count(&sp, "runtime.open_tab"), 1);
+    let graph = layout::graph_id(&view(&fx)).unwrap().to_any();
+    assert!(
+        sp.plan
+            .relied_on
+            .iter()
+            .any(|r| r.object == graph
+                && matches!(r.version, crate::model::change::Version::Blob(_)))
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let (_, back) = seat(&fx, "one", None);
+    assert_eq!(back.lifecycle, Lifecycle::Active);
+    assert_eq!(teamspace(&fx, "alpha").1.lifecycle, Lifecycle::Active);
+    assert_eq!(node_manager(&fx), Some(back.id.clone()));
+    assert!(
+        clones_of(&fx, &back.id)
+            .iter()
+            .any(|(_, c)| c.lifecycle == CloneLifecycle::Active)
+    );
+}
+
+#[test]
+fn seat_resurrect_no_auto_assign_when_live_seats_exist() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    commit(&fx, "seat create two --teamspace alpha");
+    set_role(&fx, None);
+    commit(&fx, "seat retire two");
+    let sp = plan(&fx, "seat resurrect two");
+    assert_eq!(count(&sp, "graph.node_manager_seat"), 0);
+    assert_eq!(
+        sp.plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "seat.resurrect")
+            .unwrap()
+            .detail["to"],
+        json!("dormant")
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), None);
+    assert_eq!(seat(&fx, "two", None).1.lifecycle, Lifecycle::Dormant);
+}
+
+#[test]
+fn teamspace_resurrect_first_seat_assigns() {
+    let fx = fx_fresh();
+    alpha(&fx);
+    commit(&fx, "seat create one --teamspace alpha");
+    commit(&fx, "seat create two --teamspace alpha");
+    set_role(&fx, None);
+    commit(&fx, "teamspace retire alpha");
+    let sp = plan(&fx, "teamspace resurrect alpha");
+    let seats: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.resurrect")
+        .collect();
+    assert_eq!(seats.len(), 2, "{:?}", kinds_of(&sp));
+    let eff: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "graph.node_manager_seat")
+        .collect();
+    assert_eq!(eff.len(), 1);
+    // Only the first listed seat is assigned and Active; the other stays dormant.
+    assert_eq!(eff[0].detail["to"], json!(seats[0].object));
+    assert_eq!(seats[0].detail["to"], json!("active"));
+    assert_eq!(seats[1].detail["to"], json!("dormant"));
+    assert_eq!(count(&sp, "runtime.open_tab"), 1);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let first: SeatId = seats[0].object.clone().try_into().unwrap();
+    assert_eq!(node_manager(&fx), Some(first.clone()));
+    let all = layout::all_seats(&view(&fx)).unwrap();
+    let live = |id: &SeatId| all.iter().find(|(_, s)| &s.id == id).unwrap().1.lifecycle;
+    assert_eq!(live(&first), Lifecycle::Active);
+    let second: SeatId = seats[1].object.clone().try_into().unwrap();
+    assert_eq!(live(&second), Lifecycle::Dormant);
+    assert_eq!(teamspace(&fx, "alpha").1.lifecycle, Lifecycle::Active);
+    assert!(
+        clones_of(&fx, &first)
+            .iter()
+            .any(|(_, c)| c.lifecycle == CloneLifecycle::Active)
+    );
+}
+
 fn point_manager_of(fx: &Fx, seat_name: &str, manager: &str) {
     set_pointers(
         fx,
