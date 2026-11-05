@@ -3,6 +3,9 @@
 //! the seat intent but never writes it; new seat-state handling is added in the single match below; callers
 //! never map seat states to graph changes elsewhere.
 //!
+//! A seat the read omitted (a per-seat refusal) is threads not speaking for that clone: the matcher's result
+//! stands. A refusal that outlasts `SEAT_LOST_AFTER` makes the clone Unknown (seat lost).
+//!
 //! Pre-D1 precedence: threads speaks only with Resolved, Retired or KeyConflict. Unresolved, an unreachable
 //! threads service and a clone without `threads_seat` leave the old matcher's result untouched.
 use super::matcher::Matches;
@@ -12,6 +15,14 @@ use crate::model::{CloneId, HerdrPaneId, Timestamp};
 use crate::ports::threads::{RetirementKind, SeatStatus, ThreadsSeatRef};
 use crate::reconcile::desired::DesiredRuntime;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// How long a seat may stay refused before the clone is Unknown with a seat-lost alert. Equal to the Herdr
+/// incarnation grace.
+pub const SEAT_LOST_AFTER: chrono::Duration = chrono::Duration::seconds(90);
+
+/// The remedy shown with a lost seat: threads refused it for good, so the graph never re-resolves it silently.
+pub const SEAT_LOST_REMEDY: &str =
+    "retire and purge the clone; a lost seat is never re-resolved silently";
 
 /// The outcome of this step's threads read.
 pub enum ThreadsRead {
@@ -94,10 +105,12 @@ fn unbind(m: &mut Matches, out: &mut SeatOutcome, clone: &CloneId) {
 
 /// Single match on SeatStatus. Mutates `m` for the clones threads speaks for. `live` is the set of panes in
 /// the snapshot: a Resolved pane that is not there yet cannot be bound, so the matcher's result stands.
+/// `lost` holds the seats refused for longer than `SEAT_LOST_AFTER`: their clones are Unknown, never retired.
 pub fn observe(
     d: &DesiredRuntime,
     read: &ThreadsRead,
     live: &BTreeSet<HerdrPaneId>,
+    lost: &BTreeSet<ThreadsSeatRef>,
     m: &mut Matches,
     now: Timestamp,
 ) -> SeatOutcome {
@@ -108,6 +121,9 @@ pub fn observe(
     let mut resolved: Vec<(CloneId, HerdrPaneId)> = Vec::new();
     for (clone, seat) in seated_clones(d) {
         let Some(status) = statuses.get(&seat) else {
+            if lost.contains(&seat) {
+                unbind(m, &mut out, &clone);
+            }
             continue;
         };
         out.facts.push((
