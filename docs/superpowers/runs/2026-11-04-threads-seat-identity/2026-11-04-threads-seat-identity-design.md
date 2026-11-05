@@ -94,13 +94,23 @@ Recommended: `CloneRecord` gains `threads_seat: Option<SeatId>` (the clone, not 
 it survives rebinding of panes by Herdr moves and undo). A threads effect resolves it once the
 clone's pane binding is verified (stamped token or verified bound pane in the current incarnation),
 via the existing `ThreadsSeatMap::seat_for` (`ResolveSeat`). Rules:
-- Never overwritten once set, with one exception, **seat succession**: when threads reports the
-  clone's seat `Retired` *final* (irreversible: every pane-close retirement before D2, or an
-  operator's final retire after it) and the graph restores the clone (undo or resurrection), the
-  assignment may replace the final-retired seat with the seat resolved for the restored pane. The
-  succession is recorded on the clone (previous seat id kept for history) and the new seat needs
-  memberships re-invited and accepted once, as today. A reversibly retired seat is never succeeded;
-  it is un-retired (§8). At any instant a clone has at most one live seat, so B1's 1:1 holds.
+- Never overwritten once set, with one exception, **seat succession**: when the clone carries a
+  `Restore{seat, epoch}` intent (§8, written by the undo or resurrection commit) whose `seat` threads
+  reports `Retired` *final* (irreversible: every pane-close retirement before D2, or an operator's
+  final retire after it), a succession want resolves the seat of the pane the restore reopened (the
+  plan path writes that pane as the clone's binding when it creates it, so the binding is verified
+  by the create nonce) and the assignment replaces the final-retired seat with it. The assignment
+  admits succession only against a `Restore` intent with the same `seat` and `epoch`; without one a
+  different seat is rejected as before. The succession is recorded on the clone (previous seat id
+  kept for history) and the new seat needs memberships re-invited and accepted once, as today. A
+  reversibly retired seat is never succeeded; it is un-retired (§8). At any instant a clone has at
+  most one live seat, so B1's 1:1 holds.
+- Unseated clone after D1: an active clone with `threads_seat = None` and a recorded key
+  reservation (§5) needs no pane binding to learn its seat. The resolve want for it re-issues
+  `ReserveContinuityKey{key}` (idempotent for the holder); when the answer carries `seat` (bound at
+  the first keyed check-in), that seat is admitted through the assignment. The key is the evidence,
+  so this works with the matcher deleted and after a restart; the launch that produces the check-in
+  is the resume driver's (§9). Before D1 an unseated clone is bound by the old matcher as today.
 - `ResolveSeat` refusals (restore holds, pane held for a key conflict) are `Deferred`, never errors,
   and never retried with a fresh allocation while the seat is unresolved — an early resolve on a
   restored pane would allocate a new seat and defeat threads' reattach.
@@ -146,9 +156,24 @@ Considered: Options A/B/C of the H2 review (rejected there).
 Recommended: every agent start the graph performs (`start`, `RelaunchOccupant`, `ReplaceSession`,
 the resume driver) runs the agent with `HERDR_THREADS_CONTINUITY_KEY=<cl_ id>` in its environment.
 Because `StartAgent` has no env and Herdr cannot change (B6), the graph's Herdr port grows an `env`
-parameter that the Herdr adapter realises without Herdr changes (argv prefix `env K=V …` or the
-existing pane-creation env, whichever the installed Herdr API supports for agent start; the
-implementer verifies on the real Herdr). The existing `HERDR_GRAPH_CLONE` pane env stays. The
+parameter that the Herdr adapter delivers by exporting it into the pane's shell just before
+`agent.start`. Herdr v0.9.5's `agent.start` has no env field (`AgentStartParams`: name, kind,
+pane_id, args; `env` exists only on `PaneSplitParams`, pane creation) and cannot take an `env`
+argv prefix (args follow the fixed agent executable). It does submit the rendered agent command as
+typed input into the pane's existing interactive shell (`src/app/agents.rs` `start_agent`), so the
+agent is a child of that shell and inherits its environment. The adapter therefore sends
+` export HERDR_GRAPH_CLONE=<cl_> HERDR_THREADS_CONTINUITY_KEY=<cl_>` plus Enter through the existing
+text/keys path (`pane.send_text`/`pane.send_keys`, the port's `send_keys`), then calls
+`agent.start`; both go into the same pty input in order, so the shell runs the export first. Rules:
+the executor's existing guard (pane exists, shell in the foreground, no agent) runs before the
+export, as before a start; values are `cl_` ids, and the adapter refuses any value outside
+`[A-Za-z0-9_.-]` instead of quoting it; the leading space keeps the line out of history where the
+shell ignores space-prefixed lines (fish by default; bash `ignorespace`, zsh `HIST_IGNORE_SPACE`),
+otherwise the harmless line is recorded. `export K=V` is accepted by bash, zsh, sh and fish; a pane
+shell that rejects it starts the agent without the key, which falls back to C1 evidence, not an
+error. The variables stay in the pane shell afterwards, so a manual relaunch in that pane presents
+the same key, which is the same identity. The existing `HERDR_GRAPH_CLONE` pane-creation env stays
+for panes the graph creates. The
 holder of a reservation is the graph's registered threads service; a key can be reserved before
 the clone has a seat, so the graph reserves at clone creation, before the first launch. Clones that
 predate D1 are backfilled and linked to their current seat through a seat-bearing
@@ -166,9 +191,26 @@ polled per observation step for clones with a `threads_seat`. Mapping: `Resolved
 clone Present, bound to that pane (binding written from threads' target, token re-stamped by the
 existing stamp path); `Unresolved` → Unknown; `Retired` (reversible or final) → clone retired
 through the existing undoable retirement (the reversible/final distinction matters only to undo,
-§8); key-conflict field → Unknown plus a recorded alert in `status`. On v3.0.0 every retired seat
-is final (threads retirement is irreversible until D2), and the adapter reports it so. Threads unreachable → no binding changes (hold last state; Unknown only after the existing
-staleness rule). Then delete: the clone passes of `observe/matcher.rs` (token, terminal, native
+§8), **unless** the clone carries a `Restore` intent whose threads step is not yet acknowledged
+(§8): then the Retired seat is the expected interim state of the restore, and the arm changes
+nothing. Once that step is acknowledged, a Retired seat is a fresh close and retires the clone
+(dropping the intent). `KeyConflict` → Unknown plus a key-conflict alert in `status`. The alert is
+a level, not an event: it is the conflict field of the clone's last successful read, stored on the
+observation state the step commits (one per clone, so no dedup), set by a read that shows a
+conflict, cleared by the next successful read that shows none, and held unchanged across a
+`ThreadsError`. Nothing else reads it; launches are gated on the current SeatStatus, not on the
+alert. On v3.0.0 every retired seat is final (threads retirement is irreversible until D2), and the
+adapter reports it so. Threads unreachable → no binding changes (hold last state; Unknown only
+after the existing staleness rule).
+
+Before D1 the old matcher still runs, and precedence is per clone: threads *speaks* for a clone
+only when its seat reads `Resolved`, `Retired` or `KeyConflict`. `Unresolved`, an unreachable
+threads, and `threads_seat = None` do not speak, and the matcher's result for that clone stands
+(binding or Unknown, as today). When threads speaks, its answer replaces the matcher's for that
+clone. Pane uniqueness: one pane is bound to at most one clone per step; when a threads `Resolved`
+answer and a matcher match claim the same pane for different clones, the threads-bound clone keeps
+the pane and the other clone gets no binding this step (Unknown). After D1 the matcher's clone
+passes are gone and `Unresolved` → Unknown is the only answer. Then delete: the clone passes of `observe/matcher.rs` (token, terminal, native
 session), clone terminal/incarnation tracking used only by them, the clone parts of the planner's
 `LiveIndex` (bound-id, rebind-adopted, journal `live_ref` re-matching; the create-nonce match for a
 pane the graph is creating stays until its seat is resolved), `/seat` rebind proposals
@@ -177,7 +219,8 @@ adopted only through the first bind of an unseated clone (existing env-based `/s
 which resolves its seat once. The deletion is gated on D1 (§10): before D1, a fresh agent or bare
 pane after cold restart has no evidence threads accepts, so deleting the matcher first would regress
 those cases relative to today's operator rebind; the `ThreadsSeatView` reader and binding-from-
-threads mapping land before D1 and run alongside the old matcher (threads wins when both speak).
+threads mapping land before D1 and run alongside the old matcher under the per-clone precedence
+above.
 Considered: keeping the matcher as a fallback (rejected: B1/B3 — two sources of truth is the bug).
 
 ### 7. Tabs and workspaces across incarnations
@@ -191,34 +234,79 @@ as fallback (rejected: silent first-wins, the ambiguity the review flagged).
 ### 8. Undo and resurrection onto the same seat (D2)
 
 Recommended: closing a clone's pane retires its threads seat (threads does it; the graph issues
-nothing). Graph undo of that retirement, and seat resurrection, reopen the tab/pane through the
-existing plan path, call threads `UnretireSeat{seat}` (seat returns to unresolved; memberships and
-requirement episodes were kept while reversible, B10), then launch the agent with the key (resuming the
-last session when the harness supports resume) so the key check-in reattaches the same seat. Undo
-no longer adopts the caller's pane (`undo/adopt.rs`): a different pane has its own seat, which
-would break 1:1. When the graph's retirement becomes final (purge), the graph releases the key /
-finalizes retirement (operation per D2's published API). After reattachment the graph re-checks its
-wants and releases any requirement it no longer wants. All of this is gated on D2.
-**Before D2 (interim):** undo and resurrection reopen the clone's tab in its original workspace
-through the plan path and no longer adopt the caller's pane (it has its own seat); the restored
-clone's final-retired seat is succeeded by the reopened pane's seat (§2), the resume driver resumes
-the last session, and memberships are re-invited and accepted once. The
-D2-gated work replaces this with un-retire for reversibly retired seats; seat succession remains
-only for operator-finalized seats.
+nothing), and SeatObservation retires the clone (§6). Every graph-initiated threads lifecycle
+command and the launch that follows a restore are derived from a persisted **seat intent** on the
+clone, never from the bare pair (clone state, seat status):
+
+`CloneRecord.seat_intent: Option<SeatIntent>`, with variants
+- `Restore{seat, epoch, threads_done}`: written by the same commit that performs graph undo of the
+  clone's retirement or seat resurrection (`seat` = the clone's `threads_seat`, `epoch` = that
+  commit's operation id, `threads_done = false`). A later undo or resurrection overwrites it with a
+  new epoch; an acknowledgement for an older epoch changes nothing.
+- `Finalize{seat}`: written by the purge commit (the end of the clone's undo window) when the seat
+  is reversibly retired. The purge keeps the record as a tombstone carrying only identity and the
+  intent; the tombstone is removed when threads acknowledges. A clone whose seat is already final
+  (every seat before D2) is purged at once, with no intent.
+
+Only the threads executor advances or clears the intent, through ThreadsSeatAssignment, on threads'
+acknowledgement. The restore runs:
+1. The undo/resurrection commit makes the clone active with `Restore`; the plan path reopens its
+   tab in the original workspace and creates the pane, writing it as the clone's binding (create
+   nonce). Undo no longer adopts the caller's pane (`undo/adopt.rs`): a different pane has its own
+   seat, which would break 1:1. While the threads step is pending, SeatObservation does not
+   re-retire the clone (§6), and the ordinary start rule launches nothing for it.
+2. Threads step, chosen from the intent and the seat's status:
+   - seat Retired *reversible* (D2): `UnretireSeat{seat}`; the seat returns to unresolved with
+     memberships and requirement episodes kept (B10). `SeatUnretired` sets `threads_done`.
+   - seat Retired *final* (every seat before D2; an operator's final retire after it): seat
+     succession (§2) on the reopened pane; the succession commit sets `Restore.seat` to the new
+     seat and `threads_done`. Memberships are re-invited and accepted once.
+   - seat already Unresolved or Resolved under `seat` (an acknowledgement lost to a crash): sets
+     `threads_done` without a command.
+3. The resume driver (§9) is the single launcher: it starts the agent in the reopened pane with
+   the key (resuming the last session when the harness supports it). The key or C1 check-in
+   reattaches the (unretired or succeeded) seat.
+4. The intent clears when the seat reads `Resolved` under `Restore.seat` with an agent in the
+   bound pane. After reattachment the graph re-checks its wants and releases any requirement it no
+   longer wants.
+
+No unretire want exists without a `Restore` intent, so an ordinary pane close is never reversed. A
+threads refusal (`Rejected`) keeps the intent pending and visible in `status`; retiring the clone
+again clears it. Threads unreachable leaves the intent untouched and issues nothing.
+
+Finalize: the finalize want is derived from a `Finalize{seat}` tombstone, issues
+`FinalizeRetirement{seat}` (which also releases the key), and is retried level-triggered until
+`RetirementFinalized` or a read showing the seat final; then the tombstone is removed. The
+reversible window has no threads timer: only this want or an operator's final retire ends it.
+The unretire and finalize commands are gated on D2.
+**Before D2 (interim):** the same intent drives step 2's final branch for every restore: undo and
+resurrection reopen the clone's tab in its original workspace, the restored clone's final-retired
+seat is succeeded by the reopened pane's seat, the resume driver resumes the last session, and
+memberships are re-invited and accepted once. The D2-gated work adds the reversible branch and the
+finalize tombstone; succession remains only for operator-finalized seats.
 Considered: true un-retire (rejected by the user in favour of reversible state, threads-side);
 new seat on undo (rejected: breaks B1).
 
 ### 9. Resume driver after a headless cold restart (G4)
 
-The resume driver is the sole launcher for clones whose seat is Unresolved (the planner's ordinary
-start rule skips them); undo, resurrection and the fresh-agent path launch through it. "C1" below is
-threads' existing same-native-session continuity claim: a resumed session's check-in reattaches the
-seat it last held.
+The resume driver is the sole launcher for clones in either trigger below (the planner's ordinary
+start rule skips them, and skips any clone with a pending `Restore` intent); undo, resurrection and
+the fresh-agent path launch through it. "C1" below is threads' existing same-native-session
+continuity claim: a resumed session's check-in reattaches the seat it last held.
 
-Recommended: a reconciler step: for a clone whose `threads_seat` is `Unresolved` and whose last
-bound pane id exists in the current incarnation holding a bare shell (no agent, shell foreground via
-`process_info`), after the existing 90 s incarnation grace, start the agent in that pane: resume the
-clone's last ended session when the harness supports it, else fresh; always with the key. The pane
+Recommended: a reconciler step with two triggers, each requiring the clone's bound (or last bound)
+pane id to exist in the current incarnation holding a bare shell (no agent, shell foreground via
+`process_info`):
+- **restart**: the clone's `threads_seat` reads `Unresolved`, or (after D1) the clone has
+  `threads_seat = None` and a recorded key reservation (§2: the keyed check-in this launch causes is
+  what lets its seat be resolved). After the existing 90 s incarnation grace.
+- **restore**: the clone carries a `Restore` intent with `threads_done` (§8). The pane is the one
+  the restore reopened; its seat may read `Unresolved` (un-retired) or `Resolved` with a bare shell
+  (succeeded), and either way this rule, not the ordinary start rule, launches. No incarnation
+  grace: the pane is new.
+
+In both, start the agent in that pane: resume the clone's last ended session when the harness
+supports it, else fresh; always with the key. The pane
 id is a locator only — the seat attaches by C1 (session) or D1 (key) evidence wherever the agent
 actually runs, so a wrong locator self-corrects. The resume-by-session path works on v3.0.0 (C1);
 the fresh-agent path is gated on D1. Never launches into a pane that has an agent or whose seat is
@@ -266,37 +354,38 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
 - Errors: `ThreadsError`. Callers tell `Disconnected`/`ServiceBusy` (hold the last state; Unknown only under the existing staleness rule) apart from `Rejected`/`Unsupported` (log it and change nothing).
 
 **SeatObservation** — new module in `observe/`, turns seat statuses into observation facts for one step.
-- Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. Reversible `Retired` retires the clone undoably; final `Retired` retires it finally. `KeyConflict` marks it Unknown and records an alert that `status` reads. It also owns precedence: before D1, threads wins whenever it and the old matcher both claim a clone.
+- Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. `Retired` (either kind) retires the clone through the existing undoable retirement, except while the clone carries a `Restore` intent whose threads step is unacknowledged (no change: the expected interim state, §8); the reversible/final distinction matters only to the threads step. `KeyConflict` marks it Unknown and sets the clone's key-conflict alert. It also owns pre-D1 precedence (§6): threads speaks for a clone only with `Resolved`, `Retired` or `KeyConflict`; otherwise the old matcher's result stands; a pane claimed by a threads `Resolved` clone is withheld from any matcher-bound clone that step.
 - Hides: how threads' answer is merged into `Matches`/`build_ops`. The binding, retire and availability request builders stay as they are.
-- Must not: call threads (it receives statuses already read), or touch tabs or workspaces (matcher, preserved-id equality, §7).
-- Relationships: a function the step calls after `match_snapshot`; takes SeatStatus values and yields entries for `Matches.clone_pane` plus ops.
-- Lifecycle: stateless functions. The key-conflict alert is a journal entry.
+- Must not: call threads (it receives statuses already read), touch tabs or workspaces (matcher, preserved-id equality, §7), or write or clear a seat intent.
+- Relationships: a function the step calls after `match_snapshot`; takes SeatStatus values and each clone's seat intent and yields entries for `Matches.clone_pane` plus ops.
+- Lifecycle: stateless functions. The key-conflict alert is per-clone observation state committed by the step: set by a successful read showing a conflict, cleared by the next successful read showing none, held across `ThreadsError` (§6).
 
-**ThreadsSeatAssignment** — new bookkeeping mutation (`bookkeeping.threads_seat`, registered beside `bookkeeping.binding`), the only writer of `CloneRecord.threads_seat`.
-- Owns: the write-once rule, its one exception (seat succession of a final-retired seat on undo or resurrection, §2), and the invariant that at most one non-retired clone holds a given `threads_seat`.
+**ThreadsSeatAssignment** — new bookkeeping mutation (`bookkeeping.threads_seat`, registered beside `bookkeeping.binding`), the only writer of `CloneRecord.threads_seat` and the only mutation that advances or clears `CloneRecord.seat_intent`.
+- Owns: the write-once rule, its one exception (seat succession of a final-retired seat, admitted only against a `Restore` intent with matching seat and epoch, §2), the invariant that at most one non-retired clone holds a given `threads_seat`, and the intent transitions after threads acknowledges: `threads_done` on `SeatUnretired` or succession, clearing `Restore` on reattachment, removing a `Finalize` tombstone on `RetirementFinalized` (§8). An acknowledgement for a stale epoch is an idempotent no-op.
 - Hides: the overwrite and uniqueness checks against the committed tree.
-- Must not: resolve seats (the threads executor does that through PaneSeatMap) or retire anything.
+- Must not: resolve seats (the threads executor does that through PaneSeatMap), retire anything, or create an intent (undo, resurrection and purge commits write it).
 - Relationships: one more entry in the existing `MutationRegistry`, the same shape as `bookkeeping.binding`; the threads executor admits it.
 - Errors: `MutationError`. Writing the seat already set is an idempotent success, distinct from a different seat (rejected) and from a seat another live clone holds (rejected, surfaced, never retried).
 
-**CloneRecord** — extended: gains `threads_seat` (write-once, §2). `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
+**CloneRecord** — extended: gains `threads_seat` (write-once, §2) and `seat_intent: Option<SeatIntent>` (`Restore{seat, epoch, threads_done}` or `Finalize{seat}`, §8). A purged clone whose seat is reversibly retired stays as a tombstone record carrying only its identity and `Finalize` until threads acknowledges. `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
 
 **PaneSeatMap** — extended: becomes the port for seat-lifecycle commands. It already has resolve; it gains reserving the continuity key (D1), unretiring a seat (D2) and finalizing a retirement or releasing the key (D2, per the published API). Its resolve reports threads' refusals (restore hold, key-conflict hold) as a non-error "not yet" so the executor returns `Deferred` (§2). Implementations stay `ThreadsSeatMap` and `FakePaneSeatMap`.
 
 **ThreadsSource / ThreadsExecutor (`Payload`)** — extended: new want kinds, still chosen in `system_wants` and dispatched in `execute_scoped`:
-- resolve seat: for an active clone with a verified pane binding and no `threads_seat`; it admits ThreadsSeatAssignment.
+- resolve seat: for an active clone with no `threads_seat` and either a verified pane binding (`ResolveSeat`) or, after D1, a recorded key reservation (re-issued `ReserveContinuityKey{key}`, admitting the answer's `seat` when present, §2); it admits ThreadsSeatAssignment.
 - reserve key: for an active clone with no recorded reservation, before its first keyed launch.
-- unretire seat: for an active clone whose seat threads reports as reversibly retired, the state undo or resurrection leaves.
-- finalize retirement: on purge.
+- unretire seat: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads reversibly retired (§8). No other state produces it.
+- succession: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads final-retired; resolves the reopened pane's seat and admits ThreadsSeatAssignment's succession (§2, §8).
+- finalize retirement: for every `Finalize{seat}` tombstone, retried until threads acknowledges (§8).
 
 `clone_wants` keys desired, satisfied and released on `threads_seat` instead of the occupant (§3). The invite executor invites the recorded seat and does not re-resolve it.
 
-**StartAgent / HerdrApi adapter** — extended: `StartAgent` gains `env`. The Herdr client adapter alone decides how to deliver it (an `env K=V` argv prefix or the agent-start env, §5).
+**StartAgent / HerdrApi adapter** — extended: `StartAgent` gains `env`. The Herdr client adapter alone delivers it: a space-prefixed `export K=V …` line plus Enter typed into the pane's shell through `pane.send_text`/`pane.send_keys`, then `agent.start`, whose command the same shell runs and whose environment the agent inherits (§5). It refuses values outside `[A-Za-z0-9_.-]` rather than quoting them. Callers never see the mechanism.
 
 **`model::launch`** — extended: gains the continuity-key env constant and one function that builds the env for every agent start (`HERDR_GRAPH_CLONE` plus `HERDR_THREADS_CONTINUITY_KEY=<cl_ id>`). Every start site calls it: `HerdrExecutor` start/relaunch, `session::start` for ReplaceSession, and the resume rule. No site builds the env by hand.
 
 **Reconcile planner (`plan_effects`, `LiveIndex`)** — extended:
-- A resume rule plans the existing `StartAgent` effect for a clone in the §9 situation: its seat is Unresolved, its last bound pane id exists in this incarnation, and that pane has no agent. The executor already applies the 90 s grace, checks for a shell foreground and chooses resume over fresh. The rule skips clones that carry a key-conflict alert.
+- A resume rule plans the existing `StartAgent` effect for a clone in either §9 trigger: restart (seat Unresolved, or after D1 `threads_seat = None` with a recorded reservation) or restore (`Restore` intent with `threads_done`); in both its bound or last bound pane id exists in this incarnation and that pane has no agent. The executor already applies the 90 s grace (restart trigger only), checks for a shell foreground and chooses resume over fresh. The ordinary start rule skips every clone the resume rule covers and every clone with a pending `Restore` intent. A clone whose seat reads `KeyConflict` matches neither trigger, so the rule needs no alert check.
 - The clone side of `LiveIndex` shrinks to a lookup by committed binding plus the create-nonce match. Rebind adoption and `live_ref` re-matching are removed after D1 (§6).
 
 **Matcher** — extended (narrowed): tabs and workspaces match by token, else by preserved-id equality, and become Unknown when the id is absent (§7). The clone passes are deleted once D1 lands (§6).
@@ -308,16 +397,30 @@ Walk-through, cold restart headless: the new incarnation forces a rebind step; `
 Future change, G5 limbo disposition: one new SeatStatus variant, mapped in the adapter, and one new arm in SeatObservation's `match`. No caller changes.
 
 Spec-forced exceptions:
-- Per §6: before D1, threads and the old clone matcher run side by side and threads wins whenever both speak. Deliberate and temporary; the matcher's clone passes are deleted in the D1-gated bead.
-- Per §8: undo no longer adopts the caller's pane (`undo/adopt.rs` removed for clones). Undo commits the clone active; unretire, relaunch and key steps follow from level-triggered wants. The undo code makes no threads calls.
+- Per §6: before D1, threads and the old clone matcher run side by side under per-clone precedence (threads speaks only with Resolved, Retired or KeyConflict; a threads-claimed pane is withheld from matcher-bound clones). Deliberate and temporary; the matcher's clone passes are deleted in the D1-gated bead.
+- Per §8: undo no longer adopts the caller's pane (`undo/adopt.rs` removed for clones). Undo and resurrection commit the clone active together with a `Restore` intent; unretire or succession, then the resume driver's launch, follow from wants derived from that intent. The undo code makes no threads calls. Purge of a reversibly retired seat's clone leaves a `Finalize` tombstone instead of deleting the record.
 - Per §3: `ThreadsLink.occupant` stays on the record, but nothing may branch on it any more.
 - Per §5: the key env var is emitted only once the clone's key reservation is recorded (none before D1).
 
 Digest:
 - SeatStatus: owns the closed set of threads seat states; a new state is added as one variant plus one arm in SeatObservation; callers never inspect threads wire results.
 - ThreadsSeatView: owns read-only seat inspection per observation step; new reads are added on this port and its fake; callers never write to threads through it or invent a state when threads is unreachable.
-- SeatObservation: owns turning seat statuses into clone binding, availability and retirement, plus precedence over the old matcher; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
-- ThreadsSeatAssignment: owns the write-once `threads_seat`, its seat-succession exception and its one-live-clone-per-seat invariant; new rules on the field are added in this mutation; callers never write `threads_seat` directly or retry a rejected different seat.
+- SeatObservation: owns turning seat statuses into clone binding, availability, retirement and the key-conflict alert level, plus pre-D1 precedence over the old matcher; it reads the seat intent but never writes it; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
+- ThreadsSeatAssignment: owns the write-once `threads_seat`, its intent-gated seat-succession exception, its one-live-clone-per-seat invariant and the acknowledgement transitions of `seat_intent`; new rules on the field are added in this mutation; callers never write `threads_seat` directly, clear an intent, or retry a rejected different seat.
+
+## Unchanged behavior
+
+- An ordinary pane close retires the clone through the existing undoable retirement on the next observation step; nothing un-retires it without a graph undo or resurrection.
+- `threads_seat` is write-once except for seat succession of a final-retired seat; at most one non-retired clone holds a seat (B1 1:1).
+- There is no separate "retired-final" clone state; graph clone retirement stays undoable until purge.
+- Participation is keyed to `threads_seat`, survives agent exit with the pane open (B8), and is not released on clone retirement.
+- The key env var is emitted only for a clone whose reservation is recorded; no key is emitted before D1.
+- `HERDR_GRAPH_CLONE` is still set on every agent start and on panes the graph creates.
+- The resume driver never launches into a pane with an agent, applies the 90 s incarnation grace after a restart, and is the only launcher for the clones it covers.
+- Threads unreachable changes no binding, writes no seat or intent, and launches nothing that depends on a threads answer.
+- Gating stays delivery order: the matcher deletion and fresh-agent path wait on D1, unretire and finalize on D2; no runtime capability switches.
+- Undo never adopts the caller's pane.
+- Tabs and workspaces match by token, then preserved Herdr id (§7), unaffected by this amendment.
 
 ## Post-Implementation Notes
 
