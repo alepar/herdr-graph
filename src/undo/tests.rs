@@ -115,6 +115,7 @@ fn fx() -> Fx {
     let docs = tmp.path().join("docs");
     std::fs::create_dir_all(&docs).unwrap();
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     register_template_kinds(&mut kinds);

@@ -161,7 +161,7 @@ struct Fx {
 }
 
 fn fx() -> Fx {
-    fx_with(|_| {})
+    fx_with(|root| crate::plan::managers::testing::opt_out(root))
 }
 
 /// A fixture over a freshly initialised instance; `prepare` runs before the writer and store open it.
@@ -2006,7 +2006,8 @@ fn show_seat_appends_manager_line() {
     commit(&fx, "seat create boss --teamspace alpha --active");
     commit(&fx, "seat create low --teamspace alpha --active");
     let (boss, low) = (seat_rec(&fx, "boss"), seat_rec(&fx, "low"));
-    // No node manager yet: unassigned.
+    // Clear the first-seat assignment: no node manager at all.
+    set_manager_args(&fx, json!({ "node_manager": null }));
     let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
     assert!(
         text.contains("name = \"low\"") && text.ends_with("\nmanager: none assigned"),
@@ -2030,6 +2031,8 @@ fn show_cycle_is_store_integrity() {
     commit(&fx, "seat create a --teamspace alpha --active");
     commit(&fx, "seat create b --teamspace alpha --active");
     let (a, b) = (seat_rec(&fx, "a"), seat_rec(&fx, "b"));
+    // Neither seat may be the node manager: the chain walk stops at the live node manager.
+    set_manager_args(&fx, json!({ "node_manager": null }));
     set_manager_args(&fx, json!({ "seat": a.id, "manager": b.id }));
     set_manager_args(&fx, json!({ "seat": b.id, "manager": a.id }));
     let e = show::show(&view(&fx), &fx.root, a.id.as_str()).unwrap_err();

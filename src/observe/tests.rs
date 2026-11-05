@@ -140,6 +140,7 @@ fn fx() -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::plan::kinds_extra::register_kinds(&mut kinds);
