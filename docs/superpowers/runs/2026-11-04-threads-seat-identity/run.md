@@ -10,7 +10,7 @@ idea: Fully autonomous; both roasts (design roast and PR roast) on. Scope: herdr
 branch: super-auto/threads-seat-identity
 base: main
 epic: hg-66u
-roastDesignRound: 1
+roastDesignRound: 2
 roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
 spec: 2026-11-04-threads-seat-identity-design.md
