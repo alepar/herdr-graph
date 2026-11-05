@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-04-threads-seat-identity
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-design
+phase: code
 codeMechanism: Workflow
 runTag: threads-seat-identity-20261105T073527
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -17,6 +17,8 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "f868aa09569684ce2fe2c44c3ec6ee4f1b23baeb", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-auto", "source": "skill"}, {"id": "final-suite", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "nice cargo test && nice cargo test --features test-support && nice cargo test --features private-herdr -- --test-threads=1", "configuration": "default features; test-support; private-herdr (serial)", "requiredLive": false}, {"id": "phase7-choice", "kind": "human", "owner": "human", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [], "checkEvidence": [], "runFailures": []}
+- review-collection · {"invocationId": "inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md", "review": "pending", "required": [], "settled": false}
 - top-split · auto · hg-66u.1 LEAF, hg-66u.2 LEAF, hg-66u.3 LEAF, hg-66u.4 LEAF, hg-66u.5 LEAF, hg-66u.6 LEAF, hg-66u.7 LEAF, hg-66u.8 LEAF, hg-66u.9 LEAF, hg-66u.10 LEAF, hg-66u.11 LEAF, hg-66u.12 LEAF, hg-66u.13 LEAF, hg-66u.14 LEAF, hg-66u.15 LEAF, hg-66u.16 LEAF, hg-66u.17 LEAF, hg-66u.18 LEAF, hg-66u.19 LEAF, hg-66u.20 LEAF, hg-66u.21 LEAF, hg-66u.22 LEAF (promotion review: SPLIT .7→.19, SPLIT .13→.21, PROMOTE .10 and .16 overruled sp:demoted-by-session; spec amended c77dfe3)
 - coverage-round-1 · R1-R14 (R15-R21 appended from r-new) · specsAt b992cab337bbcbe87dca1bcda205cdba3fa8c455 · requirements: 14 · mapped: 14 · unmapped: 0 · cov-3..cov-22 applied auto except cov-10 rejected auto (see coverage-ledger.md)
 - coverage-round-2 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-23..cov-46 applied auto · divergence: findings: 19 → 20 novel: 12/20 (60%) widening: yes 
@@ -36,3 +38,4 @@ stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol i
 - coverage-amend-design-1 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-47..cov-65 applied auto except cov-56, cov-57 rejected auto (see coverage-ledger.md)
 - design-roast exit · converged at round 2 (Should-fix (12 confirmed) [converged]); punch list: all 12 applied inline as spec §14 + bead text, new leaf hg-66u.35 (clone purge command); no re-roast (super-design converged exit)
 graph-pass: depth 8→8 · width 3.5→3.5 · applied 0 · parked 3
+gates: fix-loop gate hg-66u.36 holds hg-66u.17/.18 (final-SHA rig smokes); threads gates hg-66u.1 (D1) and hg-66u.2 (D2) close together (one threads release, mnSGq1eyidhP)
