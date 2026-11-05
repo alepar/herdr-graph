@@ -27,3 +27,9 @@ Source: herdr-threads coordinator (seat snSGTpBk7xGd), message mnSGy0OTGAUK on t
 - No "service resolved it" guard: the graph must name the right seat (its recorded threads_seat); naming a wrong seat makes that seat reversible and reattachable by the key (accepted limit).
 - SeatInspection.continuity_key gains bound_by: "check_in" | "service_reservation".
 - Confirmed: no seat needed to reserve for a brand-new clone (bound at first keyed check-in). No threads-side timer finalizes; the reversible window lasts until the service's FinalizeRetirement or an operator retire.
+
+## Correction 2026-11-05 (message mnSGLnbuvcjW, threads worker #8 mnSGAQs25Skk)
+
+- ReserveContinuityKey{seat}: accepts a resolved OR unresolved seat (binding moves nothing); a clone whose seat is already waiting at upgrade can gain a key. Refused for a retired, named or hc seat.
+- New native refusal ContinuityKeyPending: a claimless ResolveSeat (plain CLI) on a pane whose key is bound to an unresolved seat; no seat minted, no alert. Hooked agents never hit it (their claim reattaches).
+- Conflict alerts on a pane with a resolved owner hold nothing; that seat keeps working.
