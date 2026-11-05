@@ -472,6 +472,31 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
 }
 
 #[tokio::test]
+async fn start_records_the_exported_variable_names() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = fx
+        .herdr
+        .calls()
+        .into_iter()
+        .find_map(|call| match call {
+            FakeCall::StartAgent(s) => Some(s.pane),
+            _ => None,
+        })
+        .expect("an agent was started");
+    let raw = fx
+        .journal
+        .meta_get(&planner::launch_env_key(&c.id))
+        .unwrap()
+        .expect("launch_env recorded with the start");
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["pane"], pane.0);
+    assert_eq!(v["vars"], json!(["HERDR_GRAPH_CLONE"]));
+}
+
+#[tokio::test]
 async fn shell_harness_starts_no_agent() {
     let fx = fx();
     activate(&fx, "shell");

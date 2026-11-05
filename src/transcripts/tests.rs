@@ -1140,6 +1140,101 @@ async fn session_report_resolves_clone_by_pane_binding_when_env_absent() {
     assert_eq!(report_session(&fx, other).await.unwrap()["changed"], false);
 }
 
+/// Pretend the executor exported the clone variable and the key into `pane`'s shell.
+fn record_launch_env(fx: &Fx, clone: &CloneId, pane: &str) {
+    fx.tr
+        .journal
+        .meta_set(
+            &crate::reconcile::planner::launch_env_key(clone),
+            &json!({ "pane": pane, "vars": ["HERDR_GRAPH_CLONE", "HERDR_THREADS_CONTINUITY_KEY"] })
+                .to_string(),
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn session_report_missing_exported_vars_is_named_in_status() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let pane = clone_rec(&fx, &worker.id)
+        .runtime
+        .bound
+        .unwrap()
+        .pane_id
+        .unwrap();
+    record_launch_env(&fx, &worker.id, &pane.0);
+    assert_eq!(fx.tr.status_json()["export_rejected"], json!([]));
+    // The shell dropped both exports: the check-in has neither clone nor key, only the pane.
+    let capture = json!({ "harness": "claude", "native_session_id": "sess-x", "cwd": "/work" });
+    let r = report_session(&fx, json!({ "pane": pane.0, "capture": capture }))
+        .await
+        .unwrap();
+    assert_eq!(r["resolved"], true);
+    let named = fx.tr.status_json()["export_rejected"].clone();
+    assert_eq!(named.as_array().unwrap().len(), 1, "{named}");
+    assert_eq!(named[0]["clone"], worker.id.to_string());
+    assert_eq!(named[0]["pane"], pane.0);
+    assert_eq!(
+        named[0]["missing"],
+        json!(["HERDR_GRAPH_CLONE", "HERDR_THREADS_CONTINUITY_KEY"])
+    );
+    let remedy = named[0]["remedy"].as_str().unwrap();
+    assert!(
+        remedy.contains(
+            "relaunch the agent from a shell that accepts \"export K=V\" (bash, zsh, sh or fish)"
+        ),
+        "{remedy}"
+    );
+}
+
+#[tokio::test]
+async fn a_report_from_another_pane_is_not_judged_by_this_launch() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let pane = clone_rec(&fx, &worker.id)
+        .runtime
+        .bound
+        .unwrap()
+        .pane_id
+        .unwrap();
+    record_launch_env(&fx, &worker.id, "some-older-pane");
+    let capture = json!({ "harness": "claude", "native_session_id": "sess-y", "cwd": "/work" });
+    report_session(&fx, json!({ "pane": pane.0, "capture": capture }))
+        .await
+        .unwrap();
+    assert_eq!(fx.tr.status_json()["export_rejected"], json!([]));
+}
+
+#[tokio::test]
+async fn a_later_complete_report_clears_the_export_alert() {
+    let fx = fx();
+    let worker = base(&fx).await;
+    let pane = clone_rec(&fx, &worker.id)
+        .runtime
+        .bound
+        .unwrap()
+        .pane_id
+        .unwrap();
+    record_launch_env(&fx, &worker.id, &pane.0);
+    let capture = json!({ "harness": "claude", "native_session_id": "sess-1", "cwd": "/work" });
+    report_session(&fx, json!({ "pane": pane.0, "capture": capture.clone() }))
+        .await
+        .unwrap();
+    assert_eq!(
+        fx.tr.status_json()["export_rejected"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // A relaunch from a shell that accepts the export: the check-in carries both.
+    let complete = json!({
+        "clone": worker.id, "pane": pane.0, "continuity_key": worker.id, "capture": capture,
+    });
+    report_session(&fx, complete).await.unwrap();
+    assert_eq!(fx.tr.status_json()["export_rejected"], json!([]));
+}
+
 #[tokio::test]
 async fn session_report_noop_when_unresolved() {
     let fx = fx();
@@ -1176,7 +1271,8 @@ fn spool_session(fx: &Fx, clone: &CloneId, native: &str) {
         r#"{{"session_id":"{native}","source":"startup"}}"#
     ))
     .unwrap();
-    let args = capture::report_args(&hook, Some(&clone.to_string()), None, "/work".into()).unwrap();
+    let args =
+        capture::report_args(&hook, Some(&clone.to_string()), None, None, "/work".into()).unwrap();
     let r = capture::SpooledReport {
         version: 1,
         caller: CallerInfo::default(),
@@ -1448,8 +1544,14 @@ async fn stale_live_report_after_newer_spooled_report_leaves_occupant() {
     let fx = fx();
     let worker = base(&fx).await;
     let hook = capture::parse_claude_hook(r#"{"session_id":"s2","source":"startup"}"#).unwrap();
-    let args =
-        capture::report_args(&hook, Some(&worker.id.to_string()), None, "/work".into()).unwrap();
+    let args = capture::report_args(
+        &hook,
+        Some(&worker.id.to_string()),
+        None,
+        None,
+        "/work".into(),
+    )
+    .unwrap();
     let later = fx.clock.now() + chrono::Duration::seconds(10);
     let r = capture::SpooledReport {
         version: 1,
@@ -1486,8 +1588,8 @@ fn session_report_cli_is_a_noop_without_clone_or_pane() {
     )
     .unwrap();
     assert_eq!(hook.session_id, "abc");
-    assert!(capture::report_args(&hook, None, None, "/fallback".into()).is_none());
-    let args = capture::report_args(&hook, None, Some("p1"), "/fallback".into()).unwrap();
+    assert!(capture::report_args(&hook, None, None, None, "/fallback".into()).is_none());
+    let args = capture::report_args(&hook, None, Some("p1"), None, "/fallback".into()).unwrap();
     assert_eq!(args["pane"], "p1");
     assert_eq!(args["capture"]["transcript_path"], "/t/abc.jsonl");
     assert_eq!(args["capture"]["cwd"], "/w");
@@ -1495,6 +1597,7 @@ fn session_report_cli_is_a_noop_without_clone_or_pane() {
     let args = capture::report_args(
         &capture::parse_claude_hook(r#"{"session_id":"abc"}"#).unwrap(),
         Some("cl_x"),
+        None,
         None,
         "/fallback".into(),
     )

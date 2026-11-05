@@ -51,6 +51,11 @@ pub fn launched_key(clone: &CloneId) -> String {
     format!("launched:{clone}")
 }
 
+/// Journal meta: the pane and variable names the last start exported for `clone` (spec §5).
+pub fn launch_env_key(clone: &CloneId) -> String {
+    format!("launch_env:{clone}")
+}
+
 pub struct LivePane<'a> {
     pub ws: &'a WorkspaceInfo,
     pub tab: &'a TabInfo,
