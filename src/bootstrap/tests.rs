@@ -1,8 +1,10 @@
 use super::resolve::{Resolution, proposal_words, resolve_caller};
 use super::setup_claude::{self, HookChange};
 use super::*;
-use crate::daemon::registry::CallerInfo;
+use crate::daemon::registry::{CallerInfo, CommandError};
+use crate::ipc::IpcErrorCode;
 use crate::journal::{Journal, OpRow};
+use crate::model::CommitId;
 use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{Invitation, InvitationState, InviteConstraint, ThreadsLink};
@@ -3439,4 +3441,245 @@ mod h1_untested {
         assert_eq!(r.text.matches("MEMBER-TEXT").count(), 0);
         assert!(r.text.contains("NEW-TEXT"));
     }
+}
+
+// ---- seat.resolve integrity errors (hg-k4l.12) ----
+
+/// Like `put`, but at a repo path directly (for `templates/...` and `applications/...`).
+fn put_path(fx: &Fx, path: &str, bytes: &[u8]) -> OpRow {
+    use crate::ports::writer::Writer;
+    let op =
+        fx.w.admit(ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_put", "path": path, "bytes_b64": b64_encode(bytes) }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap();
+    fx.w.drain().unwrap();
+    fx.w.journal().get(&op).unwrap().unwrap()
+}
+
+fn member_rec(
+    name: &str,
+    seat_template: Option<crate::model::TemplateId>,
+) -> crate::model::template::TemplateMember {
+    crate::model::template::TemplateMember {
+        id: crate::model::MemberId::new(),
+        name: name.into(),
+        seat_template,
+        responsibility: None,
+        system_duty: None,
+        startup: Startup::Active,
+        defaults: Default::default(),
+    }
+}
+
+fn tpl_rec(
+    name: &str,
+    kind: crate::model::template::TemplateKind,
+    members: Vec<crate::model::template::TemplateMember>,
+) -> crate::model::template::TemplateRecord {
+    crate::model::template::TemplateRecord {
+        schema: 1,
+        id: crate::model::TemplateId::new(),
+        rev: 1,
+        name: name.into(),
+        kind,
+        name_history: vec![],
+        defaults: Default::default(),
+        members,
+        relationships: vec![],
+        copied_from: None,
+    }
+}
+
+fn put_tpl(fx: &Fx, t: &crate::model::template::TemplateRecord) {
+    let bytes = crate::store::record::to_toml_bytes(t).unwrap();
+    let path = format!("templates/{}/template.toml", t.name);
+    assert_eq!(put_path(fx, &path, &bytes).state, OpState::Committed);
+}
+
+/// Rewrite the committed seat record through `f`.
+fn edit_seat(fx: &Fx, seat: &SeatRecord, f: impl FnOnce(&mut SeatRecord)) {
+    let mut rec = seat_rec(fx, &seat.name);
+    f(&mut rec);
+    let bytes = crate::store::record::to_toml_bytes(&rec).unwrap();
+    assert_eq!(
+        put(fx, seat.id.as_str(), "seat.toml", &bytes).state,
+        OpState::Committed
+    );
+}
+
+fn tpl_ref(
+    t: &crate::model::template::TemplateRecord,
+    m: &crate::model::template::TemplateMember,
+) -> crate::model::seat::TemplateRef {
+    crate::model::seat::TemplateRef {
+        template: t.id.clone(),
+        member: m.id.clone(),
+    }
+}
+
+/// The `seat.resolve` error for a seat bound on pane `p1`; asserts it is an integrity error naming each of `parts`.
+fn integrity_err(fx: &Fx, parts: &[&str]) -> CommandError {
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Integrity, "{}", err.message);
+    for p in parts {
+        assert!(err.message.contains(p), "{p} not in {}", err.message);
+    }
+    assert!(err.message.contains("(HEAD "), "{}", err.message);
+    err
+}
+
+#[test]
+fn integrity_template_ref_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let ghost = tpl_rec("ghost", crate::model::template::TemplateKind::Team, vec![]);
+    let m = member_rec("m", None);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&ghost, &m)));
+    integrity_err(&fx, &["template_ref", ghost.id.as_str()]);
+}
+
+#[test]
+fn integrity_shared_template_missing() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let missing_shared = crate::model::TemplateId::new();
+    let m = member_rec("m", Some(missing_shared.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(&fx, &["seat_template", missing_shared.as_str()]);
+}
+
+#[test]
+fn integrity_shared_template_wrong_kind() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let other = tpl_rec("other", Team, vec![]);
+    put_tpl(&fx, &other);
+    let m = member_rec("m", Some(other.id.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(
+        &fx,
+        &["seat_template", other.id.as_str(), "is not a seat template"],
+    );
+}
+
+#[test]
+fn integrity_shared_template_with_team_structure() {
+    use crate::model::template::TemplateKind::{Seat, Team};
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let shared = tpl_rec("shared", Seat, vec![member_rec("inner", None)]);
+    put_tpl(&fx, &shared);
+    let m = member_rec("m", Some(shared.id.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(&fx, &["contains team structure"]);
+}
+
+#[test]
+fn integrity_teamspace_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let ghost = TeamspaceId::new();
+    edit_seat(&fx, &seat, |s| s.teamspace = ghost.clone());
+    integrity_err(&fx, &["teamspace", ghost.as_str()]);
+}
+
+#[test]
+fn integrity_application_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::AppId::new();
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.clone()]);
+    integrity_err(&fx, &["applications", app.as_str()]);
+}
+
+#[test]
+fn integrity_application_template_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::application::ApplicationRecord {
+        schema: 1,
+        id: crate::model::AppId::new(),
+        rev: 1,
+        name: "app".into(),
+        template: crate::model::TemplateId::new(),
+        teamspace: seat.teamspace.clone(),
+        lifecycle: Default::default(),
+        retired: None,
+        member_map: BTreeMap::new(),
+        additions: vec![],
+        exclusions: vec![],
+        reused: vec![],
+        contributions: Default::default(),
+        created_by: crate::model::application::CreatedBy {
+            op: crate::model::OpId::new(),
+            action: crate::model::ActionId::new(),
+        },
+    };
+    let bytes = crate::store::record::to_toml_bytes(&app).unwrap();
+    assert_eq!(
+        put_path(&fx, &format!("applications/{}.toml", app.id), &bytes).state,
+        OpState::Committed
+    );
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.id.clone()]);
+    integrity_err(&fx, &["template", app.template.as_str()]);
+}
+
+#[test]
+fn plain_read_failure_stays_internal() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let m = member_rec("m", None);
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    assert_eq!(
+        put_path(&fx, "templates/t1/template.toml", b"not toml [").state,
+        OpState::Committed
+    );
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Internal, "{}", err.message);
+}
+
+#[test]
+fn integrity_reply_has_no_partial_paths() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    assert!(seat_reply(&fx.deps, &caller("p1"), None).is_ok());
+    edit_seat(&fx, &seat, |s| s.teamspace = TeamspaceId::new());
+    // The error path returns no Value at all, so no `paths` object can escape.
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Integrity);
+    assert!(!err.message.contains("seat_folder"), "{}", err.message);
+}
+
+#[test]
+fn resolve_error_appends_suffix_after_semicolon() {
+    let head = CommitId("0123456789abcdef0123".into());
+    let e = resolve_error(
+        crate::ports::store::unresolved("st_a", "teamspace", "ts_b"),
+        &head,
+        Some("tell the node manager"),
+    );
+    assert_eq!(e.code, IpcErrorCode::Integrity);
+    assert_eq!(
+        e.message,
+        "st_a: teamspace ts_b not found at the committed revision (HEAD 0123456789ab); tell the node manager"
+    );
+    let plain = resolve_error(StoreError::Git("boom".into()), &head, Some("x"));
+    assert_eq!(plain.code, IpcErrorCode::Internal);
 }

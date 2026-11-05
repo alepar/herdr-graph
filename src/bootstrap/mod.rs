@@ -8,11 +8,11 @@ use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
 use crate::model::clone::CloneRecord;
 use crate::model::seat::SeatRecord;
-use crate::model::{CloneId, PlanId, SeatId};
+use crate::model::{CloneId, CommitId, PlanId, SeatId};
 use crate::plan::commands::{PlanDeps, create_plan};
 use crate::plan::ops::pending_for;
 use crate::ports::herdr::{HerdrApi, PaneInfo};
-use crate::ports::store::{RepoPath, Store, StoreError};
+use crate::ports::store::{RepoPath, Store, StoreError, unresolved};
 use crate::store::instruction_source::{FolderKind, PathClass, classify};
 use crate::store::layout;
 use crate::store::record::read_toml;
@@ -131,14 +131,14 @@ fn bound_paths(
     seat_id: &SeatId,
     clone_id: &CloneId,
 ) -> Result<BoundPaths, StoreError> {
-    let seat_loc = layout::locate(tree, &seat_id.to_any())?.ok_or_else(|| missing(seat_id))?;
-    let seat: SeatRecord =
-        read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat_id))?;
-    let clone_loc = layout::locate(tree, &clone_id.to_any())?.ok_or_else(|| missing(clone_id))?;
-    let clone: CloneRecord =
-        read_toml(tree, &clone_loc.record_path)?.ok_or_else(|| missing(clone_id))?;
-    let ts_loc =
-        layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
+    let no_seat = || unresolved(clone_id, "seat", seat_id);
+    let no_clone = || unresolved(seat_id, "clone", clone_id);
+    let seat_loc = layout::locate(tree, &seat_id.to_any())?.ok_or_else(no_seat)?;
+    let seat: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(no_seat)?;
+    let clone_loc = layout::locate(tree, &clone_id.to_any())?.ok_or_else(no_clone)?;
+    let clone: CloneRecord = read_toml(tree, &clone_loc.record_path)?.ok_or_else(no_clone)?;
+    let ts_loc = layout::locate(tree, &seat.teamspace.to_any())?
+        .ok_or_else(|| unresolved(seat_id, "teamspace", &seat.teamspace))?;
 
     let mut templates = Vec::new();
     let mut add = |path: String| {
@@ -208,11 +208,19 @@ fn bound_paths(
     })
 }
 
-fn missing(id: impl std::fmt::Display) -> StoreError {
-    StoreError::Corrupt {
-        path: id.to_string(),
-        reason: "object not found at the committed revision".into(),
+/// The `seat.resolve` error for a store failure: an integrity error becomes `CommandError::integrity` naming holder,
+/// field, target and HEAD (no partial reply), with `suffix` (the node-manager sentence) appended after "; ";
+/// every other StoreError stays internal through the shared classifier.
+pub(crate) fn resolve_error(e: StoreError, head: &CommitId, suffix: Option<&str>) -> CommandError {
+    if !matches!(e, StoreError::Integrity { .. }) {
+        return CommandError::from_store(e);
     }
+    let mut m = format!("{e} (HEAD {})", instructions::short_rev(&head.0));
+    if let Some(s) = suffix {
+        m.push_str("; ");
+        m.push_str(s);
+    }
+    CommandError::integrity(m)
 }
 
 /// `seat.resolve`: resolution, proposals (stored, never applied), paths, pending ops and invitations.
@@ -260,7 +268,8 @@ pub fn seat_reply(
                 native_session,
                 ..
             } => {
-                let bp = bound_paths(&view, root, seat, clone).map_err(internal)?;
+                let bp = bound_paths(&view, root, seat, clone)
+                    .map_err(|e| resolve_error(e, &head, None))?;
                 let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
                 let mut labels = json!({
                     "ts": format!("hg-ts:{teamspace}"),
@@ -279,7 +288,7 @@ pub fn seat_reply(
                     labels,
                     {
                         let r = instructions::render_instructions(&view, &head, seat)
-                            .map_err(internal)?;
+                            .map_err(|e| resolve_error(e, &head, None))?;
                         json!({
                             "rev": r.rev,
                             "parts": r.parts.iter()

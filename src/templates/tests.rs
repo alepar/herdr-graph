@@ -1677,7 +1677,10 @@ fn seat_template_reference_validation_and_dependency_revisions() {
         )
     };
     let path = write_doc(&fx, &text(&missing));
-    assert!(plan_err(&fx, &format!("template create team --from {path}")).contains("missing"));
+    assert!(
+        plan_err(&fx, &format!("template create team --from {path}"))
+            .contains("not found at the committed revision")
+    );
     create_doc(&fx, "wrong", "name = 'wrong'\n");
     let path = write_doc(&fx, &text(&tpl(&fx, "wrong").id));
     assert!(

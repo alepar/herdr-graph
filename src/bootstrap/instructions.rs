@@ -1,11 +1,10 @@
 //! The verbatim, ordered instruction stack of one seat at one commit (spec §4.1); reads only the committed
 //! tree; never truncates (the hook does, through `fit_hook`).
-use super::missing;
 use crate::model::application::ApplicationRecord;
 use crate::model::seat::SeatRecord;
 use crate::model::template::{TemplateMember, TemplateRecord};
 use crate::model::{CommitId, SeatId};
-use crate::ports::store::{DirEntry, EntryKind, ObjectLocation, RepoPath, StoreError};
+use crate::ports::store::{DirEntry, EntryKind, ObjectLocation, RepoPath, StoreError, unresolved};
 use crate::store::instruction_source::{
     self as source, InstructionError, InstructionScope, ListedFile, check_content,
 };
@@ -81,8 +80,13 @@ impl Walk {
         member: Option<&TemplateMember>,
     ) -> Result<(), StoreError> {
         if let Some(shared) = crate::model::effective::referenced_seat_template(tree, member)? {
-            let shared_loc =
-                layout::locate(tree, &shared.id.to_any())?.ok_or_else(|| missing(&shared.id))?;
+            let shared_loc = layout::locate(tree, &shared.id.to_any())?.ok_or_else(|| {
+                unresolved(
+                    member.map_or_else(|| record.id.to_string(), |m| m.id.to_string()),
+                    "seat_template",
+                    &shared.id,
+                )
+            })?;
             self.push(&shared_loc, &shared, None, true);
         }
         self.push(template, record, member, false);
@@ -100,31 +104,27 @@ pub fn template_participation(
         out: Vec::new(),
         seen: BTreeSet::new(),
     };
-    if let Some(r) = &seat.template_ref
-        && let Some(loc) = layout::locate(tree, &r.template.to_any())?
-        && let Some(record) = read_toml::<TemplateRecord>(tree, &loc.record_path)?
-    {
+    if let Some(r) = &seat.template_ref {
+        let no_template = || unresolved(&seat.id, "template_ref", &r.template);
+        let loc = layout::locate(tree, &r.template.to_any())?.ok_or_else(no_template)?;
+        let record: TemplateRecord = read_toml(tree, &loc.record_path)?.ok_or_else(no_template)?;
         let member = record.members.iter().find(|m| m.id == r.member).cloned();
         walk.push_member(tree, &loc, &record, member.as_ref())?;
     }
-    for app in &seat.applications {
-        let Some(app_loc) = layout::locate(tree, &app.to_any())? else {
-            continue;
-        };
-        let Some(app) = read_toml::<ApplicationRecord>(tree, &app_loc.record_path)? else {
-            continue;
-        };
-        if let Some(loc) = layout::locate(tree, &app.template.to_any())? {
-            let record: TemplateRecord =
-                read_toml(tree, &loc.record_path)?.ok_or_else(|| missing(&app.template))?;
-            walk.push(&loc, &record, None, false);
-            for member in record
-                .members
-                .iter()
-                .filter(|m| app.member_map.get(&m.id) == Some(&seat.id))
-            {
-                walk.push_member(tree, &loc, &record, Some(member))?;
-            }
+    for app_id in &seat.applications {
+        let no_app = || unresolved(&seat.id, "applications", app_id);
+        let app_loc = layout::locate(tree, &app_id.to_any())?.ok_or_else(no_app)?;
+        let app: ApplicationRecord = read_toml(tree, &app_loc.record_path)?.ok_or_else(no_app)?;
+        let no_template = || unresolved(&app.id, "template", &app.template);
+        let loc = layout::locate(tree, &app.template.to_any())?.ok_or_else(no_template)?;
+        let record: TemplateRecord = read_toml(tree, &loc.record_path)?.ok_or_else(no_template)?;
+        walk.push(&loc, &record, None, false);
+        for member in record
+            .members
+            .iter()
+            .filter(|m| app.member_map.get(&m.id) == Some(&seat.id))
+        {
+            walk.push_member(tree, &loc, &record, Some(member))?;
         }
     }
     Ok(walk.out)
@@ -270,8 +270,9 @@ pub fn revision_line(name: &str, seat: &SeatId, short_rev: &str) -> String {
 /// The seat's ordered render parts (spec §4.1) and the substitutions made, from the committed `tree` only.
 /// The one part list shared by the renderer and doctor.
 pub fn seat_parts(tree: &dyn TreeRead, seat: &SeatId) -> Result<SeatParts, StoreError> {
-    let seat_loc = layout::locate(tree, &seat.to_any())?.ok_or_else(|| missing(seat))?;
-    let rec: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat))?;
+    let no_seat = || unresolved(seat, "record", seat);
+    let seat_loc = layout::locate(tree, &seat.to_any())?.ok_or_else(no_seat)?;
+    let rec: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(no_seat)?;
     let mut c = Collector {
         parts: Vec::new(),
         findings: Vec::new(),
