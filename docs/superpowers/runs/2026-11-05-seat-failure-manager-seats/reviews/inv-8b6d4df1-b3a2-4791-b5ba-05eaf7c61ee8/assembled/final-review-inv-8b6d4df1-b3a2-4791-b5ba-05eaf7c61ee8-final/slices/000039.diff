@@ -1,0 +1,96 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.md
+new file mode 100644
+index 0000000..340dad3
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.md
+@@ -0,0 +1,90 @@
++# Final seam review: epic hg-k4l (integration branch super-auto/seat-failure-manager-seats)
++
++## Source and method
++
++- Range: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b. Both verified with `git rev-parse --verify <sha>^{commit}`. `bind-review-source` exited 0 before any artifact write.
++- Caller checkout observed at HEAD efc21b65 with a clean `git status` at the start and again before writing. It was not switched, restored or edited.
++- Inputs: the 17 cluster reviews, `clusters.json`, and the cross-cluster hunks (plan::managers admission and first-seat, observe classify/mutations, reconcile desired, templates kinds, test registries). The hunks relied on are packaged in final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.diff next to this file.
++- Spec: `bd show hg-k4l` plus the design doc at head. The doc has a `## Requirement baseline` section, so the human request, rows B1-B14 and scope change S1 are the acceptance standard.
++- Bead tree at review time: hg-k4l.14, .17, .19, .20, .22, .24 and .25 are open. All others are closed. The final review was dispatched with seven child tasks still open.
++- Execution: a review-owned detached worktree at efc21b65 (`.worktrees/review-final-inv17c351e9` under the run worktree, target reflinked from the run worktree, submodule initialised) ran in the ht-build toolbox with a libz shim under the session scratchpad. It was removed afterwards.
++- `cargo test --locked --offline --lib` with a short TMPDIR: 896 passed, 35 failed. A first run with the long scratchpad TMPDIR showed 23 more failures (daemon::server, threads::service_tests, cli::daemon_error hung-daemon). Every one of them was `path must be shorter than SUN_LEN`, which is a test-environment artifact and not a branch defect.
++- `cargo test --locked --offline --no-fail-fast --test '*'`: daemon_composed 12 passed, 3 failed. instruction_writers 1 passed, 1 failed. integration_sweep 10 passed, 3 failed. All other integration targets passed, including seat_exit_codes, daemon_error_commands, daemon_free_reads and node_manager_warning.
++
++## How the clusters compose
++
++Composition defect A comes from first-seat assignment (hg-k4l.23) combined with the node-manager guards (hg-k4l.8 make_plan refusal and hg-k4l.9 closure exemption).
++- `first_seat::assignment` makes the first seat created by SeatCreate the node manager.
++- `refuse_node_manager_retirement` then refuses its retire, deactivate and close.
++- `observe::classify` routes its tab and pane closure to `gone` instead of a cascade.
++
++Every pre-existing fixture whose first seat is later retired, deactivated or closed now fails. Each task was tested in isolation with scoped filters, and the opt-out (`plan::managers::testing::opt_out`) was applied only to some fixtures. The 35 lib failures and 6 of the 7 integration failures all carry the `node manager <x> cannot be retired|deactivated|moved or closed` refusal, or a `timed out waiting for ... to retire` caused by the closure exemption. Two of the failing tests are new in this epic: `bootstrap::tests::show_seat_appends_manager_line` and `show_cycle_is_store_integrity` from hg-k4l.16. Their first seat silently becomes the node manager, so the expected "none assigned" line and the expected cycle do not hold. The global constraint "Full suite: cargo test" is therefore not met at head.
++
++Composition defect B comes from the new graph.toml writer (hg-k4l.5) and the instruction-source writer inventory guard. `tests/instruction_writers.rs::instruction_source_writers_are_inventoried` fails because `src/plan/managers/mod.rs` (`write_graph`, a raw `put_file` of graph.toml) is a new raw file writer that is not in the inventory. graph.toml is not an InstructionSource path and is written only by plan kinds committed by apply. The fix is to add it to the inventory with that reason, not to weaken the guard.
++
++Interfaces that do agree across clusters:
++- `cycle_guard` requires `name` and `teamspace` in `seat.create` detail. Both producers supply them: SeatCreate in core_kinds and `create_effects` in templates/kinds. So `admit` does not refuse application apply plans as malformed.
++- The retire guard's effect vocabulary (`seat.retire`, `seat.deactivate`, `runtime.close_tab`, `teamspace.retire`, `runtime.close_workspace`, `clone.retire`, `runtime.close_pane`) matches what core_kinds, templates/kinds and undo/preview emit.
++- `DesiredRuntime.node_manager` (reconcile) is the one live answer that classify reads. CascadeMutation re-reads `live_node_manager` at apply time. Both use model::manager, as the key abstractions require.
++- The integrity path runs from `unresolved` in ports/store, through bootstrap `seat_reply` and `CommandError::from_store` (daemon registry), then `IpcErrorCode::Integrity`, to `cli::daemon_error` exit 6. It is consistent end to end. Plan-time store errors, Integrity included, still map to `internal` (exit 1) through `PlanError::Store`.
++- ORG_KINDS in tests/daemon_composed.rs lists `node_manager_set` but not `manager_edit`. The registration test checks only that the listed keys are present, so it passes. The list is merely incomplete; cluster 17 records this as deferred.
++
++## Requirement baseline trace at head
++
++- B1 delivered. who, ops (list, get, check-instruction), request and undo route client errors through `cli::daemon_error`. The direct-read functions are removed. tests/daemon_free_reads.rs passes: exit 5, no fallback.
++- B2 delivered. Exit 5 prints the retry-later line from `cli::daemon_error` for every daemon-calling command. The seat-specific sentences are covered by tests/seat_exit_codes.rs, which passes.
++- B3 delivered. skills/seat/SKILL.md step 1 has the exit-5 "carry on" branch, and HOOK_PROMPT points to it.
++- B4 delivered on the seat.resolve path. The three silent skips raise Integrity, the daemon answers `integrity`, and the CLI exits 6. There is no spawned-binary exit-6 test; it is covered only at unit level.
++- B5 partly delivered. The pointer fields and the `manager`/`node_manager` reply references exist. The human request's "managers are tasked with listening, detecting, unblocking" is undelivered: there is no `reports` field and no manager-duty step in the skill (hg-k4l.19 open; see Must fix).
++- B6 delivered for forward retirement on every route through `do_retire_seat`, plus preview effects. Spec §4.11 undo restore of the rewritten pointers is missing (hg-k4l.17 open).
++- B7 delivered. ManagerEdit and NodeManagerSet are OrgKinds that go through `make_plan` and `admit`.
++- B8 delivered in plan admission and observation. However, the skill sends the node manager seat to escalate to itself (cluster 1).
++- B9 delivered in production: who renders `manager_chain` and show appends the manager line. The two new show unit tests fail at head because of composition defect A.
++- B10 not delivered, and S1 does not cover it. S1 only fixes "created" as the reading of "seated". No `templates/node-manager` or `office` template ships. ApplicationApply and TemplateEdit additions never call `first_seat::assignment`. On a fresh graph built with `init --with-examples` and `application apply`, the first seat is never made the node manager, and every command prints the unassigned warning (hg-k4l.14 and hg-k4l.24 open).
++- B11 delivered on the production path. Closure classifies the node manager to `gone`, `availability_request(Absent)` follows, and the Reconciler composed into the daemon observer step recreates the tab and panes. No test settles end to end to show the reopen.
++- B12 delivered. `node_manager_warning::warn` runs from cli main, and `plan node-manager set` exists. tests/node_manager_warning.rs passes.
++- B13 delivered. NodeManagerSet rewrites explicit pointers and teamspace defaults naming the old holder, re-parents the old holder, and clears the new holder's pointer.
++- B14 delivered. Same evidence as B1.
++
++## Verdict
++not ready (B10 and the manager-duty request undelivered with seven child beads open; full suite fails at head: 35 lib and 7 integration tests broken by composing first-seat assignment with the node-manager guards)
++
++## Must fix before landing
++- B10 undelivered (clusters 2, 9 and 13): no templates/node-manager or office template ships, and `first_seat::assignment` has one caller, SeatCreate (src/plan/core_kinds.rs:996). ApplicationApply (first created seat in member order) and TemplateEdit additions in src/templates/kinds.rs must call it, with tests (hg-k4l.14 and hg-k4l.24 open; S1 does not cover this).
++- Spec §4.8 (clusters 9 and 15): SeatResurrect (src/plan/core_kinds.rs:1496), TeamspaceResurrect (src/plan/core_kinds.rs:797) and undo restore skip the first-seat helper, so a resurrect into an all-retired unassigned graph assigns no node manager (hg-k4l.25 open).
++- Human request "managers are tasked with listening, detecting, unblocking" / spec §4.12 undelivered (clusters 1 and 3): seat_reply in src/bootstrap/mod.rs emits no `reports` list and no node-manager duty text, render_seat prints none, and skills/seat/SKILL.md has no manager-duty step (hg-k4l.19 open; no scope change row covers it).
++- skills/seat/SKILL.md step 3 sends the node manager to escalate to itself (cluster 1): for the node manager `manager` is null and `node_manager` names its own seat, contrary to B8 and §4.12 ("report it to the user"); the duty text shared with templates/node-manager/AGENTS.md does not exist (hg-k4l.19 and hg-k4l.14 open).
++- Spec §4.11 undo restore unimplemented (cluster 15): undo of a Retire or ApplicationRetire action ignores the recorded `reparented` rewrites (src/undo has no reader of REPARENTED_KEY), so reparented pointers are never restored or listed (hg-k4l.17 open).
++- Documentation task hg-k4l.20 undelivered (cluster 2): CURRENT-DESIGN.md has only the §4.9 closure line, with no dated section on manager pointers, node manager, reparent and undo, or exit codes 2/5/6; README.md does not document exit codes 5/6 or `plan manager set|clear` / `plan node-manager set`.
++- Composition defect A, full lib suite red at head (`cargo test --lib`: 896 passed, 35 failed, all node-manager refusals or closure exemptions on fixtures whose first seat auto-becomes the node manager): add `plan::managers::testing::opt_out` (or seat a separate first seat, or move the role) in the affected fixtures, never by weakening the guard.
++- Composition defect A, undo module (cluster 15): src/undo/tests.rs `fx()` lacks `opt_out(&root)` after `init_instance`, so 11 of 34 `undo::` tests fail; the cluster's probe with that one line gives 34/34.
++- Composition defect A, reconcile module (cluster 11): `retire_after_queued_create_is_obsolete`, `close_effects_predict_induced_closures`, `deactivated_seat_closes_its_tab`, `reactivated_seat_starts_agent_again` and `relaunch_refused_for_dormant_seat` fail because `foreman` becomes an unretirable node manager.
++- Composition defect A, remaining lib modules: bootstrap::tests (4, including the new hg-k4l.16 tests `show_seat_appends_manager_line` and `show_cycle_is_store_integrity`, whose first seat becomes the node manager so "none assigned" and the cycle no longer hold), observe::tests (10), plan::ops::tests (2) and transcripts::tests (3).
++- Composition defect A, integration targets: tests/daemon_composed.rs (`undo_tab_close_from_pane_adopts_caller_pane`, `undo_from_pane_adopts_caller_pane_without_creating_one`, `undo_from_pane_bound_to_other_clone_keeps_that_pane`: closure of the first seat no longer retires it) and tests/integration_sweep.rs (`sweep_harness_profiles_used_for_start_and_resume`, `sweep_summary_into_retired_seat_and_instruction_plan_flow`, `sweep_action_and_effect_envelopes_round_trip`) fail at head.
++- Composition defect B: tests/instruction_writers.rs `instruction_source_writers_are_inventoried` fails because src/plan/managers/mod.rs (`write_graph`, raw put_file of graph.toml) is a new raw file writer missing from the inventory; add it with its reason (graph.toml is not an InstructionSource path and is written only by plan kinds committed by apply).
++- Integration sweep hg-k4l.22 open: no end-to-end `manager_flow_on_fresh_graph` (first seat, node-manager set move, who/show chain, retirement reparent) at head; it must land, and pass, together with a green full `cargo test`.
++
++## Untested scope
++- B11 reopening is not settled end to end in any test: observe tests assert lifecycle only, and reconcile tests admit Absent bindings directly without going through the classifier (clusters 8 and 11).
++- Exit 6 has no spawned-binary test for `seat`, for `who` on a chain cycle, or for `show` on a chain integrity failure; these paths rest on `classify`, `seat_failure` and `show::exit_for` unit tests (clusters 4, 14 and 17).
++- No spawned-binary test covers a hung daemon (read timeout to Frame) or a still-starting daemon (Remote{Unavailable}), both §4.4 rows (cluster 17).
++- Exit 5 is not exercised for the mutating daemon commands `ops cancel`, `ops reassign`, `request ack`, `request complete` and interactive `undo` apply (clusters 4 and 17).
++- No test pins the skills/seat/SKILL.md failure branch (exit 5, exit 6 and other) or ties its exit-6 wording to the three node_manager_suffix forms (cluster 1).
++- The lenient observed-cascade reparent fallback with no live node manager (target None) is untested (clusters 8 and 9).
++- teamspace.default_manager rewrites on template withdrawal and application retire, and withdrawals that span more than one application, are untested (cluster 13).
++- The undo-of-hydrate preview is not asserted to list the seat.manager reparent effect, and undo of a ClosureCascade that reparented is not tested (cluster 15).
++- NodeManagerSet refusal of an Active target in a non-Active teamspace, and ManagerEdit retired-subject rejections, are untested (cluster 9).
++- The node-manager warning is tested end to end only through `list seats`; the setup and daemon exemptions and the "any read failure prints nothing" rule are unit-level only (cluster 17).
++- The `no_command_matches_unavailable_itself` source scan still allow-lists who.rs, ops.rs, request.rs and undo.rs (AWAITING_HG_K4L_3), so a reintroduced fallback in those files would not be caught (cluster 4).
++
++## Deferred OK
++- Plan-time store errors, Integrity included, still surface as `internal` (exit 1) through `PlanError::Store`. With `admit` loading every pointer on every plan, one out-of-band dangling pointer makes reparenting plans fail with exit 1 rather than exit 6. The spec scopes exit 6 to seat.resolve, and a follow-up should route plan Integrity through `from_store` (clusters 5 and 9; seam).
++- `admit` scans every seat and teamspace record, plus graph.toml, once or twice per plan, and DesiredRuntime::load repeats the scan on every observer pass; this is an efficiency cost only (clusters 8, 9 and 11).
++- The apply-side reparent resolves the nearest surviving manager even when nothing reports to the retiring seat, so a seat with an out-of-band dangling manager plans cleanly and then fails at apply; `manager clear` is the remedy (cluster 9).
++- When the CascadeMutation apply-time re-check skips the node manager, its runtime stays Present and its occupancy is not ended; the race window is narrow and reopen by planner lookup is unaffected (cluster 8).
++- ORG_KINDS in tests/daemon_composed.rs omits `manager_edit`; the presence-only check still passes (cluster 17).
++- Drop the stale AWAITING_HG_K4L_3 exemption in the src/cli/daemon_error.rs tests now that hg-k4l.3 has merged (cluster 4).
++- Outside Herdr, NoInstance renders the not-in-Herdr line instead of the init hint; this is spec-sanctioned and the exit code is unchanged (cluster 4).
++- The show manager line uses "->" where spec §4.12 has the arrow glyph, and render_seat prints "node manager: none assigned" for an unbound caller even when one is assigned (cluster 3).
++- The Post-Implementation Notes are empty, and run.md and the profile snapshots are stale; fill and refresh them when hg-k4l.20 lands (cluster 2).
++- Cosmetic test hygiene: `admit_stubs_pass` naming, the unused Herdr UnixListener fixtures, the near-vacuous `contains("s")` assertion, duplicated git2 helpers and the SetManager/TestManager duplication (clusters 9, 14 and 17).

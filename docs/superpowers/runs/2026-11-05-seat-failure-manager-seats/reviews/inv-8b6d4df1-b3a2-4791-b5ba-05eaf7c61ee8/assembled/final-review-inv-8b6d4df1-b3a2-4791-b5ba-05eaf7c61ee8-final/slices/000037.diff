@@ -1,0 +1,62 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-8.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-8.md
+new file mode 100644
+index 0000000..ded83e6
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-8.md
+@@ -0,0 +1,56 @@
++# Final review, cluster 8 (observe), epic hg-k4l
++
++## Scope and method
++
++Captured source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify <sha>^{commit}`; caller checkout HEAD equals the captured head, status clean at review time).
++Cluster files: src/observe/classify.rs, src/observe/mutations.rs, src/observe/step.rs, src/observe/tests.rs (slices 000050-000053).
++Spec: docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md at head, sections 4.9 (observation choke point), 4.11 (reparent on observed cascades) and Key abstractions "observe::classify".
++Static review only: no review-owned worktree or build was made (the head has no compiled test binary in the run target dir, and building needs the ht-build toolbox shim). Test pass claims rest on the task reports (hg-k4l.8, hg-k4l.9, hg-k4l.26).
++Out-of-cluster sources opened only to trace named risks: src/reconcile/desired.rs (source of `DesiredRuntime.node_manager`), src/model/manager.rs (`live_node_manager`, `Pointers::load`), src/plan/managers/reparent.rs and src/plan/core_kinds.rs (`do_retire_seat`, `reparent`, `write_action`), src/reconcile/planner.rs (reopen path), src/observe/diff.rs (occupancy elements).
++
++## Requirement trace
++
++- B8 (node manager cannot be retired), observation route. Production entry: daemon `RuntimeLoop` step (src/observe/step.rs:509 `DesiredRuntime::load`, which sets `node_manager` from `model::manager::live_node_manager`) then `classify`, then `build_ops`, then the `observed.cascade` mutation. classify drops the node manager seat and its live clones from workspace, tab and pane cascades and drops its teamspace from the workspace cascade `retire` list; `CascadeMutation` re-reads `live_node_manager` at apply time and skips that seat, its clones and its teamspace. Delivered. Tests: node_manager_tab_close_is_not_retired_and_reopens, node_manager_pane_close_is_not_retired, workspace_close_keeps_node_manager_teamspace_active, cascade_rechecks_node_manager_at_apply.
++- B11 (stays open, reopened if closed). The node manager's disappearances go to `gone`/`gone_ends`, so build_ops marks its runtime absent and ends occupancy, and the reconcile planner recreates the workspace, tab and panes. Delivered for closure; tests run settle and assert a new pane exists (assert_reopened). The "cannot be moved" half is promised by the spec only as tolerate-and-warn for observed moves (spec 4.9); classify emits a warning naming the node manager by name and id when its clone moves or its tab closes with its panes surviving elsewhere, and step.rs prints it with the observer's existing eprintln convention. Delivered per the spec's reading; the plan-side placement refusal belongs to the plan cluster.
++- B6 (reparent on retirement), observed route. `CascadeMutation` sets `Acc.lenient_reparent = true`, and every retirement goes through `do_retire_seat`, which calls `plan::managers::reparent`; rewrites and fallback notes land in the ClosureCascade action record (`reparented`, `reparent_fallback`). Delivered for the observed route; tests reparent_on_observed_cascade and reparent_fallback_on_integrity. Other retirement routes and the undo of rewrites belong to other clusters (seam reviewer).
++- Other seats in the node manager's tab or workspace still retire normally (spec 4.9): covered by node_manager_tab_close_still_cascades_other_seats and the workspace test, which asserts the action retires exactly bench and its clone.
++
++## Analysis
++
++classify: the three containment loops stay disjoint. A node manager tab or pane inside a closed workspace is absorbed by the workspace branch, and its panes are skipped through `absorbed_seats`/`ws_gone`, so nothing is ended twice. `diff::occupancy` only emits OccupancyEnded for panes that are still matched, so the new `gone_ends` entries do not duplicate an occupancy end. A clone of the node manager that was moved into another teamspace's workspace falls to the pane loop when that workspace closes, and the node manager check there keeps it unretired.
++
++mutations: the apply-time re-check is correct for reparenting. `reparent` computes the retiring set per seat from the overlay, so a skipped node manager stays a surviving manager and reports of other retiring seats still resolve to it.
++
++Apply-time race (classification before a concurrent `node-manager set`, apply after): the skip leaves the node manager's seat, clone and teamspace records exactly as they were. The runtime is not set absent and the clone occupant is not ended. build_ops already attached the classified `ends` to the cascade op, so commit_ops emits SessionEnded for the node manager's clone while the record still shows the occupant. The planner looks tabs and panes up by id against the snapshot, so a stale binding does not match and reopening should still happen, but no test exercises that path through settle. The window is narrow and the B8/B11 outcome holds, so this is recorded as deferred, not blocking.
++
++The ClosureCascade action is written even when the re-check skips everything (for example a tab cascade for the node manager alone in the race). write_action has always behaved this way for all-already-retired cascades; harmless.
++
++The move warning is per classification. It can repeat if a step's ops fail and the next diff re-derives the same move; the noise is cosmetic.
++
++## Findings
++
++- none
++
++## Verdict
++
++ready
++
++## Must fix before landing
++
++- none
++
++## Untested scope
++
++- src/observe/tests.rs cascade_rechecks_node_manager_at_apply asserts lifecycle only; it does not settle to show the node manager is reopened, nor check its runtime and occupancy after the apply-time skip.
++- Lenient reparent fallback in an observed cascade with no live node manager (target None) has no test; only the node-manager fallback is covered (already a deferred minor of hg-k4l.26).
++- A rebind pass (baseline None) involving the node manager's closed tab or moved pane is not exercised; only diff passes are tested.
++- The warning's path to stderr through RuntimeLoop::step is not asserted; the move test checks `Classified.warnings` by calling classify directly.
++- This review did not build or run the tests; pass status rests on the task reports.
++
++## Deferred OK
++
++- src/observe/mutations.rs CascadeMutation: when the apply-time re-check skips the node manager, its seat and clone runtime stay Present/bound and its occupant is not ended, while the op's precomputed `ends` still emit SessionEnded; consider marking runtime absent and ending occupancy for the skipped seat (narrow race window; reopening via planner id lookup is unaffected).
++- src/observe/mutations.rs CascadeMutation writes a ClosureCascade action with an empty `retired` list when the re-check skips every target; pre-existing behaviour for all-already cascades.
++- src/observe/mutations.rs retire_seat now takes 8 parameters behind allow(clippy::too_many_arguments) (already a deferred minor of hg-k4l.9).
++- Seam note for the reconcile cluster: src/reconcile/desired.rs DesiredRuntime::load now calls live_node_manager, i.e. Pointers::load, which reads every seat including archived ones plus graph.toml on every observer and reconcile load, so an unreadable archived seat or graph.toml now fails the whole load.
++- The node manager move warning can repeat if a failed step re-derives the same move element; cosmetic.

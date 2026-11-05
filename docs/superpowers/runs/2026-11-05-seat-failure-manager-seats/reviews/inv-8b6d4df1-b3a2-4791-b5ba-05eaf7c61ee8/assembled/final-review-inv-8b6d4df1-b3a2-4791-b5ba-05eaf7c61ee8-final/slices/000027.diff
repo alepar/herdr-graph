@@ -1,0 +1,54 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-14.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-14.md
+new file mode 100644
+index 0000000..eb97402
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-14.md
+@@ -0,0 +1,48 @@
++# Final review: cluster 14 (threads), epic hg-k4l
++
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD efc21b6, clean, before and after the review; nothing in it was modified. Read from git objects only; no review worktree created, no build run.
++
++Inputs: slices/000075.diff (src/threads/mod.rs) and slices/000076.diff (src/threads/tests.rs), digest.md, the epic (`bd show hg-k4l`), the design doc at docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md (§4.6, §4.12, Requirement baseline) and bead hg-k4l.16.
++
++## What the cluster changes
++
++- `WhoReply` gains `manager_chain: Vec<NamedId>` with `#[serde(default)]`, so a new CLI parses an old daemon's reply (roast r1 C2).
++- `manager_line(chain)` renders `manager: a (st_a) -> b (st_b)` or `manager: none assigned`. The ASCII `->` differs from the spec's `→`, but the plan brief and the hg-k4l.16 acceptance spell it with `->` on purpose.
++- `named_manager_chain(tree, seat)` loads `model::manager::Pointers` and maps `manager_chain` to names. It does not read `manager`, `default_manager` or `node_manager_seat` itself, so the model::manager key abstraction holds. The `name()` miss branch cannot be reached, because `effective_manager` checks `contains_key` before it returns a seat. It is harmless.
++- `who()` computes the chain for the resolved seat. This covers pane, threads-seat, clone and seat-id targets. An unbound target gets an empty chain and stays the single line `unbound`.
++- `render()` appends the manager line as a second line after `teamspace/seat/clone/ns`.
++- The `who` IPC handler now maps store errors through `CommandError::from_store`. A chain cycle or a dangling explicit pointer reaches the client as `IpcErrorCode::Integrity` instead of `internal`.
++
++## Requirement trace (B9, who half)
++
++- Production path at head: `herdr-graph who <target>` (src/cli/who.rs `run_who`) calls the daemon's `who` command over `call_daemon(NoEnsure)`. src/daemon/compose.rs:364 registers that command through `crate::threads::register_commands`. The handler runs `who()`, then `named_manager_chain`, then `Pointers::manager_chain`. The CLI prints `reply.render()`, whose second line is the manager chain. The who half of B9 is delivered.
++- Retired managers are walked through and left out of the list (`Pointers::manager_chain` filters them), which matches spec §4.6. A missing or retired `node_manager_seat` falls back to unassigned, so the line reads `none assigned` and no integrity error is raised.
++- The show half of B9 (`show <seat>` appends the line through `crate::threads::manager_line` / `named_manager_chain` in src/bootstrap/show.rs:158-162) is outside this cluster. Its seam belongs to the seam reviewer.
++- Exit 6 for a chain integrity failure on `who` depends on `cli::daemon_error::report` mapping `Remote{Integrity}`. That is a cli-cluster seam. This cluster's side, the handler returning `IpcErrorCode::Integrity`, is tested by `who_cycle_is_integrity`.
++
++## Test assessment
++
++- `manager_line_forms`, `who_reports_manager_chain` (explicit manager plus node-manager fallback, nearest first, root has none), `who_unassigned_graph_says_none`, `who_cycle_is_integrity` (both `who()` and the registered handler) and `who_reply_without_chain_parses` cover every acceptance bullet of hg-k4l.16 that belongs to this cluster.
++- The fixture calls `plan::managers::testing::opt_out`, so first-seat node-manager assignment does not disturb the existing threads tests. The `who_maps_pane_to_graph_identity` assertions were updated to the two-line form.
++- The `SetManager` test mutation writes records directly. That is acceptable only because it is a `bookkeeping.test_*` mutation inside a test fixture. It duplicates `bootstrap/tests.rs` TestManager, which is already a deferred minor.
++
++## Findings
++
++- A side effect outside the cluster: tests/real_agent_smoke.rs `claude_pane_of` picks a pane when its `who` stdout contains the seat name. Now that `who` output includes the manager chain, a non-foreman pane whose chain names a seat called `foreman` (for example, the foreman as the first seat and so the node manager) can match `claude_pane_of(.., "foreman")`, depending on pane order. This only affects the opt-in tier-3 test (HG_REAL_AGENTS=1). Production behaviour is unaffected. Matching on the first line of the output would fix it.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- No spawned-binary test asserts that daemon-backed `herdr-graph who` prints the manager line or exits 6 on a chain cycle. The end-to-end sweep hg-k4l.22 (plan `manager_flow_on_fresh_graph`) is still open, and the cli seam is the seam reviewer's to trace.
++- A `who` target whose chain passes through a retired manager, or through a teamspace `default_manager`, is not exercised at the `who` level. Only model::manager unit tests cover these cases.
++- The cluster tests were not run in this review (static review from git objects; the host build needs the ht-build toolbox).
++
++## Deferred OK
++- tests/real_agent_smoke.rs `claude_pane_of` substring match on full `who` stdout can now match a pane through its manager line (opt-in tier-3 only); match on the first line instead.
++- `named_manager_chain` has an unreachable `unresolved(seat, "manager", ..)` branch for a chain member missing from `Pointers.seats`; harmless defensive code.
++- The `who` handler loads the tree twice (`Graph::load` plus `Pointers::load`); acceptable for a single read command.
++- `SetManager` in src/threads/tests.rs duplicates the bootstrap tests' TestManager (already recorded as a Task 10 deferred minor).

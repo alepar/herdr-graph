@@ -1,0 +1,59 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-3.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-3.md
+new file mode 100644
+index 0000000..616f798
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-3.md
+@@ -0,0 +1,53 @@
++# Final review, cluster 3 (bootstrap), epic hg-k4l
++
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify <sha>^{commit}`). Files: src/bootstrap/instructions.rs, src/bootstrap/mod.rs, src/bootstrap/show.rs, src/bootstrap/tests.rs (slices 000022-000025). Caller checkout observed at efc21b6 with a clean status before and after reading; nothing in it was switched or edited. Analysis is static: tests were not run here (the task reports record that this host needs the ht-build toolbox plus a libz shim to build; the reports claim the bootstrap tests pass).
++
++## Scope and spec trace
++
++Spec: docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md at head, which has a `## Requirement baseline` section (B1-B14, scope change S1 affecting B10 only). The rows this cluster produces are B4 (integrity errors, silent drops become fatal), B5 (each session knows its manager seat), B9 (show displays the chain), the §4.3 node-manager suffix, and the human request sentence "managers are tasked with listening, detecting, unblocking" (spec §4.12 `reports` and node-manager duty text).
++
++Production entry point traced: `herdr-graph seat` -> daemon `seat.resolve` -> `bootstrap::seat_reply` (pre-existing registration) -> on a bound caller, `bound_paths`, `Pointers::load`, `manager_chain`, `seat_ref`, `render_instructions`, each mapped through the `fail` closure into `resolve_error`.
++
++## B4 integrity errors
++
++- `missing()` is gone; `bound_paths` and `seat_parts` use `unresolved(holder, field, target)` for seat, clone and teamspace.
++- `template_participation`: the three silent skips named in §4.2 (template_ref template not found, missing application, missing application template) now return `StoreError::Integrity`. `referenced_seat_template` (model cluster) maps missing, wrong-kind and team-structure shared templates to `unresolved(...).because(...)`; the bootstrap tests cover all three through `seat_reply`.
++- `resolve_error` keeps non-integrity errors on `CommandError::from_store` (internal), appends `(HEAD <short_rev>)` and the suffix after `; `. `plain_read_failure_stays_internal` checks that malformed TOML stays Internal. `integrity_reply_has_no_partial_paths` checks the error carries no paths object.
++- One reference is still dropped without an error: when `template_ref.member` names a member no longer in the template, `find` returns None and the member's AGENTS.md and shared seat template are skipped. §4.2 does not list it, and a kept seat after a TemplateEdit member removal can legitimately reach that state, so leaving it lenient looks right. Noted below as an accepted item.
++- Effect outside the cluster: `templates/kinds.rs` (TemplateEdit cap-warning loop, around line 1457) calls `template_participation` for every non-retired seat in the patched tree. Since that function became strict, one seat with a dangling reference anywhere makes every TemplateEdit plan fail with a store integrity error, where it used to skip. That matches B4's intent, but it widens the blast radius to plans unrelated to the broken seat. The seam reviewer owns that path; it is listed here because this cluster caused the change.
++
++## §4.3 suffix and B5 reply fields
++
++- `node_manager_suffix` reads pointers independently of the broken object, uses `live_node_manager` (so a missing or retired node manager gives the user form), and uses "you are the node manager seat; report it to the user" when the caller is the node manager. All four branches have tests, plus a full exit-6 text test through `cli::seat::seat_failure`.
++- The reply carries `manager` (first live hop of `manager_chain`) and `node_manager` (live node manager), each a `SeatRef {seat, name, threads_seat}` with `threads_seat` `#[serde(default)]`. A cycle surfaces as integrity (`manager_cycle_is_integrity`). `render_seat` prints `manager:` and `node manager:` lines. B5 is delivered for bound seats.
++- For an unbound or unknown caller both fields are null, and `render_seat` prints "node manager: none assigned" even when a node manager exists. The line is wrong for that caller, but such a caller has no graph seat. Minor.
++
++## B9 show
++
++- `show <seat>` appends `threads::manager_line(named_manager_chain(..))`. A chain integrity failure becomes `ShowError::Store(StoreError::Integrity)`, and `cli/show.rs exit_for` maps it to exit 6 through `daemon_error::store_failure` (cli cluster; it has a unit test there). Tests: `show_seat_appends_manager_line`, `show_cycle_is_store_integrity`. The line uses `->` where the spec text shows the arrow glyph; cosmetic.
++
++## Manager duty and reports (human request, spec §4.12)
++
++The human request says "managers are tasked with listening, detecting, unblocking", and §4.12 turns that into the `reports` field of the `seat.resolve` reply (seats whose effective manager is this seat) and node-manager duty text when the caller is the node manager. At head, `seat_reply` emits neither: `git grep reports` across src/ and skills/ at efc21b6 finds only the `SeatRef` doc comment ("manager, node manager, reports"), and there is no duty text. Bead hg-k4l.19, which owns this, is open and blocked on hg-k4l.14, which is also open. No human scope change row covers it (S1 affects B10 only). A session therefore has no way to learn that it is somebody's manager, so the "managers listen, detect, unblock" half of the request is not delivered from the producer in this cluster.
++
++Other open epic beads at head (hg-k4l.14 templates/B10, .17 undo restore/B6, .24 and .25 first-seat paths/B10, .20 docs, .22 sweep) leave this cluster. The seam and other cluster reviewers trace those.
++
++## Verdict
++not ready (seat.resolve has no reports field or node-manager duty text: hg-k4l.19 is open, and the human request "managers are tasked with listening, detecting, unblocking" is undelivered)
++
++## Must fix before landing
++- Human request "managers are tasked with listening, detecting, unblocking" / spec §4.12, with no covering scope change row: src/bootstrap/mod.rs seat_reply at efc21b6 emits no `reports` list (seats whose effective manager is the caller) and no node-manager duty text when the caller is the live node manager; render_seat prints no reports. Bead hg-k4l.19 is open (blocked on open hg-k4l.14), so a manager session cannot learn that it has reports to look after.
++
++## Untested scope
++- bound_paths integrity for a missing seat record or a missing clone record (holder/field `clone`/`seat`, `seat`/`clone`) has no test; only the missing-teamspace branch is exercised.
++- render_seat output for an unbound caller when a node manager exists (prints "node manager: none assigned") is asserted only on reply nulls, not on the text.
++- seat.resolve manager resolved through a teamspace default_manager (as opposed to an explicit pointer or the node-manager fallback) is not exercised in bootstrap tests; the resolver is covered only in model tests.
++- Effect of the stricter template_participation on the TemplateEdit cap-warning loop (src/templates/kinds.rs ~1457) when an unrelated seat has a dangling reference has no test; this is the seam reviewer's to trace.
++- No tests were run in this review; pass status rests on the task reports.
++
++## Deferred OK
++- template_participation still skips a template_ref.member that no longer exists in its template, without an error; §4.2 does not list it and a kept seat after member removal reaches it legitimately.
++- One dangling reference on any seat now fails every TemplateEdit plan through the cap-warning loop instead of being skipped; consistent with B4, but the blast radius is wider than the broken seat (seam).
++- render_seat prints "node manager: none assigned" for an unbound caller even when one is assigned.
++- show manager line uses "->" rather than the arrow glyph in spec §4.12.
++- seat_ref scans layout::all_clones once per named seat (twice per reply); negligible at current graph sizes.

@@ -1,0 +1,187 @@
+diff --git a/src/threads/tests.rs b/src/threads/tests.rs
+index a19ebd3..a890ce8 100644
+--- a/src/threads/tests.rs
++++ b/src/threads/tests.rs
+@@ -100,6 +100,34 @@ impl Mutation for SetReload {
+     }
+ }
+ 
++/// Test-only manager pointers (`bookkeeping.test_seat_manager`): `seat` + `manager` set `SeatRecord.manager`;
++/// `node_manager` (an id or null) sets graph.toml's `node_manager_seat`.
++struct SetManager;
++impl Mutation for SetManager {
++    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
++        let a = &cx.request.args;
++        if let Some(seat) = a["seat"].as_str() {
++            let seat: SeatId = seat.parse().unwrap();
++            let loc = cx.tree.locate(&seat.to_any())?.unwrap();
++            let mut rec: SeatRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
++            rec.manager = a["manager"].as_str().map(|m| m.parse().unwrap());
++            cx.tree.put_record(loc.record_path, &mut rec)?;
++        }
++        if a.get("node_manager").is_some() {
++            let mut graph = layout::read_graph(&cx.tree)?;
++            graph.node_manager_seat = a["node_manager"].as_str().map(|m| m.parse().unwrap());
++            cx.tree.put_file(
++                layout::graph_toml(),
++                crate::store::record::to_toml_bytes(&graph)?,
++            );
++        }
++        Ok(Applied {
++            summary: "set manager".into(),
++            action: None,
++        })
++    }
++}
++
+ struct Fx {
+     _tmp: tempfile::TempDir,
+     deps: PlanDeps,
+@@ -116,6 +144,7 @@ fn fx() -> Fx {
+     let tmp = tempfile::tempdir().unwrap();
+     let root = tmp.path().join("inst");
+     init_instance(&root).unwrap();
++    crate::plan::managers::testing::opt_out(&root);
+     let mut kinds = KindRegistry::default();
+     register_core_kinds(&mut kinds);
+     crate::plan::kinds_extra::register_kinds(&mut kinds);
+@@ -129,6 +158,7 @@ fn fx() -> Fx {
+     reg.register("bookkeeping.test_set_occupant", Arc::new(SetOccupant));
+     reg.register("bookkeeping.test_clear_occupant", Arc::new(ClearOccupant));
+     reg.register("bookkeeping.test_set_reload", Arc::new(SetReload));
++    reg.register("bookkeeping.test_seat_manager", Arc::new(SetManager));
+     let store = Arc::new(GitStore::open(&root).unwrap());
+     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
+     let clock = Arc::new(ManualClock::new(t0()));
+@@ -1327,9 +1357,10 @@ async fn who_maps_pane_to_graph_identity() {
+         reply.render()
+     );
+     assert!(
+-        reply
+-            .render()
+-            .ends_with(&reply.native_session.clone().unwrap()),
++        reply.render().ends_with(&format!(
++            "{}\nmanager: none assigned",
++            reply.native_session.clone().unwrap()
++        )),
+         "{}",
+         reply.render()
+     );
+@@ -1340,12 +1371,116 @@ async fn who_maps_pane_to_graph_identity() {
+     );
+     // Graph ids resolve too; unknown targets are unbound.
+     let seat_only = who(&view(&fx), seat(&fx, "foreman").id.as_str()).unwrap();
+-    assert_eq!(seat_only.render(), "alpha/foreman");
++    assert_eq!(seat_only.render(), "alpha/foreman\nmanager: none assigned");
+     let nobody = who(&view(&fx), "w9:p9").unwrap();
+     assert!(!nobody.is_bound());
+     assert_eq!(nobody.render(), "unbound");
+ }
+ 
++/// Teamspace alpha with plain (unbound) seats `names`; the first is not special.
++fn plain_seats(fx: &Fx, names: &[&str]) {
++    plan_and_apply(fx, "teamspace create alpha");
++    for n in names {
++        plan_and_apply(
++            fx,
++            &format!("seat create {n} --teamspace alpha --harness shell"),
++        );
++    }
++}
++
++fn manager_of(fx: &Fx, seat_name: &str, manager: Option<&str>) {
++    let m = manager.map(|n| seat(fx, n).id.to_string());
++    bookkeeping(
++        fx,
++        "test_seat_manager",
++        json!({ "seat": seat(fx, seat_name).id, "manager": m }),
++    );
++}
++
++#[test]
++fn manager_line_forms() {
++    assert_eq!(manager_line(&[]), "manager: none assigned");
++    let n = |id: &str, name: &str| NamedId {
++        id: id.into(),
++        name: name.into(),
++    };
++    assert_eq!(
++        manager_line(&[n("st_1", "boss"), n("st_2", "nm")]),
++        "manager: boss (st_1) -> nm (st_2)"
++    );
++}
++
++#[tokio::test]
++async fn who_reports_manager_chain() {
++    let fx = fx();
++    plain_seats(&fx, &["boss", "mid", "low"]);
++    bookkeeping(
++        &fx,
++        "test_seat_manager",
++        json!({ "node_manager": seat(&fx, "boss").id }),
++    );
++    manager_of(&fx, "low", Some("mid"));
++    let (boss, mid, low) = (seat(&fx, "boss"), seat(&fx, "mid"), seat(&fx, "low"));
++    let reply = who(&view(&fx), low.id.as_str()).unwrap();
++    let names: Vec<_> = reply
++        .manager_chain
++        .iter()
++        .map(|n| n.name.as_str())
++        .collect();
++    assert_eq!(names, ["mid", "boss"]);
++    assert_eq!(
++        reply.render(),
++        format!("alpha/low\nmanager: mid ({}) -> boss ({})", mid.id, boss.id)
++    );
++    // The node manager itself has no manager above it.
++    assert_eq!(
++        who(&view(&fx), boss.id.as_str()).unwrap().render(),
++        "alpha/boss\nmanager: none assigned"
++    );
++}
++
++#[tokio::test]
++async fn who_unassigned_graph_says_none() {
++    let fx = fx();
++    plain_seats(&fx, &["low"]);
++    let reply = who(&view(&fx), seat(&fx, "low").id.as_str()).unwrap();
++    assert!(reply.manager_chain.is_empty());
++    assert_eq!(reply.render(), "alpha/low\nmanager: none assigned");
++    // An unbound reply stays one line.
++    assert_eq!(who(&view(&fx), "w9:p9").unwrap().render(), "unbound");
++}
++
++#[tokio::test]
++async fn who_cycle_is_integrity() {
++    let fx = fx();
++    plain_seats(&fx, &["a", "b"]);
++    manager_of(&fx, "a", Some("b"));
++    manager_of(&fx, "b", Some("a"));
++    let a = seat(&fx, "a");
++    assert!(matches!(
++        who(&view(&fx), a.id.as_str()),
++        Err(StoreError::Integrity { .. })
++    ));
++    let mut reg = Registry::default();
++    register_commands(&mut reg, fx.store.clone());
++    let h = reg.handler("who").unwrap();
++    let ctx = CommandCtx {
++        request_id: "r".into(),
++        caller: CallerInfo::default(),
++    };
++    let e = h.call(ctx, json!({ "target": a.id })).await.unwrap_err();
++    assert_eq!(e.code, crate::ipc::IpcErrorCode::Integrity, "{}", e.message);
++}
++
++#[test]
++fn who_reply_without_chain_parses() {
++    let r: WhoReply = serde_json::from_value(
++        json!({"teamspace":null,"seat":null,"clone":null,"native_session":null}),
++    )
++    .unwrap();
++    assert!(r.manager_chain.is_empty());
++}
++
+ #[tokio::test]
+ async fn who_command_is_registered_and_answers() {
+     let fx = fx();
