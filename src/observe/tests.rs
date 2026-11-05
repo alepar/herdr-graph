@@ -762,6 +762,83 @@ async fn node_manager_move_is_tolerated_and_warned() {
     assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
 }
 
+/// Foreman (node manager) and `other` active in alpha, settled; foreman's only pane is moved into `other`'s tab.
+/// Returns the fixture, foreman's clone and `other`'s tab.
+async fn node_manager_moved_into_other() -> (Fx, CloneRecord, HerdrTabId) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let fc = only_clone(&fx, "foreman");
+    let other_tab = tab_of_seat(&fx, "other");
+    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &other_tab);
+    step(&fx).await;
+    assert!(seat(&fx, "foreman").moved_out);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+    assert_eq!(
+        creates(&fx),
+        0,
+        "the move stays tolerated: {:?}",
+        calls(&fx)
+    );
+    (fx, fc, other_tab)
+}
+
+#[tokio::test]
+async fn node_manager_closed_after_move_is_reopened() {
+    let (fx, fc, _) = node_manager_moved_into_other().await;
+    fx.herdr.user_close_pane(&pane_of(&fx, &fc));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(
+        !s.moved_out,
+        "the closed node manager no longer lives elsewhere"
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    settle(&fx).await;
+    assert!(creates(&fx) > 0, "{:?}", calls(&fx));
+    assert!(
+        calls(&fx)
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_reopened(&fx, "foreman").await;
+}
+
+#[tokio::test]
+async fn node_manager_moved_into_closed_tab_is_reopened() {
+    let (fx, _, other_tab) = node_manager_moved_into_other().await;
+    fx.herdr.user_close_tab(&other_tab);
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(seat(&fx, "other").lifecycle, Lifecycle::Retired);
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out);
+    settle(&fx).await;
+    assert!(
+        calls(&fx)
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_reopened(&fx, "foreman").await;
+}
+
 #[tokio::test]
 async fn cascade_rechecks_node_manager_at_apply() {
     let fx = fx();
