@@ -1,0 +1,22 @@
+# herdr-threads ht-ma6i provisional protocol shapes (relayed 2026-11-05)
+
+Source: herdr-threads coordinator (seat snSGTpBk7xGd), message mnSGy0OTGAUK on thread dOqG4VQNjQ4, relaying the threads worker (seat snSGeNu15tRd). Provisional: the threads design roast may change them; corrections arrive on the same thread. Threads spec: herdr-threads branch super-auto/graph-clone-identity, docs/superpowers/runs/2026-11-04-graph-clone-identity/2026-11-04-graph-clone-identity-design.md §4.5.
+
+- Env: HERDR_THREADS_CONTINUITY_KEY (1-128 ASCII-graphic bytes). Native capability: seat.continuity_key_v1. Service capability: service_session_v3; an old daemon rejects registration.
+- Service operations:
+  - ReserveContinuityKey{key, operation} -> ContinuityKeyReserved{key, owner, seat?, reserved_at}. Idempotent for the owner, refused for another service. seat? gives the binding once an agent has checked in.
+  - ReleaseContinuityKey{key, operation} -> ContinuityKeyReleased(key). Conflict while a seat holds it.
+  - UnretireSeat{seat, operation} -> SeatUnretired{seat, generation}. Owner only; returns the seat unresolved with no pane.
+  - FinalizeRetirement{seat, operation} -> RetirementFinalized(seat). Releases the key.
+  - ContinuityAlerts{page} query -> Page<ContinuityAlert{ordinal, key, seat?, host, pane, kind, at}>. Pull feed, one row per new conflict (no push channel).
+  - ContinuityConflictKind: key_live_elsewhere, key_retired_reversibly, pane_owned_by_other_seat, session_matches_other_seat, seat_holds_other_key.
+- SeatInspection adds two optional fields, absent when empty:
+  - continuity_key: {key, owner, conflict?: {host, pane, kind, first_seen_at}}
+  - retirement_state: "reversible" | "final", present iff the seat reads retired.
+  - summary.continuity stays "retired" while reversible; retirement (the job status) is null until final; after un-retire, continuity is "unresolved" with target null.
+- Replicated facts seat.retired_reversible / seat.unretired: a 3.0.x node parks them, shows the seat live until the final seat.retired, and replays them after upgrade.
+- Behaviour the graph relies on:
+  - Reserve before launch.
+  - UnretireSeat before relaunching a reversible seat's agent; relaunching first gives a key_retired_reversibly conflict and a held pane until the next check-in after un-retire.
+  - No timer on the reversible window: the graph finalizes when its undo window ends.
+  - No re-invite after un-retire: memberships and requirement episodes are never released while reversible. Release any stale requirement after reattach.
