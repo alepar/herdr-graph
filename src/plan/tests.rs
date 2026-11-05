@@ -4506,3 +4506,189 @@ fn cycle_guard_ignores_plans_without_pointer_impact() {
     plan(&fx, "seat rename a c");
     plan(&fx, "teamspace create gamma");
 }
+
+// ---------------------------------------------------------------------------------------------
+// reparent previews in the retire-effect builders (hg-k4l.27)
+// ---------------------------------------------------------------------------------------------
+
+/// `(kind, holder, from, to)` of every manager-pointer effect in the plan, in plan order.
+fn pointer_effects(sp: &StoredPlan) -> Vec<(String, AnyId, Option<SeatId>, Option<SeatId>)> {
+    let id = |v: &serde_json::Value| v.as_str().map(|s| s.parse::<SeatId>().unwrap());
+    sp.plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.manager" || e.kind == "teamspace.default_manager")
+        .map(|e| {
+            (
+                e.kind.clone(),
+                e.object.clone(),
+                id(&e.detail["from"]),
+                id(&e.detail["to"]),
+            )
+        })
+        .collect()
+}
+
+fn seat_pointer(
+    fx: &Fx,
+    holder: &str,
+    from: &str,
+    to: &str,
+) -> (String, AnyId, Option<SeatId>, Option<SeatId>) {
+    (
+        "seat.manager".into(),
+        seat_id(fx, holder).to_any(),
+        Some(seat_id(fx, from)),
+        Some(seat_id(fx, to)),
+    )
+}
+
+/// nm <- boss <- {r1, r2}; boss is in alpha.
+fn boss_fx() -> Fx {
+    let fx = fx();
+    alpha(&fx);
+    dormant_seats(&fx, "alpha", &["nm", "boss", "r1", "r2"]);
+    set_nm(&fx, "nm");
+    point(&fx, "boss", Some("nm"));
+    point(&fx, "r1", Some("boss"));
+    point(&fx, "r2", Some("boss"));
+    fx
+}
+
+fn sorted(
+    mut v: Vec<(String, AnyId, Option<SeatId>, Option<SeatId>)>,
+) -> Vec<(String, AnyId, Option<SeatId>, Option<SeatId>)> {
+    v.sort_by(|a, b| a.1.cmp(&b.1));
+    v
+}
+
+#[test]
+fn reparent_preview_single_retire() {
+    let fx = boss_fx();
+    let sp = plan(&fx, "seat retire boss");
+    let want = sorted(vec![
+        seat_pointer(&fx, "r1", "boss", "nm"),
+        seat_pointer(&fx, "r2", "boss", "nm"),
+    ]);
+    assert_eq!(sorted(pointer_effects(&sp)), want);
+    // After the existing retire effects, not before.
+    assert_eq!(sp.plan.effects[0].kind, "seat.retire");
+}
+
+#[test]
+fn reparent_preview_teamspace_default() {
+    use super::managers::reparent::testing::teamspace_request;
+    let fx = boss_fx();
+    commit(&fx, "teamspace create beta");
+    let beta = teamspace(&fx, "beta").1.id;
+    commit_request(&fx, teamspace_request(&beta, Some(&seat_id(&fx, "boss"))));
+    let sp = plan(&fx, "seat retire boss");
+    let got = pointer_effects(&sp);
+    let beta_row = (
+        "teamspace.default_manager".to_string(),
+        beta.to_any(),
+        Some(seat_id(&fx, "boss")),
+        Some(seat_id(&fx, "nm")),
+    );
+    assert!(got.contains(&beta_row), "{got:?}");
+    assert_eq!(got.len(), 3, "{got:?}");
+}
+
+#[test]
+fn reparent_preview_last_clone_retire() {
+    let fx = fx();
+    alpha(&fx);
+    dormant_seats(&fx, "alpha", &["nm", "r1", "r2"]);
+    commit(
+        &fx,
+        "seat create boss --teamspace alpha --active --harness shell",
+    );
+    set_nm(&fx, "nm");
+    point(&fx, "boss", Some("nm"));
+    point(&fx, "r1", Some("boss"));
+    point(&fx, "r2", Some("boss"));
+    let only = clones_of(&fx, &seat_id(&fx, "boss")).remove(0).1;
+    let sp = plan(&fx, &format!("clone retire {}", only.id));
+    let want = sorted(vec![
+        seat_pointer(&fx, "r1", "boss", "nm"),
+        seat_pointer(&fx, "r2", "boss", "nm"),
+    ]);
+    assert_eq!(sorted(pointer_effects(&sp)), want);
+}
+
+#[test]
+fn reparent_preview_not_last_clone_has_none() {
+    let fx = fx();
+    alpha(&fx);
+    dormant_seats(&fx, "alpha", &["nm", "r1"]);
+    commit(
+        &fx,
+        "seat create boss --teamspace alpha --active --harness shell",
+    );
+    set_nm(&fx, "nm");
+    point(&fx, "boss", Some("nm"));
+    point(&fx, "r1", Some("boss"));
+    let boss = seat_id(&fx, "boss");
+    commit(&fx, "clone add boss --name second");
+    let first = clones_of(&fx, &boss).remove(0).1;
+    let sp = plan(&fx, &format!("clone retire {}", first.id));
+    assert_eq!(pointer_effects(&sp), vec![]);
+}
+
+#[test]
+fn reparent_preview_teamspace_retire() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "beta", &["nm", "r"]);
+    dormant_seats(&fx, "alpha", &["mid", "boss"]);
+    set_nm(&fx, "nm");
+    point(&fx, "mid", Some("nm"));
+    point(&fx, "boss", Some("mid"));
+    point(&fx, "r", Some("boss"));
+    let sp = plan(&fx, "teamspace retire alpha");
+    // mid and boss retire together: r skips both, and neither retiring seat gets a preview.
+    assert_eq!(
+        pointer_effects(&sp),
+        vec![seat_pointer(&fx, "r", "boss", "nm")]
+    );
+}
+
+#[test]
+fn reparent_preview_matches_apply() {
+    use super::managers::reparent::testing::teamspace_request;
+    let fx = boss_fx();
+    dormant_seats(&fx, "alpha", &["bystander"]);
+    point(&fx, "bystander", Some("nm"));
+    commit(&fx, "teamspace create beta");
+    let beta = teamspace(&fx, "beta").1.id;
+    commit_request(&fx, teamspace_request(&beta, Some(&seat_id(&fx, "boss"))));
+    let sp = plan(&fx, "seat retire boss");
+    let preview = pointer_effects(&sp);
+    assert_eq!(preview.len(), 3, "{preview:?}");
+    let before: Vec<(String, Option<SeatId>)> = ["nm", "bystander"]
+        .iter()
+        .map(|n| (n.to_string(), manager_of(&fx, n)))
+        .collect();
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    for (kind, holder, _, to) in &preview {
+        let now = if kind == "seat.manager" {
+            let id: SeatId = holder.to_string().parse().unwrap();
+            layout::all_seats(&view(&fx))
+                .unwrap()
+                .into_iter()
+                .find(|(_, s)| s.id == id)
+                .unwrap()
+                .1
+                .manager
+        } else {
+            teamspace(&fx, "beta").1.default_manager
+        };
+        assert_eq!(&now, to, "{kind} {holder}");
+    }
+    // Holders the preview did not list are unchanged.
+    for (n, m) in before {
+        assert_eq!(manager_of(&fx, &n), m, "{n}");
+    }
+}

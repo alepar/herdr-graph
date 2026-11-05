@@ -111,6 +111,10 @@ fn fx() -> Fx {
         crate::plan::managers::testing::SET_NODE_MANAGER_KEY,
         Arc::new(crate::plan::managers::testing::SetNodeManager),
     );
+    reg.register(
+        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
+        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
+    );
     kinds.register_mutations(&mut reg, plans.clone());
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
@@ -2830,4 +2834,106 @@ fn guard_application_retire() {
     let (_, seat) = node_manager_app(&fx);
     assert_guard_refusal(&plan_err(&fx, "application retire auth"));
     assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Active);
+}
+
+// ---------------------------------------------------------------------------------------------
+// reparent previews (hg-k4l.27)
+// ---------------------------------------------------------------------------------------------
+
+fn point(fx: &Fx, seat: &SeatId, manager: Option<&SeatId>) {
+    let op = crate::ports::writer::Writer::admit(
+        &*fx.w,
+        crate::plan::managers::reparent::testing::seat_request(seat, manager),
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+}
+
+fn manager_pointers(sp: &StoredPlan) -> Vec<(AnyId, Option<SeatId>, Option<SeatId>)> {
+    let id = |v: &serde_json::Value| v.as_str().map(|s| s.parse::<SeatId>().unwrap());
+    sp.plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.manager")
+        .map(|e| (e.object.clone(), id(&e.detail["from"]), id(&e.detail["to"])))
+        .collect()
+}
+
+#[test]
+fn reparent_preview_chained_application_retire() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create nm --teamspace alpha");
+    commit(&fx, "seat create c --teamspace alpha");
+    let nm = seat_by_id_named(&fx, "nm");
+    let c = seat_by_id_named(&fx, "c");
+    let (ma, mb) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "pair",
+        &[m(&ma, "a", "deferred"), m(&mb, "b", "deferred")],
+        &[],
+    );
+    apply_app(&fx, "pair", "one");
+    let (a, b) = (member_seat(&fx, "one", &ma), member_seat(&fx, "one", &mb));
+    point(&fx, &a, Some(&nm));
+    point(&fx, &b, Some(&a));
+    point(&fx, &c, Some(&b));
+
+    let sp = plan(&fx, "application retire one");
+    // a and b retire together: only c, outside the application, is rewritten, past both of them.
+    assert_eq!(
+        manager_pointers(&sp),
+        vec![(c.to_any(), Some(b.clone()), Some(nm.clone()))]
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &c).manager, Some(nm));
+}
+
+#[test]
+fn reparent_preview_template_withdrawal() {
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "seat create nm --teamspace alpha");
+    commit(&fx, "seat create r --teamspace alpha");
+    let nm = seat_by_id_named(&fx, "nm");
+    let r = seat_by_id_named(&fx, "r");
+    let (keep, gone) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "duo",
+        &[m(&keep, "keep", "deferred"), m(&gone, "gone", "deferred")],
+        &[],
+    );
+    apply_app(&fx, "duo", "one");
+    let (keep_seat, gone_seat) = (
+        member_seat(&fx, "one", &keep),
+        member_seat(&fx, "one", &gone),
+    );
+    point(&fx, &keep_seat, Some(&nm));
+    point(&fx, &gone_seat, Some(&keep_seat));
+    point(&fx, &r, Some(&gone_seat));
+
+    let sp = edit_plan(&fx, "duo", &[m(&keep, "keep", "deferred")], &[]);
+    assert_eq!(count(&sp, "seat.retire"), 1);
+    assert_eq!(
+        manager_pointers(&sp),
+        vec![(r.to_any(), Some(gone_seat), Some(keep_seat.clone()))]
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &r).manager, Some(keep_seat));
+}
+
+fn seat_by_id_named(fx: &Fx, name: &str) -> SeatId {
+    layout::all_seats(&view(fx))
+        .unwrap()
+        .into_iter()
+        .find(|(_, s)| s.name == name)
+        .unwrap_or_else(|| panic!("no seat {name}"))
+        .1
+        .id
 }
