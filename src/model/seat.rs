@@ -24,6 +24,9 @@ pub struct SeatRecord {
     pub system_duty: Option<SystemDuty>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template_ref: Option<TemplateRef>,
+    /// Explicit manager seat (spec §4.6); read through model::manager only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager: Option<SeatId>,
     #[serde(default)]
     pub applications: Vec<AppId>,
     #[serde(default)]

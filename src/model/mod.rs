@@ -11,6 +11,7 @@ pub mod graph;
 pub mod harness;
 pub mod ids;
 pub mod launch;
+pub mod manager;
 pub mod native_session;
 pub mod operation;
 pub mod request;

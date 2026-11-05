@@ -10,6 +10,9 @@ pub struct GraphRecord {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summarizer_seat: Option<SeatId>,
+    /// The node manager seat, root of every manager chain (spec §4.6); read through model::manager only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_manager_seat: Option<SeatId>,
     #[serde(default)]
     pub defaults: GraphDefaults,
 }
