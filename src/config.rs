@@ -28,6 +28,8 @@ pub struct Env {
     pub pane_id: Option<String>,
     pub graph_clone: Option<String>,
     pub graph_seat: Option<String>,
+    /// `HERDR_THREADS_CONTINUITY_KEY`.
+    pub continuity_key: Option<String>,
     /// `HERDR_GRAPH_THREADS_STATE_DIR`.
     pub threads_state_dir: Option<PathBuf>,
     /// `HERDR_PLUGIN_STATE_DIR` (herdr-graph's own plugin state dir under Herdr).
@@ -53,6 +55,7 @@ impl Env {
             pane_id: var("HERDR_PANE_ID"),
             graph_clone: var("HERDR_GRAPH_CLONE"),
             graph_seat: var("HERDR_GRAPH_SEAT"),
+            continuity_key: var("HERDR_THREADS_CONTINUITY_KEY"),
             threads_state_dir: var("HERDR_GRAPH_THREADS_STATE_DIR").map(PathBuf::from),
             plugin_state_dir: var("HERDR_PLUGIN_STATE_DIR").map(PathBuf::from),
             xdg_state_home: var("XDG_STATE_HOME").map(PathBuf::from),

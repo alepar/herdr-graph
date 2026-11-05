@@ -5,8 +5,8 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
-    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
-    set_live_ref, token_of,
+    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launch_env_key, launched_key,
+    live_ref, plan_effects, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
@@ -122,6 +122,16 @@ impl HerdrExecutor {
         let _ = self
             .journal
             .meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
+    }
+
+    /// The variable names the start exported into `pane`'s shell, so a check-in that lacks them can be named
+    /// (the shell may have rejected the export, spec §5).
+    fn record_launch_env(&self, clone: &CloneId, pane: &HerdrPaneId, env: &[(String, String)]) {
+        let vars: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        let _ = self.journal.meta_set(
+            &launch_env_key(clone),
+            &serde_json::json!({ "pane": pane.0, "vars": vars }).to_string(),
+        );
     }
 
     /// A new pane for `clone` is a bare shell: forget the previous pane's launch so `start_needed` fires again.
@@ -536,6 +546,7 @@ impl HerdrExecutor {
             if e.status == EffectStatus::Unknown {
                 // The earlier start went through; only its response was lost.
                 self.record_launch(p);
+                self.record_launch_env(&clone, &lp.pane.id, &agent_env(&clone, false));
                 return ExecOutcome::Done;
             }
             return ExecOutcome::NeedsRevision("agent already running on the pane".into());
@@ -546,6 +557,7 @@ impl HerdrExecutor {
             Err(err) => return transient_or_failed(err),
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
+        let env = agent_env(&clone, false);
         let started = cx
             .herdr
             .start_agent(StartAgent {
@@ -553,13 +565,14 @@ impl HerdrExecutor {
                 kind: kind.to_owned(),
                 args,
                 // No key reservation exists before D1 (hg-66u.13 records it).
-                env: agent_env(&clone, false),
+                env: env.clone(),
             })
             .await;
         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
         let out = start_outcome(started);
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
+            self.record_launch_env(&clone, &lp.pane.id, &env);
         }
         out
     }
@@ -642,11 +655,12 @@ impl HerdrExecutor {
         let resume = (from == p.harness && to_prof.supports_resume())
             .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
             .flatten();
+        let env = agent_env(&clone, false);
         let to = to_prof.agent_kind.map(|kind| Relaunch {
             kind,
             args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
             // No key reservation exists before D1 (hg-66u.13 records it).
-            env: agent_env(&clone, false),
+            env: env.clone(),
         });
         let out = advance_replacement(
             cx.herdr,
@@ -661,6 +675,9 @@ impl HerdrExecutor {
         .await;
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
+            if to_prof.agent_kind.is_some() {
+                self.record_launch_env(&clone, &lp.pane.id, &env);
+            }
         }
         out
     }
