@@ -1,0 +1,15 @@
+schema = 1
+id = "tpl_01M6NENT60PG08FYVY1Z3YDVQT"
+rev = 1
+name = "office"
+kind = "team"
+
+[defaults]
+harness = "claude"
+
+[[members]]
+id = "mem_01M6NENT62M7GBHHKDFSVNQ71J"
+name = "main"
+seat_template = "tpl_01M6NENT5Y5NM21KQY20FEXTP1"
+responsibility = "Node manager: unblock lifecycle issues of every seat on this node and repair the graph"
+startup = "active"

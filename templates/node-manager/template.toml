@@ -1,0 +1,8 @@
+schema = 1
+id = "tpl_01M6NENT5Y5NM21KQY20FEXTP1"
+rev = 1
+name = "node-manager"
+kind = "seat"
+
+[defaults]
+harness = "claude"
