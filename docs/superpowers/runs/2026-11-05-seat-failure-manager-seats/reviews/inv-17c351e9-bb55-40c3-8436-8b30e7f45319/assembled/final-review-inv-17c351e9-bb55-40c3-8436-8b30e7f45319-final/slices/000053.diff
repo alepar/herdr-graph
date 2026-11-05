@@ -1,0 +1,423 @@
+diff --git a/src/observe/tests.rs b/src/observe/tests.rs
+index 8c092b3..1823ff6 100644
+--- a/src/observe/tests.rs
++++ b/src/observe/tests.rs
+@@ -1,5 +1,6 @@
+ //! Observer tests: FakeHerdr + real writer, journal, git store, plan engine and reconciler, driven through
+ //! `RuntimeLoop::step_once`. The "user" is `FakeHerdr::user_*`.
++use super::mutations::cascade_request;
+ use super::step::{LoopTuning, StepMode};
+ use super::*;
+ use crate::config::InstancePaths;
+@@ -71,6 +72,27 @@ impl Writer for DrainingWriter {
+     }
+ }
+ 
++/// Test-only: point `graph.toml node_manager_seat` at a seat (the real `node-manager set` is another task's).
++struct TestNodeManager;
++impl crate::writer::Mutation for TestNodeManager {
++    fn apply(
++        &self,
++        cx: &mut crate::writer::MutationCx<'_>,
++    ) -> Result<crate::writer::Applied, crate::writer::MutationError> {
++        let seat: SeatId = cx.request.args["seat"].as_str().unwrap().parse().unwrap();
++        let mut g = layout::read_graph(&cx.tree)?;
++        g.node_manager_seat = Some(seat);
++        cx.tree.put_file(
++            layout::graph_toml(),
++            toml::to_string(&g).unwrap().into_bytes(),
++        );
++        Ok(crate::writer::Applied {
++            summary: "set node manager".into(),
++            action: None,
++        })
++    }
++}
++
+ struct Fx {
+     _tmp: tempfile::TempDir,
+     root: PathBuf,
+@@ -127,6 +149,14 @@ fn fx() -> Fx {
+     kinds.register_mutations(&mut reg, plans.clone());
+     crate::reconcile::register_mutations(&mut reg);
+     register_mutations(&mut reg);
++    reg.register(
++        "bookkeeping.test_node_manager_obs",
++        Arc::new(TestNodeManager),
++    );
++    reg.register(
++        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
++        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
++    );
+     let store = Arc::new(GitStore::open(&root).unwrap());
+     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
+     let clock = Arc::new(ManualClock::new(t0()));
+@@ -376,6 +406,19 @@ fn activate(fx: &Fx, harness: &str) {
+     );
+ }
+ 
++fn make_node_manager(fx: &Fx, seat: &SeatId) {
++    fx.w.admit(crate::model::change::ChangeRequest {
++        kind: crate::model::change::RequestKind::Bookkeeping,
++        args: serde_json::json!({"sub": "test_node_manager_obs", "seat": seat}),
++        relied_on: vec![],
++        requester: Default::default(),
++        supersedes: None,
++        confirmed: None,
++    })
++    .unwrap();
++    fx.w.drain().unwrap();
++}
++
+ fn claude_agent(session: Option<&str>) -> Option<AgentInfo> {
+     Some(AgentInfo {
+         kind: "claude".into(),
+@@ -522,6 +565,251 @@ async fn workspace_close_retires_dormant_seats_too() {
+     assert_eq!(seat_by_id(&fx, &foreman.id).1.lifecycle, Lifecycle::Retired);
+ }
+ 
++/// The seat has a live tab and its clone a live pane in the fake Herdr.
++async fn assert_reopened(fx: &Fx, seat_name: &str) {
++    let s = seat(fx, seat_name);
++    assert_eq!(s.lifecycle, Lifecycle::Active);
++    assert_eq!(s.runtime.availability, Availability::Present, "{seat_name}");
++    let c = only_clone(fx, seat_name);
++    assert_eq!(c.lifecycle, CloneLifecycle::Active);
++    let pane = pane_of(fx, &c);
++    let snap = snapshot(fx).await;
++    assert!(
++        snap.workspaces
++            .iter()
++            .flat_map(|w| &w.tabs)
++            .flat_map(|t| &t.panes)
++            .any(|p| p.id == pane),
++        "the clone's pane exists in Herdr again"
++    );
++}
++
++#[tokio::test]
++async fn node_manager_tab_close_is_not_retired_and_reopens() {
++    let fx = fx();
++    activate(&fx, "shell");
++    settle(&fx).await;
++    let foreman = seat(&fx, "foreman");
++    make_node_manager(&fx, &foreman.id);
++    let old_pane = pane_of(&fx, &only_clone(&fx, "foreman"));
++    fx.herdr.user_close_tab(&tab_of_seat(&fx, "foreman"));
++    fx.herdr.clear_calls();
++
++    step(&fx).await;
++    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++    settle(&fx).await;
++    assert!(creates(&fx) > 0, "{:?}", calls(&fx));
++    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
++    assert_reopened(&fx, "foreman").await;
++    assert_ne!(pane_of(&fx, &only_clone(&fx, "foreman")), old_pane);
++}
++
++#[tokio::test]
++async fn node_manager_pane_close_is_not_retired() {
++    let fx = fx();
++    activate(&fx, "shell");
++    commit(&fx, "clone add foreman --name second");
++    settle(&fx).await;
++    let foreman = seat(&fx, "foreman");
++    make_node_manager(&fx, &foreman.id);
++    let victim = clones_of(&fx, &foreman.id).remove(0);
++    fx.herdr.user_close_pane(&pane_of(&fx, &victim));
++    fx.herdr.clear_calls();
++
++    step(&fx).await;
++    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
++    assert_eq!(
++        clone_by_id(&fx, &victim.id).lifecycle,
++        CloneLifecycle::Active
++    );
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++    settle(&fx).await;
++    assert!(creates(&fx) > 0, "the pane is recreated: {:?}", calls(&fx));
++    assert!(
++        clones_of(&fx, &foreman.id)
++            .iter()
++            .all(|c| c.lifecycle == CloneLifecycle::Active && c.runtime.bound.is_some())
++    );
++}
++
++#[tokio::test]
++async fn node_manager_tab_close_still_cascades_other_seats() {
++    let fx = fx();
++    activate(&fx, "shell");
++    commit(
++        &fx,
++        "seat create bench --teamspace alpha --active --harness shell",
++    );
++    settle(&fx).await;
++    make_node_manager(&fx, &seat(&fx, "foreman").id);
++    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
++    step(&fx).await;
++    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Retired);
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++}
++
++#[tokio::test]
++async fn workspace_close_keeps_node_manager_teamspace_active() {
++    let fx = fx();
++    activate(&fx, "shell");
++    commit(
++        &fx,
++        "seat create bench --teamspace alpha --active --harness shell",
++    );
++    settle(&fx).await;
++    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
++    make_node_manager(&fx, &foreman.id);
++    let bench_clone = only_clone(&fx, "bench");
++    let ws = workspace_id(&fx).await;
++    fx.herdr.user_close_workspace(&ws);
++    fx.herdr.clear_calls();
++
++    step(&fx).await;
++    let acts = actions(&fx, ActionKind::ClosureCascade);
++    assert_eq!(acts.len(), 1);
++    let retired: std::collections::BTreeSet<AnyId> = acts[0].retired.iter().cloned().collect();
++    assert_eq!(
++        retired,
++        [bench.id.to_any(), bench_clone.id.to_any()]
++            .into_iter()
++            .collect(),
++        "only the other seat and its clone"
++    );
++    let ts = ts_rec(&fx, "alpha");
++    assert_eq!(ts.lifecycle, Lifecycle::Active);
++    assert!(ts.retired.is_none());
++    assert_eq!(seat_by_id(&fx, &bench.id).1.lifecycle, Lifecycle::Retired);
++    assert_eq!(seat_by_id(&fx, &foreman.id).1.lifecycle, Lifecycle::Active);
++
++    settle(&fx).await;
++    let log = calls(&fx);
++    let first_ws = log
++        .iter()
++        .position(|c| matches!(c, FakeCall::CreateWorkspace(_)))
++        .expect("workspace recreated");
++    let first_tab = log
++        .iter()
++        .position(|c| matches!(c, FakeCall::CreateTab(_)))
++        .expect("tab recreated");
++    assert!(first_ws < first_tab, "{log:?}");
++    assert_reopened(&fx, "foreman").await;
++    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active);
++}
++
++#[tokio::test]
++async fn node_manager_move_is_tolerated_and_warned() {
++    let fx = fx();
++    commit(&fx, "teamspace create alpha");
++    commit(
++        &fx,
++        "seat create foreman --teamspace alpha --active --harness shell",
++    );
++    commit(
++        &fx,
++        "seat create other --teamspace alpha --active --harness shell",
++    );
++    settle(&fx).await;
++    let foreman = seat(&fx, "foreman");
++    make_node_manager(&fx, &foreman.id);
++    let fc = only_clone(&fx, "foreman");
++    let oc = only_clone(&fx, "other");
++    let before = snapshot(&fx).await;
++    let other_tab = tab_of_seat(&fx, "other");
++    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &other_tab);
++    let after = snapshot(&fx).await;
++
++    // Classify by hand so the warning is observable.
++    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.root).unwrap();
++    assert_eq!(desired.node_manager, Some(foreman.id.clone()));
++    let (mb, ma) = (
++        super::matcher::match_snapshot(&before, &desired),
++        super::matcher::match_snapshot(&after, &desired),
++    );
++    let moved = |c: &CloneRecord| super::diff::DiffElement::Moved {
++        clone: c.id.clone(),
++        from_tab: HerdrTabId("unused".into()),
++        to_tab: other_tab.clone(),
++    };
++    let run = |els| {
++        super::classify::classify(
++            &super::classify::ClassifyCx {
++                desired: &desired,
++                journal: &fx.journal,
++                preds: &[],
++                matches: &ma,
++                baseline: Some(&mb),
++            },
++            els,
++        )
++    };
++    let out = run(vec![moved(&fc)]);
++    assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
++    assert!(out.warnings[0].contains("foreman"), "{:?}", out.warnings);
++    assert!(out.warnings[0].contains(foreman.id.as_str()));
++    assert_eq!(out.moves.len(), 1, "the move is recorded as before");
++    assert!(run(vec![moved(&oc)]).warnings.is_empty());
++
++    // End to end: the move is recorded, not reverted, and not retired.
++    fx.herdr.clear_calls();
++    step(&fx).await;
++    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
++    assert!(seat(&fx, "foreman").moved_out);
++    assert!(clone_by_id(&fx, &fc.id).reload_required);
++    settle(&fx).await;
++    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++}
++
++#[tokio::test]
++async fn cascade_rechecks_node_manager_at_apply() {
++    let fx = fx();
++    activate(&fx, "shell");
++    commit(
++        &fx,
++        "seat create bench --teamspace alpha --active --harness shell",
++    );
++    settle(&fx).await;
++    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
++    let (fc, bc) = (only_clone(&fx, "foreman"), only_clone(&fx, "bench"));
++    let ts = ts_rec(&fx, "alpha");
++    // Classified while foreman was an ordinary seat ...
++    let tab_req = cascade_request(
++        super::classify::CascadeRule::Tab,
++        &[foreman.id.to_any(), fc.id.to_any()],
++        fx.clock.now(),
++    );
++    let ws_req = cascade_request(
++        super::classify::CascadeRule::Workspace,
++        &[
++            ts.id.to_any(),
++            foreman.id.to_any(),
++            fc.id.to_any(),
++            bench.id.to_any(),
++            bc.id.to_any(),
++        ],
++        fx.clock.now(),
++    );
++    // ... then `node-manager set` lands before the cascade applies.
++    make_node_manager(&fx, &foreman.id);
++    fx.w.admit(tab_req).unwrap();
++    fx.w.drain().unwrap();
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Active);
++    for a in actions(&fx, ActionKind::ClosureCascade) {
++        assert!(!a.retired.contains(&foreman.id.to_any()), "{:?}", a.retired);
++        assert!(!a.retired.contains(&fc.id.to_any()), "{:?}", a.retired);
++    }
++
++    fx.w.admit(ws_req).unwrap();
++    fx.w.drain().unwrap();
++    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
++    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Active);
++    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active);
++    assert_eq!(seat_by_id(&fx, &bench.id).1.lifecycle, Lifecycle::Retired);
++    assert_eq!(clone_by_id(&fx, &bc.id).lifecycle, CloneLifecycle::Retired);
++}
++
+ #[tokio::test]
+ async fn graph_issued_close_not_double_retired() {
+     let fx = fx();
+@@ -2019,3 +2307,96 @@ fn baseline_roundtrip_and_corruption() {
+         "a corrupt baseline means a rebind pass"
+     );
+ }
++
++// =================================================================================================
++// reparenting on observed closure (hg-k4l.26)
++// =================================================================================================
++
++/// foreman (node manager), bench (active, its own tab) and a dormant `report`; `report.manager` = bench and
++/// `bench.manager` = the node manager, or a seat id that does not exist when `dangling`.
++async fn manager_world(fx: &Fx, dangling: bool) {
++    use crate::plan::managers::reparent::testing::seat_request;
++    activate(fx, "shell");
++    commit(
++        fx,
++        "seat create bench --teamspace alpha --active --harness shell",
++    );
++    commit(fx, "seat create report --teamspace alpha");
++    settle(fx).await;
++    let foreman = seat(fx, "foreman").id;
++    make_node_manager(fx, &foreman);
++    let bench_manager = if dangling { SeatId::new() } else { foreman };
++    for req in [
++        seat_request(&seat(fx, "bench").id, Some(&bench_manager)),
++        seat_request(&seat(fx, "report").id, Some(&seat(fx, "bench").id)),
++    ] {
++        fx.w.admit(req).unwrap();
++        fx.w.drain().unwrap();
++    }
++}
++
++#[tokio::test]
++async fn reparent_on_observed_cascade() {
++    use crate::plan::managers::reparent::{Rewrite, testing::recorded};
++    let fx = fx();
++    manager_world(&fx, false).await;
++    let foreman = seat(&fx, "foreman").id;
++    let bench = seat(&fx, "bench").id;
++    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
++    step(&fx).await;
++
++    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
++    let acts = actions(&fx, ActionKind::ClosureCascade);
++    assert_eq!(acts.len(), 1);
++    assert_eq!(
++        recorded(&acts[0]),
++        vec![Rewrite {
++            holder: seat(&fx, "report").id.to_any(),
++            field: "manager".into(),
++            old: bench,
++            new: Some(foreman),
++        }]
++    );
++    assert!(
++        !acts[0]
++            .compensation
++            .contains_key(crate::plan::managers::reparent::REPARENT_FALLBACK_KEY),
++        "no fallback when the target resolves"
++    );
++}
++
++#[tokio::test]
++async fn reparent_fallback_on_integrity() {
++    use crate::plan::managers::reparent::{REPARENT_FALLBACK_KEY, Rewrite, testing::recorded};
++    let fx = fx();
++    manager_world(&fx, true).await;
++    let (foreman, bench) = (seat(&fx, "foreman").id, seat(&fx, "bench").id);
++    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
++    step(&fx).await;
++
++    assert_eq!(
++        seat_by_id(&fx, &bench).1.lifecycle,
++        Lifecycle::Retired,
++        "the cascade still retires the seat"
++    );
++    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
++    let acts = actions(&fx, ActionKind::ClosureCascade);
++    assert_eq!(acts.len(), 1);
++    assert_eq!(
++        recorded(&acts[0]),
++        vec![Rewrite {
++            holder: seat(&fx, "report").id.to_any(),
++            field: "manager".into(),
++            old: bench,
++            new: Some(foreman),
++        }]
++    );
++    let notes = acts[0].compensation[REPARENT_FALLBACK_KEY]
++        .as_array()
++        .expect("fallback notes recorded");
++    assert_eq!(notes.len(), 1);
++    assert!(
++        notes[0].as_str().unwrap().contains("node manager"),
++        "{notes:?}"
++    );
++}

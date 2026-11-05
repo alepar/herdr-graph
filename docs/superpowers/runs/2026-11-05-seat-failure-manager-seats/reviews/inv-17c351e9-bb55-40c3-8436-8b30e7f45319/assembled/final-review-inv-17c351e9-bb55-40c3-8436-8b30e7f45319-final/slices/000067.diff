@@ -1,0 +1,21 @@
+diff --git a/src/reconcile/desired.rs b/src/reconcile/desired.rs
+index 9923b83..15b0209 100644
+--- a/src/reconcile/desired.rs
++++ b/src/reconcile/desired.rs
+@@ -95,6 +95,8 @@ pub struct DesiredRuntime {
+     pub workspaces: Vec<DesiredWorkspace>,
+     pub tabs: Vec<DesiredTab>,
+     pub panes: Vec<DesiredPane>,
++    /// The live node manager seat (`model::manager::live_node_manager`): exempt from closure retirement.
++    pub node_manager: Option<SeatId>,
+ }
+ 
+ fn latest_ended(sessions: &[NativeSession], harness: Harness) -> Option<&NativeSession> {
+@@ -108,6 +110,7 @@ impl DesiredRuntime {
+     pub fn load(tree: &dyn TreeRead, instance: &Path) -> Result<Self, StoreError> {
+         let mut d = DesiredRuntime {
+             instance: instance.to_path_buf(),
++            node_manager: crate::model::manager::live_node_manager(tree)?,
+             ..Default::default()
+         };
+         for (_, t) in layout::list_teamspaces(tree)? {

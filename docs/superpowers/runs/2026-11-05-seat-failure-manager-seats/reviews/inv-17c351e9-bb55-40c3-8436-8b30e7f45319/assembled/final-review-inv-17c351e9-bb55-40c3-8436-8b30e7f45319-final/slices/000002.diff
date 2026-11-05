@@ -1,0 +1,12 @@
+diff --git a/CURRENT-DESIGN.md b/CURRENT-DESIGN.md
+index e8a9f8c..5694ec8 100644
+--- a/CURRENT-DESIGN.md
++++ b/CURRENT-DESIGN.md
+@@ -21,6 +21,7 @@ Consolidated contract for the authorized implementation. Detailed decisions and
+ - Cancel an uncommitted queued request without applying its mutation. After commitment, cancelling remaining effects requires a superseding mutation specifying replacement desired state; ambiguous replacements return to the requesting agent. Preserve already-performed effects in history and reconcile toward the replacement, without silently undoing the original operation. Cancellation must not leave a hidden suppression flag competing with desired state.
+ - Delayed action instructions carry their originating operation and relevant revision. Recipients check current applicability before acting; an obsolete whole-seat leave instruction must not become a fresh voluntary clone opt-out. Exact message/API representation remains to specify.
+ - Closure retirement follows containment: a pane retires its clone; a tab retires its seat and remaining clones; a workspace retires its teamspace and all remaining seats/clones, including dormant seats. Native-agent exit with the pane retained ends occupancy only. If last-pane closure also removes the tab, the resulting tab closure retires the seat. Archive state and attribution; never-activated absence is intentional, and disconnected/ambiguous observations mark runtime availability unknown rather than retiring objects.
++- 2026-11-05: the node manager seat is exempt from direct-closure containment retirement. Closing its pane, tab or workspace never retires it, its clones or its teamspace; reconciliation reopens it (recreating the workspace first when needed). Other seats in a closed workspace or tab still follow containment retirement.
+ - Record a closure cascade as one action with provenance and the descendants it actually retired, distinguishing previously retired objects for undo. Correlate graph-issued closures with observations to avoid duplicate retirement. Graph reconciles lifecycle thread-membership cleanup after occupants disappear while preserving messages and attribution. Exact observation qualification and transport cleanup mechanics remain to specify.
+ - Cross-tab clone moves initially require destination-seat reload; old transcript/context remains but applicable graph state changes. Eventual clone transfer preserves work history and changes scope/system threads.
+ 

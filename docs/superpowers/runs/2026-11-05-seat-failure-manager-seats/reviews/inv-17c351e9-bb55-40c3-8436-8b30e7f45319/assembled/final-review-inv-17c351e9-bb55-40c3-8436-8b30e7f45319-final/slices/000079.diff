@@ -1,0 +1,37 @@
+diff --git a/src/writer/tests.rs b/src/writer/tests.rs
+index daf9770..ecfc0cf 100644
+--- a/src/writer/tests.rs
++++ b/src/writer/tests.rs
+@@ -39,6 +39,7 @@ impl Mutation for TestSeed {
+             retired: None,
+             runtime: Default::default(),
+             project_repo: None,
++            default_manager: None,
+             channel: Default::default(),
+         };
+         cx.tree
+@@ -55,6 +56,7 @@ impl Mutation for TestSeed {
+                 retired: None,
+                 system_duty: None,
+                 template_ref: None,
++                manager: None,
+                 applications: vec![],
+                 overrides: Default::default(),
+                 participation: Default::default(),
+@@ -1288,3 +1290,16 @@ fn recovery_reapplies_missing_supersede() {
+         "idempotent"
+     );
+ }
++
++#[test]
++fn integrity_store_error_is_data_not_infra() {
++    use crate::ports::store::unresolved;
++    assert!(matches!(
++        Fail::from(unresolved("st_a", "manager", "st_b")),
++        Fail::Data(_)
++    ));
++    assert!(matches!(
++        Fail::from(StoreError::Git("boom".into())),
++        Fail::Infra(_)
++    ));
++}

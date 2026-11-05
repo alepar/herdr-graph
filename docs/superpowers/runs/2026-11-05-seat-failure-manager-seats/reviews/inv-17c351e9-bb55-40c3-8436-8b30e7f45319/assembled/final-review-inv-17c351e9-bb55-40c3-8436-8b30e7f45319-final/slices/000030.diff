@@ -1,0 +1,161 @@
+diff --git a/src/cli/ops.rs b/src/cli/ops.rs
+index 13069a6..fa98cfe 100644
+--- a/src/cli/ops.rs
++++ b/src/cli/ops.rs
+@@ -1,12 +1,10 @@
+ //! `ops`, `op`, `cancel`, `reassign`, `check-instruction`, `rebind` — owned by hg-zmi.17.
+ //!
+-//! Reads (`ops`, `op`, `check-instruction`) never start a daemon: with none running they read the journal and
+-//! the committed graph straight from the instance. `cancel` and `reassign` mutate, so they ensure the daemon.
+-use crate::config::{Env, InstancePaths, plugin_config_dir_via_herdr};
+-use crate::daemon::client::{CallMode, ClientError, call_daemon};
+-use crate::journal::Journal;
++//! Reads (`ops`, `op`, `check-instruction`) never start a daemon: with none running they exit 5 through
++//! `cli::daemon_error`. `cancel` and `reassign` mutate, so they ensure the daemon.
++use crate::cli::daemon_error;
++use crate::daemon::client::{CallMode, call_daemon};
+ use crate::model::{AnyId, OpId};
+-use crate::plan::ops;
+ use clap::Subcommand;
+ use serde_json::{Value, json};
+ use std::process::ExitCode;
+@@ -62,45 +60,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+     }
+ }
+ 
+-/// The instance's journal and graph, opened without a daemon.
+-struct Direct {
+-    paths: InstancePaths,
++/// A call to the daemon; a failure is reported through `cli::daemon_error`.
++fn call(kind: &str, args: Value, mode: CallMode) -> Result<Value, ExitCode> {
++    call_daemon(kind, args, mode).map_err(daemon_error::report)
+ }
+ 
+-fn direct() -> anyhow::Result<Direct> {
+-    let env = Env::from_process();
+-    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
+-        .ok_or(ClientError::NoInstance)?;
+-    Ok(Direct {
+-        paths: InstancePaths::new(&root),
+-    })
+-}
+-
+-impl Direct {
+-    /// The journal, or None when the instance has never admitted an op (opening would create it).
+-    fn journal(&self) -> anyhow::Result<Option<Journal>> {
+-        if !self.paths.journal.exists() {
+-            return Ok(None);
+-        }
+-        Ok(Some(Journal::open(&self.paths.journal)?))
+-    }
+-}
+-
+-/// A read: ask the daemon, and when none is running compute the same answer from the instance on disk.
+-fn read(
+-    kind: &str,
+-    args: Value,
+-    fallback: impl FnOnce(&Direct) -> anyhow::Result<Value>,
+-) -> anyhow::Result<Value> {
+-    match call_daemon(kind, args, CallMode::NoEnsure) {
+-        Ok(v) => Ok(v),
+-        Err(ClientError::Unavailable(_)) => fallback(&direct()?),
+-        Err(e) => Err(anyhow::anyhow!("{e}")),
+-    }
+-}
+-
+-fn remote(e: ClientError) -> anyhow::Error {
+-    anyhow::anyhow!("{e}")
++/// A read: ask the daemon, never start one.
++fn read(kind: &str, args: Value) -> Result<Value, ExitCode> {
++    call(kind, args, CallMode::NoEnsure)
+ }
+ 
+ fn parse_op(s: &str) -> anyhow::Result<OpId> {
+@@ -135,12 +102,10 @@ fn render_op(o: &Value) -> String {
+ }
+ 
+ fn list(unresolved: bool) -> anyhow::Result<ExitCode> {
+-    let reply = read("ops.list", json!({ "unresolved": unresolved }), |d| {
+-        let Some(journal) = d.journal()? else {
+-            return Ok(json!({ "ops": [] }));
+-        };
+-        Ok(ops::list_json(&journal, unresolved, 200)?)
+-    })?;
++    let reply = match read("ops.list", json!({ "unresolved": unresolved })) {
++        Ok(v) => v,
++        Err(code) => return Ok(code),
++    };
+     let list = reply["ops"].as_array().cloned().unwrap_or_default();
+     if list.is_empty() {
+         println!(
+@@ -156,13 +121,10 @@ fn list(unresolved: bool) -> anyhow::Result<ExitCode> {
+ 
+ fn show(id: &str) -> anyhow::Result<ExitCode> {
+     let op = parse_op(id)?;
+-    let reply = read("ops.get", json!({ "op": op }), |d| {
+-        let journal = d
+-            .journal()?
+-            .ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
+-        let store = crate::store::GitStore::open(&d.paths.root)?;
+-        Ok(ops::op_detail(&journal, &store, &op)?)
+-    })?;
++    let reply = match read("ops.get", json!({ "op": op })) {
++        Ok(v) => v,
++        Err(code) => return Ok(code),
++    };
+     print!("{}", render_op(&reply["op"]));
+     println!("  requester: {}", reply["op"]["requester"]);
+     println!("  attempts: {}", reply["attempts"]);
+@@ -183,19 +145,24 @@ fn show(id: &str) -> anyhow::Result<ExitCode> {
+ 
+ fn cancel(op: &str) -> anyhow::Result<ExitCode> {
+     let op = parse_op(op)?;
+-    let reply = call_daemon("ops.cancel", json!({ "op": op }), CallMode::Ensure).map_err(remote)?;
++    let reply = match call("ops.cancel", json!({ "op": op }), CallMode::Ensure) {
++        Ok(v) => v,
++        Err(code) => return Ok(code),
++    };
+     println!("{}", text(&reply["message"]));
+     Ok(ExitCode::SUCCESS)
+ }
+ 
+ fn reassign(op: &str, to: &str) -> anyhow::Result<ExitCode> {
+     let op = parse_op(op)?;
+-    let reply = call_daemon(
++    let reply = match call(
+         "ops.reassign",
+         json!({ "op": op, "to": to }),
+         CallMode::Ensure,
+-    )
+-    .map_err(remote)?;
++    ) {
++        Ok(v) => v,
++        Err(code) => return Ok(code),
++    };
+     println!(
+         "{} reassigned to {}",
+         text(&reply["op"]),
+@@ -208,18 +175,13 @@ fn reassign(op: &str, to: &str) -> anyhow::Result<ExitCode> {
+ fn check_instruction(op: &str, object: &str, rev: u64) -> anyhow::Result<ExitCode> {
+     let op = parse_op(op)?;
+     let object = AnyId::parse(object).map_err(|e| anyhow::anyhow!("object id {object:?}: {e}"))?;
+-    let reply = read(
++    let reply = match read(
+         "ops.check_instruction",
+         json!({ "op": op, "object": object, "rev": rev }),
+-        |d| {
+-            let journal = d
+-                .journal()?
+-                .ok_or_else(|| anyhow::anyhow!("unknown operation {op}"))?;
+-            let store = crate::store::GitStore::open(&d.paths.root)?;
+-            let status = ops::check_instruction(&journal, &store, &op, &object, rev)?;
+-            Ok(json!({ "status": status }))
+-        },
+-    )?;
++    ) {
++        Ok(v) => v,
++        Err(code) => return Ok(code),
++    };
+     println!("{}", text(&reply["status"]));
+     Ok(ExitCode::SUCCESS)
+ }

@@ -1,0 +1,554 @@
+# Run profile — hg-k4l
+
+```
+Profile: hg-k4l · 1 invocation · 2026-11-05T09:12Z → 2026-11-05T10:45Z · wall 1h33m (task graph 1h01m, after the last landing 32m) · agents 203 (timed 203) · beads dispatched 20, landed 18, planned 27
+Profile: graph scope — observed invocation/residual graph; historical topology is unknown
+Profile: shape — 27 beads · 61 edges · depth 8 · width 3.4 · beads per level 3/3/5/8/2/3/2/1 · widest fan-out hg-k4l.1 (4 direct, 24 transitive dependents) · 1 edge cut(s) applied mid-run
+Profile: bound — graph lower bound 38m along hg-k4l.1 → hg-k4l.4 → hg-k4l.5 → hg-k4l.26 → hg-k4l.27 (unlimited slots and merge lanes) · model of the run 58m (cap 6, one merge lane) vs actual 1h01m (95%) → merge-lane-bound: 19m of the 20m above the graph's bound is the serial merge lane
+Profile: critical path — 1h01m = implement 11m · review 1m · merge 32m · seam 12m · planning 1m · ready 8s · startup 28s · dispatch 3m · of which other beads' merge-lane turns 40m
+Profile: diagnosis — planning 1m (2% of first dispatch to last landing)
+Profile: critical chain — close-epics ready 8s → plan planning 1m → hg-k4l.1 implement+review+merge 3m → hg-k4l.2 implement 5m → hg-k4l.18 implement+review+merge 7m → merge lane ×13 40m (seam 12m)
+Profile: bottleneck — hg-k4l.18 — 8m on the critical path (12%) · implement 4m · review 36s · merge 3m · dispatch 8s · implement on the path 4m: test 50s · read 5s · shell 2m · model 1m (longest: "mkdir -p /tmp/sp-2d1990ff/hg-k4l.18" 50s, "python3 - <<'EOF'" 49s) · dependents 2
+Profile: waits — ready→start, summed per bead (beads wait at the same time, so not wall time): 23m over 7 of 18 landed beads — waited-for-merge 6m (3) · slot 3m (2) · hot-file 15m (2)
+Profile: early unblock — 17 landed beads had in-run blockers · stacked on an implementation 12 · bounced on a stack conflict then waited for the merge 0 (0s) · waited for a merge without one 3
+Profile: rework — 6m of dispatch time in attempts that did not land — hg-k4l.24 4m (SETUP_FAILED, SETUP_FAILED; never landed) · hg-k4l.17 2m (SETUP_FAILED; never landed)
+Profile: tests — implementers and fixers, summed: 24m running tests and 0s polling background runs, 21% of their 1h54m · 0 Bash call(s) ran into the 10-minute tool limit
+Profile: slow tests — cargo test --locked --offline --lib plan::tests::guard 2m (3 runs, longest 1m) · cargo test --locked --offline --lib model:: 2m (2 runs, longest 1m) · cargo test --lib cli::daemon_error 1m (2 runs, longest 1m) · cargo test --lib --locked --offline plan::tests::node_manager_set 1m (2 runs, longest 1m) · cargo test --lib --locked --offline node_manager 1m (3 runs, longest 1m)
+Profile: merge lane — busy 48m of 57m (83%) · seam reviews and fixes 12m (26% of busy) · 26 merge dispatches, first try not merged for 8 of 18 · queue wait 1h49m total, peak 5 waiting · stack-parent wait 0s
+Profile: conflicts — src/plan/tests.rs (stack conflicts 0, seam overlaps 6, declared by 11) · src/plan/core_kinds.rs (stack conflicts 0, seam overlaps 3, declared by 9) · src/bootstrap/tests.rs (stack conflicts 0, seam overlaps 1, declared by 7) · src/model/change.rs (stack conflicts 0, seam overlaps 1, declared by 2)
+Profile: runtime — peak 9 agents at once of 16 runtime slots · full 0% of the run · slot cap 6
+Profile: concurrency scope — all-agent concurrency peak 9 · task-slot concurrency peak 7, cap 6 (ordinary chains retain a slot through merge)
+Profile: what-if estimate — unlimited merge lanes → 39m (−19m, 32%) — merges in parallel, each still after its stack parents; first dispatch to last landing, planning retained
+Profile: what-if estimate — seam work off the merge lane → 46m (−12m, 21%) — rebase and seam review/fix before queueing; the lane only merges (an engine change); first dispatch to last landing, planning retained
+Profile: what-if estimate — every early unblock taken → 56m (−2m, 3%) — no stack conflicts: dependents stack on implemented blockers instead of waiting for their merge; first dispatch to last landing, planning retained
+Profile: what-if estimate — cut hg-k4l.2 <- hg-k4l.1 → 57m (−1m, 2%) — payoff if this edge were cut — whether it can be is a design call; first dispatch to last landing, planning retained
+Profile: what-if estimate — faster hg-k4l.2 → 57m (−1m, 2%) — its implement time halved; first dispatch to last landing, planning retained
+Profile: context — agents 204 (measured 204) · peak≥80% 0 · compacted 0 agents, 0 compactions · coordinator 557K/1000K (56%), 0 compactions · max coordinator 56%
+Profile: context agent — coordinator peak 557K/1000K (56%) · first 157K · compactions 0
+Profile: unmeasured — 2 dispatched bead(s) did not land (not in the model): hg-k4l.24, hg-k4l.17; Claude context windows from the model table: claude-opus-5-5 1000K, claude-sonnet-5-5 1000K
+```
+
+## Per bead
+
+Offsets are from the run's first dispatch. `wait` starts at evidenced creation/mapping/dependency availability, bounded by invocation start; unknown readiness means unknown wait. Creation, mapping and dependency timestamps stay distinct in JSON. `stack` waits for parents to merge; `queue` waits for the single merge lane; `lane` is its lane turn (merge plus seam work).
+
+| bead | deps | dependents | attempts | wait (cause) | implement | of it: tools | review | fix | stack | queue | lane (seam) | landed | critical |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| hg-k4l.1 | 0 | 4 | IMPLEMENTED | - | 1m | test 24s · git 2s · shell 17s | 31s | - | - | 1s | 1m | +5m | 3m |
+| hg-k4l.2 | 1 | 4 | IMPLEMENTED | 2m (waited-for-merge) | 5m | test 1m · git 2s · read 9s · shell 2m | 45s | - | - | 54s | 1m | +13m | 5m |
+| hg-k4l.12 | 1 | 2 | IMPLEMENTED | 2m (waited-for-merge) | 5m | test 1m · read 9s · shell 2m | 30s | - | - | 2s | 50s | +12m |  |
+| hg-k4l.4 | 1 | 6 | IMPLEMENTED | 2m (waited-for-merge) | 6m | test 2m · build 56s · git 3s · read 10s · shell 1m | 33s | - | - | 2m | 1m | +15m |  |
+| hg-k4l.3 | 1 | 2 | IMPLEMENTED | - | 4m | test 46s · read 10s · shell 2m | 39s | - | - | 3m | 1m | +19m | 1m |
+| hg-k4l.18 | 1 | 2 | IMPLEMENTED | - | 4m | test 50s · read 5s · shell 2m | 36s | - | - | 5s | 3m | +18m | 8m |
+| hg-k4l.11 | 3 | 2 | IMPLEMENTED | - | 6m | test 1m · build 29s · read 8s · shell 2m | 38s | - | - | 3m | 1m | +22m | 2m |
+| hg-k4l.5 | 1 | 11 | IMPLEMENTED | - | 6m | test 1m · bd 3s · read 12s · shell 2m | 38s | - | - | 1m | 1m | +21m | 1m |
+| hg-k4l.9 | 1 | 2 | IMPLEMENTED | - | 7m | test 1m · git 4s · read 12s · shell 2m | 39s | - | - | 3m | 2m | +24m | 2m |
+| hg-k4l.16 | 2 | 1 | IMPLEMENTED | - | 6m | test 2m · build 44s · bd 2s · read 12s · shell 17s | 1m | - | - | 2m | 3m (2m) | +28m | 3m |
+| hg-k4l.6 | 1 | 2 | IMPLEMENTED | - | 7m | test 1m · git 5s · bd 3s · read 14s · shell 2m | 35s | - | - | 16m | 6m (2m) | +48m | 6m |
+| hg-k4l.8 | 1 | 1 | IMPLEMENTED | - | 7m | test 2m · git 3s · read 18s · shell 2m | 32s | - | - | 8m | 5m (2m) | +38m | 5m |
+| hg-k4l.10 | 2 | 1 | IMPLEMENTED | - | 5m | test 1m · read 8s · shell 2m | 32s | - | - | 5m | 1m | +29m | 1m |
+| hg-k4l.13 | 1 | 1 | IMPLEMENTED | 43s (slot) | 6m | test 1m · build 31s · read 8s · shell 1m | 44s | - | - | 4m | 4m (1m) | +33m | 4m |
+| hg-k4l.23 | 1 | 4 | IMPLEMENTED | 2m (slot) | 6m | test 1m · read 11s · shell 2m | 26s | - | - | 22m | 6m (1m) | +54m | 6m |
+| hg-k4l.21 | 1 | 1 | IMPLEMENTED | 7m (hot-file) | 5m | test 1m · read 6s · shell 1m | 35s | - | - | 23m | 4m (2m) | +58m | 4m |
+| hg-k4l.26 | 1 | 3 | IMPLEMENTED | 8m (hot-file) | 10m | test 1m · build 34s · git 3s · read 18s · shell 3m | 42s | - | - | 2m | 3m (49s) | +41m | 3m |
+| hg-k4l.24 | 2 | 3 | SETUP_FAILED, SETUP_FAILED | 2m (retry) | 23s | git 1s · shell 1s | 0s | - | - | - | - | not landed |  |
+| hg-k4l.27 | 2 | 2 | IMPLEMENTED | - | 7m | test 1m · build 2m · read 9s · shell 2m | 39s | - | - | 15m | 3m (38s) | +1h01m | 3m |
+| hg-k4l.17 | 2 | 2 | SETUP_FAILED | - | 36s | git 1s · shell 8s | 0s | - | - | - | - | not landed |  |
+
+## Critical path, step by step
+
+| at | step | kind | via | duration |
+|---|---|---|---|---|
+| +0s | run start | startup |  | 28s |
+| +28s | close-epics | ready |  | 8s |
+| +36s | previous → plan | dispatch |  | 2s |
+| +38s | plan | planning | previous | 1m |
+| +2m | planned → impl:hg-k4l.1 | dispatch |  | 1s |
+| +2m | impl:hg-k4l.1 | implement | planned | 1m |
+| +3m | chain → review:hg-k4l.1 | dispatch |  | 1s |
+| +3m | review:hg-k4l.1 | review | chain | 31s |
+| +4m | chain → merge:hg-k4l.1 | dispatch |  | 1s |
+| +4m | merge:hg-k4l.1 | merge | chain | 1m |
+| +5m | dep → impl:hg-k4l.2 | dispatch |  | 11s |
+| +5m | impl:hg-k4l.2 | implement | dep | 5m |
+| +10m | dep → impl:hg-k4l.18 | dispatch |  | 2s |
+| +10m | impl:hg-k4l.18 | implement | dep | 4m |
+| +14m | chain → review:hg-k4l.18 | dispatch |  | 2s |
+| +14m | review:hg-k4l.18 | review | chain | 36s |
+| +15m | chain → merge:hg-k4l.18 | dispatch |  | 5s |
+| +15m | merge:hg-k4l.18 | merge | chain | 3m |
+| +18m | merge-lane → merge:hg-k4l.3 | dispatch |  | 13s |
+| +18m | merge:hg-k4l.3 | merge | merge-lane | 1m |
+| +19m | merge-lane → merge:hg-k4l.5 | dispatch |  | 13s |
+| +19m | merge:hg-k4l.5 | merge | merge-lane | 1m |
+| +21m | merge-lane → merge:hg-k4l.11 | dispatch |  | 12s |
+| +21m | merge:hg-k4l.11 | merge | merge-lane | 1m |
+| +22m | merge-lane → merge:hg-k4l.9 | dispatch |  | 15s |
+| +23m | merge:hg-k4l.9 | merge | merge-lane | 2m |
+| +24m | merge-lane → merge:hg-k4l.16 | dispatch |  | 7s |
+| +25m | merge:hg-k4l.16 | merge | merge-lane | 16s |
+| +25m | chain → seam-review:hg-k4l.16 | dispatch |  | 1s |
+| +25m | seam-review:hg-k4l.16 | seam | chain | 34s |
+| +25m | chain → fix:hg-k4l.16:seam | dispatch |  | 1s |
+| +25m | fix:hg-k4l.16:seam | seam | chain | 1m |
+| +27m | chain → merge:hg-k4l.16:seam-cleared | dispatch |  | 1s |
+| +27m | merge:hg-k4l.16:seam-cleared | merge | chain | 1m |
+| +28m | merge-lane → merge:hg-k4l.10 | dispatch |  | 10s |
+| +28m | merge:hg-k4l.10 | merge | merge-lane | 1m |
+| +29m | merge-lane → merge:hg-k4l.13 | dispatch |  | 9s |
+| +29m | merge:hg-k4l.13 | merge | merge-lane | 39s |
+| +30m | chain → fix:hg-k4l.13:check | dispatch |  | 1s |
+| +30m | fix:hg-k4l.13:check | seam | chain | 1m |
+| +31m | chain → seam-review:hg-k4l.13:check | dispatch |  | 1s |
+| +31m | seam-review:hg-k4l.13:check | seam | chain | 26s |
+| +31m | chain → merge:hg-k4l.13:check-fixed | dispatch |  | 1s |
+| +31m | merge:hg-k4l.13:check-fixed | merge | chain | 2m |
+| +33m | merge-lane → merge:hg-k4l.8 | dispatch |  | 15s |
+| +33m | merge:hg-k4l.8 | merge | merge-lane | 43s |
+| +34m | chain → seam-review:hg-k4l.8 | dispatch |  | 2s |
+| +34m | seam-review:hg-k4l.8 | seam | chain | 33s |
+| +34m | chain → fix:hg-k4l.8:seam | dispatch |  | 2s |
+| +34m | fix:hg-k4l.8:seam | seam | chain | 2m |
+| +36m | chain → merge:hg-k4l.8:seam-cleared | dispatch |  | 1s |
+| +36m | merge:hg-k4l.8:seam-cleared | merge | chain | 2m |
+| +38m | merge-lane → merge:hg-k4l.26 | dispatch |  | 7s |
+| +38m | merge:hg-k4l.26 | merge | merge-lane | 1m |
+| +39m | chain → seam-review:hg-k4l.26 | dispatch |  | 1s |
+| +39m | seam-review:hg-k4l.26 | seam | chain | 49s |
+| +40m | chain → merge:hg-k4l.26:seam-cleared | dispatch |  | 1s |
+| +40m | merge:hg-k4l.26:seam-cleared | merge | chain | 1m |
+| +41m | merge-lane → merge:hg-k4l.6 | dispatch |  | 11s |
+| +41m | merge:hg-k4l.6 | merge | merge-lane | 2m |
+| +43m | chain → seam-review:hg-k4l.6 | dispatch |  | 1s |
+| +43m | seam-review:hg-k4l.6 | seam | chain | 2m |
+| +45m | chain → merge:hg-k4l.6:seam-cleared | dispatch |  | 1s |
+| +45m | merge:hg-k4l.6:seam-cleared | merge | chain | 3m |
+| +48m | merge-lane → merge:hg-k4l.23 | dispatch |  | 14s |
+| +48m | merge:hg-k4l.23 | merge | merge-lane | 2m |
+| +49m | chain → seam-review:hg-k4l.23 | dispatch |  | 2s |
+| +49m | seam-review:hg-k4l.23 | seam | chain | 1m |
+| +51m | chain → merge:hg-k4l.23:seam-cleared | dispatch |  | 2s |
+| +51m | merge:hg-k4l.23:seam-cleared | merge | chain | 3m |
+| +54m | merge-lane → merge:hg-k4l.21 | dispatch |  | 10s |
+| +54m | merge:hg-k4l.21 | merge | merge-lane | 1m |
+| +55m | chain → seam-review:hg-k4l.21 | dispatch |  | 1s |
+| +55m | seam-review:hg-k4l.21 | seam | chain | 25s |
+| +55m | chain → fix:hg-k4l.21:seam | dispatch |  | 1s |
+| +55m | fix:hg-k4l.21:seam | seam | chain | 2m |
+| +57m | chain → merge:hg-k4l.21:seam-cleared | dispatch |  | 1s |
+| +57m | merge:hg-k4l.21:seam-cleared | merge | chain | 58s |
+| +58m | merge-lane → merge:hg-k4l.27 | dispatch |  | 9s |
+| +58m | merge:hg-k4l.27 | merge | merge-lane | 46s |
+| +59m | chain → seam-review:hg-k4l.27 | dispatch |  | 1s |
+| +59m | seam-review:hg-k4l.27 | seam | chain | 38s |
+| +1h00m | chain → merge:hg-k4l.27:seam-cleared | dispatch |  | 2s |
+| +1h00m | merge:hg-k4l.27:seam-cleared | merge | chain | 1m |
+
+## Longest tool calls in the bottleneck's implement (hg-k4l.18)
+
+| tool | category | what | duration |
+|---|---|---|---|
+| Bash | test | mkdir -p /tmp/sp-2d1990ff/hg-k4l.18 | 50s |
+| Bash | shell | python3 - <<'EOF' | 49s |
+| Bash | shell | python3 - <<'EOF' | 28s |
+| Bash | shell | git worktree add $W -b task-hg-k4l.18 super-auto/seat-failu… | 6s |
+| Bash | shell | W=/var/home/alepar/AleCode/herdr-graph/.worktrees/super-aut… | 5s |
+| Bash | shell | distrobox enter durak-dev -- env TMPDIR=/tmp/sp-2d1990ff/hg… | 4s |
+| Bash | shell | which toolbox distrobox podman flatpak-spawn | 3s |
+| Bash | shell | distrobox enter durak-dev -- env TMPDIR=/tmp/sp-2d1990ff/hg… | 2s |
+| Bash | read | cat /var/home/alepar/AleCode/herdr-graph/.worktrees/super-a… | 2s |
+| Bash | shell | distrobox enter durak-dev -- env TMPDIR=/tmp/sp-2d1990ff/hg… | 2s |
+
+## Conflict files
+
+Files named in stack-conflict findings and in merges' seam overlaps, with how many planned beads declared them.
+
+| file | stack conflicts | seam overlaps | declared by |
+|---|---|---|---|
+| src/plan/tests.rs | 0 | 6 | 11 |
+| src/plan/core_kinds.rs | 0 | 3 | 9 |
+| src/bootstrap/tests.rs | 0 | 1 | 7 |
+| src/model/change.rs | 0 | 1 | 2 |
+| src/templates/tests.rs | 0 | 1 | 5 |
+| src/threads/tests.rs | 0 | 1 | 3 |
+| src/undo/tests.rs | 0 | 1 | 7 |
+| tests/integration_sweep.rs | 0 | 1 | 1 |
+
+## Schedule model
+
+Landed beads replayed with their measured implement, review+fix and lane times; creation, mapping and invocation bounds retained, with dispatch as the conservative release when readiness is unknown. In-model dependencies release at their modeled implementation/merge times; known releases outside the model stay fixed. Window: first dispatch to last landing; planning retained. Model of the run: 58m against 1h01m measured. Estimates, not measurements.
+
+| scenario | makespan | saving |
+|---|---|---|
+| as run (cap 6, one merge lane) | 58m | - |
+| unlimited slots | 58m | 0s |
+| unlimited merge lanes | 39m | 19m |
+| graph lower bound (both) | 38m | 20m |
+| seam work off the merge lane | 46m | 12m |
+| every early unblock taken | 56m | 2m |
+| cut hg-k4l.2 <- hg-k4l.1 | 57m | 1m |
+| faster hg-k4l.2 | 57m | 1m |
+
+## Timeline
+
+each bead's final attempt; critical-path steps are marked crit.
+
+```mermaid
+gantt
+  dateFormat x
+  axisFormat %H:%M
+  section hg-k4l.1
+  impl :crit, 1793870030522, 1793870118365
+  review :crit, 1793870119202, 1793870149992
+  merge :crit, 1793870150752, 1793870221377
+  close-check :1793870222173, 1793870231374
+  section hg-k4l.2
+  impl :crit, 1793870232254, 1793870548693
+  review :1793870550606, 1793870595771
+  review-bead :1793870550607, 1793870559913
+  merge :1793870649641, 1793870732056
+  close-check :1793870734067, 1793870742448
+  section hg-k4l.12
+  impl :1793870232255, 1793870553066
+  review-bead :1793870555391, 1793870578835
+  review :1793870555391, 1793870585651
+  merge :1793870587977, 1793870638052
+  close-check :1793870640004, 1793870647677
+  section hg-k4l.4
+  impl :1793870232255, 1793870604599
+  review :1793870606643, 1793870639496
+  review-bead :1793870606644, 1793870615725
+  merge :1793870744433, 1793870818561
+  close-check :1793870820654, 1793870835090
+  section hg-k4l.3
+  impl :1793870550608, 1793870820007
+  review-bead :1793870821929, 1793870837716
+  review :1793870821929, 1793870860609
+  merge :crit, 1793871015074, 1793871082368
+  close-check :1793871084187, 1793871093213
+  section hg-k4l.18
+  impl :crit, 1793870550609, 1793870794825
+  review :crit, 1793870796735, 1793870832376
+  review-bead :1793870796736, 1793870811307
+  merge :crit, 1793870836958, 1793871001869
+  close-check :1793871003642, 1793871012082
+  section hg-k4l.11
+  impl :1793870606645, 1793870959622
+  review :1793870961651, 1793870999593
+  review-bead :1793870961652, 1793870991704
+  merge :crit, 1793871181847, 1793871270611
+  close-check :1793871272538, 1793871283767
+  section hg-k4l.5
+  impl :1793870606645, 1793870983684
+  review :1793870986830, 1793871025006
+  review-bead :1793870986831, 1793871004761
+  merge :crit, 1793871095052, 1793871169564
+  close-check :1793871171617, 1793871179892
+  section hg-k4l.9
+  impl :1793870606645, 1793871048287
+  review-bead :1793871050220, 1793871067656
+  review :1793871050220, 1793871088739
+  merge :crit, 1793871285803, 1793871394445
+  close-check :1793871395220, 1793871401030
+  section hg-k4l.16
+  impl :1793870821931, 1793871194844
+  review :1793871196958, 1793871257632
+  review-bead :1793871196959, 1793871206517
+  merge :crit, 1793871401819, 1793871418244
+  seam-review :crit, 1793871418985, 1793871453175
+  fix seam :crit, 1793871453947, 1793871529291
+  merge seam-cleared :crit, 1793871530018, 1793871590903
+  close-check :1793871591696, 1793871599962
+  section hg-k4l.6
+  impl :1793870986832, 1793871424837
+  review :1793871425620, 1793871460210
+  review-bead :1793871425621, 1793871438070
+  merge :crit, 1793872406006, 1793872497859
+  seam-review :crit, 1793872498596, 1793872622898
+  merge seam-cleared :crit, 1793872623609, 1793872783051
+  close-check :1793872785129, 1793872794764
+  section hg-k4l.8
+  impl :1793870986833, 1793871418459
+  review :1793871419218, 1793871451330
+  review-bead :1793871419219, 1793871432452
+  merge :crit, 1793871911476, 1793871954213
+  seam-review :crit, 1793871956141, 1793871989489
+  fix seam :crit, 1793871991353, 1793872086253
+  merge seam-cleared :crit, 1793872087021, 1793872187431
+  close-check :1793872188193, 1793872193894
+  section hg-k4l.10
+  impl :1793871001450, 1793871297742
+  review :1793871298472, 1793871330677
+  review-bead :1793871298473, 1793871311013
+  merge :crit, 1793871600715, 1793871670104
+  close-check :1793871670889, 1793871677180
+  section hg-k4l.13
+  impl :1793871027066, 1793871382488
+  review :1793871383456, 1793871427599
+  review-bead :1793871383457, 1793871393328
+  merge :crit, 1793871678668, 1793871717920
+  fix check :crit, 1793871718695, 1793871778245
+  seam-review check :crit, 1793871779046, 1793871804670
+  merge check-fixed :crit, 1793871805426, 1793871896827
+  close-check :1793871899562, 1793871909648
+  section hg-k4l.23
+  impl :1793871090580, 1793871478257
+  review :1793871479116, 1793871505005
+  review-bead :1793871479117, 1793871496084
+  merge :crit, 1793872796713, 1793872894436
+  seam-review :crit, 1793872896271, 1793872972623
+  merge seam-cleared :crit, 1793872974737, 1793873145588
+  close-check :1793873147166, 1793873154741
+  section hg-k4l.21
+  impl :1793871428321, 1793871735218
+  review :1793871736014, 1793871770956
+  review-bead :1793871736015, 1793871746013
+  merge :crit, 1793873155659, 1793873217666
+  seam-review :crit, 1793873218454, 1793873243781
+  fix seam :crit, 1793873244620, 1793873355841
+  merge seam-cleared :crit, 1793873356652, 1793873414730
+  close-check :1793873415533, 1793873423143
+  section hg-k4l.26
+  impl :1793871452138, 1793872030819
+  review-bead :1793872031600, 1793872044900
+  review :1793872031600, 1793872073260
+  merge :crit, 1793872194653, 1793872258116
+  seam-review :crit, 1793872258870, 1793872308304
+  merge seam-cleared :crit, 1793872309057, 1793872395438
+  close-check :1793872397219, 1793872404214
+  section hg-k4l.24
+  impl :1793871620477, 1793871643899
+  missing-blocker :1793871644672, 1793871656702
+  triage :1793871657453, 1793871703513
+  clarify :1793871704360, 1793871719427
+  section hg-k4l.27
+  impl :1793872031602, 1793872475009
+  review-bead :1793872475796, 1793872490267
+  review :1793872475796, 1793872515128
+  merge :crit, 1793873423898, 1793873469893
+  seam-review :crit, 1793873470678, 1793873508487
+  merge seam-cleared :crit, 1793873510259, 1793873577484
+  close-check :1793873578234, 1793873587810
+  section hg-k4l.17
+  impl :1793872475798, 1793872511336
+  missing-blocker :1793872512049, 1793872529221
+  triage :1793872530019, 1793872558027
+  clarify :1793872558874, 1793872574735
+```
+
+## Context
+
+- Profile: context — agents 204 (measured 204) · peak≥80% 0 · compacted 0 agents, 0 compactions · coordinator 557K/1000K (56%), 0 compactions · max coordinator 56%
+- Profile: context agent — coordinator peak 557K/1000K (56%) · first 157K · compactions 0
+
+| agent | role | model | tasks | requests | first | peak | window | source | peak% | compactions |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| coordinator | coordinator | claude-opus-5-5 | 8 | 145 | 157K | 557K | 1000K | table | 56% | 0 |
+| final-review:seam | agent | claude-opus-5-5 | 1 | 46 | 34K | 186K | 1000K | table | 19% | 0 |
+| impl:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 44 | 36K | 171K | 1000K | table | 17% | 0 |
+| final-review:cluster:9 | agent | claude-opus-5-5 | 1 | 28 | 32K | 162K | 1000K | table | 16% | 0 |
+| impl:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 35 | 37K | 149K | 1000K | table | 15% | 0 |
+| final-review:cluster:4 | agent | claude-opus-5-5 | 1 | 28 | 32K | 142K | 1000K | table | 14% | 0 |
+| impl:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 32 | 37K | 139K | 1000K | table | 14% | 0 |
+| plan-rest | agent | claude-opus-5-5 | 1 | 25 | 31K | 144K | 1000K | table | 14% | 0 |
+| final-review:cluster:17 | agent | claude-opus-5-5 | 1 | 28 | 32K | 126K | 1000K | table | 13% | 0 |
+| final-review:cluster:3 | agent | claude-opus-5-5 | 1 | 28 | 32K | 133K | 1000K | table | 13% | 0 |
+| final-review:cluster:8 | agent | claude-opus-5-5 | 1 | 23 | 32K | 132K | 1000K | table | 13% | 0 |
+| impl:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 28 | 37K | 129K | 1000K | table | 13% | 0 |
+| impl:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 35 | 37K | 130K | 1000K | table | 13% | 0 |
+| final-review:cluster:15 | agent | claude-opus-5-5 | 1 | 35 | 32K | 123K | 1000K | table | 12% | 0 |
+| final-review:cluster:2 | agent | claude-opus-5-5 | 1 | 17 | 32K | 119K | 1000K | table | 12% | 0 |
+| final-review:cluster:7 | agent | claude-opus-5-5 | 1 | 22 | 32K | 116K | 1000K | table | 12% | 0 |
+| impl:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 24 | 37K | 117K | 1000K | table | 12% | 0 |
+| impl:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 24 | 37K | 123K | 1000K | table | 12% | 0 |
+| impl:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 29 | 37K | 122K | 1000K | table | 12% | 0 |
+| impl:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 28 | 37K | 118K | 1000K | table | 12% | 0 |
+| impl:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 31 | 37K | 123K | 1000K | table | 12% | 0 |
+| final-review:cluster:1 | agent | claude-opus-5-5 | 1 | 20 | 32K | 112K | 1000K | table | 11% | 0 |
+| final-review:cluster:13 | agent | claude-opus-5-5 | 1 | 22 | 32K | 110K | 1000K | table | 11% | 0 |
+| impl:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 23 | 36K | 108K | 1000K | table | 11% | 0 |
+| impl:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 20 | 36K | 107K | 1000K | table | 11% | 0 |
+| impl:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 21 | 37K | 106K | 1000K | table | 11% | 0 |
+| impl:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 24 | 36K | 106K | 1000K | table | 11% | 0 |
+| final-review:cluster:14 | agent | claude-opus-5-5 | 1 | 23 | 32K | 97K | 1000K | table | 10% | 0 |
+| final-review:cluster:5 | agent | claude-opus-5-5 | 1 | 21 | 32K | 101K | 1000K | table | 10% | 0 |
+| impl:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 19 | 37K | 97K | 1000K | table | 10% | 0 |
+| impl:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 21 | 36K | 99K | 1000K | table | 10% | 0 |
+| impl:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 17 | 37K | 85K | 1000K | table | 9% | 0 |
+| final-review:cluster:10 | agent | claude-opus-5-5 | 1 | 16 | 32K | 76K | 1000K | table | 8% | 0 |
+| final-review:cluster:11 | agent | claude-opus-5-5 | 1 | 20 | 32K | 80K | 1000K | table | 8% | 0 |
+| final-review:cluster:16 | agent | claude-opus-5-5 | 1 | 21 | 32K | 78K | 1000K | table | 8% | 0 |
+| final-review:cluster:6 | agent | claude-opus-5-5 | 1 | 14 | 32K | 81K | 1000K | table | 8% | 0 |
+| impl:hg-k4l.1 | agent | claude-sonnet-5-5 | 1 | 9 | 36K | 67K | 1000K | table | 7% | 0 |
+| merge:hg-k4l.23:seam-cleared | agent | claude-sonnet-5-5 | 1 | 28 | 34K | 72K | 1000K | table | 7% | 0 |
+| merge:hg-k4l.6:seam-cleared | agent | claude-sonnet-5-5 | 1 | 26 | 34K | 67K | 1000K | table | 7% | 0 |
+| review:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 9 | 32K | 66K | 1000K | table | 7% | 0 |
+| review:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 7 | 32K | 66K | 1000K | table | 7% | 0 |
+| assemble:final | agent | claude-sonnet-5-5 | 1 | 11 | 31K | 62K | 1000K | table | 6% | 0 |
+| edge-audit:1 | agent | claude-opus-5-5 | 1 | 8 | 30K | 61K | 1000K | table | 6% | 0 |
+| final-review:cluster:12 | agent | claude-opus-5-5 | 1 | 12 | 32K | 60K | 1000K | table | 6% | 0 |
+| fix:hg-k4l.21:seam | agent | claude-sonnet-5-5 | 1 | 13 | 35K | 58K | 1000K | table | 6% | 0 |
+| impl:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 4 | 37K | 56K | 1000K | table | 6% | 0 |
+| merge:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 12 | 34K | 59K | 1000K | table | 6% | 0 |
+| merge:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 13 | 34K | 61K | 1000K | table | 6% | 0 |
+| merge:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 15 | 34K | 61K | 1000K | table | 6% | 0 |
+| merge:hg-k4l.8:seam-cleared | agent | claude-sonnet-5-5 | 1 | 15 | 34K | 55K | 1000K | table | 6% | 0 |
+| plan | agent | claude-opus-5-5 | 1 | 8 | 30K | 58K | 1000K | table | 6% | 0 |
+| review:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 55K | 1000K | table | 6% | 0 |
+| review:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 60K | 1000K | table | 6% | 0 |
+| review:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 57K | 1000K | table | 6% | 0 |
+| review:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 7 | 32K | 58K | 1000K | table | 6% | 0 |
+| review:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 57K | 1000K | table | 6% | 0 |
+| review:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 57K | 1000K | table | 6% | 0 |
+| review:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 60K | 1000K | table | 6% | 0 |
+| review:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 62K | 1000K | table | 6% | 0 |
+| review:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 61K | 1000K | table | 6% | 0 |
+| review:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 56K | 1000K | table | 6% | 0 |
+| review:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 63K | 1000K | table | 6% | 0 |
+| review:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 57K | 1000K | table | 6% | 0 |
+| fix:hg-k4l.16:seam | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 47K | 1000K | table | 5% | 0 |
+| fix:hg-k4l.8:seam | agent | claude-sonnet-5-5 | 1 | 11 | 34K | 54K | 1000K | table | 5% | 0 |
+| impl:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 4 | 37K | 53K | 1000K | table | 5% | 0 |
+| impl:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 4 | 37K | 48K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 10 | 34K | 48K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 10 | 34K | 47K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.13:check-fixed | agent | claude-sonnet-5-5 | 1 | 13 | 34K | 53K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.16:seam-cleared | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 45K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 11 | 34K | 54K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.26:seam-cleared | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 46K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 51K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.27:seam-cleared | agent | claude-sonnet-5-5 | 1 | 12 | 34K | 52K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 46K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 46K | 1000K | table | 5% | 0 |
+| merge:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 10 | 34K | 47K | 1000K | table | 5% | 0 |
+| review:hg-k4l.1 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 54K | 1000K | table | 5% | 0 |
+| review:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 54K | 1000K | table | 5% | 0 |
+| review:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 51K | 1000K | table | 5% | 0 |
+| review:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 5 | 32K | 55K | 1000K | table | 5% | 0 |
+| seam-review:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 7 | 31K | 51K | 1000K | table | 5% | 0 |
+| seam-review:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 6 | 31K | 49K | 1000K | table | 5% | 0 |
+| seam-review:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 4 | 31K | 45K | 1000K | table | 5% | 0 |
+| triage:hg-k4l.17 | agent | claude-opus-5-5 | 1 | 4 | 30K | 49K | 1000K | table | 5% | 0 |
+| triage:hg-k4l.24 | agent | claude-opus-5-5 | 1 | 7 | 30K | 52K | 1000K | table | 5% | 0 |
+| triage:hg-k4l.24 | agent | claude-opus-5-5 | 1 | 4 | 30K | 50K | 1000K | table | 5% | 0 |
+| edge-add:1 | agent | claude-sonnet-5-5 | 1 | 3 | 29K | 35K | 1000K | table | 4% | 0 |
+| edge-add:2 | agent | claude-sonnet-5-5 | 1 | 3 | 29K | 36K | 1000K | table | 4% | 0 |
+| edge-add:3 | agent | claude-sonnet-5-5 | 1 | 4 | 29K | 36K | 1000K | table | 4% | 0 |
+| edge-add:4 | agent | claude-sonnet-5-5 | 1 | 4 | 29K | 36K | 1000K | table | 4% | 0 |
+| edge-add:5 | agent | claude-sonnet-5-5 | 1 | 3 | 31K | 38K | 1000K | table | 4% | 0 |
+| edge-add:6 | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 39K | 1000K | table | 4% | 0 |
+| edge-cuts:1 | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 36K | 1000K | table | 4% | 0 |
+| fix:hg-k4l.13:check | agent | claude-sonnet-5-5 | 1 | 6 | 35K | 45K | 1000K | table | 4% | 0 |
+| ledger-append:edge-add:2 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 43K | 1000K | table | 4% | 0 |
+| ledger-append:surface:2 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 43K | 1000K | table | 4% | 0 |
+| ledger:hg-k4l.1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 35K | 1000K | table | 4% | 0 |
+| merge:hg-k4l.1 | agent | claude-sonnet-5-5 | 1 | 7 | 34K | 44K | 1000K | table | 4% | 0 |
+| merge:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 45K | 1000K | table | 4% | 0 |
+| merge:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 7 | 34K | 42K | 1000K | table | 4% | 0 |
+| merge:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 4 | 34K | 38K | 1000K | table | 4% | 0 |
+| merge:hg-k4l.21:seam-cleared | agent | claude-sonnet-5-5 | 1 | 8 | 34K | 45K | 1000K | table | 4% | 0 |
+| read-ledger:finish | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 42K | 1000K | table | 4% | 0 |
+| seam-review:hg-k4l.13:check | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 38K | 1000K | table | 4% | 0 |
+| seam-review:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 5 | 31K | 44K | 1000K | table | 4% | 0 |
+| seam-review:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 4 | 31K | 42K | 1000K | table | 4% | 0 |
+| seam-review:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 4 | 31K | 44K | 1000K | table | 4% | 0 |
+| seam-review:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 6 | 31K | 45K | 1000K | table | 4% | 0 |
+| worktree-sweep | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 41K | 1000K | table | 4% | 0 |
+| bd-ready | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| bd-ready | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 33K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 33K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 34K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 34K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
+| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 33K | 1000K | table | 3% | 0 |
+| clarify:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| clarify:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 34K | 1000K | table | 3% | 0 |
+| clarify:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 34K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-check:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-epics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| close-epics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| ledger-append:detector | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:detector | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:edge-add:1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:edge-add:3 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:edge-add:4 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:edge-add:5 | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 35K | 1000K | table | 3% | 0 |
+| ledger-append:edge-add:6 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| ledger-append:edge-audit:1 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:edge-cuts:1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:launch | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:metrics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:recovery:deferred:hg-k4l:sweep:seat-failure-manager-seats-20261105T074235 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger-append:surface:1 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
+| ledger-recurring:1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 34K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 34K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 34K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 35K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 33K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 33K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 34K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 34K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
+| ledger:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 33K | 1000K | table | 3% | 0 |
+| missing-blocker:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 3 | 31K | 34K | 1000K | table | 3% | 0 |
+| missing-blocker:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 3 | 31K | 34K | 1000K | table | 3% | 0 |
+| missing-blocker:hg-k4l.24 | agent | claude-sonnet-5-5 | 1 | 3 | 31K | 34K | 1000K | table | 3% | 0 |
+| read-ledger | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 34K | 1000K | table | 3% | 0 |
+| reconcile-buckets | agent | claude-sonnet-5-5 | 1 | 3 | 29K | 32K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.10 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.11 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.12 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.13 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.16 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.18 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.2 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.21 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.23 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.26 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.27 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.3 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.4 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.5 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.6 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.8 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
+| review-bead:hg-k4l.9 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
+
+## Unmeasured
+
+- 2 dispatched bead(s) did not land (not in the model): hg-k4l.24, hg-k4l.17
+- Claude context windows from the model table: claude-opus-5-5 1000K, claude-sonnet-5-5 1000K

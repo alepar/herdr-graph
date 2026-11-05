@@ -1,0 +1,99 @@
+diff --git a/src/ports/store.rs b/src/ports/store.rs
+index 759609b..08b09bf 100644
+--- a/src/ports/store.rs
++++ b/src/ports/store.rs
+@@ -65,6 +65,50 @@ pub enum StoreError {
+     Git(String),
+     #[error(transparent)]
+     Io(#[from] std::io::Error),
++    /// A reference does not resolve at the committed revision (spec §4.2). Build only via `unresolved`.
++    #[error("{holder}: {field} {target} {reason}")]
++    Integrity {
++        holder: String,
++        field: String,
++        target: String,
++        reason: String,
++    },
++}
++
++impl StoreError {
++    /// Replace the reason of an `Integrity` error; identity for every other variant.
++    pub fn because(self, reason: impl Into<String>) -> Self {
++        match self {
++            Self::Integrity {
++                holder,
++                field,
++                target,
++                ..
++            } => Self::Integrity {
++                holder,
++                field,
++                target,
++                reason: reason.into(),
++            },
++            other => other,
++        }
++    }
++}
++
++/// The one constructor for `StoreError::Integrity`: `holder`'s `field` names `target`, which does not
++/// resolve at the committed revision. Use `.because(..)` to replace the default reason
++/// (e.g. wrong kind, broken team structure, a manager-chain cycle).
++pub fn unresolved(
++    holder: impl std::fmt::Display,
++    field: &str,
++    target: impl std::fmt::Display,
++) -> StoreError {
++    StoreError::Integrity {
++        holder: holder.to_string(),
++        field: field.to_string(),
++        target: target.to_string(),
++        reason: "not found at the committed revision".to_string(),
++    }
+ }
+ 
+ /// Read-only access to complete committed revisions. Readers never see partial writes.
+@@ -104,3 +148,43 @@ pub fn read_record<R: DeserializeOwned>(
+             reason: e.to_string(),
+         })
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn unresolved_builds_integrity_with_default_reason() {
++        let e = unresolved("st_a", "template_ref", "tp_b");
++        match &e {
++            StoreError::Integrity {
++                holder,
++                field,
++                target,
++                reason,
++            } => {
++                assert_eq!(
++                    (holder.as_str(), field.as_str(), target.as_str()),
++                    ("st_a", "template_ref", "tp_b")
++                );
++                assert_eq!(reason, "not found at the committed revision");
++            }
++            other => panic!("expected Integrity, got {other:?}"),
++        }
++        assert_eq!(
++            e.to_string(),
++            "st_a: template_ref tp_b not found at the committed revision"
++        );
++    }
++
++    #[test]
++    fn because_replaces_reason_only_on_integrity() {
++        let e = unresolved("st_a", "template_ref", "tp_b").because("is not a seat template");
++        assert_eq!(
++            e.to_string(),
++            "st_a: template_ref tp_b is not a seat template"
++        );
++        let other = StoreError::Git("boom".into()).because("ignored");
++        assert!(matches!(other, StoreError::Git(m) if m == "boom"));
++    }
++}

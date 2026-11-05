@@ -1,0 +1,81 @@
+diff --git a/src/daemon/client.rs b/src/daemon/client.rs
+index c6e8f1d..12be8e4 100644
+--- a/src/daemon/client.rs
++++ b/src/daemon/client.rs
+@@ -15,12 +15,19 @@ use super::budget::CALL_TIMEOUT;
+ pub const EXIT_NO_INSTANCE: u8 = 2;
+ /// The change was admitted and is still running (finishes in the background).
+ pub const EXIT_STILL_RUNNING: u8 = 3;
++/// The graph daemon is unavailable (not running, hung, still starting, wrong Herdr, version mismatch).
++pub const EXIT_DAEMON_UNAVAILABLE: u8 = 5;
++/// A graph reference does not resolve at the committed revision: not transient.
++pub const EXIT_INTEGRITY: u8 = 6;
+ const ENSURE_TIMEOUT: Duration = super::budget::STARTUP_WAIT;
+ 
+ #[derive(Debug, thiserror::Error)]
+ pub enum ClientError {
+     #[error("no instance configured — run herdr-graph init")]
+     NoInstance,
++    /// `CallMode::Ensure` without HERDR_SOCKET_PATH: this process is not inside a Herdr pane.
++    #[error("not inside Herdr")]
++    NotInHerdr,
+     #[error("daemon unavailable: {0}")]
+     Unavailable(String),
+     #[error("{message}")]
+@@ -100,7 +107,7 @@ pub enum CallMode {
+ }
+ 
+ /// Locate instance → connect → on failure with CallMode::Ensure: if HERDR_SOCKET_PATH is unset →
+-/// Unavailable("not inside Herdr"); else run ensure (STARTUP_WAIT) once and retry once; still failing → Unavailable(<reason>).
++/// NotInHerdr; else run ensure (STARTUP_WAIT) once and retry once; still failing → Unavailable(<reason>).
+ /// Verifies `hello.herdr_socket` matches this process's HERDR_SOCKET_PATH when both are set (decision 1).
+ /// Injects args["_caller"].
+ pub fn call_daemon(
+@@ -122,7 +129,7 @@ pub fn call_daemon_with_timeout(
+     let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
+         .ok_or(ClientError::NoInstance)?;
+     if mode == CallMode::Ensure && env.herdr_socket.is_none() {
+-        return Err(ClientError::Unavailable("not inside Herdr".into()));
++        return Err(ClientError::NotInHerdr);
+     }
+     let socket = socket_path(&root);
+     let mut client = match Client::connect(&socket, timeout) {
+@@ -171,3 +178,38 @@ pub fn instance_or_none() -> Option<PathBuf> {
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn integrity_reply_is_remote_integrity() {
++        let (a, mut b) = UnixStream::pair().unwrap();
++        let server = std::thread::spawn(move || {
++            let req: IpcRequest = read_frame(&mut b).unwrap();
++            let resp = IpcResponse {
++                version: IPC_VERSION,
++                request_id: req.request_id,
++                result: IpcResult::Error {
++                    code: IpcErrorCode::Integrity,
++                    message: "st_a: template_ref tp_b not found at the committed revision".into(),
++                },
++            };
++            write_frame(&mut b, &resp).unwrap();
++        });
++        a.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
++        let mut client = Client { stream: a };
++        let err = client
++            .call("seat.resolve", serde_json::json!({}))
++            .unwrap_err();
++        server.join().unwrap();
++        match err {
++            ClientError::Remote { code, message } => {
++                assert_eq!(code, IpcErrorCode::Integrity);
++                assert!(message.contains("tp_b"), "{message}");
++            }
++            other => panic!("expected Remote, got {other:?}"),
++        }
++    }
++}
