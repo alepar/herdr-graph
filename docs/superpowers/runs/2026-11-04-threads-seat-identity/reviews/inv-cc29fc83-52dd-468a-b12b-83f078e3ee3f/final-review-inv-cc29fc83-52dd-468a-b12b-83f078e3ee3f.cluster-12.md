@@ -1,0 +1,52 @@
+# Final review: cluster 12 (src-plan), epic hg-66u
+
+Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD e4984a4, clean; not modified by this review.
+
+Cluster inputs: slices/000047.diff (src/plan/core_kinds.rs), slices/000048.diff (src/plan/tests.rs). Spec: docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md, sections 8, 13 ("Tombstones are inert", "Key release at purge") and 14.1-3, 14.6. Task bead: hg-66u.35.
+
+## What the cluster changes
+
+- New `ClonePurge` plan kind (`clone purge <clone>`), registered in `register_core_kinds`. Resolves the clone by id, else by name among retired clones, falling back to a live-name lookup so that a live clone gets the "retire it first" refusal. Refuses non-retired clones and existing tombstones. Plans one `clone.purge` effect with a `tombstone` detail (`finalize` / `release_key` / `none`), relies on the clone's rev, and warns that the undo window ends. Mutate either writes the `purge_tombstone` record or deletes the clone record.
+- Both retire paths (`do_retire_seat`, `CloneRetire::mutate`) call `clear_restore_on_retire`, which meets spec 14.6 (the retire commit clears a Restore intent).
+- `do_resurrect_seat` skips tombstones.
+- `new_clone_record` and the test fixture fill the three new CloneRecord fields.
+- Tests: finalize tombstone for a seated clone, record removal for a seatless clone, refusal of an active clone by id and by name, refusal of a second purge, seat resurrect skipping a purged clone that has a live sibling, and `clone_status` listing only retired, unpurged clones.
+
+## Verification performed
+
+- Created a review-owned detached worktree at head (/var/home/alepar/AleCode/herdr-graph/.worktrees/review-cc29fc83-c12), with the target dir reflink-seeded. Ran `cargo test --lib plan::` inside the ht-build toolbox: 143 passed, including a probe test I added.
+- Probe test: seat `foreman` with one clone; assign it threads seat `seat-42`; run `seat retire foreman`, then `clone purge <clone>`, then `seat resurrect <seat> --active`. Observed plan kinds `["seat.resurrect", "clone.resurrect", "runtime.open_tab", "runtime.open_pane"]`. The op committed. Afterwards the seat was `Active` and had zero active clones.
+
+## Requirement baseline trace
+
+- The spec has a `## Requirement baseline` section (B1-B11, no human scope change rows). This cluster's slice of it is B7: graph retirement is undoable, and purge (14.1) is the one explicit end of that undo window. Purge is reachable from production through the generic plan/confirm verb dispatch (`verbs()` returns `("clone","purge")`). It needs no live threads read (14.2) and is not undoable (`action: None`). Within this cluster that meets the spec's purge contract.
+- Undo refusing a purged clone is in src/undo/preview.rs (outside this cluster). Status wiring of `clone_status` is in src/daemon/compose.rs. The finalize/release wants that consume the tombstones belong to hg-66u.31 and hg-66u.43, which are open and gated on D2/D1. All three are seam or gate items, not judged here.
+- The remaining baseline rows (B1-B6, B8-B11) do not run through src/plan in this diff, beyond the field defaults. They belong to other clusters and the seam reviewer.
+
+## Findings
+
+- `SeatResurrect` (plan and mutate) and the teamspace-resurrect plan do not filter out tombstones, although `do_resurrect_seat` does. This contradicts spec section 13 ("A Finalize tombstone is not planned, ... resurrected").
+  - At head, src/plan/core_kinds.rs: the `revived` loop in `SeatResurrect::plan` (around line 1576) and `revives_clone` in `SeatResurrect::mutate` (around line 1606) test only `lifecycle == Retired && retired_with(..)`. The same applies to the teamspace-resurrect plan loop around line 827.
+  - Effect: when the purged clone was the seat's only clone retired with it, `seat resurrect --active` previews a `clone.resurrect` and an `open_pane` for the tombstone. It then skips the "create a fresh clone" branch. `do_resurrect_seat` correctly skips the tombstone, so the commit leaves an active seat with no active clone. This was reproduced by the probe above.
+  - The cluster's own test `seat_resurrect_skips_a_purged_clone` does not catch this, because a live sibling is always revived.
+- Name resolution includes tombstones. `grammar::resolve_clone(.., Scope::Retired)` matches tombstones by name. So `clone purge <name>`, run after a same-named clone was purged and a new one retired, fails as ambiguous and lists the inert tombstone as a candidate. Separately, an ambiguous retired-name match falls through to the live lookup, so with a live clone of the same name the operator gets "retire it first" instead of the ambiguity. Both cases only refuse; the id form works.
+- Before D2, purge of every seated clone writes a `Finalize{seat}` tombstone. Spec section 8 says "A clone whose seat is already final (every seat before D2) is purged at once, with no intent", but 14.2 ("after D2"), which supersedes it, together with hg-66u.35's description, prescribes the tombstone always. No finalize want exists until hg-66u.31 (D2-gated, open), so these tombstones persist until then. 14.2 makes a read showing the seat final count as acknowledgement, so they will drain once that want lands. They are inert meanwhile: excluded from status, resurrect, undo, and the one-live-clone-per-seat check.
+- The `ReleaseKey` branch cannot be reached at head. Both call sites pass `reservation = None` with the comment "hg-66u.13 passes the recorded key reservation", but hg-66u.13 is closed and that work was split into hg-66u.43 (open, D1-gated), so the comment points at the wrong bead. No CloneRecord reservation field exists yet, so this is expected gate-ordering, not a defect.
+
+## Verdict
+not ready (seat resurrect counts purge tombstones as revivable clones, so resurrecting a seat whose only clone was purged commits an active seat with no clone)
+
+## Must fix before landing
+- SeatResurrect::plan/mutate (revived and revives_clone) and the teamspace-resurrect plan loop in src/plan/core_kinds.rs must skip `is_tombstone()` clones like do_resurrect_seat does; reproduced: retire a seat whose only clone is seated, purge that clone, then `seat resurrect --active` commits an Active seat with zero active clones and previews clone.resurrect/open_pane for the tombstone; add a regression test without a live sibling.
+
+## Untested scope
+- seat resurrect --active of a seat whose only retired clone is a purge tombstone (the existing test always has a reviving sibling).
+- teamspace resurrect preview over a seat holding a purge tombstone.
+- clone purge by name when a same-named tombstone, or a second retired clone of the same name, exists.
+- clone purge plan/apply race: a clone un-retired or purged between plan and confirm (relied_on rev guard is present but not exercised by a test).
+- ReleaseKey tombstone path (unreachable until hg-66u.43 records a reservation).
+
+## Deferred OK
+- Before D2, purge writes Finalize tombstones that persist until the hg-66u.31 finalize want exists; they are inert and are drained by the final-read acknowledgement of spec 14.2.
+- Name resolution for `clone purge <name>` should exclude tombstones and not let a retired-name ambiguity fall through to the live lookup; refusal-only, the id form works.
+- Stale bead pointer in the two `// hg-66u.13 passes the recorded key reservation.` comments in ClonePurge; the work now lives in hg-66u.43.

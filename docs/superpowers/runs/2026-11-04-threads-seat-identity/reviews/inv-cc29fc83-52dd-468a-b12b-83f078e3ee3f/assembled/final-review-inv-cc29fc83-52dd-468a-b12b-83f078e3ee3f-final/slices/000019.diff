@@ -1,0 +1,29 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md
+new file mode 100644
+index 0000000..320d796
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md
+@@ -0,0 +1,23 @@
++(Condensed orchestrator copy; reviewer 2 of round 2. Findings by type · subject; see coverage-findings-round-2.md for the union.)
++requirements:
++R1 → hg-66u.19
++R2 → hg-66u.14
++R3 → hg-66u.6
++R4 → hg-66u.12
++R5 → hg-66u.4
++R6 → hg-66u.9
++R7 → hg-66u.10
++R8 → hg-66u.8
++R9 → hg-66u.9
++R10 → hg-66u.16
++R11 → hg-66u.5
++R12 → hg-66u.8
++R13 → hg-66u.11
++R14 → hg-66u.4
++R15 → hg-66u.16
++R16 → hg-66u.24
++R17 → hg-66u.20
++R18 → hg-66u.13
++R19 → hg-66u.12
++R20 → hg-66u.23
++R21 → hg-66u.22

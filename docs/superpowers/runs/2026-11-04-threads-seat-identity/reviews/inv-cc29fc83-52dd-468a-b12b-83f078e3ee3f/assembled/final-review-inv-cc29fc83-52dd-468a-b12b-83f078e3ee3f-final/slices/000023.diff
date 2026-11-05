@@ -1,0 +1,47 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md
+new file mode 100644
+index 0000000..e440703
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md
+@@ -0,0 +1,41 @@
++# super-auto run — 2026-11-04-threads-seat-identity
++
++flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
++phase: code
++codeMechanism: Workflow
++runTag: threads-seat-identity-20261105T073527
++context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
++
++idea: Fully autonomous; both roasts (design roast and PR roast) on. Scope: herdr-graph side of the approved design docs/reviews/2026-10-29-seat-review-H2-identity-design.md (read also docs/reviews/2026-10-29-seat-review-H2.md and docs/reviews/2026-10-29-seat-review-H2-identity.md). Includes: H2 Option D (bead hg-s6o: /seat drops accept_command, skill step 5 delegates acceptance to herdr-threads); clone.threads_seat write-once binding; participation keyed to the clone/threads seat (not occupant), kept across agent exit (D3); agent launch/resume sets HERDR_GRAPH_CLONE=<cl_>; delete clone re-matching in favour of SeatInspect; undo/resurrection via threads UnretireSeat + relaunch with key; G4 headless resume driver; tab/workspace matching by preserved Herdr ids. Threads-side work (G1 v2.8.2 release, G2, D1 continuity key, D2 reversible retirement with requirement restore, G5) is owned by the herdr-threads coordinator (seat snSGTpBk7xGd, thread dOqG4VQNjQ4); graph tasks that depend on unreleased threads features must be sequenced/blocked on them, not faked. Constraints: Herdr is not modified; do not touch the user's live graph instance or live Herdr layout; another session may be editing src/cli/seat.rs and skills — check main is current before starting and rebase as needed.
++branch: super-auto/threads-seat-identity
++base: main
++epic: hg-66u
++roastDesignRound: 2
++roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md, 2026-11-05-threads-seat-identity-roast-design-2.md
++findingsLedgerDesign: findings-ledger-design.md
++spec: 2026-11-04-threads-seat-identity-design.md
++skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
++
++approvals:
++- root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "f868aa09569684ce2fe2c44c3ec6ee4f1b23baeb", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-auto", "source": "skill"}, {"id": "final-suite", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "nice cargo test && nice cargo test --features test-support && nice cargo test --features private-herdr -- --test-threads=1", "configuration": "default features; test-support; private-herdr (serial)", "requiredLive": false}, {"id": "phase7-choice", "kind": "human", "owner": "human", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [], "checkEvidence": [], "runFailures": []}
++- review-collection · {"invocationId": "inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md", "review": "pending", "required": [], "settled": false}
++- top-split · auto · hg-66u.1 LEAF, hg-66u.2 LEAF, hg-66u.3 LEAF, hg-66u.4 LEAF, hg-66u.5 LEAF, hg-66u.6 LEAF, hg-66u.7 LEAF, hg-66u.8 LEAF, hg-66u.9 LEAF, hg-66u.10 LEAF, hg-66u.11 LEAF, hg-66u.12 LEAF, hg-66u.13 LEAF, hg-66u.14 LEAF, hg-66u.15 LEAF, hg-66u.16 LEAF, hg-66u.17 LEAF, hg-66u.18 LEAF, hg-66u.19 LEAF, hg-66u.20 LEAF, hg-66u.21 LEAF, hg-66u.22 LEAF (promotion review: SPLIT .7→.19, SPLIT .13→.21, PROMOTE .10 and .16 overruled sp:demoted-by-session; spec amended c77dfe3)
++- coverage-round-1 · R1-R14 (R15-R21 appended from r-new) · specsAt b992cab337bbcbe87dca1bcda205cdba3fa8c455 · requirements: 14 · mapped: 14 · unmapped: 0 · cov-3..cov-22 applied auto except cov-10 rejected auto (see coverage-ledger.md)
++- coverage-round-2 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-23..cov-46 applied auto · divergence: findings: 19 → 20 novel: 12/20 (60%) widening: yes 
++
++parked:
++- graph-pass · graph-change · "narrow hg-66u.13 <- hg-66u.30 to hg-66u.13 <- hg-66u.34 + hg-66u.28 (safe no: shared src/reconcile/planner.rs; .13 cold-restart acceptance test needs .30 — move it to .33/.21); depth 8→7"
++- graph-pass · graph-change · "proposal: seam-contract seat_fact between hg-66u.28 and hg-66u.30 (fix the type and read accessor early, e.g. with .27) so .30 builds in parallel; depth 8→6 with the narrow"
++- graph-pass · graph-change · "proposal: split src/reconcile/planner.rs (reserve-key gate, resume rule, unseated restart arm, LiveIndex) so hg-66u.13/.30/.33/.14 do not serialize at merge"
++- 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 90 s grace + point-in-time shell-foreground check vs Herdr auto-resume latency (spike: restore 20+ agent panes with a client attached, time foreground transitions, test late attach)"
++- 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 assumes a pane seat stays Resolved after its agent exits with the pane open (B8); check on threads v3.0.0: agent checks in, exits, SeatInspect"
++- 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "material dissent: §7/§9 assume Herdr never reissues a public workspace/tab/pane id; Herdr reserve_workspace_ids can reissue a deleted highest workspace id after restore"
++- 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §7 'Herdr preserves tab/workspace ids across restore and handoff' unsourced for tabs and for live handoff on v0.9.5"
++- 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 headless cold restart assumes Herdr v0.9.5 restores bare-shell panes with no client attached"
++redesignCycles-design: 1
++redesign-design-1: round 1 · triggers shared-cause, defect-type · amended 2. Clone threads seat (write-once), 5. Launching with the continuity key, 6. Location and liveness from threads; delete clone re-matching, 8. Undo and resurrection onto the same seat (D2), 9. Resume driver after a headless cold restart (G4), Key abstractions, Unchanged behavior · lastGood 4795ea116f946a9551a7b59dd1037854bbcbe200 · designRoast - · state applied
++stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol inferred from (clone active, seat Retired) → persisted SeatIntent (Restore/Finalize) on CloneRecord driving unretire, succession, resume and finalize (dissolves 6)
++- coverage-amend-design-1 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-47..cov-65 applied auto except cov-56, cov-57 rejected auto (see coverage-ledger.md)
++- design-roast exit · converged at round 2 (Should-fix (12 confirmed) [converged]); punch list: all 12 applied inline as spec §14 + bead text, new leaf hg-66u.35 (clone purge command); no re-roast (super-design converged exit)
++graph-pass: depth 8→8 · width 3.5→3.5 · applied 0 · parked 3
++gates: fix-loop gate hg-66u.36 holds hg-66u.17/.18 (final-SHA rig smokes); threads gates hg-66u.1 (D1) and hg-66u.2 (D2) close together (one threads release, mnSGq1eyidhP)

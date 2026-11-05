@@ -1,0 +1,45 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md
+new file mode 100644
+index 0000000..bab1a79
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md
+@@ -0,0 +1,39 @@
++(Condensed copy by the orchestrator: requirements block verbatim in substance; findings listed by type · subject.)
++requirements:
++R1 → hg-66u.19, hg-66u.7, hg-66u.6, hg-66u.10
++R2 → hg-66u.14, hg-66u.15
++R3 → hg-66u.6, hg-66u.10
++R4 → hg-66u.9, hg-66u.11, hg-66u.12, hg-66u.13, hg-66u.21, hg-66u.17, hg-66u.18
++R5 → hg-66u.10, hg-66u.11, hg-66u.17
++R6 → (constraint)
++R7 → hg-66u.16, hg-66u.22, hg-66u.20
++R8 → hg-66u.8, hg-66u.10
++R9 → hg-66u.9, hg-66u.13, hg-66u.21
++R10 → hg-66u.22, hg-66u.16
++R11 → hg-66u.5
++R12 → hg-66u.8
++R13 → hg-66u.11
++R14 → hg-66u.4
++R-new: The graph's herdr-threads dependency is raised to the release that ships D1/D2/G5
++R-new: The graph has a defined disposition for seats in G5 limbo
++R-new: Clones closed before the upgrade (no threads_seat recorded) have a defined undo/resurrection path
++R-new: The operator has a resolution path for a key-conflict / Unknown clone now that manual rebind is removed
++findings:
++GAP · pin bump to D1/D2/G5 release
++GAP · G5 limbo disposition
++GAP · threads_seat producer not upstream of consumers
++GAP · B1/B10 succession after D2
++GAP · B7 undo reopens tab and resumes session
++GAP · pre-upgrade closed clones
++GAP · operator resolution of key conflicts
++GAP · R3 unreachable threads on actuators
++GAP · B6/B9 env delivery without Herdr change
++GAP · key-conflict alert ordering / reservation ordering
++GAP · pane closed during downtime
++UNOWNED-SEAM · continuity key value and derivation
++UNOWNED-SEAM · key reservation
++UNOWNED-SEAM · unretire want
++UNOWNED-SEAM · PaneSeatMap
++UNOWNED-SEAM · resolve-seat want
++ORPHAN · hg-66u.20
++ORPHAN · hg-66u.3

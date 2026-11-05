@@ -1,0 +1,97 @@
+# Final review, cluster 3 (docs-runs), epic hg-66u
+
+Invocation: inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f
+Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify <sha>^{commit}`).
+Source binding: `dispatch-text.mjs bind-review-source` exited 0 and echoed the same invocation, base and head.
+Caller checkout observed at HEAD e4984a49, `git status --short` clean. Nothing in the caller checkout was switched, restored or edited.
+
+## Scope and method
+
+Cluster docs-runs: the 23 files under `docs/superpowers/runs/2026-11-04-threads-seat-identity/` (slices 000004-000026). All are new files. Each was read at the head revision with `git show e4984a49:<path>`. The files are: the design spec (the epic's spec_id), the two design roast reports plus a format-repair copy of round 2, the round-1 step-back record and keys, the amendment record `amend-design-1.md`, coverage rounds 1 and 2 (requirements, condensed reviews, findings, ledger), the design findings ledger and overrides, friction, run.md, the two settled-tree snapshots and the threads ht-ma6i protocol-shapes relay.
+
+Acceptance standard: the spec's `## Requirement baseline` (B1-B11, human scope changes "none"). Source files were opened only for named risks: `src/observe/matcher.rs` (§7 preserved-id rule) and the `third_party/herdr-threads` gitlink and docs (B8 behaviour and the §1 pin).
+
+## Spec and run-record analysis
+
+Baseline mapping. The coverage requirements R1-R21 cover every baseline row: B1 to R1/R2, B2 to R3, B3 to R2/R20, B4 to R4, B5 to R5, B6 to R6, B7 to R7, B8 to R8/R19, B9 to R9, B10 to R10, B11 to R11. Both round-2 coverage reviews map all 21 to beads, and the ledger records each GAP's disposition (cov-1..cov-69). The `requirements:` block in `amend-design-1.md` omits B2 and B11. The amendment does not touch either one, so nothing is lost.
+
+Roast convergence. Round 1 returned Blocking (10). The step-back redesign introduced the persisted SeatIntent and dissolved six findings. Round 2 converged at Should-fix (12), and all twelve are resolved in spec §14:
+- 14.1 purge command
+- 14.2 tombstone regardless of kind
+- 14.3 ReleaseKey
+- 14.4 relink want gating the launch
+- 14.5 no intent for a seatless clone
+- 14.6 intent writers
+- 14.7 `launched` marker with commit-before-dispatch
+- 14.8 restart arm skips Restore
+- 14.9 committed seat_fact
+- 14.10 retire closes the pane
+- 14.11 want existence
+- 14.12 keyless reversibility
+
+I checked each against its round-2 fix-shape hint. Every one answers its finding, with one exception covered below: 14.12 records a B10 gap instead of closing it.
+
+Supersession clause. §14 says it "supersedes any conflicting sentence earlier in this spec". The earlier sentences were not edited, so the body still contradicts §14 in places:
+- §8 line 251: "Only the threads executor advances or clears the intent". §14.6/14.7 add the Herdr executor (`launched`) and the retire commit.
+- Key abstractions ThreadsSeatAssignment, line 445: "Must not ... create an intent". §14.6 and the shipped `write_restore_intent` helper in `src/threads/assignment.rs` say the opposite.
+- §3 line 126: the want exists "when it is active". §14.11 extends that to retired-unpurged.
+- §8 Restore lists three fields. §14.7 adds `launched`.
+
+An implementer who reads §8 or Key abstractions without §14 gets the old rule. This is documentation debt, not a behaviour defect.
+
+B10 and §14.12. The baseline row B10 ("undo fully hands-off ... threads restores the memberships on un-retire") is lowered by §14.12. The spec accepts that a keyless seat closes final and that its undo needs one re-acceptance. One named cause is "backfill link not yet done", which is transient because the backfill want retries. The other, "shell rejected the export", is permanent for that clone, and the graph could close it.
+
+Take a post-D1 clone whose pane shell rejects `export`. Its reservation is recorded at creation, but no check-in ever presents the key. Threads mints or reattaches its seat by plain check-in, and the graph then learns the seat through the verified-binding ResolveSeat (§2). The spec issues the seat-bearing `ReserveContinuityKey{key, seat}` only for "clones that predate D1" (§5, line 179) and for succession relink (§14.4). Nothing binds an existing reservation to a seat the graph resolved by pane binding.
+
+The protocol-shapes relay (corrections mnSGt9sPAujE and mnSGLnbuvcjW) says threads accepts a seat-bearing reserve for a resolved or unresolved seat that holds no other key. Threads then counts the seat as keyed, so a pane close is reversible. A graph-side remedy therefore exists, and no human scope-change row covers the gap. The pre-D2 interim (succession with re-acceptance) and the operator-final exception (cov-34) are a different matter. They are delivery order and an explicit operator act, not a lowering, provided the hand-back lists B10 as open while D2 is gated.
+
+Unresolved external assumptions. Round 1 sent four external-unverified items and one material dissent to "need human". run.md parks them, and round 2 notes they "remain open for the human decision recorded there". The spec records none of them, and still states as fact (line 49, §7) that Herdr v0.9.5 preserves workspace/tab/pane ids across restore and handoff.
+
+The dissent is concrete. Round 1's ground seat cites Herdr `reserve_workspace_ids` and the repo's `archive/HERDR-IDENTITY-CHECK.md:19`: after a restore, a deleted highest-numbered workspace id can be issued again. The shipped hg-66u.11 matcher (`src/observe/matcher.rs`, diff hunks at lines ~207 and ~257) now links a bound tab or workspace id by plain equality in any incarnation, with no reuse guard. A reissued id would therefore bind a teamspace to the wrong workspace.
+
+The smoke hg-66u.17 checks that ids are preserved, not that they are never reissued. The other three items (headless bare-shell restore, the 90 s grace racing Herdr auto-resume, a seat staying Resolved after agent exit) are covered by hg-66u.17's three configurations, but only once it runs. It is open and blocked on the fix-loop gate hg-66u.36. On B8, the threads docs in the checked-out submodule (`docs/operations.md:219`, v2.6.4) say process exit only disconnects the binding and does not retire the seat. That supports the assumption but is not v3.0.0 evidence.
+
+Run-record hygiene:
+- `findings-ledger-design.md` is headed "through r1" and has no round-2 entries. The round-2 punch list appears only in run.md's exit line and spec §14.
+- `2026-11-05-threads-seat-identity-roast-design-2-format-repair.md` differs from the original only by a missing trailing `---`. friction.md records that repair as rejected ("original stands"), yet the rejected copy is committed beside the original.
+- Round 2 rejected two items but left two one-sentence documentation residuals: tie the restore-limbo window to G5, and state that seat reads and the intent come from one snapshot. Neither was added to the spec.
+- The spec's `## Post-Implementation Notes` is empty, though the task reports record divergences. Examples: hg-66u.25 relaxes "SplitPane after swap" until rebind exists, hg-66u.7's writer rejection after async admission is not observed by the executor, and hg-66u.35's `clone_status` drops the journal parameter.
+
+## Baseline row accounting (docs-runs view)
+
+- B1, B2, B3, B4, B5, B6, B7, B8, B9, B11: the spec and coverage records carry each row to owning beads without lowering it. Delivery runs through code in other clusters (seam reviewer).
+- B10: lowered in spec §14.12 for keyless seats. The shell-rejection case is closable on the graph side, see the must-fix item.
+- Gated rows: B3 (matcher deletion hg-66u.14/.15), B9 (keyed launch hg-66u.43/.44), B10 (D2 restore hg-66u.31/.32) and part of B4 (fresh-agent path hg-66u.21) wait on gates hg-66u.1/.2, which are still open. The epic's Global Constraints require the hand-back to list them as open. That is the seam reviewer's and the orchestrator's to account for.
+
+## Seam handoffs
+
+- The reviewed head's `third_party/herdr-threads` gitlink is cdc8423f ("Prepare v2.6.4"). `third_party`, `Cargo.toml` and `Cargo.lock` do not appear in the base..head diff, and hg-66u.4 (v3.0.0 bump) is open. Spec §1 makes v3.0.0 the bottleneck. Whether the code clusters' v3.0.0-dependent work (SeatInspect, ThreadsSeatView) is reachable at this head is for the seam and code reviewers.
+- Many beads the spec relies on are open at this head: .6, .7, .8, .28, .29, .30 and others. Tracing B1/B4/B5/B7/B8 from production entry points leaves this cluster.
+
+## Findings
+
+- [Must fix] B10 is lowered by spec §14.12 (design.md line 413). A post-D1 clone whose shell rejects the export keeps an unbound key permanently, so a pane close is final and undo needs re-acceptance. A graph-side remedy exists: a seat-bearing `ReserveContinuityKey{key, seat: threads_seat}` whenever a reservation is recorded and not bound to the clone's seat (accepted for resolved or unresolved seats per mnSGLnbuvcjW). The spec limits that call to pre-D1 backfill (§5 line 179) and succession relink (§14.4). No human scope-change row covers this.
+- [Should fix] Spec body sentences contradict §14 and were not edited: §8 line 251 (executor-only intent writes), Key abstractions line 445 ("Must not ... create an intent"), §3 line 126 (want exists only while active), §8 Restore field list. Only the §14 supersession clause reconciles them.
+- [Should fix] Spec line 49 and §7 state Herdr id preservation across restore and handoff as fact. Round 1's material dissent (workspace id reissue via `reserve_workspace_ids`) and its four external-unverified items are parked "need human" in run.md and appear nowhere in the spec. The shipped matcher binds by id equality in any incarnation with no reuse guard.
+- [Nit] `findings-ledger-design.md` stops at r1, so round-2 findings and their §14 dispositions are not ledgered.
+- [Nit] The rejected format-repair copy of the round-2 roast is committed beside the original that friction.md says stands.
+- [Nit] Round-2 documentation residuals (G5 limbo window sentence, one-snapshot sentence) were not added. Post-Implementation Notes is empty despite recorded divergences.
+
+## Verdict
+not ready (spec §14.12 lowers baseline row B10 for keyless seats although a graph-side seat-bearing key reserve can close it)
+
+## Must fix before landing
+- B10: spec §14.12 (docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md:413) accepts re-acceptance on undo for a keyless seat, and a shell that rejects the export leaves a post-D1 clone keyless permanently; the spec should require a seat-bearing ReserveContinuityKey{key, seat: threads_seat} whenever a recorded reservation is not bound to the clone's seat (shapes doc mnSGLnbuvcjW), not only for pre-D1 backfill (§5 line 179) and succession relink (§14.4), and assign that want to the reservation bead (hg-66u.43)
+
+## Untested scope
+- Herdr id reissue: the round-1 material dissent (deleted highest workspace id reissued after restore) has no spec record, no reuse guard in the hg-66u.11 matcher (bound-id equality in any incarnation), and no test; hg-66u.17 checks preservation, not reissue
+- Round-1 external-unverified items (headless bare-shell restore, 90 s grace vs Herdr auto-resume, seat stays Resolved after agent exit on v3.0.0, tab/workspace id preservation on v0.9.5) rely on hg-66u.17, which is open and blocked on gate hg-66u.36; nothing has run
+- B8 support is from threads docs at the checked-out v2.6.4 submodule (docs/operations.md:219), not v3.0.0
+
+## Deferred OK
+- Spec body sentences that contradict §14 (§8 line 251, Key abstractions line 445, §3 line 126, §8 Restore field list) are reconciled only by the §14 supersession clause; edit them in place when the spec is next amended
+- findings-ledger-design.md is headed "through r1" and lacks the round-2 entries and their §14 dispositions
+- The rejected round-2 format-repair copy is committed beside the original roast report that friction.md says stands
+- Round-2 documentation residuals (tie the restore-limbo window to G5; state that seat reads and the intent come from one snapshot) were not added to the spec
+- Spec Post-Implementation Notes is empty despite divergences recorded in task reports (hg-66u.25 SplitPane-after-swap relaxation, hg-66u.7 unobserved async admission rejection, hg-66u.35 clone_status signature)
+- The hand-back must list B3, B9, B10 and the B4 fresh-agent path as open while gates hg-66u.1/.2 stay closed (epic Global Constraints); the orchestrator's and seam reviewer's to report

@@ -1,0 +1,129 @@
+diff --git a/src/reconcile/tests.rs b/src/reconcile/tests.rs
+index cf9a165..7c12091 100644
+--- a/src/reconcile/tests.rs
++++ b/src/reconcile/tests.rs
+@@ -7,6 +7,7 @@ use crate::model::clone::CloneRecord;
+ use crate::model::common::{Availability, Binding, Lifecycle, Occupant};
+ use crate::model::effect::{ContainerKind, EndState};
+ use crate::model::harness::{Harness, StartOutcome};
++use crate::model::launch::agent_env;
+ use crate::model::native_session::NativeSession;
+ use crate::model::operation::OpState;
+ use crate::model::seat::SeatRecord;
+@@ -446,6 +447,7 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
+     };
+     assert_eq!(start.kind, "claude");
+     assert!(start.args.is_empty());
++    assert_eq!(start.env, agent_env(&c.id, false));
+ 
+     // Binding written back as a bookkeeping mutation.
+     let bound = clones_of(&fx, &s.id).remove(0).runtime;
+@@ -469,6 +471,31 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
+     );
+ }
+ 
++#[tokio::test]
++async fn start_records_the_exported_variable_names() {
++    let fx = fx();
++    activate(&fx, "claude");
++    step(&fx).await;
++    let c = only_clone(&fx, "foreman");
++    let pane = fx
++        .herdr
++        .calls()
++        .into_iter()
++        .find_map(|call| match call {
++            FakeCall::StartAgent(s) => Some(s.pane),
++            _ => None,
++        })
++        .expect("an agent was started");
++    let raw = fx
++        .journal
++        .meta_get(&planner::launch_env_key(&c.id))
++        .unwrap()
++        .expect("launch_env recorded with the start");
++    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
++    assert_eq!(v["pane"], pane.0);
++    assert_eq!(v["vars"], json!(["HERDR_GRAPH_CLONE"]));
++}
++
+ #[tokio::test]
+ async fn shell_harness_starts_no_agent() {
+     let fx = fx();
+@@ -650,6 +677,49 @@ async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguit
+     );
+ }
+ 
++#[tokio::test]
++async fn live_index_matches_bound_tab_and_workspace_across_incarnations() {
++    let fx = fx();
++    activate(&fx, "claude");
++    step(&fx).await;
++    let seat_id = seat(&fx, "foreman").id;
++    let before = fx.herdr.snapshot().await.unwrap();
++    // No tokens survive, so only the bound ids can place the objects.
++    fx.herdr.restart(false, false);
++    let snap = fx.herdr.snapshot().await.unwrap();
++    assert_ne!(snap.incarnation, before.incarnation);
++    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
++    let ts = desired.workspaces[0].ts.clone();
++    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
++    let (ws, tab) = idx.tab_for_seat(&seat_id).expect("bound tab id survives");
++    assert_eq!(tab.id, before.workspaces[0].tabs.last().unwrap().id);
++    assert_eq!(ws.id, before.workspaces[0].id);
++    assert_eq!(idx.workspace(&ts).expect("bound workspace id").ws.id, ws.id);
++}
++
++#[tokio::test]
++async fn live_index_does_not_refind_an_absent_bound_tab_or_workspace_by_tokens() {
++    let fx = fx();
++    activate(&fx, "claude");
++    step(&fx).await;
++    let seat_id = seat(&fx, "foreman").id;
++    // Tokens survive (the seat's clone pane and the workspace stay stamped) but the ids do not.
++    fx.herdr.restart(true, true);
++    fx.herdr.renumber_tabs_and_workspaces();
++    let snap = fx.herdr.snapshot().await.unwrap();
++    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
++    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
++    assert!(
++        snap.workspaces
++            .iter()
++            .flat_map(|w| &w.tabs)
++            .flat_map(|t| &t.panes)
++            .any(|p| p.metadata.contains_key("hg")),
++        "a token-stamped clone pane is still live"
++    );
++    assert!(idx.tab_for_seat(&seat_id).is_none());
++}
++
+ #[tokio::test]
+ async fn lost_response_create_adopted_by_nonce() {
+     let fx = fx();
+@@ -1002,6 +1072,7 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
+         })
+         .collect();
+     assert_eq!(starts.len(), 1);
++    assert_eq!(starts[0].env, agent_env(&c.id, false));
+     assert_eq!(starts[0].pane, pane);
+     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
+     // Exit keys come before the restart.
+@@ -1338,6 +1409,7 @@ async fn replacement_resumes_after_occupant_cleared() {
+     let starts = start_calls(&fx);
+     assert_eq!(starts.len(), 1, "{starts:?}");
+     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
++    assert_eq!(starts[0].env, agent_env(&c.id, false));
+     let launched: serde_json::Value = serde_json::from_str(
+         &fx.journal
+             .meta_get(&planner::launched_key(&c.id))
+@@ -1584,7 +1656,9 @@ async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
+     assert_eq!(
+         count_calls(
+             &fx,
+-            |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")
++            |call| matches!(call, FakeCall::StartAgent(s) if s.pane == pane
++                && s.kind == "claude"
++                && s.env == agent_env(&c.id, false))
+         ),
+         1
+     );

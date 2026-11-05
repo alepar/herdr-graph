@@ -1,0 +1,161 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md
+new file mode 100644
+index 0000000..970bb53
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md
+@@ -0,0 +1,155 @@
++## Task tree
++
++- hg-66u · Threads seat as the clone identity (graph side) (epic) · Root epic for super-auto run 2026-11-04-threads-seat-identity. · deps: none
++  - hg-66u.1 · Gate: herdr-threads D1 continuity key released (ht-ma6i.2) · Gate bead: closed by the super-auto orchestrator when the herdr-threads coordinator announces ht-ma6i.2 (D1) released on thread dOqG4VQNjQ4 (threads epic ht-ma6 · deps: none
++  - hg-66u.2 · Gate: herdr-threads D2 reversible retirement released (ht-ma6i.3) · Gate bead: closed by the super-auto orchestrator when the herdr-threads coordinator announces ht-ma6i.3 (D2) released on thread dOqG4VQNjQ4 (threads epic ht-ma6 · deps: none
++  - hg-66u.3 · Gate: herdr-threads G5 limbo disposition released (ht-ma6i.4) · Gate bead: closed by the super-auto orchestrator when the herdr-threads coordinator announces ht-ma6i.4 (G5) released on thread dOqG4VQNjQ4 (threads epic ht-ma6 · deps: none
++  - hg-66u.4 · Bump herdr-threads to v3.0.0 · Spec §1. · deps: none
++      owns: herdr-threads v3.0.0 protocol compatibility in the threads adapter and port.
++      - [ ] submodule at v3.0.0, Cargo.lock updated, cargo build and the full unit suite pass
++      - [ ] tests/threads_real.rs passes against the v3.0.0 binary when its env gate is enabled (or is recorded unmet with the reason when the binary/rig is unavailable)
++      - [ ] CURRENT-DESIGN.md names the v3.0.0 version and wire protocol
++      - [ ] no behaviour change in graph features beyond protocol adaptation
++      - [ ] confirm from the v3.0.0 changelog/source that process continuity after live handoff (ht-hsyg, shipped 2.8.2) is included; cite it in the bead close note
++      - [ ] any check recorded unmet (no private rig or threads binary) is reported as an open acceptance item at hand-back (not a pass)
++  - hg-66u.5 · /seat drops accept_command; skill delegates acceptance to herdr-threads (H2 Option D, hg-s6o) · Spec §4. · deps: none
++      - [ ] /seat JSON and text output carry no acceptance command for any invitation
++      - [ ] skills/seat/SKILL.md step 4 has the delegated wording for required and ordinary invitations
++      - [ ] tests updated; suite green
++  - hg-66u.6 · Seat contract: ThreadsSeatView port and SeatStatus · Spec §6, Key abstractions SeatStatus and ThreadsSeatView. · deps: hg-66u.4
++      owns: SeatStatus, ThreadsSeatView.
++      - [ ] ThreadsSeatView trait + real impl + fake; SeatStatus enum with responsibility comments
++      - [ ] transport errors (Disconnected/ServiceBusy vs Rejected/Unsupported) surface as ThreadsError, never as a fabricated status
++      - [ ] unit tests for the wire->SeatStatus mapping against v3.0.0 result fixtures
++      - [ ] a threads service older than the pin answering Unsupported/Rejected surfaces as a visible status error for the affected action, with no state recorded (test)
++  - hg-66u.7 · Clone threads_seat: write-once assignment and resolve-seat want · Spec §2, Key abstractions PaneSeatMap and ThreadsSource. · deps: hg-66u.19, hg-66u.4
++      owns: PaneSeatMap seat-lifecycle port (resolve with Deferred refusals), resolve-seat want and its ResolveSeat op-id idempotence.
++      consumes: ThreadsSeatAssignment.
++      - [ ] resolve want fires only on verified bindings (test)
++      - [ ] refusals defer; no second ResolveSeat with a new op id while deferred (test)
++      - [ ] live clones are backfilled (test)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no threads_seat is written and a retry reuses the same ResolveSeat op id (test)
++  - hg-66u.8 · Participation keyed to the clone's threads seat (D3) · Spec §3. · deps: hg-66u.19
++      consumes: ThreadsSeatAssignment (CloneRecord.threads_seat).
++      - [ ] /clear or relaunch on the same pane issues no release or re-invite (test)
++      - [ ] agent exit with pane open keeps required memberships (test)
++      - [ ] upgrade with existing links causes no re-invite (test)
++      - [ ] docs updated
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no release or invite happens (test)
++      - [ ] closing the clone's pane retires the clone and the graph issues no release (test); the want's existence condition is 'clone active or retired-undoable with threads_seat known', so retirement does not drop it
++      - [ ] graph retire of a clone whose pane is open closes the pane through the reconciler (existing behaviour; verify), so threads retires the seat; if verification shows the pane is kept, memberships stay until purge and this is documented (test)
++  - hg-66u.9 · Launch agents with the continuity key env · Spec §5, Key abstractions StartAgent/HerdrApi adapter and model::launch. · deps: none
++      owns: model::launch agent env builder, StartAgent env.
++      - [ ] every graph agent start path passes the builder's env (unit tests on the fake Herdr)
++      - [ ] confirm from the pinned Herdr v0.9.5 source/API (cite file:line) whether agent start accepts env; if not, deliver it with an `env K=V` argv prefix (no Herdr change). Not closable as "recorded unmet".
++      - [ ] the real Herdr adapter delivers the env to the agent process (herdr_client/real test on a private rig; an unavailable rig is reported as an open acceptance item at hand-back)
++  - hg-66u.10 · SeatObservation: clone location and liveness from threads · Spec §6, Key abstractions SeatObservation. · deps: hg-66u.19, hg-66u.6
++      owns: SeatObservation.
++      consumes: SeatStatus, ThreadsSeatView, ThreadsSeatAssignment.
++      - [ ] each SeatStatus maps as specified (unit tests with the fake view)
++      - [ ] live handoff simulation (new incarnation, new terminal ids, no tokens, seat Resolved at same pane) keeps clones Present with no operator step (test)
++      - [ ] threads unreachable changes no binding (test)
++      - [ ] a clone whose pane is closed (threads retires the seat) is retired, undoably, on the next step (test)
++  - hg-66u.11 · Tabs and workspaces match by preserved Herdr ids · Spec §7. · deps: none
++      - [ ] restart with preserved ids rebinds tabs/workspaces without voting (tests)
++      - [ ] missing id -> Unknown (test)
++      - [ ] no change to clone passes
++  - hg-66u.12 · Resume driver after headless cold restart (G4, session path) · Spec §9. · deps: hg-66u.10, hg-66u.9
++      owns: resume driver — the sole launch want for clones whose seat is Unresolved (planner start_needed skips them), its grace window and guards; undo and the fresh-agent path launch only through it.
++      consumes: SeatObservation unresolved fact, model::launch agent env builder.
++      - [ ] headless cold-restart simulation resumes each clone with a resumable session into its last pane after grace (test)
++      - [ ] no launch when pane has an agent or no resumable session (tests)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no launch happens (test)
++      - [ ] an agent exiting while its pane stays open, with no Herdr restart, launches nothing (its seat stays Resolved) (test)
++      - [ ] last bound pane missing after a cold restart: no launch attempt, clone stays Unknown (test)
++      - [ ] after a relaunch in a different harness on the same pane, the clone's resumable session is the new occupant's and a later cold restart resumes that one (test)
++      - [ ] attended cold restart: an agent Herdr auto-resumed (no key env) reattaches its seat by C1 (threads' same-native-session continuity claim) and the driver, waiting out the grace, launches nothing into that pane (test)
++      - [ ] status names a clone stuck Unknown because its last pane is missing and gives the remedy (retire it); the G5 gate not releasing is reported at hand-back (test of status text)
++  - hg-66u.13 · Reserve continuity keys and surface key conflicts (D1) · Spec §5, §9, §10. · deps: hg-66u.1, hg-66u.12, hg-66u.6
++      owns: herdr-threads D1 pin, KeyConflict SeatStatus variant production and SeatInspect continuity_key mapping, ContinuityKey (value = the clone's cl_ id; holder = the graph's registered service; reservation needs no seat; reservation state recorded on CloneRecord), key reservation, key-conflict alert (shape, journal storage, set from SeatInspect continuity_key.conflict / ContinuityAlerts, cleared when the conflict disappears).
++      consumes: ThreadsSeatView, SeatStatus, model::launch agent env builder.
++      - [ ] keys reserved before first keyed launch (test)
++      - [ ] KeyConflict surfaces as Unknown + alert (test)
++      - [ ] status shows the key-conflict alert (test)
++      - [ ] the env builder emits the key once the reservation is recorded (test)
++      - [ ] documented operator resolution for a key-conflict alert (status names the conflicting pane and the remedy: close the stray pane or retire/purge the clone; threads clears the hold at the next check-in) (test of the status text)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no reservation is recorded, the builder emits no key, and an existing key-conflict alert is not cleared (test)
++      - [ ] pin at the D1 release; suite green
++      - [ ] a clone created after D1 is reserved before its first agent launch, so that launch carries the key (test)
++      - [ ] active clones that predate D1 get their key reserved by a backfill and linked to their current seat: via a seat-bearing ReserveContinuityKey if threads provides it (asked on thread dOqG4VQNjQ4, message mnSGjHOtxksb), otherwise by one keyed relaunch per clone at its next idle point; then a pre-D1 clone survives a headless cold restart on its seat (test)
++  - hg-66u.14 · Delete the graph's clone re-matching (observe matcher and LiveIndex) · Spec §6. · deps: hg-66u.1, hg-66u.11, hg-66u.13, hg-66u.23
++      consumes: SeatObservation.
++      - [ ] no clone re-matching code remains (repo-wide search for deleted symbols clean)
++      - [ ] restart/handoff tests pass via SeatObservation
++      - [ ] suite green
++      - [ ] blocked until the parity table (hg-66u.23), re-run after D1 with key-dependent scenarios, records no worse-than-matcher scenario, or each such finding is fixed upstream or listed as an open item for the human at hand-back (in which case the matcher is not deleted)
++      - [ ] the planner no longer re-matches clones: plans use SeatObservation's binding (test)
++  - hg-66u.15 · Remove /seat rebind proposals and clone rebind --pane · Spec §6. · deps: hg-66u.1, hg-66u.13
++      - [ ] no rebind proposal or clone rebind --pane remains (repo-wide search clean)
++      - [ ] first bind of an unseated clone still works (test)
++  - hg-66u.16 · Unretire and finalize threads seats (D2, threads side) · Spec §8, §10. · deps: hg-66u.13, hg-66u.2
++      owns: unretire want (UnretireSeat), finalize-on-purge, herdr-threads D2 pin, reversible/final retirement SeatStatus mapping, UnretireSeat/FinalizeRetirement port wrappers.
++      consumes: ThreadsSeatView, SeatStatus, PaneSeatMap.
++      - [ ] an active clone with a reversibly retired seat triggers UnretireSeat (test on fake)
++      - [ ] reversible vs final mapped from SeatInspect (fixture test)
++      - [ ] purge finalizes retirement / releases the key (test)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no unretire or finalize happens (test)
++      - [ ] pin at the D2 release; suite green
++  - hg-66u.17 · Configuration smoke: live handoff and cold restart on a private rig (pre-D1) · Spec §11. · deps: hg-66u.10, hg-66u.11, hg-66u.12, hg-66u.25, hg-66u.7, hg-66u.8
++      - [ ] each of the three configurations runs and passes, or is recorded unmet with reason
++      - [ ] any configuration recorded unmet is reported as an open acceptance item at hand-back (not a pass)
++  - hg-66u.18 · Configuration smoke: fresh agents, pane closed during downtime, undo keeps seat (post-gates) · Spec §11. · deps: hg-66u.14, hg-66u.21, hg-66u.22, hg-66u.24, hg-66u.3
++      - [ ] each of the three configurations runs and passes, or is recorded unmet with reason
++      - [ ] any configuration recorded unmet is reported as an open acceptance item at hand-back (not a pass)
++  - hg-66u.19 · ThreadsSeatAssignment: CloneRecord.threads_seat field and write-once mutation · Spec §2, Key abstractions ThreadsSeatAssignment and CloneRecord. · deps: none
++      owns: ThreadsSeatAssignment, CloneRecord.threads_seat.
++      - [ ] write-once, idempotent same-seat, rejected different seat, rejected held-elsewhere, allowed succession of a final-retired seat on restore (tests)
++      - [ ] GRAPH_STATE.md documents the field and succession
++  - hg-66u.20 · Seat succession on undo and resurrection (pre-D2 interim) · Spec §2 and §8 (interim). · deps: hg-66u.10, hg-66u.7
++      owns: seat-succession want and policy (when a seat may be succeeded). Never succeeds a seat that is not final-retired.
++      consumes: ThreadsSeatAssignment, SeatObservation.
++      - [ ] close a clone's pane, graph undo: the clone is Present with a new seat recorded as succession, memberships re-invited (test)
++      - [ ] same for resurrection (test)
++      - [ ] a live or unresolved seat is never succeeded (test)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no succession happens (test)
++      - [ ] an unseated closed clone (closed before the upgrade, no threads_seat) takes a first bind via ResolveSeat when undone or resurrected (test)
++      - [ ] undo reopens the tab in its original workspace (no caller-pane adoption) and the agent resumes its last session with exactly one launch (test)
++  - hg-66u.21 · Resume driver: fresh-agent path after cold restart (D1) · Spec §9. · deps: hg-66u.12, hg-66u.13
++      consumes: model::launch agent env builder, key reservation.
++      - [ ] headless cold restart with a non-resumable clone launches a fresh keyed agent in its last pane after grace (test)
++      - [ ] fresh agent in a restored bare pane reattaches the same seat (threads_real on a private rig, or recorded unmet with reason)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no launch happens (test)
++      - [ ] an agent exiting while its pane stays open, with no Herdr restart, launches nothing (test)
++      - [ ] a clone with a key-conflict alert is never launched (test)
++      - [ ] a clone with no recorded reservation is not fresh-launched (test)
++      - [ ] any check recorded unmet (no private rig or threads binary) is reported as an open acceptance item at hand-back (not a pass)
++  - hg-66u.22 · Undo and resurrection restore the same seat via un-retire (D2) · Spec §8. · deps: hg-66u.16
++      consumes: seat-succession policy, resume driver.
++      consumes: SeatObservation, model::launch agent env builder, unretire want.
++      - [ ] close then graph undo restores the clone on the same threads seat id with memberships intact and no re-acceptance (fake-backed test; real rig or recorded unmet)
++      - [ ] resurrection does the same
++      - [ ] docs updated (CURRENT-DESIGN.md undo lines)
++      - [ ] after D2, seat succession (hg-66u.20) is restricted to final-retired seats; a reversibly retired seat is never succeeded (test); a final-retired seat (operator final retire) is succeeded with one re-acceptance, documented in CURRENT-DESIGN.md as the exception
++      - [ ] undo reopens the tab in its original workspace and resumes the agent's last session with the continuity key (test)
++      - [ ] an unseated closed clone (closed before the upgrade) takes a first bind via ResolveSeat when undone (test)
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, undo commits no seat change and launches nothing until threads answers (test)
++      - [ ] undo produces exactly one agent launch, by the resume driver (test)
++      - [ ] the only finalizers of a reversible retirement are graph FinalizeRetirement at purge and an explicit operator retire (cite the D2 shape: no threads timer); a seat finalized by the operator is succeeded with one re-acceptance, documented as the exception
++      - [ ] any check recorded unmet (no private rig or threads binary) is reported as an open acceptance item at hand-back (not a pass)
++  - hg-66u.23 · Parity check: old clone-matcher scenarios replayed against SeatObservation · Spec §6, requirement B3 (threads must be as good as or better than the graph's matcher before delegation). · deps: hg-66u.10, hg-66u.7
++      consumes: SeatObservation, ThreadsSeatAssignment.
++      - [ ] parity.md lists every old matcher scenario with its SeatObservation test or a recorded justification why it no longer applies
++      - [ ] every listed SeatObservation test passes
++      - [ ] scenarios where threads is worse than the old matcher are listed as findings (not silently dropped)
++  - hg-66u.24 · Honour herdr-threads G5 limbo disposition (G5) · Spec §10, Key abstractions "Future change, G5". · deps: hg-66u.10, hg-66u.12, hg-66u.3
++      owns: G5 disposition mapping, herdr-threads G5 pin.
++      consumes: SeatStatus, SeatObservation.
++      - [ ] pane closed during Herdr downtime: after the G5 window the clone is retired and undoable, and no resume is attempted (test)
++      - [ ] pin at the G5 release; suite green
++      - [ ] with threads unreachable (ThreadsError Disconnected/ServiceBusy) during the pass, no clone is retired from elapsed time alone (test)
++  - hg-66u.25 · Graph daemon reconnects across herdr update --handoff · Spec §1 problem statement, requirement B5 (graph side of live handoff). · deps: none
++      - [ ] fake-Herdr test swapping the server under a running RuntimeLoop: the loop reconnects, records the new incarnation and continues (test)
++      - [ ] no duplicate launches or retirements across the swap (test)
++  - hg-66u.26 · Integration sweep: threads seat as the clone identity (ungated tree) · Root integration sweep (super-design §Coverage). · deps: hg-66u.10, hg-66u.11, hg-66u.12, hg-66u.17, hg-66u.19, hg-66u.20, hg-66u.23, hg-66u.25, hg-66u.4, hg-66u.5, hg-66u.6, hg-66u.7, hg-66u.8, hg-66u.9
++      - [ ] each listed main flow has a passing integration test (fakes) or is covered by hg-66u.17's rig run
++      - [ ] no unwired config/parameter/interface found, or each found one fixed or filed

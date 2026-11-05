@@ -1,0 +1,20 @@
+diff --git a/tests/integration_sweep.rs b/tests/integration_sweep.rs
+index 5a34d3e..c762b97 100644
+--- a/tests/integration_sweep.rs
++++ b/tests/integration_sweep.rs
+@@ -1509,6 +1509,7 @@ mod wiring {
+             K::SeatOverride,
+             K::CloneAdd,
+             K::CloneRetire,
++            K::ClonePurge,
+             K::CloneRebind,
+             K::ParticipationJoin,
+             K::ParticipationLeave,
+@@ -1539,6 +1540,7 @@ mod wiring {
+                 | K::SeatOverride => {}
+                 K::CloneAdd
+                 | K::CloneRetire
++                | K::ClonePurge
+                 | K::CloneRebind
+                 | K::ParticipationJoin
+                 | K::ParticipationLeave => {}

@@ -1,0 +1,12 @@
+diff --git a/CURRENT-DESIGN.md b/CURRENT-DESIGN.md
+index e8a9f8c..d1fd1a5 100644
+--- a/CURRENT-DESIGN.md
++++ b/CURRENT-DESIGN.md
+@@ -61,6 +61,7 @@ Consolidated contract for the authorized implementation. Detailed decisions and
+ - Dedicated CLI, separate from automatic `/seat`. List recent actions newest first, let user select, show a concrete undo plan, then [y/n]. Adopt the command's current terminal pane only when restoring a runtime presence; identify the restored clone it becomes and other panes to reopen. Previously dormant seats remain dormant.
+ - Preview any existing binding of the recovery pane and its replacement; archive displaced identities and preserve their history. Adoption affecting unrelated occupants/work requires a repair plan. When undo restores no runtime presence, leave the caller's pane in place unless that pane is itself retired by the undo. In that case, preview its closure, persist the operation and provide its ID before closing it; completion remains discoverable elsewhere.
+ - Initial scope includes closures/retirements, hydration and template updates. Grouped actions record before/after/provenance. Undo creates compensating graph mutations and reconciliation; preserve history and unrelated work.
++- `clone purge <clone>` (plan/confirm) ends a retired clone's undo window: undo and seat resurrection no longer bring it back. There is no automatic retention timer. A clone that held a threads seat leaves an inert tombstone (identity plus `Finalize{seat}`) until threads finalizes the retirement; a seatless clone's record is removed. `status` lists retired-unpurged clones under `clones.retired_unpurged`.
+ - Hydration undo retires its application to stop live-template generation, then removes that application's contributions using current membership and dependencies. Include later template-created members; retire only those still exclusive to the application. Preserve pre-existing or subsequently reused objects and relationships with another independent contribution. Show preserved and retired objects in the preview; ambiguous dependencies go to agent repair planning. Template undo reverses the edit while preserving unrelated later edits and instance overrides. Preview all current affected instances, even those created later.
+ - Conflicting later edits are explained and sent to an agent for repair planning; do not guess. Native session resume versus fresh launch, exact multi-object placement mechanics and dependency conflict checks remain to specify.
+ 

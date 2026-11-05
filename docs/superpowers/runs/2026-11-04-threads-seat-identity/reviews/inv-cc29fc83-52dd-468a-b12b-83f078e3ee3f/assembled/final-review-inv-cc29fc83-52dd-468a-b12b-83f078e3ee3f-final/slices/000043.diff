@@ -1,0 +1,81 @@
+diff --git a/src/model/tests.rs b/src/model/tests.rs
+index bd9df1c..3d5718f 100644
+--- a/src/model/tests.rs
++++ b/src/model/tests.rs
+@@ -378,6 +378,9 @@ fn clone_record_roundtrip() {
+             }),
+         }],
+         reload_required: true,
++        threads_seat: None,
++        threads_seat_history: vec![],
++        seat_intent: None,
+     });
+     toml_rt(&CloneRecord {
+         schema: 1,
+@@ -394,7 +397,50 @@ fn clone_record_roundtrip() {
+         opt_outs: vec![],
+         invitations: vec![],
+         reload_required: false,
++        threads_seat: None,
++        threads_seat_history: vec![],
++        seat_intent: None,
+     });
++    let epoch = OpId::new();
++    for intent in [
++        SeatIntent::Restore {
++            seat: "seat-b".into(),
++            epoch: epoch.clone(),
++            threads_done: true,
++            launched: true,
++        },
++        SeatIntent::Restore {
++            seat: "seat-b".into(),
++            epoch,
++            threads_done: false,
++            launched: false,
++        },
++        SeatIntent::Finalize {
++            seat: "seat-b".into(),
++        },
++        SeatIntent::ReleaseKey { key: "k1".into() },
++    ] {
++        let rec = CloneRecord {
++            schema: 1,
++            id: CloneId::new(),
++            rev: 2,
++            seat: SeatId::new(),
++            name: "c".into(),
++            name_history: vec![],
++            lifecycle: CloneLifecycle::Retired,
++            retired: Some(retirement()),
++            runtime: minimal_runtime(),
++            occupant: None,
++            sessions: vec![],
++            opt_outs: vec![],
++            invitations: vec![],
++            reload_required: false,
++            threads_seat: Some("seat-b".into()),
++            threads_seat_history: vec!["seat-a".into()],
++            seat_intent: Some(intent),
++        };
++        toml_rt(&rec);
++    }
+ }
+ 
+ fn full_defaults() -> MemberDefaults {
+@@ -1091,6 +1137,15 @@ fn launch_env_contract() {
+     assert!(bare.iter().all(|(k, _)| k != ENV_SEAT && k != ENV_CLONE));
+ }
+ 
++#[test]
++fn agent_env_has_graph_clone_and_the_key_only_when_reserved() {
++    let clone = CloneId::new();
++    let clone_var = (ENV_CLONE.to_string(), clone.to_string());
++    let key_var = (ENV_CONTINUITY_KEY.to_string(), clone.to_string());
++    assert_eq!(agent_env(&clone, false), vec![clone_var.clone()]);
++    assert_eq!(agent_env(&clone, true), vec![clone_var, key_var]);
++}
++
+ #[test]
+ fn graph_token_roundtrip() {
+     let id = SeatId::new();

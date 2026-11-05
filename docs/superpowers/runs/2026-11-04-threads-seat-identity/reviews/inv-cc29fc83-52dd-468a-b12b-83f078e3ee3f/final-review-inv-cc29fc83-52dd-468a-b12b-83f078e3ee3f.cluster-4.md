@@ -1,0 +1,47 @@
+# Final review, cluster 4 (skills), epic hg-66u
+
+Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD e4984a4, status clean; it was not switched or modified. Inputs: slices/000028.diff (skills/graph/SKILL.md), slices/000029.diff (skills/seat/SKILL.md), digest.md, epic spec `docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md` at head.
+
+## Scope of this cluster
+
+- skills/graph/SKILL.md: the `clone` verb list gains `purge` (`clone add|retire|purge|rebind`).
+- skills/seat/SKILL.md: step 4 no longer tells the agent to run a graph-printed `accept_command`; it delegates acceptance to herdr-threads.
+
+## Requirement baseline trace
+
+The spec has a `## Requirement baseline` section (B1-B11, no human scope changes). The row this cluster carries is B11 (H2 Option D: "/seat stops printing accept commands and leaves acceptance to herdr-threads"), realised by spec §4.
+
+Trace from the production entry point at head:
+
+- `herdr-graph seat --json` -> `seat.resolve` in src/bootstrap/mod.rs:218-314 builds `pending_invitations` from `crate::threads::pending_invitations` (src/threads/mod.rs:202-219), whose `PendingInvitation` struct carries only `thread` and `constraint` (snake_case `required`/`ordinary`, src/model/clone.rs:98-103). No `accept_command` field or formatter remains anywhere under src/ (git grep at head finds only negative test assertions).
+- `render_seat` (src/bootstrap/mod.rs:456-466) prints `pending invitations (accept through herdr-threads):` followed by `<thread> [<constraint>]`; no accept command text.
+- The skill text matches the JSON shape it describes (`thread`, `constraint: required|ordinary`) and matches spec §4 point for point: required -> ready `accept-required` command from the herdr-threads hook; if absent, `herdr-threads thread participants <thread>` row -> `accept-required`, reread on stale; ordinary -> decide by topic and goal.
+- The herdr-threads commands the skill names exist: `accept-required` is emitted as a ready command (third_party/herdr-threads src/delivery/invitation.rs, src/cli/human.rs in the checked-out tree) and the v3.0.0 commit 95e9ebac has `ErrorCode::StaleRequirementAcceptance`, which is what "reports the invitation as stale" refers to. `thread participants` exists in src/cli/commands.rs.
+- The skill file reaches agents through `setup claude` (src/bootstrap/setup_claude.rs:26 `include_str!`), so the edited text is what installs.
+
+B11 is delivered within this cluster. The graph-side removal of `accept_command` lives in the src-threads / src-bootstrap clusters; I checked it only to confirm the skill describes real output.
+
+The graph skill's `clone purge` entry corresponds to a registered plan kind: `ClonePurge` registered at src/plan/core_kinds.rs:49 with words `("clone", "purge")` and usage `clone purge <clone>` (spec §14.1). `clone rebind` remains registered in src/plan/kinds_extra.rs:827. The list is accurate.
+
+## Test coverage of the skill text
+
+- src/bootstrap/tests.rs `seat_skill_has_instruction_steps` asserts the seat skill contains `accept-required` and `thread participants` and no `accept_command`.
+- src/bootstrap/tests.rs around lines 700-735 asserts the JSON entry has no `accept_command` and the human rendering contains no `herdr-threads accept`.
+- The graph skill is covered only by the install-copy equality test (src/bootstrap/tests.rs:1005-1007); nothing checks that the listed verbs are registered kinds.
+
+## Observations outside this cluster
+
+- The committed gitlink for third_party/herdr-threads is cdc8423f (tag v2.6.4) at both base and head, while spec §1 pins v3.0.0 (95e9ebac) and task reports say worktrees were initialised at 95e9eba by hand. The skill text works against either version, so this does not affect cluster 4; whether the pin requirement is met is for the seam / src cluster reviewers to judge.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- skills/graph/SKILL.md verb list (including the new `clone purge`) is not checked against the registered plan kinds; only an install-copy equality test covers the file.
+- skills/seat/SKILL.md step 4 is checked by substring assertions only; the ordinary-invitation branch and the stale-reread instruction have no assertion.
+
+## Deferred OK
+- none
