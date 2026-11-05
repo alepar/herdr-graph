@@ -1,0 +1,14 @@
+# findings ledger — code — through r1
+triggers: none
+blocking: r0=- r1=0 carriedB=- regressedB=- degraded=r1 not-computable=no-progress,returned,regressed
+ignored-overrides: 0
+- [Should-fix] src/undo/preview.rs:545 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Should-fix] src/plan/managers/cycle_guard.rs:119 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Nit] src/plan/managers/reparent.rs:70 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Nit] src/plan/core_kinds.rs:796 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Nit] src/observe/classify.rs:283 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Nit] CHANGELOG.md:3 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Should-fix] evidence/hg-k4l.22/full-suite-head.log:1 · raised r1@a12cf4549b474b2129d9ee83bd400c8f46b3660f · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1.md
+- [Must-fix] final-review inv-f2700d23 #1 undo of a multi-seat retirement restores the wrong manager (src/plan/managers/reparent.rs, src/undo) · raised r1@- · open · source final-review · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1-final-review-keys.txt
+- [Must-fix] final-review inv-f2700d23 #2 node manager not reopened after an observed move then close (src/observe/classify.rs:326) · raised r1@- · open · source final-review · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1-final-review-keys.txt
+- [Must-fix] final-review inv-f2700d23 #3 remove committed evidence/hg-k4l.22 and evidence/hg-k4l.45 logs · raised r1@- · open · source final-review · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-pr-1-final-review-keys.txt
