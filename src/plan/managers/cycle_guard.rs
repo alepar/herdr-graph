@@ -8,7 +8,7 @@
 //! | `seat.create`                   | `Live` in detail.teamspace   | the seat                              |
 //! | `seat.resurrect`                | un-retire (keeps `manager`)  | the seat                              |
 //! | `seat.manager`                  | `SeatManager`                | the seat                              |
-//! | `teamspace.default_manager`     | `DefaultManager`             | every live seat of that teamspace     |
+//! | `teamspace.default_manager`     | `DefaultManager`             | every live seat of that teamspace, and the new default manager (a cycle the edit creates passes through it, retired seats included) |
 //! | `graph.node_manager_seat`       | `NodeManager`                | every live seat                       |
 //! | `seat.retire`                   | `Retire`                     | none                                  |
 //!
@@ -67,6 +67,8 @@ pub fn refuse_cyclic_chains(tree: &dyn TreeRead, effects: &[PlanEffect]) -> Resu
     let mut p = Pointers::load(tree)?;
     let mut subjects: BTreeSet<SeatId> = BTreeSet::new();
     let mut all_live = false;
+    // New default managers: walked after the live seats, so existing walk-order messages stay the same.
+    let mut new_defaults: BTreeSet<SeatId> = BTreeSet::new();
     let mut teamspaces: BTreeSet<TeamspaceId> = BTreeSet::new();
     for e in effects {
         match e.kind.as_str() {
@@ -101,11 +103,13 @@ pub fn refuse_cyclic_chains(tree: &dyn TreeRead, effects: &[PlanEffect]) -> Resu
             TEAMSPACE_DEFAULT_MANAGER => {
                 let teamspace =
                     TeamspaceId::try_from(e.object.clone()).map_err(|_| malformed(e, "object"))?;
+                let to: Option<SeatId> = detail(e, "to")?;
                 p.apply(&PointerEdit::DefaultManager {
                     teamspace: teamspace.clone(),
-                    manager: detail(e, "to")?,
+                    manager: to.clone(),
                 });
                 teamspaces.insert(teamspace);
+                new_defaults.extend(to);
             }
             GRAPH_NODE_MANAGER => {
                 p.apply(&PointerEdit::NodeManager(detail(e, "to")?));
@@ -123,7 +127,11 @@ pub fn refuse_cyclic_chains(tree: &dyn TreeRead, effects: &[PlanEffect]) -> Resu
             .map(|(id, _)| id.clone()),
     );
     let subjects: Vec<SeatId> = subjects.into_iter().collect();
-    match p.cycle_from(&subjects) {
+    let new_defaults: Vec<SeatId> = new_defaults.into_iter().collect();
+    match p
+        .cycle_from(&subjects)
+        .or_else(|| p.cycle_from(&new_defaults))
+    {
         None => Ok(()),
         Some(cycle) => {
             let names: Vec<String> = cycle

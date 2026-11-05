@@ -4609,6 +4609,42 @@ fn cycle_guard_resurrection_closes_loop() {
     assert!(msg.contains("s (st_") && msg.contains("x (st_"), "{msg}");
 }
 
+/// A.manager = R (A in u, R in t); A and R retired, A resurrected: the chain A -> (retired R) -> t's default.
+fn retired_seat_default_world(fx: &Fx) {
+    commit(fx, "teamspace create u");
+    commit(fx, "teamspace create t");
+    commit(fx, "seat create a --teamspace u");
+    commit(fx, "seat create r --teamspace t");
+    commit(fx, "manager set a r");
+    commit(fx, "seat retire a");
+    commit(fx, "seat retire r");
+    commit(fx, "seat resurrect a");
+}
+
+#[test]
+fn manager_set_default_refuses_cycle_through_retired_seat() {
+    let fx = fx();
+    retired_seat_default_world(&fx);
+    let err = plan_err(&fx, "manager set t a");
+    assert!(err.contains("manager cycle"), "{err}");
+    assert_eq!(teamspace(&fx, "t").1.default_manager, None);
+}
+
+#[test]
+fn cycle_guard_default_through_retired_seat() {
+    let fx = fx();
+    retired_seat_default_world(&fx);
+    let a = seat_id(&fx, "a");
+    let t = teamspace(&fx, "t").1.id;
+    let err = super::managers::cycle_guard::refuse_cyclic_chains(
+        &view(&fx),
+        &[super::managers::default_manager_effect(&t, None, Some(&a))],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("would make a manager cycle"), "{err}");
+}
+
 #[test]
 fn cycle_guard_ignores_plans_without_pointer_impact() {
     let fx = fx();

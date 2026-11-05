@@ -164,7 +164,12 @@ fn validate(tree: &dyn TreeRead, a: &EditArgs) -> Result<Checked, PlanError> {
             default_manager_effect(id, from.as_ref(), to.as_ref()),
         ),
     };
-    if let Some(cycle) = would_create_cycle(tree, &[edit], &members)? {
+    // A cycle through a retired member passes through the new default manager itself.
+    let mut subjects = members;
+    if matches!(subject, Subject::Teamspace(_)) {
+        subjects.extend(to.clone());
+    }
+    if let Some(cycle) = would_create_cycle(tree, &[edit], &subjects)? {
         let p = Pointers::load(tree)?;
         let names: Vec<String> = cycle
             .iter()
