@@ -35,6 +35,7 @@ use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::store::layout;
 use crate::store::tree::CommitView;
+use crate::threads::FakeThreadsSeatView;
 use crate::writer::{WriterConfig, WriterCore};
 use chrono::TimeZone;
 use std::collections::BTreeMap;
@@ -71,6 +72,25 @@ impl Writer for DrainingWriter {
     }
 }
 
+/// Test-only stand-in for the undo/resurrection commit that calls `write_restore_intent`.
+struct TestRestore;
+impl crate::writer::Mutation for TestRestore {
+    fn apply(
+        &self,
+        cx: &mut crate::writer::MutationCx<'_>,
+    ) -> Result<crate::writer::Applied, crate::writer::MutationError> {
+        let clone: CloneId = cx.request.args["clone"].as_str().unwrap().parse().unwrap();
+        let loc = cx.tree.locate(&clone.to_any())?.unwrap();
+        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        crate::threads::assignment::write_restore_intent(&mut rec, &OpId::new());
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(crate::writer::Applied {
+            summary: "test restore".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     root: PathBuf,
@@ -83,6 +103,7 @@ struct Fx {
     clock: Arc<ManualClock>,
     rec: Arc<Reconciler>,
     lp: Arc<RuntimeLoop>,
+    seats: Arc<FakeThreadsSeatView>,
 }
 
 fn new_loop(
@@ -93,6 +114,7 @@ fn new_loop(
     rec: &Arc<Reconciler>,
     clock: &Arc<ManualClock>,
     root: &Path,
+    seats: &Arc<FakeThreadsSeatView>,
 ) -> Arc<RuntimeLoop> {
     let lp = RuntimeLoop::new(
         herdr.clone(),
@@ -105,7 +127,7 @@ fn new_loop(
         Duration::from_secs(60),
         None,
         root.join("claude"),
-        Arc::new(crate::threads::FakeThreadsSeatView::new()),
+        seats.clone(),
     );
     lp.set_tuning(LoopTuning {
         commit_timeout: Duration::from_secs(5),
@@ -122,12 +144,16 @@ fn fx() -> Fx {
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::plan::kinds_extra::register_kinds(&mut kinds);
+    crate::templates::register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
     crate::reconcile::register_mutations(&mut reg);
     register_mutations(&mut reg);
+    crate::threads::register_mutations(&mut reg);
+    reg.register("bookkeeping.test_restore", Arc::new(TestRestore));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -165,7 +191,8 @@ fn fx() -> Fx {
         Arc::new(QuietNotifier),
         cfg,
     );
-    let lp = new_loop(&herdr, &store, &dw, &journal, &rec, &clock, &root);
+    let seats = Arc::new(FakeThreadsSeatView::new());
+    let lp = new_loop(&herdr, &store, &dw, &journal, &rec, &clock, &root, &seats);
     Fx {
         _tmp: tmp,
         root,
@@ -178,6 +205,7 @@ fn fx() -> Fx {
         clock,
         rec,
         lp,
+        seats,
     }
 }
 
@@ -192,6 +220,7 @@ impl Fx {
             &self.rec,
             &self.clock,
             &self.root,
+            &self.seats,
         )
     }
 }
@@ -2097,5 +2126,372 @@ fn baseline_roundtrip_and_corruption() {
     assert!(
         baseline::load(&path).is_none(),
         "a corrupt baseline means a rebind pass"
+    );
+}
+
+// =================================================================================================
+// SeatObservation (threads seat as clone identity)
+// =================================================================================================
+
+use crate::model::clone::{SeatFactState, SeatIntent};
+use crate::ports::threads::{RetirementKind, SeatStatus, ThreadsSeatRef};
+use crate::threads::assignment::{SeatTransition, admit_threads_seat};
+use crate::threads::fake::FakeSeatViewError;
+
+fn seat_ref(s: &str) -> ThreadsSeatRef {
+    ThreadsSeatRef(s.into())
+}
+
+/// The foreman's only clone, bound to a pane, with threads seat `seat` assigned.
+async fn seated(fx: &Fx, seat: &str) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    settle(fx).await;
+    let c = only_clone(fx, "foreman");
+    assign_seat(fx, &c.id, seat);
+    let pane = pane_of(fx, &c);
+    (clone_by_id(fx, &c.id), pane)
+}
+
+fn assign_seat(fx: &Fx, clone: &CloneId, seat: &str) {
+    admit_threads_seat(
+        &*fx.dw,
+        clone,
+        &SeatTransition::Assign { seat: seat.into() },
+    )
+    .unwrap();
+}
+
+fn fact_state(fx: &Fx, id: &CloneId) -> Option<SeatFactState> {
+    clone_by_id(fx, id).seat_fact.map(|f| f.state)
+}
+
+/// Herdr's live handoff: tokens and terminal ids are gone, so the old matcher cannot find the clone.
+async fn handoff(fx: &Fx) {
+    fx.herdr.live_handoff();
+    fx.lp.force_rebind();
+}
+
+#[tokio::test]
+async fn seat_resolved_binds_and_marks_present() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    handoff(&fx).await;
+    step(&fx).await;
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown,
+        "without threads the old matcher loses the clone"
+    );
+
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    let b = after.runtime.bound.expect("bound");
+    assert_eq!(b.pane_id, Some(pane.clone()));
+    assert_eq!(
+        b.terminal_id,
+        snapshot(&fx).await.workspaces[0]
+            .tabs
+            .iter()
+            .flat_map(|t| t.panes.iter())
+            .find(|p| p.id == pane)
+            .and_then(|p| p.terminal_id.clone()),
+        "the binding carries the new incarnation's terminal id"
+    );
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+}
+
+#[tokio::test]
+async fn seat_unresolved_keeps_the_matcher_result() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    // Matcher still finds the clone (nothing changed): threads says Unresolved, the binding stays.
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.bound, c.runtime.bound);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(fact_state(&fx, &c.id), Some(SeatFactState::Unresolved));
+    // And when the matcher loses it too, Unresolved does not invent a binding.
+    handoff(&fx).await;
+    step(&fx).await;
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown
+    );
+    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
+}
+
+#[tokio::test]
+async fn seat_retired_retires_the_clone_undoably() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    for kind in [RetirementKind::Final, RetirementKind::Reversible] {
+        fx.seats
+            .set(&seat_ref("seat-1"), SeatStatus::Retired { kind });
+        step(&fx).await;
+        let after = clone_by_id(&fx, &c.id);
+        assert_eq!(after.lifecycle, CloneLifecycle::Retired, "{kind:?}");
+        let act = after.retired.expect("retirement").action.expect("action");
+        // Undo brings it back.
+        commit(&fx, &format!("undo {act}"));
+        assert_eq!(
+            clone_by_id(&fx, &c.id).lifecycle,
+            CloneLifecycle::Active,
+            "{kind:?}"
+        );
+        // Reset the view so the loop does not retire it again before the second round.
+        fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+        settle(&fx).await;
+    }
+}
+
+#[tokio::test]
+async fn seat_key_conflict_marks_unknown_and_sets_the_alert() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::KeyConflict {
+            pane: Some(pane.clone()),
+        },
+    );
+    // A diff pass, not a rebind: the conflicted clone is Unknown, never reported as a closed pane.
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.availability, Availability::Unknown);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::KeyConflict { pane: Some(pane) })
+    );
+}
+
+#[tokio::test]
+async fn key_conflict_alert_clears_on_a_clean_read_and_holds_across_errors() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats
+        .set(&seat_ref("seat-1"), SeatStatus::KeyConflict { pane: None });
+    step(&fx).await;
+    let alert = Some(SeatFactState::KeyConflict { pane: None });
+    assert_eq!(fact_state(&fx, &c.id), alert);
+
+    for e in [
+        FakeSeatViewError::Disconnected,
+        FakeSeatViewError::Busy,
+        FakeSeatViewError::Rejected,
+        FakeSeatViewError::Unsupported,
+    ] {
+        fx.seats.set_error(Some(e));
+        step(&fx).await;
+        assert_eq!(fact_state(&fx, &c.id), alert, "held across {e:?}");
+    }
+
+    fx.seats.set_error(None);
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    step(&fx).await;
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::Resolved { pane }),
+        "the next clean read replaces the alert"
+    );
+}
+
+#[tokio::test]
+async fn threads_unreachable_changes_no_binding() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
+    let before = clone_by_id(&fx, &c.id);
+    step(&fx).await;
+    step(&fx).await;
+    assert!(fx.seats.reads() >= 2, "threads was asked");
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.bound, before.runtime.bound);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_eq!(after.seat_fact, None, "no read, no fact");
+}
+
+#[tokio::test]
+async fn seatless_clone_keeps_the_matcher_result() {
+    let fx = fx();
+    activate(&fx, "claude");
+    settle(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(after.seat_fact, None);
+    assert_eq!(fx.seats.reads(), 0, "no seated clone, no threads read");
+}
+
+#[tokio::test]
+async fn threads_resolved_pane_is_withheld_from_a_matcher_bound_clone() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(&fx, "clone add foreman --name second");
+    settle(&fx).await;
+    let s = seat(&fx, "foreman");
+    let mut cs = clones_of(&fx, &s.id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let pane_b = pane_of(&fx, &b);
+    assign_seat(&fx, &a.id, "seat-a");
+    // Threads says A lives in B's pane, which the token matcher gave to B.
+    fx.seats.set(
+        &seat_ref("seat-a"),
+        SeatStatus::Resolved {
+            pane: pane_b.clone(),
+        },
+    );
+    step(&fx).await;
+    let (a2, b2) = (clone_by_id(&fx, &a.id), clone_by_id(&fx, &b.id));
+    assert_eq!(a2.runtime.bound.unwrap().pane_id, Some(pane_b.clone()));
+    assert_eq!(a2.runtime.availability, Availability::Present);
+    assert_eq!(b2.runtime.availability, Availability::Unknown);
+    assert_eq!(
+        b2.lifecycle,
+        CloneLifecycle::Active,
+        "B lost the pane to threads' claim; it is Unknown, not closed"
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+}
+
+#[tokio::test]
+async fn retired_seat_with_pending_restore_does_not_retire() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    write_restore(&fx, &c.id);
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert!(matches!(
+        after.seat_intent,
+        Some(SeatIntent::Restore {
+            threads_done: false,
+            ..
+        })
+    ));
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::Retired { reversible: false }),
+        "the fact still records what threads said"
+    );
+}
+
+fn write_restore(fx: &Fx, clone: &CloneId) {
+    use crate::model::change::{ChangeRequest, RequestKind, Requester};
+    fx.dw
+        .admit(ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: serde_json::json!({ "sub": "test_restore", "clone": clone }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn retired_seat_after_threads_done_retires_and_clears_the_intent() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    write_restore(&fx, &c.id);
+    let Some(SeatIntent::Restore { epoch, .. }) = clone_by_id(&fx, &c.id).seat_intent else {
+        panic!("restore intent written");
+    };
+    admit_threads_seat(&*fx.dw, &c.id, &SeatTransition::Acknowledge { epoch }).unwrap();
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.lifecycle, CloneLifecycle::Retired);
+    assert_eq!(
+        after.seat_intent, None,
+        "the retire commit dropped the intent"
+    );
+}
+
+#[tokio::test]
+async fn seat_fact_is_committed_and_held_across_errors() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    assert_eq!(clone_by_id(&fx, &c.id).seat_fact, None);
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    step(&fx).await;
+    let f = clone_by_id(&fx, &c.id).seat_fact.expect("fact committed");
+    assert_eq!(f.seat, "seat-1");
+    assert_eq!(f.state, SeatFactState::Resolved { pane });
+    assert_eq!(f.read_at, fx.clock.now());
+
+    // Unchanged state: no commit per step.
+    let head = crate::ports::store::Store::head(&*fx.store).unwrap();
+    fx.clock.advance(chrono::Duration::seconds(5));
+    step(&fx).await;
+    assert_eq!(
+        clone_by_id(&fx, &c.id).seat_fact.unwrap().read_at,
+        f.read_at
+    );
+    assert_eq!(crate::ports::store::Store::head(&*fx.store).unwrap(), head);
+
+    fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
+    step(&fx).await;
+    assert_eq!(clone_by_id(&fx, &c.id).seat_fact, Some(f));
+}
+
+#[tokio::test]
+async fn live_handoff_with_resolved_seats_keeps_clones_present() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    step(&fx).await;
+    fx.herdr.clear_calls();
+    // New incarnation, new terminal ids, no tokens; threads' seat still resolves to the same pane.
+    fx.herdr.live_handoff();
+    for _ in 0..3 {
+        step(&fx).await;
+        let after = clone_by_id(&fx, &c.id);
+        assert_eq!(after.runtime.availability, Availability::Present);
+        assert_eq!(after.lifecycle, CloneLifecycle::Active);
+        assert_eq!(after.runtime.bound.unwrap().pane_id, Some(pane.clone()));
+    }
+    assert_eq!(
+        creates(&fx),
+        0,
+        "no operator step, no create: {:?}",
+        calls(&fx)
     );
 }

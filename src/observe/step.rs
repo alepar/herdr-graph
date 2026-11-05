@@ -1,12 +1,14 @@
 //! The shared runtime loop step (spec §4.3.6): complete snapshot → rebind pass or diff → observed
 //! mutations (admitted, awaited) → baseline advance → session-ended hook → `Reconciler::step`.
 use super::baseline::{self, Baseline};
-use super::classify::{Classified, ClassifyCx, EndedSession, classify};
+use super::classify::{CascadeRule, Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
 use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
 use super::mutations::{
     availability_request, cascade_request, move_request, occupancy_request, rename_request,
+    seat_fact_request,
 };
+use super::seat_observation::{self, ThreadsRead};
 use crate::config::InstancePaths;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
@@ -19,7 +21,7 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, ProcessInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::Store;
-use crate::ports::threads::ThreadsSeatView;
+use crate::ports::threads::{ThreadsError, ThreadsSeatView};
 use crate::ports::writer::Writer;
 use crate::reconcile::desired::DesiredRuntime;
 use crate::reconcile::planner::TOKEN_KEY;
@@ -115,9 +117,9 @@ pub struct RuntimeLoop {
     step_lock: tokio::sync::Mutex<()>,
     tuning: RwLock<LoopTuning>,
     claude_root: RwLock<PathBuf>,
-    /// Read-only threads seat inspection; unused until SeatObservation (hg-66u.28).
-    #[allow(dead_code)]
+    /// Read-only threads seat inspection, once per step (SeatObservation).
     seat_view: Arc<dyn ThreadsSeatView>,
+    seat_view_logged: std::sync::atomic::AtomicBool,
 }
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
@@ -368,6 +370,7 @@ impl RuntimeLoop {
             tuning: RwLock::new(LoopTuning::default()),
             claude_root: RwLock::new(claude_root),
             seat_view,
+            seat_view_logged: Default::default(),
         })
     }
 
@@ -488,6 +491,85 @@ impl RuntimeLoop {
         all_ok
     }
 
+    /// Read threads' view of the seated clones and let SeatObservation overlay it on `matches`.
+    async fn observe_seats(
+        &self,
+        desired: &DesiredRuntime,
+        snap: &HerdrSnapshot,
+        matches: &mut Matches,
+        now: Timestamp,
+    ) -> seat_observation::SeatOutcome {
+        let seats: Vec<_> = seat_observation::seated_clones(desired)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect();
+        if seats.is_empty() {
+            return Default::default();
+        }
+        let read = match self.seat_view.inspect(&seats).await {
+            Ok(statuses) => ThreadsRead::Statuses(statuses),
+            Err(e) => {
+                // Threads being down changes no binding; a protocol problem is logged once.
+                if matches!(e, ThreadsError::Rejected(_) | ThreadsError::Unsupported)
+                    && !self
+                        .seat_view_logged
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    eprintln!("herdr-graph: observe: threads seat read refused: {e}");
+                }
+                ThreadsRead::Unavailable
+            }
+        };
+        let live = pane_locs(snap).into_keys().collect();
+        seat_observation::observe(desired, &read, &live, matches, now)
+    }
+
+    /// Retirements threads decided and seat facts to commit, after the step's other observed ops.
+    fn append_seat_ops(
+        &self,
+        ops: &mut Vec<PlannedOp>,
+        desired: &DesiredRuntime,
+        out: seat_observation::SeatOutcome,
+        now: Timestamp,
+    ) {
+        if !out.retire.is_empty() {
+            let retire: Vec<AnyId> = out.retire.iter().map(CloneId::to_any).collect();
+            ops.push(PlannedOp {
+                request: cascade_request(CascadeRule::Pane, &retire, now),
+                ends: vec![],
+            });
+        }
+        let changed_at = self
+            .journal
+            .meta_get("incarnation:changed_at")
+            .ok()
+            .flatten()
+            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(&raw).ok())
+            .map(|t| t.to_utc());
+        for clone in out.unknown() {
+            if let Some(rec) = desired.clones.get(clone)
+                && rec.runtime.bound.is_some()
+                && rec.runtime.availability != Availability::Unknown
+            {
+                ops.push(PlannedOp {
+                    request: availability_request(&clone.to_any(), Availability::Unknown),
+                    ends: vec![],
+                });
+            }
+        }
+        for (clone, fact) in out.facts {
+            let Some(rec) = desired.clones.get(&clone) else {
+                continue;
+            };
+            if seat_observation::fact_needs_write(rec, &fact, changed_at) {
+                ops.push(PlannedOp {
+                    request: seat_fact_request(&clone, &fact),
+                    ends: vec![],
+                });
+            }
+        }
+    }
+
     /// One shared step (spec §4.3.6).
     pub async fn step_once(&self) -> anyhow::Result<StepSummary> {
         let _one_at_a_time = self.step_lock.lock().await;
@@ -514,7 +596,8 @@ impl RuntimeLoop {
             };
             DesiredRuntime::load(&tree, &self.paths.root)?
         };
-        let matches = match_snapshot(&snap, &desired);
+        let mut matches = match_snapshot(&snap, &desired);
+        let seat_out = self.observe_seats(&desired, &snap, &mut matches, now).await;
         let mut procs: BTreeMap<crate::model::HerdrPaneId, ProcessInfo> = BTreeMap::new();
         for pane in needs_process(&desired, &snap, &matches) {
             if let Ok(info) = self.herdr.process_info(&pane).await {
@@ -536,7 +619,14 @@ impl RuntimeLoop {
         let base_matches;
         let (elements, baseline_matches) = match (&baseline, rebind) {
             (Some(b), false) => {
-                base_matches = match_snapshot(&b.snapshot, &desired);
+                let mut bm = match_snapshot(&b.snapshot, &desired);
+                // Clones threads unbound this step are Unknown, not closed.
+                for clone in &seat_out.unbound {
+                    if let Some(p) = bm.clone_pane.remove(clone) {
+                        bm.panes.remove(&p);
+                    }
+                }
+                base_matches = bm;
                 (
                     diff::diff(&cx, &b.snapshot, &base_matches),
                     Some(&base_matches),
@@ -555,7 +645,8 @@ impl RuntimeLoop {
             },
             elements,
         );
-        let ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
+        let mut ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
+        self.append_seat_ops(&mut ops, &desired, seat_out, now);
 
         let mut summary = StepSummary {
             mode: Some(if rebind {

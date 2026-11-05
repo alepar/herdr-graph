@@ -2081,6 +2081,7 @@ mod effective {
             threads_seat: None,
             threads_seat_history: vec![],
             seat_intent: None,
+            seat_fact: None,
         }
     }
 

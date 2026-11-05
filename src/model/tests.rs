@@ -381,6 +381,7 @@ fn clone_record_roundtrip() {
         threads_seat: None,
         threads_seat_history: vec![],
         seat_intent: None,
+        seat_fact: None,
     });
     toml_rt(&CloneRecord {
         schema: 1,
@@ -400,6 +401,7 @@ fn clone_record_roundtrip() {
         threads_seat: None,
         threads_seat_history: vec![],
         seat_intent: None,
+        seat_fact: None,
     });
     let epoch = OpId::new();
     for intent in [
@@ -438,8 +440,51 @@ fn clone_record_roundtrip() {
             threads_seat: Some("seat-b".into()),
             threads_seat_history: vec!["seat-a".into()],
             seat_intent: Some(intent),
+            seat_fact: None,
         };
         toml_rt(&rec);
+    }
+}
+
+#[test]
+fn clone_record_seat_fact_roundtrip() {
+    use crate::model::clone::{SeatFact, SeatFactState};
+    for state in [
+        SeatFactState::Resolved {
+            pane: HerdrPaneId("p_1".into()),
+        },
+        SeatFactState::Unresolved,
+        SeatFactState::KeyConflict { pane: None },
+        SeatFactState::KeyConflict {
+            pane: Some(HerdrPaneId("p_2".into())),
+        },
+        SeatFactState::Retired { reversible: true },
+        SeatFactState::Retired { reversible: false },
+    ] {
+        toml_rt(&CloneRecord {
+            schema: 1,
+            id: CloneId::new(),
+            rev: 2,
+            seat: SeatId::new(),
+            name: "c".into(),
+            name_history: vec![],
+            lifecycle: CloneLifecycle::Active,
+            retired: None,
+            runtime: minimal_runtime(),
+            occupant: None,
+            sessions: vec![],
+            opt_outs: vec![],
+            invitations: vec![],
+            reload_required: false,
+            threads_seat: Some("seat-b".into()),
+            threads_seat_history: vec![],
+            seat_intent: None,
+            seat_fact: Some(SeatFact {
+                seat: "seat-b".into(),
+                state,
+                read_at: ts(),
+            }),
+        });
     }
 }
 
