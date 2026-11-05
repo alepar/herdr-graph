@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-05-seat-failure-manager-seats
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-code
+phase: fix-loop
 codeMechanism: Workflow
 runTag: seat-failure-manager-seats-20261105T074235
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -13,6 +13,7 @@ spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
 roastDesignRound: 2
 roastCodeRound: 1
+roast-code: 2026-11-05-seat-failure-manager-seats-roast-pr-1.md
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md, 2026-11-05-seat-failure-manager-seats-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 graph-pass: depth 7→7 · width 3.1→3.1 · applied 0 · parked 1
