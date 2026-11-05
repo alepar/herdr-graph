@@ -168,15 +168,11 @@ impl CascadeMutation {
         exclusions: bool,
         nm: Option<&SeatId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
-        // The node manager is never retired by an observed closure (re-checked here, at apply time).
-        if nm == Some(seat) {
-            return Ok(());
-        }
+    ) -> Result<bool, MutationError> {
         let f = read_seat(&cx.tree, seat).map_err(mm)?;
         if f.rec.lifecycle == Lifecycle::Retired {
             acc.already.push(seat.to_any());
-            return Ok(());
+            return Ok(false);
         }
         // The panes are gone: occupancy ends and the runtime is absent, before the shared retire path runs.
         for (loc, c) in &f.clones {
@@ -191,7 +187,13 @@ impl CascadeMutation {
         let mut rec = f.rec.clone();
         rec.runtime = absent();
         cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-        do_retire_seat(cx, seat, act, mech, acc, exclusions)
+        // The node manager is never retired by an observed closure: the live answer at apply time decides, so a
+        // closure is recorded for it (runtime absent, sessions ended; the planner reopens it) and nothing more.
+        if nm == Some(seat) {
+            return Ok(true);
+        }
+        do_retire_seat(cx, seat, act, mech, acc, exclusions)?;
+        Ok(false)
     }
 
     fn retire_teamspace(
@@ -202,19 +204,26 @@ impl CascadeMutation {
         at: Timestamp,
         nm: Option<&SeatId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
+    ) -> Result<usize, MutationError> {
         let ts = read_ts(&cx.tree, id).map_err(mm)?;
         if ts.rec.lifecycle == Lifecycle::Retired {
             acc.already.push(id.to_any());
-            return Ok(());
+            return Ok(0);
         }
         let seats = layout::list_seats(&cx.tree, &ts.loc.folder)?;
+        let mut kept = 0;
         for (_, seat) in &seats {
-            Self::retire_seat(cx, &seat.id, act, mech, at, false, nm, acc)?;
+            kept += usize::from(Self::retire_seat(
+                cx, &seat.id, act, mech, at, false, nm, acc,
+            )?);
         }
-        // The node manager's teamspace stays Active: its other seats are retired seat by seat.
+        // The node manager's teamspace stays Active with its runtime absent (it reopens); its other seats are
+        // retired seat by seat.
         if nm.is_some_and(|n| seats.iter().any(|(_, s)| &s.id == n)) {
-            return Ok(());
+            let mut rec = ts.rec.clone();
+            rec.runtime = absent();
+            cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
+            return Ok(kept + 1);
         }
         let before = if ts.rec.lifecycle == Lifecycle::Active {
             "active"
@@ -237,7 +246,7 @@ impl CascadeMutation {
             &ts.loc.folder,
             &layout::archived_teamspace_dir(basename(&ts.loc.folder), id),
         )?;
-        Ok(())
+        Ok(kept)
     }
 
     fn retire_clone(
@@ -248,22 +257,24 @@ impl CascadeMutation {
         at: Timestamp,
         nm: Option<&SeatId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
+    ) -> Result<bool, MutationError> {
         let any = id.to_any();
         let loc = cx.tree.locate(&any)?.ok_or_else(|| gone(&any))?;
         let mut rec: CloneRecord = cx
             .tree
             .read_record(&loc.record_path)?
             .ok_or_else(|| gone(&any))?;
-        if nm == Some(&rec.seat) {
-            return Ok(());
-        }
         if rec.lifecycle == CloneLifecycle::Retired {
             acc.already.push(any);
-            return Ok(());
+            return Ok(false);
         }
         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
         rec.runtime = absent();
+        // A node manager's clone is kept: the closure is recorded, nothing is retired.
+        if nm == Some(&rec.seat) {
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+            return Ok(true);
+        }
         rec.lifecycle = CloneLifecycle::Retired;
         rec.retired = Some(Retirement {
             op: cx.op.clone(),
@@ -274,7 +285,7 @@ impl CascadeMutation {
         cx.tree.put_record(loc.record_path, &mut rec)?;
         acc.retired.push(any.clone());
         acc.changed(any, "active", "retired");
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -314,20 +325,33 @@ impl Mutation for CascadeMutation {
         let nm = crate::model::manager::live_node_manager(&cx.tree)?;
         let nm = nm.as_ref();
         let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
+        let mut kept = 0;
         for ts in &teamspaces {
-            Self::retire_teamspace(cx, ts, &act, mech, at, nm, &mut acc)?;
+            kept += Self::retire_teamspace(cx, ts, &act, mech, at, nm, &mut acc)?;
         }
         for seat in &seats {
             if !handled(&acc, &seat.to_any()) {
-                Self::retire_seat(cx, seat, &act, mech, at, exclusions, nm, &mut acc)?;
+                kept += usize::from(Self::retire_seat(
+                    cx, seat, &act, mech, at, exclusions, nm, &mut acc,
+                )?);
             }
         }
         for clone in &clones {
             if !handled(&acc, &clone.to_any()) {
-                Self::retire_clone(cx, clone, &act, mech, at, nm, &mut acc)?;
+                kept += usize::from(Self::retire_clone(cx, clone, &act, mech, at, nm, &mut acc)?);
             }
         }
         let (n, already) = (acc.retired.len(), acc.already.len());
+        if n == 0 && kept > 0 {
+            // Only the node manager was affected: no retirement happened, so there is no action to record.
+            return Ok(Applied {
+                summary: format!(
+                    "observed {} closure of the node manager: kept, runtime absent",
+                    a.rule
+                ),
+                action: None,
+            });
+        }
         let mut comp = toml::Table::new();
         comp.insert("rule".into(), toml::Value::String(a.rule.clone()));
         write_action(cx, &act, ActionKind::ClosureCascade, acc, comp)?;

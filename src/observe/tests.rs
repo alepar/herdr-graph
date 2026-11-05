@@ -1,6 +1,6 @@
 //! Observer tests: FakeHerdr + real writer, journal, git store, plan engine and reconciler, driven through
 //! `RuntimeLoop::step_once`. The "user" is `FakeHerdr::user_*`.
-use super::mutations::cascade_request;
+use super::mutations::{availability_request, cascade_request};
 use super::step::{LoopTuning, StepMode};
 use super::*;
 use crate::config::InstancePaths;
@@ -809,6 +809,93 @@ async fn cascade_rechecks_node_manager_at_apply() {
     assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active);
     assert_eq!(seat_by_id(&fx, &bench.id).1.lifecycle, Lifecycle::Retired);
     assert_eq!(clone_by_id(&fx, &bc.id).lifecycle, CloneLifecycle::Retired);
+}
+
+/// Classify a tab closure of `seat_name` by hand at the current head, as the observer does before its awaited
+/// snapshot returns; the result is applied later by `apply_classified`.
+async fn classify_tab_closure(fx: &Fx, seat_name: &str) -> super::classify::Classified {
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.root).unwrap();
+    let tab = tab_of_seat(fx, seat_name);
+    let before = snapshot(fx).await;
+    fx.herdr.user_close_tab(&tab);
+    let after = snapshot(fx).await;
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    super::classify::classify(
+        &super::classify::ClassifyCx {
+            desired: &desired,
+            journal: &fx.journal,
+            preds: &[],
+            matches: &ma,
+            baseline: Some(&mb),
+        },
+        vec![super::diff::DiffElement::Disappeared {
+            object: seat(fx, seat_name).id.to_any(),
+            container: ContainerKind::Tab,
+        }],
+    )
+}
+
+fn apply_classified(fx: &Fx, out: &super::classify::Classified) {
+    for cas in &out.cascades {
+        fx.w.admit(cascade_request(cas.rule, &cas.retire, fx.clock.now()))
+            .unwrap();
+    }
+    for obj in &out.gone {
+        fx.w.admit(availability_request(obj, Availability::Absent))
+            .unwrap();
+    }
+    fx.w.drain().unwrap();
+}
+
+#[tokio::test]
+async fn node_manager_closure_after_concurrent_move_retires_old_seat() {
+    // Direction 1: foreman is node manager at classification; `node-manager set bench` lands before apply.
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
+    let fc = only_clone(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let out = classify_tab_closure(&fx, "foreman").await;
+    make_node_manager(&fx, &bench.id);
+    apply_classified(&fx, &out);
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Retired);
+    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Retired);
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert!(acts[0].retired.contains(&foreman.id.to_any()));
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Active);
+}
+
+#[tokio::test]
+async fn node_manager_closure_classified_before_set_is_recorded_absent() {
+    // Direction 2: foreman is ordinary at classification, then becomes node manager before apply.
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    let fc = only_clone(&fx, "foreman");
+    let out = classify_tab_closure(&fx, "foreman").await;
+    make_node_manager(&fx, &foreman.id);
+    apply_classified(&fx, &out);
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(s.runtime.availability, Availability::Absent);
+    assert!(s.runtime.bound.is_none());
+    let c = clone_by_id(&fx, &fc.id);
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    assert_eq!(c.runtime.availability, Availability::Absent);
+    assert!(c.occupant.is_none(), "the session ended with the pane");
+    settle(&fx).await;
+    assert_reopened(&fx, "foreman").await;
 }
 
 #[tokio::test]
