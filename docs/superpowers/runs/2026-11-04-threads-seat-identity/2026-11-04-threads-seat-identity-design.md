@@ -136,8 +136,12 @@ open keeps memberships (B8): `occupancy_end_releases_requirement` and
 `occupant_replaced_in_one_commit_releases_before_reinviting_the_same_seat` flip. The invite
 executor invites the recorded `threads_seat` (no re-resolve, no `Obsolete` for "no occupant");
 `ThreadsLink.occupant` becomes attribution only; `SetInvitation`'s `expect_occupant` guard becomes
-`expect_seat`. Migration: links whose `seat` equals the backfilled `threads_seat` are satisfied —
-no churn, no mass re-acceptance. Update spec §7.1 / `CURRENT-DESIGN.md` "Threads and policy" and
+`expect_seat`. Migration: links whose `seat` equals the backfilled `threads_seat` and whose state
+is Pending or Accepted are satisfied — no churn, no mass re-acceptance. The satisfied test checks
+state as well as seat for every constraint, Required included: a link on the same seat in state
+Released or Retired (left by the old occupant-keyed release) is unsatisfied, so the want re-invites
+it once on the recorded seat. A migration test seeds a Released Required row on the backfilled
+seat and expects exactly one re-invite. Update spec §7.1 / `CURRENT-DESIGN.md` "Threads and policy" and
 `DESIGN-NOTES.md:331` to say cleanup follows seat lifetime and acceptance is not liveness.
 
 ### 4. /seat stops printing acceptance commands (H2 Option D, hg-s6o)
@@ -372,9 +376,17 @@ and supersedes any conflicting sentence earlier in this spec.
    `herdr-graph clone purge <clone>` (plan/confirm like other mutations) ends a retired clone's undo
    window; there is no automatic retention timer. Until a clone is purged its reversibly retired
    seat keeps its memberships and key (accepted cost; `status` lists retired-unpurged clones).
-2. **Purge always writes a tombstone after D2.** Purge of any clone that holds a `threads_seat`
-   writes `Finalize{seat}` regardless of the seat's retirement kind; the finalize want treats a read
-   showing the seat final as acknowledgement. Purge never needs a live threads read.
+2. **Purge always writes a tombstone after D2; before D2 it never does.** After D2, purge of any
+   clone that holds a `threads_seat` writes `Finalize{seat}` regardless of the seat's retirement
+   kind; the finalize want treats a read showing the seat final as acknowledgement. Purge never needs
+   a live threads read. Before D2 every seat is final and no finalize want or `TombstoneDone`
+   admitter exists, so a tombstone would never drain: purge deletes the clone record outright, seated
+   or not (§8, "purged at once, with no intent"), and `purge_tombstone` returns no `Finalize` intent.
+   The `Finalize` tombstone write lands in the same D2-gated bead as the finalize want and the
+   `TombstoneDone` admitter (hg-66u.31), and that bead audits every clone reader for tombstone
+   filtering (SeatResurrect `revived`/`revives_clone`, the teamspace-resurrect loop, grammar
+   `resolve_clone(Scope::Retired)`, and the existing `is_tombstone()` sites). The existing
+   `is_tombstone()` filters stay. Undo already treats a missing record as purged.
 3. **Purge of a clone that never got a seat** writes a `ReleaseKey{key}` tombstone when a reservation
    is recorded. Its want first asks threads for the key's binding (the `ReserveContinuityKey` answer
    carries `seat`): a bound seat turns the tombstone into `Finalize{seat}`, an unbound key is released
@@ -394,8 +406,18 @@ and supersedes any conflicting sentence earlier in this spec.
    re-retirement.
 7. **One launch per restore epoch is persisted.** `Restore` gains `launched: bool`. The Herdr executor
    sets it through ThreadsSeatAssignment in the commit that records the `StartAgent` dispatch, before
-   dispatching (at most once per epoch). The restore trigger requires `launched = false`; `status`
-   names a restore with `launched = true` and no reattach as stuck.
+   dispatching (at most once per epoch). The restore trigger requires `launched = false`. `status`
+   (`stuck_restores`) names every pending Restore intent that cannot make progress, each with a
+   reason and a remedy, not only `launched = true`:
+   - launched, no reattach: `launched = true` and the clear-on-reattach want has not cleared it;
+   - mark failed: the `MarkLaunched` admission returned a writer error on an unchanged intent. The
+     executor returns `Failed` with the writer error (logged and marked for attention like any
+     failed effect), never `Obsolete`; only a stale or changed epoch is `Obsolete`;
+   - not launchable: `threads_done = true`, `launched = false`, and the clone has no resumable
+     session. Before D1 the restore launches only by session (§9), so the remedy names a manual
+     start in the reopened pane; the fresh-agent launch stays with the D1 bead (hg-66u.21).
+   A Restore whose threads step is still unacknowledged is shown with its last threads refusal, if
+   any (§8). Retiring the clone again clears the intent and its entry.
 8. **The restart arm skips clones with a pending Restore intent**, so a failed restore is never
    relaunched through the restart trigger.
 9. **SeatObservation commits the seat fact.** Besides availability and binding, SeatObservation
@@ -410,10 +432,17 @@ and supersedes any conflicting sentence earlier in this spec.
 11. **Participation want existence.** A clone's desired invitations exist while it is active, or
     retired and not purged, with `threads_seat` known; they end at purge (the finalize want ends the
     seat's memberships threads-side).
-12. **Reversibility needs a bound key.** After D1/D2 a pane close is reversible only for a seat whose
-    key is bound; a keyless seat (shell rejected the export, backfill link not yet done) closes final,
-    and its undo goes through succession with one re-acceptance. Fakes in hg-66u.32 model a keyless
-    pane close as final.
+12. **Reversibility needs a bound key, and the graph binds it.** After D1/D2 a pane close is
+    reversible only for a seat whose key is bound. The graph does not rely on a keyed check-in to
+    bind it: a **key-link want** fires for every active clone with a recorded reservation and a
+    `threads_seat` whose reservation is not recorded as bound to that seat, and issues the
+    seat-bearing `ReserveContinuityKey{key, seat: threads_seat}` (idempotent for the holder); the
+    answer's binding is recorded on the reservation. This one want covers pre-D1 backfill (§5),
+    the post-succession relink (item 4) and a clone whose shell rejected the export, so a post-D1
+    clone does not stay keyless. Only a seat still unlinked at close time (threads unreachable or
+    refusing since the seat was resolved) closes final, and its undo goes through succession with
+    one re-acceptance. The want is D1-gated with the reservation (hg-66u.43). Fakes in hg-66u.32
+    model a keyless pane close as final.
 
 ## Key abstractions
 
@@ -430,7 +459,7 @@ and supersedes any conflicting sentence earlier in this spec.
 - Must not: write to threads (no resolve, reserve or unretire; PaneSeatMap does those), commit graph state (SeatObservation decides and the step commits), or fabricate a state when threads is unreachable.
 - Relationships: a port in `src/ports/`, like the others, with a real implementation (the same struct as `ThreadsSeatMap`, sharing its client, host and clock) and a fake (§11). `RuntimeLoop` holds an `Arc<dyn ThreadsSeatView>`. The dependency runs from observe to the port, never the reverse.
 - Lifecycle: built once in daemon compose next to `ThreadsSeatMap`, shared by `Arc`, lives as long as the process; no state apart from the client connection.
-- Errors: `ThreadsError`. Callers tell `Disconnected`/`ServiceBusy` (hold the last state; Unknown only under the existing staleness rule) apart from `Rejected`/`Unsupported` (log it and change nothing).
+- Errors: `ThreadsError`. Callers tell `Disconnected`/`ServiceBusy` (hold the last state; Unknown only under the existing staleness rule) apart from `Rejected`/`Unsupported` (log it and change nothing). A refusal that concerns one seat (an unparseable seat id, a per-seat `Rejected` answer such as NotFound for a seat id kept across `ThreadsReconnect`) is a per-seat outcome, not a whole-read error: the read returns the statuses of the other seats and omits that seat, so threads does not speak for that clone this step (its last state holds, as when threads is unreachable) while every other clone keeps threads authority. The per-seat refusal is logged with the clone and seat ids and kept in the `threads` status component. Only a transport error, `Unsupported`, or a refusal of the whole call fails the read.
 
 **SeatObservation** — new module in `observe/`, turns seat statuses into observation facts for one step.
 - Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. `Retired` (either kind) retires the clone through the existing undoable retirement, except while the clone carries a `Restore` intent whose threads step is unacknowledged (no change: the expected interim state, §8); the reversible/final distinction matters only to the threads step. `KeyConflict` marks it Unknown and sets the clone's key-conflict alert. It also owns pre-D1 precedence (§6): threads speaks for a clone only with `Resolved`, `Retired` or `KeyConflict`; otherwise the old matcher's result stands; a pane claimed by a threads `Resolved` clone is withheld from any matcher-bound clone that step. It also commits the per-clone `seat_fact` (Resolved | Unresolved | KeyConflict | Retired{reversible|final}) that the planner and wants read (§14.9).
@@ -446,13 +475,14 @@ and supersedes any conflicting sentence earlier in this spec.
 - Relationships: one more entry in the existing `MutationRegistry`, the same shape as `bookkeeping.binding`; the threads executor admits it.
 - Errors: `MutationError`. Writing the seat already set is an idempotent success, distinct from a different seat (rejected) and from a seat another live clone holds (rejected, surfaced, never retried).
 
-**CloneRecord** — extended: gains `threads_seat` (write-once, §2) and `seat_intent: Option<SeatIntent>` (`Restore{seat, epoch, threads_done, launched}`, `Finalize{seat}` or `ReleaseKey{key}`, §8, §14). A purged clone that holds a seat (or a recorded reservation) stays as an inert tombstone carrying only its identity and the intent until threads acknowledges (§14.2-3). Observation state gains the per-clone `seat_fact` that SeatObservation commits (§14.9). `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
+**CloneRecord** — extended: gains `threads_seat` (write-once, §2) and `seat_intent: Option<SeatIntent>` (`Restore{seat, epoch, threads_done, launched}`, `Finalize{seat}` or `ReleaseKey{key}`, §8, §14). After D2, a purged clone that holds a seat (or a recorded reservation) stays as an inert tombstone carrying only its identity and the intent until threads acknowledges (§14.2-3); before D2 purge deletes the record outright and no tombstone exists. Observation state gains the per-clone `seat_fact` that SeatObservation commits (§14.9). `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
 
 **PaneSeatMap** — extended: becomes the port for seat-lifecycle commands. It already has resolve; it gains reserving the continuity key (D1), unretiring a seat (D2) and finalizing a retirement or releasing the key (D2, per the published API). Its resolve reports threads' refusals (restore hold, key-conflict hold) as a non-error "not yet" so the executor returns `Deferred` (§2). Implementations stay `ThreadsSeatMap` and `FakePaneSeatMap`.
 
 **ThreadsSource / ThreadsExecutor (`Payload`)** — extended: new want kinds, still chosen in `system_wants` and dispatched in `execute_scoped`:
 - resolve seat: for an active clone with no `threads_seat` and either a verified pane binding (`ResolveSeat`) or, after D1, a recorded key reservation (re-issued `ReserveContinuityKey{key}`, admitting the answer's `seat` when present, §2); it admits ThreadsSeatAssignment.
 - reserve key: for an active clone with no recorded reservation, before its first keyed launch.
+- key link: for an active clone with a recorded reservation and a `threads_seat` whose reservation is not recorded as bound to that seat; issues `ReserveContinuityKey{key, seat: threads_seat}` and records the binding (§14.12). D1-gated.
 - unretire seat: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads reversibly retired (§8). No other state produces it.
 - succession: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads final-retired; resolves the reopened pane's seat and admits ThreadsSeatAssignment's succession (§2, §8).
 - finalize retirement: for every `Finalize{seat}` tombstone, retried until threads acknowledges (§8).
@@ -500,6 +530,11 @@ Digest:
 - Gating stays delivery order: the matcher deletion and fresh-agent path wait on D1, unretire and finalize on D2; no runtime capability switches.
 - Undo never adopts the caller's pane.
 - Tabs and workspaces match by token, then preserved Herdr id (§7), unaffected by this amendment.
+- (amend-code-1) Purge stays an explicit operator command that ends the undo window; undo of an action whose retired clone was purged is still refused, and `seat resurrect` never revives a purged clone.
+- (amend-code-1) A restore still gets at most one launch attempt per Restore epoch (`MarkLaunched` before dispatch); surfacing a stuck restore in status never retries or relaunches it, and no fresh-agent launch exists before D1.
+- (amend-code-1) Seat-keyed participation migration still causes no churn for Pending or Accepted links on the backfilled seat.
+- (amend-code-1) A whole-read `ThreadsSeatView` failure (transport error, `Unsupported`, refusal of the whole call) still changes no binding.
+- (amend-code-1) No key reservation, key-link want or keyed env exists before D1.
 
 ## Post-Implementation Notes
 
