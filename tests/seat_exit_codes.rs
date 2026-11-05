@@ -1,0 +1,92 @@
+//! `herdr-graph seat` exit codes (spec §4.4): 5 daemon unavailable, 2 no instance / not in Herdr.
+//! Spawns the real binary under `TestRoot`; the integrity (6) mapping is covered by unit tests.
+mod support;
+
+use herdr_graph::cli::daemon_error::{NOT_IN_HERDR, RETRY_LATER};
+use herdr_graph::store::init::init_instance;
+use std::os::unix::net::UnixListener;
+use std::process::{Command, Output};
+use support::isolated::TestRoot;
+
+const BIN: &str = env!("CARGO_BIN_EXE_herdr-graph");
+
+struct Fixture {
+    root: TestRoot,
+    _listener: UnixListener,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let root = TestRoot::new();
+        init_instance(&root.instance()).unwrap();
+        let listener = UnixListener::bind(root.herdr_socket()).unwrap();
+        let l2 = listener.try_clone().unwrap();
+        std::thread::spawn(move || for _conn in l2.incoming() {});
+        Fixture {
+            root,
+            _listener: listener,
+        }
+    }
+
+    fn cmd(&self, args: &[&str]) -> Command {
+        let mut c = self.root.command(BIN);
+        c.args(args)
+            .env("HERDR_GRAPH_INSTANCE", self.root.instance());
+        c
+    }
+}
+
+fn stderr(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stderr).into_owned()
+}
+
+#[test]
+fn seat_without_reachable_daemon_exits_5() {
+    let f = Fixture::new();
+    let dead = f.root.home().join("dead.sock");
+    for args in [&["seat"][..], &["seat", "--json"][..]] {
+        let out = f
+            .cmd(args)
+            .env("HERDR_SOCKET_PATH", &dead)
+            .output()
+            .unwrap();
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(5), "{args:?}: {err}");
+        assert!(
+            err.contains("herdr-graph: graph daemon unavailable:"),
+            "{err}"
+        );
+        assert!(err.contains(RETRY_LATER), "{err}");
+        assert!(err.contains("Do not guess your seat."), "{err}");
+    }
+}
+
+#[test]
+fn seat_without_instance_exits_2() {
+    let f = Fixture::new();
+    let out = f
+        .cmd(&["seat"])
+        .env_remove("HERDR_GRAPH_INSTANCE")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("no instance configured"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn seat_outside_herdr_exits_2() {
+    let f = Fixture::new();
+    let out = f
+        .cmd(&["seat"])
+        .env_remove("HERDR_SOCKET_PATH")
+        .output()
+        .unwrap();
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(2), "{err}");
+    assert_eq!(err.trim(), NOT_IN_HERDR);
+    assert!(!err.contains("Retry"));
+}

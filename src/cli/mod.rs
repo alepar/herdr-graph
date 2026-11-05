@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 pub mod content;
 pub mod daemon;
+pub mod daemon_error;
 pub mod init;
 pub mod instructions;
 pub mod ops;
