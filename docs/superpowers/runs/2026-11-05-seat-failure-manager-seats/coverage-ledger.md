@@ -21,3 +21,19 @@ C19 · r1 · GAP · R9 undo-driven retirement · applied — hg-k4l.15 acceptanc
 C20 · r1 · GAP · R3 dangling node manager · applied — hg-k4l.11 acceptance
 C21 · r1 · GAP · R11 workspace reopen · applied — hg-k4l.9 acceptance
 C22 · r1 · GAP · show integrity exit · applied — hg-k4l.16 acceptance
+C23 · r2 · GAP · R18 action-record format · applied — hg-k4l.15 owns {holder, field, old, new} on every route; hg-k4l.17 consumes
+C24 · r2 · GAP · cycles from other plans · applied — new leaf hg-k4l.21; spec §4.9
+C25 · r2 · GAP · retired-target pointers · applied — hg-k4l.4 transparency rule; spec §4.6
+C26 · r2 · GAP · dangling node_manager_seat · applied — hg-k4l.4 (treated as unassigned), hg-k4l.6 (assign semantics); spec §4.6/§4.7
+C27 · r2 · GAP · B11 observed move · applied — hg-k4l.9 acceptance; spec §4.9
+C28 · r2 · GAP · B11 deactivation · applied — hg-k4l.8 acceptance; spec §4.9
+C29 · r2 · GAP · B7 observed cascades (C6 re-raised) · parked — needs human: approve observed-cascade reparenting outside plans or require a reparent plan
+C30 · r2 · UNOWNED-SEAM · seat.resolve reply struct · applied — hg-k4l.11 owns SeatRef and text layout; edge hg-k4l.11 -> hg-k4l.2; hg-k4l.19 consumes
+C31 · r2 · UNOWNED-SEAM · live node manager · applied — hg-k4l.4 owns live_node_manager; .8/.9/.10/.11 consume
+C32 · r2 · UNOWNED-SEAM · show exit-6 rendering · applied — hg-k4l.2 owns local StoreError::Integrity rendering; hg-k4l.16 consumes
+C33 · r2 · GAP · B4 silent-drop scope · rejected — the approved change named the seat.resolve silent drops (review H3: mod.rs:178,193,200); no other readers were in scope
+C34 · r2 · GAP · B12 warning exclusions · parked — accepted design narrowing (init/setup/daemon/hook-prompt have no graph or must keep output clean); surfaced for human confirmation
+C35 · r2 · GAP · R8 undo of first create · applied — hg-k4l.8 refusal names the remedy
+C36 · r2 · GAP · B13 duties after move · applied — hg-k4l.19 acceptance; spec §4.12
+C37 · r2 · UNOWNED-SEAM · CURRENT-DESIGN ordering · applied — hg-k4l.20 depends on .9/.6/.17/.18
+C38 · r2 · GAP · R19 entry points · applied — hg-k4l.18 acceptance enumerates client entry points
