@@ -14,3 +14,7 @@ R13 (B13) the same command moves the role; the old node manager and its direct r
 R14 (B9) who and show display the manager chain
 R15 (B5, goal) /seat tells the session who its manager and node manager are
 R16 (goal) herdr-graph seat exits 2 when no instance is configured, matching other commands
+R17 (B11) the node manager's placement (tab, workspace) cannot be changed by any plan while it holds the role
+R18 (B6) undoing a seat retirement restores the manager pointers its reparenting rewrote, where they were not changed since
+R19 (B2) every CLI command that needs the daemon reports it unavailable the same way: exit 5 with retry-later / get-it-fixed guidance
+R20 (B5 discussion) a seat that manages others learns from /seat who its reports are and its duty to listen, detect and unblock
