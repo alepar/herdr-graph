@@ -1092,6 +1092,15 @@ fn launch_env_contract() {
 }
 
 #[test]
+fn agent_env_has_graph_clone_and_the_key_only_when_reserved() {
+    let clone = CloneId::new();
+    let clone_var = (ENV_CLONE.to_string(), clone.to_string());
+    let key_var = (ENV_CONTINUITY_KEY.to_string(), clone.to_string());
+    assert_eq!(agent_env(&clone, false), vec![clone_var.clone()]);
+    assert_eq!(agent_env(&clone, true), vec![clone_var, key_var]);
+}
+
+#[test]
 fn graph_token_roundtrip() {
     let id = SeatId::new();
     assert_eq!(

@@ -295,6 +295,7 @@ async fn private_agent_absent_and_rejections() {
             pane: pane.clone(),
             kind: "no-such-agent".into(),
             args: vec![],
+            env: vec![],
         })
         .await
         .unwrap();
@@ -304,5 +305,69 @@ async fn private_agent_absent_and_rejections() {
             herdr_graph::model::harness::StartOutcome::NeedsRevision { .. }
         ),
         "got {out:?}"
+    );
+}
+
+#[tokio::test]
+async fn private_start_agent_env_reaches_the_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(h) = start() else { return };
+    let c = h.client();
+    // A stand-in `claude` first on the workspace's PATH records its environment, then stays alive.
+    let bin = h.root.join("fakebin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let out = h.root.join("agent-env.txt");
+    let script = bin.join("claude");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\nenv > '{}'\nexec sleep 60\n", out.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let pane = c
+        .create_workspace(CreateWorkspace {
+            label: "envws".into(),
+            cwd: h.root.join("home"),
+            env: vec![("PATH".into(), path)],
+        })
+        .await
+        .unwrap()
+        .pane
+        .unwrap();
+    eventually("shell foreground", || async {
+        c.process_info(&pane).await.ok().filter(|i| i.is_shell)
+    })
+    .await;
+    let outcome = c
+        .start_agent(StartAgent {
+            pane: pane.clone(),
+            kind: "claude".into(),
+            args: vec![],
+            env: vec![
+                ("HERDR_GRAPH_CLONE".into(), "cl_testclone".into()),
+                ("HERDR_THREADS_CONTINUITY_KEY".into(), "cl_testclone".into()),
+            ],
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        outcome,
+        herdr_graph::model::harness::StartOutcome::Started,
+        "start_agent outcome"
+    );
+    let seen = eventually("agent environment file", || async {
+        read_trimmed(&out).await
+    })
+    .await;
+    let lines: Vec<&str> = seen.lines().collect();
+    assert!(lines.contains(&"HERDR_GRAPH_CLONE=cl_testclone"), "{seen}");
+    assert!(
+        lines.contains(&"HERDR_THREADS_CONTINUITY_KEY=cl_testclone"),
+        "{seen}"
     );
 }

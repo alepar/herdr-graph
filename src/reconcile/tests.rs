@@ -7,6 +7,7 @@ use crate::model::clone::CloneRecord;
 use crate::model::common::{Availability, Binding, Lifecycle, Occupant};
 use crate::model::effect::{ContainerKind, EndState};
 use crate::model::harness::{Harness, StartOutcome};
+use crate::model::launch::agent_env;
 use crate::model::native_session::NativeSession;
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
@@ -446,6 +447,7 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     };
     assert_eq!(start.kind, "claude");
     assert!(start.args.is_empty());
+    assert_eq!(start.env, agent_env(&c.id, false));
 
     // Binding written back as a bookkeeping mutation.
     let bound = clones_of(&fx, &s.id).remove(0).runtime;
@@ -1045,6 +1047,7 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
         })
         .collect();
     assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].env, agent_env(&c.id, false));
     assert_eq!(starts[0].pane, pane);
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
     // Exit keys come before the restart.
@@ -1381,6 +1384,7 @@ async fn replacement_resumes_after_occupant_cleared() {
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{starts:?}");
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, false));
     let launched: serde_json::Value = serde_json::from_str(
         &fx.journal
             .meta_get(&planner::launched_key(&c.id))
@@ -1627,7 +1631,9 @@ async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
     assert_eq!(
         count_calls(
             &fx,
-            |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")
+            |call| matches!(call, FakeCall::StartAgent(s) if s.pane == pane
+                && s.kind == "claude"
+                && s.env == agent_env(&c.id, false))
         ),
         1
     );

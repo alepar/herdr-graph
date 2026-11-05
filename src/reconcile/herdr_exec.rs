@@ -13,7 +13,7 @@ use crate::journal::Journal;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::harness::{Harness, profile};
-use crate::model::launch::{graph_token, nonce_label};
+use crate::model::launch::{agent_env, graph_token, nonce_label};
 use crate::model::{AnyId, CloneId, SeatId, TeamspaceId};
 use crate::ports::herdr::{
     CreateTab, CreateWorkspace, HerdrError, SplitDirection, SplitPane, StartAgent,
@@ -552,6 +552,8 @@ impl HerdrExecutor {
                 pane: lp.pane.id.clone(),
                 kind: kind.to_owned(),
                 args,
+                // No key reservation exists before D1 (hg-66u.13 records it).
+                env: agent_env(&clone, false),
             })
             .await;
         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
@@ -643,6 +645,8 @@ impl HerdrExecutor {
         let to = to_prof.agent_kind.map(|kind| Relaunch {
             kind,
             args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
+            // No key reservation exists before D1 (hg-66u.13 records it).
+            env: agent_env(&clone, false),
         });
         let out = advance_replacement(
             cx.herdr,
