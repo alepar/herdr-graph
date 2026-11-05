@@ -236,11 +236,13 @@ impl CascadeMutation {
                 cx, &seat.id, act, mech, at, false, nm, acc,
             )?);
         }
+        // Re-read: retiring the seats may have reparented this teamspace's own default_manager; both the kept
+        // (node manager's) teamspace and a retired one are written from this read.
+        let mut rec = read_ts(&cx.tree, id).map_err(mm)?.rec;
+        rec.runtime = absent();
         // The node manager's teamspace stays Active with its runtime absent (it reopens); its other seats are
         // retired seat by seat.
         if nm.is_some_and(|n| seats.iter().any(|(_, s)| &s.id == n)) {
-            let mut rec = ts.rec.clone();
-            rec.runtime = absent();
             cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
             return Ok(kept + 1);
         }
@@ -249,8 +251,6 @@ impl CascadeMutation {
         } else {
             "dormant"
         };
-        // Re-read: retiring the seats may have reparented this teamspace's own default_manager.
-        let mut rec = read_ts(&cx.tree, id).map_err(mm)?.rec;
         rec.lifecycle = Lifecycle::Retired;
         rec.retired = Some(Retirement {
             op: cx.op.clone(),
@@ -258,7 +258,6 @@ impl CascadeMutation {
             at,
             mechanism: mech,
         });
-        rec.runtime = absent();
         cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
         acc.retired.insert(0, id.to_any());
         acc.changed(id.to_any(), before, "retired");
