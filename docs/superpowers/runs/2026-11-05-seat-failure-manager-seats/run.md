@@ -88,6 +88,7 @@ parked:
 - .superpowers/sdd/hg-k4l-plan/progress.md#inv2 · degraded-verdict · "invocation 2 stalled: 18 landed; stale task worktrees (process-inspection exit 4, submodule guard) blocked re-cuts of hg-k4l.17/hg-k4l.24; worktrees removed, blockers closed; final review not ready (composition defects A/B filed as hg-k4l.45/hg-k4l.46); relaunched"
 - .superpowers/sdd/hg-k4l-plan/progress.md#inv3 · degraded-verdict · "invocation 3 stalled: 22 landed; hg-k4l.24 left pendingRetry while ready; final review not ready (B10 first-seat assignment and shipped node-manager templates missing, manager duties/reports missing, undo misrestores chained reparent rows; 5 epic tasks open; no full-suite run); relaunched"
 - .superpowers/sdd/hg-k4l-plan/progress.md#inv4 · degraded-verdict · "invocation 4 stalled with 0 ready: hg-k4l.23/.24/.25/.41 had lost the sp:hg-k4l label in the coordinator's split; label restored; relaunched"
+- .superpowers/sdd/hg-k4l-plan/final-review-inv-26c52189-6b83-43ed-a202-49a87db495d9.md · degraded-verdict · "review collection gap: cluster 2 (run docs directory) never reviewed — over the final-review window; source workspace retained; re-entry proceeded despite the gap (deviation: the artifact cannot be produced)"
 
 codeBuckets:
   completed: hg-k4l.1, hg-k4l.12, hg-k4l.2, hg-k4l.4, hg-k4l.18, hg-k4l.3, hg-k4l.5, hg-k4l.11, hg-k4l.9, hg-k4l.16, hg-k4l.10, hg-k4l.13, hg-k4l.8, hg-k4l.26, hg-k4l.6, hg-k4l.23, hg-k4l.21, hg-k4l.27, hg-k4l.46, hg-k4l.45, hg-k4l.17, hg-k4l.20
