@@ -1,5 +1,5 @@
 //! Desired runtime: what Herdr should look like for one committed revision (spec §4.4).
-use crate::model::clone::CloneRecord;
+use crate::model::clone::{CloneRecord, SeatFact, SeatIntent};
 use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, Occupant};
 use crate::model::effective::{EffectiveSeatConfig, resolve_in};
 use crate::model::harness::{Harness, profile};
@@ -57,6 +57,13 @@ pub struct DesiredPane {
     pub bound: Option<Binding>,
     pub availability: Availability,
     pub rev: u64,
+    /// The clone's threads seat, what threads last said about it and the graph's pending seat intent: the
+    /// inputs of the resume driver (spec §9, §14.4).
+    pub threads_seat: Option<String>,
+    pub seat_fact: Option<SeatFact>,
+    pub seat_intent: Option<SeatIntent>,
+    /// The clone has (or had) an agent: it has a native session on record.
+    pub had_agent: bool,
 }
 
 /// A bound object whose availability is `unknown` gets no create effects (spec §4.3.2).
@@ -198,6 +205,10 @@ impl DesiredRuntime {
                     bound: c.runtime.bound.clone(),
                     availability: c.runtime.availability,
                     rev: c.rev,
+                    threads_seat: c.threads_seat.clone(),
+                    seat_fact: c.seat_fact.clone(),
+                    seat_intent: c.seat_intent.clone(),
+                    had_agent: !c.sessions.is_empty(),
                 });
             }
         }

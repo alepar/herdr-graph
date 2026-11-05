@@ -505,13 +505,14 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>, store: &Arc<dyn S
     let j = journal.clone();
     reg.status_provider("reconciler", Arc::new(move || reconciler_status(&j)));
     let store = store.clone();
+    let j = journal.clone();
     reg.status_provider(
         "clones",
         Arc::new(move || match store.head() {
-            Ok(at) => super::clone_status::clone_status(&crate::store::tree::CommitView {
-                store: &*store,
-                at,
-            }),
+            Ok(at) => super::clone_status::clone_status_with_journal(
+                &crate::store::tree::CommitView { store: &*store, at },
+                &j,
+            ),
             Err(e) => json!({ "error": e.to_string() }),
         }),
     );
