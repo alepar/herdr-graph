@@ -25,8 +25,23 @@ approvals:
 - coverage-round-1 · canonical R-list: R1..R16 in coverage-round-1-requirements.md, R17..R20 appended from r-new · specsAt baa47d8 · requirements: 16 · mapped: 16 · unmapped: 0 · auto applied C4 C5 C7 C9-C22; auto rejected C6 (sanctioned observed mutation) C8 (S1); flag-sweep C1-C3 kept
 - coverage-round-2 · findings 19 → 15 · novel 12/15 (80%) · widening: no · auto applied C23-C28 C30-C32 C35-C38; auto rejected C33; parked C29 C34
 
+- review-collection · {"invocationId":"inv-437ddc72-6ee9-4817-a588-169cef502004","workspace":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.superpowers/sdd/hg-k4l-plan","reviewPath":null,"review":"no work landed","required":[],"settled":true}
+- review-collection · {"invocationId":"inv-437ddc72-6ee9-4817-a588-169cef502004","workspace":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.superpowers/sdd/hg-k4l-plan","reviewPath":null,"review":"no work landed","required":[],"settled":true,"complete":true,"gaps":[]}
 parked:
 - coverage-ledger.md#C29 · escalation · "B7: observed closure cascades reparent manager pointers outside plans (existing sanctioned observed mutation); human to approve or require a reparent plan"
 - coverage-ledger.md#C34 · escalation · "B12: unassigned-node-manager warning is suppressed for init, setup, daemon, seat --hook-prompt and graphs with no live seat; human to confirm the narrowing"
 - 2026-11-05-seat-failure-manager-seats-roast-design-1.md · degraded-verdict · "B11 partial: an observed out-of-plan move of the node manager's pane or tab is tolerated and surfaced (warning), not reverted — Herdr exposes no move primitive; plan-driven placement changes are refused"
 - graph-pass · graph-change · "drop hg-k4l.20 <- hg-k4l.17 (safe no: doc bead describes landed undo behaviour); would cut depth 7→6"
+- .superpowers/sdd/hg-k4l-plan/progress.md#hg-k4l.1 · degraded-verdict · "invocation 1 ready-drained: hg-k4l.1 merge check failed (submodule not initialised in run worktree); blockers hg-9su/hg-9bp closed after git submodule update --init; relaunched"
+
+codeBuckets:
+  completed:
+  escalated: hg-k4l.1
+  pendingRetry:
+  parked:
+  stalled: false
+  review: no work landed
+  sweep: SWEEP DEFERRED (caller-owned)
+  slowness:
+  worktreesKept: .worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.1 — clean, unmerged branch task-hg-k4l.1; /tmp/sp-2d1990ff — process inspection unknown
+  processSweep: stopped 0 · survived 0 · unknown 4 · kept 0 — unknown: 1620359 sshd-session, 1950 systemd --user, 2008 sd-pam, 6582 sshd-session (session processes, not run-owned; inspection failed)

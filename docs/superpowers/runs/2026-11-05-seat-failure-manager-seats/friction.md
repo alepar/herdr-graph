@@ -2,3 +2,6 @@
 - [2026-11-05] roast-design r1 · rung: Workflow · super-roast engine via assemble-args --script
 - [2026-11-05] .superpowers/ was not git-ignored in this repo; added to .gitignore on the run branch before phase 3
 - [2026-11-05] testPaths declared for inline Rust tests (src/**/*.rs, tests/**); mergeCheck covers default and --all-features
+- [2026-11-05] phase 3 friction log (pending file while coordinator runs)
+- [2026-11-05] phase 3 invocation 1: run worktree created by plain `git worktree add` lacked the third_party/herdr-threads submodule; mergeCheck failed twice on hg-k4l.1 → blocker beads hg-9su/hg-9bp; orchestrator ran `git submodule update --init` and closed both; relaunch with fresh invocationId
+- [2026-11-05] Finish process sweep reported unknown inspection for session processes (sshd-session, systemd --user, sd-pam) not owned by the run; task worktree hg-k4l.1 kept (clean, branch task-hg-k4l.1 @71c8f2a)
