@@ -600,6 +600,15 @@ fn restart_covered(p: &DesiredPane) -> bool {
         })
 }
 
+/// An acknowledged `Restore` whose launch mark predates `changed_at`: the restore launch ran in an earlier
+/// incarnation and the clone never reattached, so the restart trigger owns it again (spec §14.8, §16.7).
+pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bool {
+    matches!(
+        intent,
+        Some(SeatIntent::Restore { threads_done: true, launched: Some(t), .. }) if *t < changed_at
+    )
+}
+
 /// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent.
 fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     let any = p.clone.to_any();
@@ -960,7 +969,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
             && let Some(SeatIntent::Restore {
                 epoch,
                 threads_done: true,
-                launched: false,
+                launched: None,
                 ..
             }) = &p.seat_intent
         {
@@ -979,9 +988,9 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 );
             }
         } else if eligible
-            && p.seat_intent.is_none()
             && restart_covered(p)
             && let Some(changed) = changed_at
+            && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
             && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed)
         {
             match &pane {
@@ -1022,7 +1031,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 p.seat_intent,
                 Some(SeatIntent::Restore {
                     threads_done: true,
-                    launched: false,
+                    launched: None,
                     ..
                 })
             );

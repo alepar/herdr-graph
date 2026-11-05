@@ -140,7 +140,7 @@ impl Mutation for SeatFixture {
                     seat: "seat-gone".into(),
                     epoch: cx.request.args["epoch"].as_str().unwrap().parse().unwrap(),
                     threads_done: false,
-                    launched: false,
+                    launched: None,
                     last_refusal: None,
                 });
             }
@@ -2077,12 +2077,17 @@ fn intent(fx: &Fx, clone: &CloneId) -> Option<SeatIntent> {
     clone_rec(fx, clone).seat_intent
 }
 
+/// A launch mark of `true` is the fixed time `marked_at()`; assert a live mark's time separately.
+fn marked_at() -> Timestamp {
+    chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+}
+
 fn restore(seat: &str, epoch: &OpId, threads_done: bool, launched: bool) -> Option<SeatIntent> {
     Some(SeatIntent::Restore {
         seat: seat.into(),
         epoch: epoch.clone(),
         threads_done,
-        launched,
+        launched: launched.then(marked_at),
         last_refusal: None,
     })
 }
@@ -2333,7 +2338,15 @@ async fn mark_launched_is_once_per_epoch() {
         "stale epoch"
     );
     assert_eq!(transition(&fx, &c.id, mark(&epoch)), None);
-    assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, true, true));
+    let mut marked = intent(&fx, &c.id);
+    assert!(
+        matches!(&marked, Some(SeatIntent::Restore { launched: Some(t), .. }) if *t == fx.clock.now()),
+        "MarkLaunched records the mark time: {marked:?}"
+    );
+    if let Some(SeatIntent::Restore { launched, .. }) = &mut marked {
+        *launched = Some(marked_at());
+    }
+    assert_eq!(marked, restore("seat-a", &epoch, true, true));
     assert_eq!(
         transition(&fx, &c.id, mark(&epoch)).as_deref(),
         Some("already_launched")

@@ -674,7 +674,7 @@ fn undo_writes_a_restore_intent_for_a_seated_clone_only() {
             seat: "seat-A".into(),
             epoch: row.op.clone(),
             threads_done: false,
-            launched: false,
+            launched: None,
             last_refusal: None,
         }),
         "the epoch is the undo commit's operation"
@@ -1364,7 +1364,7 @@ fn seat_resurrection_writes_a_restore_intent_for_a_seated_clone() {
             seat: "seat-A".into(),
             epoch: row.op.clone(),
             threads_done: false,
-            launched: false,
+            launched: None,
             last_refusal: None,
         })
     );

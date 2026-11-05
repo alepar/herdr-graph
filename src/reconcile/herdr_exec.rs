@@ -6,7 +6,7 @@ use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
     LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, incarnation_changed_at,
-    launch_env_key, launched_key, live_ref, plan_effects, restore_mark_failed_key,
+    launch_env_key, launched_before, launched_key, live_ref, plan_effects, restore_mark_failed_key,
     restore_mark_failures, resumed_key, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
@@ -562,15 +562,20 @@ impl HerdrExecutor {
         }
         // A pending Restore launches once per epoch: the mark is admitted before the dispatch, and a clone whose
         // epoch is already marked (or acknowledged by no one) is never started here.
-        if let Some(SeatIntent::Restore {
-            epoch,
-            threads_done,
-            launched,
-            ..
-        }) = &p.seat_intent
+        // A restart relaunch of a Restore launched before the incarnation change is an ordinary restart relaunch.
+        let restart_owned = relaunch
+            && incarnation_changed_at(&self.journal)
+                .is_some_and(|at| launched_before(&p.seat_intent, at));
+        if !restart_owned
+            && let Some(SeatIntent::Restore {
+                epoch,
+                threads_done,
+                launched,
+                ..
+            }) = &p.seat_intent
         {
             // Stale: not acknowledged, already launched, or the intent moved to another epoch than this effect's.
-            if !*threads_done || *launched || *epoch != e.op {
+            if !*threads_done || launched.is_some() || *epoch != e.op {
                 return ExecOutcome::Obsolete;
             }
             let failed_key = restore_mark_failed_key(&clone);

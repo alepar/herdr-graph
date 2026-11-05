@@ -2831,10 +2831,25 @@ fn restore_intent(
         seat: seat.into(),
         epoch: epoch.clone(),
         threads_done,
-        launched,
+        launched: launched.then(restore_launched_at),
         last_refusal: None,
     })
     .unwrap()
+}
+
+/// The intent with a recorded launch mark replaced by `restore_launched_at()` (the mark time is the clock's).
+fn marked_normalized(intent: &Option<SeatIntent>) -> Option<SeatIntent> {
+    let mut i = intent.clone();
+    if let Some(SeatIntent::Restore { launched, .. }) = &mut i {
+        assert!(launched.is_some(), "expected a launch mark: {i:?}");
+        *launched = Some(restore_launched_at());
+    }
+    i
+}
+
+/// What `restore_intent(.., true)` records as the launch time: before any incarnation change a test makes.
+fn restore_launched_at() -> Timestamp {
+    chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
 }
 
 fn end_session(fx: &Fx, c: &CloneRecord, native: &str, harness: &str) {
@@ -3213,7 +3228,7 @@ async fn restore_trigger_launches_once_without_grace() {
     assert_eq!(starts[0].args, ["--resume", "abc"]);
     assert_eq!(starts[0].env, agent_env(&c.id, false));
     assert_eq!(
-        the_clone(&fx, &c.id).seat_intent,
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
         serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
         "launched is marked before the dispatch"
     );
@@ -3222,6 +3237,62 @@ async fn restore_trigger_launches_once_without_grace() {
     fx.clock.advance(chrono::Duration::seconds(300));
     step(&fx).await;
     assert!(start_calls(&fx).is_empty(), "exactly one launch");
+}
+
+#[tokio::test]
+async fn cold_restart_after_restore_launch_relaunches_once_after_grace() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "the restore launch");
+    let marked = match the_clone(&fx, &c.id).seat_intent {
+        Some(SeatIntent::Restore {
+            launched: Some(t), ..
+        }) => t,
+        other => panic!("expected a launch mark, got {other:?}"),
+    };
+    // The daemon and Herdr restart before the agent reattaches: the restore launch is lost with the incarnation.
+    fx.clock.advance(chrono::Duration::seconds(30));
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    let early = step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1, "{early:?}");
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(
+        the_clone(&fx, &c.id).seat_intent.map(|i| match i {
+            SeatIntent::Restore { launched, .. } => launched,
+            other => panic!("{other:?}"),
+        }),
+        Some(Some(marked)),
+        "the relaunch does not touch the launch mark"
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "one relaunch per incarnation");
+    assert_eq!(relaunch_rows(&fx), 1);
+    // The agent reattached: the intent clears.
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::ClearOnReattach {
+            epoch: epoch.clone(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None);
 }
 
 #[tokio::test]
@@ -3383,7 +3454,7 @@ async fn failed_mark_launched_is_retried_without_launching() {
     }
     assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
     assert_eq!(
-        the_clone(&fx, &c.id).seat_intent,
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
         serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
     );
     let stuck = stuck_restores(&fx);
@@ -3440,12 +3511,11 @@ async fn failed_restore_launch_is_not_retried_by_either_trigger() {
         "{:?}",
         rows(&fx, EffectKind::StartAgent)
     );
-    // A cold restart makes the restart trigger eligible too: the Restore intent still owns the clone.
-    fx.herdr.restart(true, true);
-    step(&fx).await;
+    // Within this incarnation the restart trigger does not apply either: the Restore intent owns the clone.
+    // (A cold restart after the launch is the separate case of
+    // `cold_restart_after_restore_launch_relaunches_once_after_grace`.)
     let p = token_pane(&fx, &c.id).await;
     fx.herdr.set_agent(&p, None);
-    keep_pane_id(&fx, &c.id, &p);
     seat_state(
         &fx,
         &c.id,
