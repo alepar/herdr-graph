@@ -3083,6 +3083,50 @@ async fn missing_last_pane_launches_nothing_and_is_named_in_status() {
     assert!(st["resume_blocked"].as_array().unwrap().is_empty(), "{st}");
 }
 
+#[test]
+fn meta_change_writes_only_on_change() {
+    use planner::{MetaChange, meta_change};
+    assert_eq!(meta_change(None, None), MetaChange::Keep);
+    assert_eq!(meta_change(None, Some("v")), MetaChange::Set);
+    assert_eq!(meta_change(Some("v"), Some("v")), MetaChange::Keep);
+    assert_eq!(meta_change(Some("v"), Some("w")), MetaChange::Set);
+    assert_eq!(meta_change(Some("v"), None), MetaChange::Delete);
+}
+
+#[tokio::test]
+async fn resume_blocked_meta_is_stable_across_passes() {
+    let fx = fx();
+    let (c, old_pane) = ended_clone(&fx).await;
+    let new_pane = cold_restart(&fx, &c.id).await;
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let key = planner::resume_blocked_key(&c.id);
+    let first = fx
+        .journal
+        .meta_get(&key)
+        .unwrap()
+        .expect("blocked meta set");
+    let st_first = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    for _ in 0..3 {
+        step(&fx).await;
+        assert_eq!(
+            fx.journal.meta_get(&key).unwrap().as_deref(),
+            Some(first.as_str())
+        );
+    }
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    assert_eq!(st["resume_blocked"], st_first["resume_blocked"]);
+    assert_eq!(st["resume_blocked"][0]["pane"], old_pane.0);
+    keep_pane_id(&fx, &c.id, &new_pane);
+    step(&fx).await;
+    assert_eq!(fx.journal.meta_get(&key).unwrap(), None);
+}
+
 #[tokio::test]
 async fn relaunch_in_another_harness_resumes_the_new_session() {
     let fx = fx();
