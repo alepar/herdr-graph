@@ -346,11 +346,13 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
   un-retire (§2's early-resolve rule).
 - **Key relink on succession.** After succession, a clone with a recorded key reservation has its
   key bound to the successor seat (`ReserveContinuityKey{key, seat: successor}`) before the restore
-  launch. Whether threads releases the key binding of a final-retired seat is being confirmed with
-  threads (message mnSG57YUhprU); the relink path follows its answer.
-- **Key release at purge.** Purge releases the reservation (`ReleaseContinuityKey`) of every clone
-  whose seat is final-retired or absent; a reversibly retired seat releases through
-  `FinalizeRetirement` from the tombstone.
+  launch. Threads deletes a seat's key row whenever its retirement becomes final, so the relink is a fresh
+  reservation on the successor; the successor is resolved before the session resumes, and a resumed
+  check-in on the successor's pane attaches to it (threads answer mnSGq1eyidhP).
+- **Key release at purge.** Threads already deletes the key of a final-retired seat. Purge releases
+  the reservation (`ReleaseContinuityKey`) of a clone that never got a seat; a reversibly retired
+  seat releases through `FinalizeRetirement` from the tombstone. D1 and D2 ship in one threads
+  release, so their gates close together.
 - **Launch ownership.** The ordinary start rule launches a clone that has never had an agent
   (including a new post-D1 clone with a reservation and no seat); the resume driver launches only on
   its restart and restore triggers. The unseated restart arm fires only for a clone that had an

@@ -33,3 +33,8 @@ Source: herdr-threads coordinator (seat snSGTpBk7xGd), message mnSGy0OTGAUK on t
 - ReserveContinuityKey{seat}: accepts a resolved OR unresolved seat (binding moves nothing); a clone whose seat is already waiting at upgrade can gain a key. Refused for a retired, named or hc seat.
 - New native refusal ContinuityKeyPending: a claimless ResolveSeat (plain CLI) on a pane whose key is bound to an unresolved seat; no seat minted, no alert. Hooked agents never hit it (their claim reattaches).
 - Conflict alerts on a pane with a resolved owner hold nothing; that seat keeps working.
+
+## Answers 2026-11-05 (message mnSGq1eyidhP, threads worker #10 mnSGRxWdaUrx) to mnSG57YUhprU
+
+1. Every path that makes a retirement final (pane close of a keyless seat, operator retire, --replace, FinalizeRetirement) deletes the key row in the same transaction: the reservation is released, not returned to reserved-unbound. Relink to a successor is a fresh ReserveContinuityKey{key, seat: successor}; it succeeds if the successor holds no other key and is resolved or unresolved. D1 and D2 land on one branch and ship in one release (no between-releases window). A seat retired final before this ships never had a key row. (Design, not yet implemented.)
+2. A final-retired seat is never a C1 candidate. A resumed check-in on a pane already resolved to the successor falls through to ordinary check-in on that seat (works today). On an unowned pane a non-resume event mints a new seat; the Resume-event case is untraced. A held pane is refused. With the key re-bound to the successor, a check-in on the successor's pane is a key no-op; on another pane it is key_live_elsewhere. Resolving the successor before resuming is the right order. (Verified in today's code: src/cli/hook.rs:2049-2085.)
