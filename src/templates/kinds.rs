@@ -29,6 +29,7 @@ use crate::plan::core_kinds::{
 use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use crate::plan::line_diff::{self, Side};
+use crate::plan::managers::reparent::reparent_effects;
 use crate::plan::types::{Plan, PlanEffect, Reserved, ReservedId};
 use crate::ports::store::{ObjectLocation, RepoPath, StoreError};
 use crate::store::instruction_source::check_content;
@@ -1049,6 +1050,7 @@ impl OrgKind for TemplateEdit {
         relied_on.extend(edit.dependencies.clone());
         let graph = layout::read_graph(cx.tree)?;
         let mut activated = BTreeSet::new();
+        let mut retiring = Vec::new();
         for ae in &edit.apps {
             relied_on.push(rev_of(ae.app.id.clone(), ae.app.rev));
             if let Some((_, tpl)) = read_template(cx.tree, &ae.app.template)? {
@@ -1093,6 +1095,7 @@ impl OrgKind for TemplateEdit {
                         relied_on.push(rev_of(s.id.clone(), s.rev));
                     }
                     effects.extend(withdrawal_effects(cx.tree, &w.seat, &ae.app.id)?);
+                    retiring.push(w.seat.clone());
                 }
             }
             for add in &ae.adds {
@@ -1171,6 +1174,7 @@ impl OrgKind for TemplateEdit {
                 ));
             }
         }
+        effects.extend(reparent_effects(cx.tree, &retiring)?);
         effects[0].detail["template_dependencies"] = json!(
             relied_on
                 .iter()
@@ -1926,6 +1930,7 @@ impl OrgKind for ApplicationRetire {
                 relied_on.push(rev_of(s.id.clone(), s.rev));
             }
         }
+        effects.extend(reparent_effects(cx.tree, &preview.retire)?);
         for (seat, why) in &preview.keep {
             let name = read_seat_rec(cx.tree, seat)?
                 .map(|(_, s)| s.name)

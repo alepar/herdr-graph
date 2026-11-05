@@ -3,7 +3,9 @@
 use super::grammar::{self, Scope, flag, has, positional};
 use super::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use super::managers::first_seat;
-use super::managers::reparent::{REPARENT_FALLBACK_KEY, REPARENTED_KEY, Rewrite, reparent};
+use super::managers::reparent::{
+    REPARENT_FALLBACK_KEY, REPARENTED_KEY, Rewrite, reparent, reparent_effects,
+};
 use super::types::{Plan, PlanEffect, Reserved};
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, ActionRecord, AffectedObject};
@@ -706,10 +708,12 @@ impl OrgKind for TeamspaceRetire {
             json!({ "name": ts.rec.name, "path_from": ts.loc.folder.as_str(), "path_to": archive.as_str() }),
         )];
         let mut relied_on = vec![rev_of(id.clone(), ts.rec.rev)];
+        let mut retiring = Vec::new();
         for (loc, seat) in layout::list_seats(cx.tree, &ts.loc.folder)? {
             if seat.lifecycle == Lifecycle::Retired {
                 continue;
             }
+            retiring.push(seat.id.clone());
             effects.push(PlanEffect::new(
                 "seat.retire",
                 seat.id.clone(),
@@ -733,6 +737,7 @@ impl OrgKind for TeamspaceRetire {
                 json!({ "name": ts.rec.name }),
             ));
         }
+        effects.extend(reparent_effects(cx.tree, &retiring)?);
         Ok(PlanBody {
             effects,
             relied_on,
@@ -1425,6 +1430,7 @@ impl OrgKind for SeatRetire {
             })
             .collect();
         effects.splice(1..1, clones);
+        effects.extend(reparent_effects(cx.tree, std::slice::from_ref(&f.rec.id))?);
         Ok(PlanBody {
             effects,
             relied_on: vec![rev_of(f.rec.id.clone(), f.rec.rev)],
@@ -1800,6 +1806,7 @@ impl OrgKind for CloneRetire {
         if f.last_of_active_seat {
             relied_on.push(rev_of(seat.id.clone(), seat.rev));
             effects.extend(seat_retire_effects(cx.tree, &f.seat, true)?);
+            effects.extend(reparent_effects(cx.tree, std::slice::from_ref(&seat.id))?);
             warnings.push(format!(
                 "retiring the last clone closes the tab and retires seat {}; consider 'seat deactivate {}'",
                 seat.name, seat.name
