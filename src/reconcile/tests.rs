@@ -3629,3 +3629,86 @@ async fn undo_reopens_the_tab_in_its_original_workspace_with_one_launch() {
     step(&fx).await;
     assert!(start_calls(&fx).is_empty(), "exactly one launch");
 }
+
+/// Hands `clone` back as the start rule sees it after a retirement was reversed: one `StartAgent` whose argv
+/// resumes the clone's last session, no resume-driver row, and nothing more on later steps.
+async fn assert_one_ordinary_resume_launch(fx: &Fx) {
+    for _ in 0..2 {
+        step(fx).await;
+    }
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(
+        rows(fx, EffectKind::StartAgent).len(),
+        2,
+        "first launch and the resume"
+    );
+    assert_eq!(relaunch_rows(fx), 0, "the resume driver plans nothing");
+    fx.herdr.clear_calls();
+    for _ in 0..2 {
+        step(fx).await;
+    }
+    assert!(start_calls(fx).is_empty(), "exactly one launch");
+    assert_eq!(relaunch_rows(fx), 0);
+}
+
+/// A seatless claude clone that had an agent, retired by closing its seat (the tab closes). Returns the clone
+/// and the retire action's id.
+async fn retired_seatless(fx: &Fx) -> (CloneRecord, crate::model::ActionId) {
+    use crate::model::action::ActionKind;
+    let (c, pane) = ended_clone(fx).await;
+    assert_eq!(c.threads_seat, None);
+    commit(fx, "seat retire foreman");
+    step(fx).await;
+    assert_eq!(workspace_of(fx, &pane).await, None, "the pane is gone");
+    let act = layout::list_actions(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action");
+    (c, act.id)
+}
+
+#[tokio::test]
+async fn seatless_undo_launches_once_through_the_ordinary_start_rule() {
+    let fx = fx();
+    let (c, act) = retired_seatless(&fx).await;
+    commit(&fx, &format!("undo {act}"));
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None, "no Restore intent");
+    fx.herdr.clear_calls();
+    assert_one_ordinary_resume_launch(&fx).await;
+}
+
+#[tokio::test]
+async fn seatless_resurrection_launches_once_through_the_ordinary_start_rule() {
+    let fx = fx();
+    let (c, _) = retired_seatless(&fx).await;
+    let id = seat(&fx, "foreman").id;
+    commit(&fx, &format!("seat resurrect {id} --active"));
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None, "no Restore intent");
+    fx.herdr.clear_calls();
+    assert_one_ordinary_resume_launch(&fx).await;
+}
+
+#[tokio::test]
+async fn seatless_restored_pane_is_not_the_resume_drivers() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    // A fresh pane has no `launched:<clone>` record (the executor's clear-on-new-pane rule).
+    let _ = fx
+        .journal
+        .meta_delete(&crate::reconcile::planner::launched_key(&c.id));
+    let fresh = the_clone(&fx, &c.id);
+    assert_eq!(
+        (fresh.seat_intent.as_ref(), fresh.threads_seat.as_ref()),
+        (None, None)
+    );
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(relaunch_rows(&fx), 0);
+}

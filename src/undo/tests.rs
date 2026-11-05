@@ -1371,6 +1371,20 @@ fn seat_resurrection_writes_a_restore_intent_for_a_seated_clone() {
 }
 
 #[test]
+fn seat_resurrection_of_a_seatless_clone_writes_no_restore_intent() {
+    let fx = fx();
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let c = clones_of(&fx, &foreman.id).remove(0);
+    assert_eq!(c.threads_seat, None);
+    commit(&fx, "seat retire foreman");
+    commit(&fx, &format!("seat resurrect {} --active", foreman.id));
+    let back = clone_by_id(&fx, &c.id);
+    assert_eq!(back.lifecycle, CloneLifecycle::Active);
+    assert_eq!(back.seat_intent, None);
+}
+
+#[test]
 fn review_legacy_added_member_compensation_without_agents_undoes() {
     let fx = fx();
     create_template(&fx, "legacy", &[]);
