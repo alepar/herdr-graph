@@ -903,6 +903,38 @@ pub fn plan_effects(
     o.planned
 }
 
+/// What a planning pass must do to a journal meta key so it holds the wanted value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetaChange {
+    Keep,
+    Set,
+    Delete,
+}
+
+pub(crate) fn meta_change(current: Option<&str>, wanted: Option<&str>) -> MetaChange {
+    match (current, wanted) {
+        (c, w) if c == w => MetaChange::Keep,
+        (_, Some(_)) => MetaChange::Set,
+        (_, None) => MetaChange::Delete,
+    }
+}
+
+/// Writes or deletes `key` only when its value differs, so a steady state costs no fsync per pass.
+fn put_meta_if_changed(journal: &Journal, key: &str, wanted: Option<&str>) {
+    let current = journal.meta_get(key).ok().flatten();
+    match meta_change(current.as_deref(), wanted) {
+        MetaChange::Keep => {}
+        MetaChange::Set => {
+            if let Some(v) = wanted {
+                let _ = journal.meta_set(key, v);
+            }
+        }
+        MetaChange::Delete => {
+            let _ = journal.meta_delete(key);
+        }
+    }
+}
+
 /// The resume driver (spec §9, §14.4): the single launcher for the restart and restore triggers. Both need
 /// the clone's bound pane to exist in this snapshot with no agent in it; only the session path exists before
 /// D1, so a resumable session is required. `RelaunchOccupant` carries the 90 s incarnation grace and the
@@ -1001,14 +1033,11 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 .then(|| serde_json::json!({ "reason": "not_launchable" }).to_string())
                 .as_deref(),
         );
-        match blocked {
-            Some(v) => {
-                let _ = journal.meta_set(&blocked_key, &v.to_string());
-            }
-            None => {
-                let _ = journal.meta_delete(&blocked_key);
-            }
-        }
+        put_meta_if_changed(
+            journal,
+            &blocked_key,
+            blocked.map(|v| v.to_string()).as_deref(),
+        );
     }
 }
 
