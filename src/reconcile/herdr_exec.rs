@@ -5,11 +5,12 @@ use super::bookkeeping::admit_binding;
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
-    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launch_env_key, launched_key,
-    live_ref, plan_effects, set_live_ref, token_of,
+    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, incarnation_changed_at,
+    launch_env_key, launched_key, live_ref, plan_effects, resumed_key, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
+use crate::model::clone::SeatIntent;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::harness::{Harness, profile};
@@ -20,6 +21,7 @@ use crate::ports::herdr::{
 };
 use crate::ports::store::StoreError;
 use crate::store::tree::TreeRead;
+use crate::threads::assignment::{SeatTransition, admit_threads_seat};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -529,7 +531,8 @@ impl HerdrExecutor {
             return ExecOutcome::Done;
         };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
-        let Some(lp) = idx.pane(&clone) else {
+        // The resume driver launches into the clone's last bound pane, which a restart may have left unstamped.
+        let Some(lp) = idx.pane(&clone).or_else(|| idx.bound_pane(&clone)) else {
             return ExecOutcome::Transient("pane is not present".into());
         };
         if relaunch && let Some(wait) = self.grace_remaining(cx) {
@@ -556,6 +559,30 @@ impl HerdrExecutor {
             Ok(_) => return ExecOutcome::NeedsRevision("pane foreground is not the shell".into()),
             Err(err) => return transient_or_failed(err),
         }
+        // A pending Restore launches once per epoch: the mark is admitted before the dispatch, and a clone whose
+        // epoch is already marked (or acknowledged by no one) is never started here.
+        if let Some(SeatIntent::Restore {
+            epoch,
+            threads_done,
+            launched,
+            ..
+        }) = &p.seat_intent
+        {
+            if !*threads_done || *launched {
+                return ExecOutcome::Obsolete;
+            }
+            if admit_threads_seat(
+                cx.writer,
+                &clone,
+                &SeatTransition::MarkLaunched {
+                    epoch: epoch.clone(),
+                },
+            )
+            .is_err()
+            {
+                return ExecOutcome::Obsolete;
+            }
+        }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
         let env = agent_env(&clone, false);
         let started = cx
@@ -573,6 +600,12 @@ impl HerdrExecutor {
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
             self.record_launch_env(&clone, &lp.pane.id, &env);
+            if relaunch && let Some(at) = incarnation_changed_at(&self.journal) {
+                // One restart relaunch per incarnation change.
+                let _ = self
+                    .journal
+                    .meta_set(&resumed_key(&clone), &at.to_rfc3339());
+            }
         }
         out
     }

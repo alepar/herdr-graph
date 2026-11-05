@@ -132,6 +132,13 @@ impl Mutation for SeatFixture {
                     launched: false,
                 });
             }
+            "fact" => {
+                rec.seat_fact = Some(crate::model::clone::SeatFact {
+                    seat: cx.request.args["seat"].as_str().unwrap().into(),
+                    state: serde_json::from_value(cx.request.args["state"].clone()).unwrap(),
+                    read_at: cx.now,
+                });
+            }
             other => panic!("unknown fixture op {other}"),
         }
         if !deleted {
@@ -2574,4 +2581,58 @@ async fn fake_seat_view_errors_are_errors() {
     view.set_error(None);
     assert!(view.inspect(&[a]).await.is_ok());
     assert_eq!(view.reads(), 6);
+}
+
+#[tokio::test]
+async fn clear_on_reattach_clears_the_restore_and_returns_the_clone_to_the_ordinary_rule() {
+    let fx = fx();
+    let c = base(&fx).await;
+    transition(&fx, &c.id, assign("seat-a"));
+    let epoch = OpId::new();
+    write_restore(&fx, &c.id, &epoch);
+    let fact = |state: serde_json::Value| {
+        bookkeeping(
+            &fx,
+            "test_seat_fixture",
+            json!({ "clone": c.id, "op": "fact", "seat": "seat-a", "state": state }),
+        );
+    };
+    let resolved = json!({ "state": "resolved", "pane": pane_of(&c).0 });
+    fact(resolved.clone());
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
+    let clear_rows = || {
+        rows(
+            &fx,
+            EffectKind::Custom(super::effects::CLEAR_RESTORE_KIND.into()),
+        )
+    };
+
+    // Threads has not acknowledged the Restore yet: nothing to clear.
+    steps(&fx, 3).await;
+    assert!(clear_rows().is_empty());
+    assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, false, false));
+
+    transition(
+        &fx,
+        &c.id,
+        SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    );
+    // Acknowledged but threads does not read the seat as Resolved: the agent has not reattached.
+    fact(json!({ "state": "unresolved" }));
+    steps(&fx, 3).await;
+    assert!(clear_rows().is_empty());
+    assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, true, false));
+
+    // Resolved under the Restore's seat and an agent in the pane: the intent clears.
+    fact(resolved);
+    steps(&fx, 3).await;
+    assert_eq!(intent(&fx, &c.id), None);
+    assert_eq!(clear_rows().len(), 1);
+    assert_eq!(clear_rows()[0].status, EffectStatus::Done);
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-a")
+    );
 }

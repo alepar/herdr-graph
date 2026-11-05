@@ -4,6 +4,7 @@ use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
+use crate::model::clone::{SeatFactState, SeatIntent};
 use crate::model::common::{
     Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
 };
@@ -11,7 +12,7 @@ use crate::model::effect::{
     ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd,
 };
 use crate::model::launch::{nonce_label, parse_graph_token};
-use crate::model::{AnyId, CloneId, EffectId, SeatId, TeamspaceId};
+use crate::model::{AnyId, CloneId, EffectId, OpId, SeatId, TeamspaceId};
 use crate::ports::herdr::{HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -54,6 +55,23 @@ pub fn launched_key(clone: &CloneId) -> String {
 /// Journal meta: the pane and variable names the last start exported for `clone` (spec §5).
 pub fn launch_env_key(clone: &CloneId) -> String {
     format!("launch_env:{clone}")
+}
+
+/// Journal meta: set while a clone's last pane is gone after an incarnation change, so `status` can name it.
+pub fn resume_blocked_key(clone: &CloneId) -> String {
+    format!("resume_blocked:{clone}")
+}
+
+/// Journal meta: the `incarnation:changed_at` a restart relaunch of `clone` already ran for (one per change).
+pub fn resumed_key(clone: &CloneId) -> String {
+    format!("resumed_at:{clone}")
+}
+
+pub fn incarnation_changed_at(journal: &Journal) -> Option<Timestamp> {
+    let raw = journal.meta_get("incarnation:changed_at").ok().flatten()?;
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|t| t.to_utc())
 }
 
 pub struct LivePane<'a> {
@@ -147,6 +165,24 @@ impl<'a> LiveIndex<'a> {
                     stamped: token_of(&p.metadata).is_some(),
                 })
             })
+        })
+    }
+
+    /// The pane the clone's committed binding names, when this snapshot has a pane of that id (any
+    /// incarnation: Herdr may keep pane ids across a restart). Tokens and live refs are not consulted.
+    pub fn bound_pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
+        let id = self
+            .desired
+            .clones
+            .get(clone)?
+            .runtime
+            .bound
+            .as_ref()?
+            .pane_id
+            .as_ref()?;
+        self.pane_by_id(id).map(|lp| LivePane {
+            stamped: false,
+            ..lp
         })
     }
 
@@ -466,7 +502,23 @@ impl Out<'_> {
         deps: Vec<EffectId>,
     ) -> EffectId {
         let op = self.desired.op_for(&object);
-        let id = EffectRecord::identity(&op, &object, &kind, rev);
+        self.mk_as(op, rev, rev, kind, object, predicted, nonce_name, deps)
+    }
+
+    /// `mk` with an explicit attribution op and identity revision (`fencing_rev` stays the object's).
+    #[allow(clippy::too_many_arguments)]
+    fn mk_as(
+        &mut self,
+        op: OpId,
+        identity_rev: u64,
+        rev: u64,
+        kind: EffectKind,
+        object: AnyId,
+        predicted: Vec<PredictedEnd>,
+        nonce_name: Option<&str>,
+        deps: Vec<EffectId>,
+    ) -> EffectId {
+        let id = EffectRecord::identity(&op, &object, &kind, identity_rev);
         if self.seen.insert(id.clone()) {
             self.planned.push(PlannedEffect {
                 record: EffectRecord {
@@ -502,9 +554,23 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {
         .unwrap_or(false)
 }
 
+/// Statically covered by the restart resume rule (spec §9): the clone had an agent, can resume its last
+/// session and threads says its seat is unresolved. Whether the rule fires now is `resume_pane`'s question.
+fn restart_covered(p: &DesiredPane) -> bool {
+    p.had_agent
+        && p.resume.is_some()
+        && p.threads_seat.is_some()
+        && p.seat_fact.as_ref().is_some_and(|f| {
+            Some(&f.seat) == p.threads_seat.as_ref() && f.state == SeatFactState::Unresolved
+        })
+}
+
+/// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent.
 fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     let any = p.clone.to_any();
     p.harness != crate::model::harness::Harness::Shell
+        && !matches!(p.seat_intent, Some(SeatIntent::Restore { .. }))
+        && !restart_covered(p)
         && p.occupant.is_none()
         && !has_agent
         && journal
@@ -762,6 +828,7 @@ pub fn plan_effects(
         }
     }
 
+    plan_resume(&mut o, &idx, journal);
     plan_closes(&mut o, &idx);
     for dup in idx.duplicates() {
         // One effect per copy: the Herdr id and incarnation name it, the nonce label lets the executor find it.
@@ -799,6 +866,96 @@ pub fn plan_effects(
         }
     }
     o.planned
+}
+
+/// The resume driver (spec §9, §14.4): the single launcher for the restart and restore triggers. Both need
+/// the clone's bound pane to exist in this snapshot with no agent in it; only the session path exists before
+/// D1, so a resumable session is required. `RelaunchOccupant` carries the 90 s incarnation grace and the
+/// shell-foreground guard; the restore launch runs at once, once per Restore epoch.
+fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
+    let changed_at = incarnation_changed_at(journal);
+    let desired = o.desired;
+    for p in &desired.panes {
+        let any = p.clone.to_any();
+        let blocked_key = resume_blocked_key(&p.clone);
+        let mut blocked: Option<serde_json::Value> = None;
+        let eligible = p.harness != crate::model::harness::Harness::Shell
+            && p.occupant.is_none()
+            && p.resume.is_some();
+        let pane = idx.bound_pane(&p.clone);
+        let key_conflict = p
+            .seat_fact
+            .as_ref()
+            .is_some_and(|f| matches!(f.state, SeatFactState::KeyConflict { .. }));
+
+        if eligible
+            && !key_conflict
+            && let Some(SeatIntent::Restore {
+                epoch,
+                threads_done: true,
+                launched: false,
+                ..
+            }) = &p.seat_intent
+        {
+            if pane.as_ref().is_some_and(|lp| lp.pane.agent.is_none()) {
+                // One launch per epoch: the epoch is the attribution op and the identity revision is fixed.
+                o.mk_as(
+                    epoch.clone(),
+                    0,
+                    p.rev,
+                    EffectKind::StartAgent,
+                    any,
+                    vec![],
+                    None,
+                    vec![],
+                );
+            }
+        } else if eligible
+            && p.seat_intent.is_none()
+            && restart_covered(p)
+            && let Some(changed) = changed_at
+            && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed)
+        {
+            match &pane {
+                Some(lp) => {
+                    let done = journal.meta_get(&resumed_key(&p.clone)).ok().flatten();
+                    if lp.pane.agent.is_none()
+                        && done.as_deref() != Some(changed.to_rfc3339().as_str())
+                        && !has_open(journal, &any, &EffectKind::RelaunchOccupant)
+                    {
+                        o.mk(
+                            EffectKind::RelaunchOccupant,
+                            any,
+                            p.rev,
+                            vec![],
+                            None,
+                            vec![],
+                        );
+                    }
+                }
+                None => {
+                    let last = p
+                        .bound
+                        .as_ref()
+                        .and_then(|b| b.pane_id.as_ref().map(|id| id.0.clone()));
+                    if let Some(last) = last {
+                        blocked = Some(serde_json::json!({
+                            "pane": last,
+                            "reason": "last pane missing",
+                        }));
+                    }
+                }
+            }
+        }
+        match blocked {
+            Some(v) => {
+                let _ = journal.meta_set(&blocked_key, &v.to_string());
+            }
+            None => {
+                let _ = journal.meta_delete(&blocked_key);
+            }
+        }
+    }
 }
 
 fn split_chain(o: &mut Out<'_>, journal: &Journal, p: &DesiredPane, deps: Vec<EffectId>) {

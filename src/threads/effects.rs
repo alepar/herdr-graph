@@ -39,6 +39,8 @@ use std::sync::{Arc, Mutex};
 pub const POLL_KIND: &str = "threads.membership";
 /// `EffectKind::Custom` name of the seat resolution of a bound clone without a `threads_seat`.
 pub const RESOLVE_KIND: &str = "threads.resolve_seat";
+/// `EffectKind::Custom` name of the clear-on-reattach of a finished Restore intent (spec §14.4).
+pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -249,6 +251,10 @@ pub(crate) enum Payload {
     ResolveSeat {
         pane: HerdrPaneId,
     },
+    /// Drop the Restore intent of `epoch`: the restored agent reattached its seat.
+    ClearRestore {
+        epoch: OpId,
+    },
 }
 
 struct Want {
@@ -381,6 +387,25 @@ fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
         .flatten()
 }
 
+/// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
+/// `Resolved` under the Restore's seat, and an agent occupies the pane again (it checked in).
+fn reattached_restore(g: &Graph, c: &CloneRecord) -> Option<OpId> {
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: true,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    let resolved = c.seat_fact.as_ref().is_some_and(|f| {
+        &f.seat == seat && matches!(f.state, crate::model::clone::SeatFactState::Resolved { .. })
+    });
+    (g.clone_active(c) && c.threads_seat.as_ref() == Some(seat) && resolved && c.occupant.is_some())
+        .then(|| epoch.clone())
+}
+
 fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
     for c in g.clones.values() {
         let object = c.id.to_any();
@@ -391,6 +416,15 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 object.clone(),
                 c.rev,
                 Payload::ResolveSeat { pane },
+            ));
+        }
+        if let Some(epoch) = reattached_restore(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(CLEAR_RESTORE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ClearRestore { epoch },
             ));
         }
         let threads_seat = g.membership_seat(c);
@@ -1148,6 +1182,32 @@ impl ThreadsExecutor {
     /// Resolve the clone's pane to its threads seat and record it write-once. A threads refusal defers (the
     /// operation key is stable, so a retry replays the same resolution); a rejected assignment is surfaced,
     /// never retried with another seat.
+    fn clear_restore(&self, cx: &ExecCx<'_>, e: &EffectRecord, epoch: &OpId) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if reattached_restore(&g, clone).as_ref() != Some(epoch) {
+            return ExecOutcome::Obsolete;
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::ClearOnReattach {
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+        }
+    }
+
     async fn resolve_seat(
         &self,
         cx: &ExecCx<'_>,
@@ -1524,7 +1584,7 @@ impl EffectExecutor for ThreadsExecutor {
             | EffectKind::ReleaseRequirement
             | EffectKind::Notify
             | EffectKind::SetTopic => true,
-            EffectKind::Custom(k) => k == POLL_KIND || k == RESOLVE_KIND,
+            EffectKind::Custom(k) => k == POLL_KIND || k == RESOLVE_KIND || k == CLEAR_RESTORE_KIND,
             _ => false,
         }
     }
@@ -1612,6 +1672,9 @@ impl ThreadsExecutor {
             }
             (EffectKind::Custom(_), Some(Payload::ResolveSeat { pane })) => {
                 self.resolve_seat(cx, e, &pane).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ClearRestore { epoch })) => {
+                self.clear_restore(cx, e, &epoch)
             }
             (
                 EffectKind::Custom(_),
