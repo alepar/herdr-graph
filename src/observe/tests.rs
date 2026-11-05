@@ -2997,3 +2997,56 @@ async fn parity_herdr_disconnect_marks_unknown_never_retires() {
     assert_eq!(bound_pane(&fx, &c.id), Some(pane));
     assert_no_closure_and_no_create(&fx);
 }
+
+/// Threads moves two seated clones into each other's panes. The loop displaces each clone while binding the
+/// other, then re-binds it: neither ends the step unbound, Unknown, or stripped from the baseline.
+#[tokio::test]
+async fn seated_clones_swapping_panes_both_stay_bound() {
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    fx.seats.set(&seat_ref("seat-a"), resolved(&pb));
+    fx.seats.set(&seat_ref("seat-b"), resolved(&pa));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    for (c, p) in [(&a, &pb), (&b, &pa)] {
+        let now = clone_by_id(&fx, &c.id);
+        assert_eq!(now.runtime.availability, Availability::Present);
+        assert_eq!(now.lifecycle, CloneLifecycle::Active);
+        assert_eq!(bound_pane(&fx, &c.id).as_ref(), Some(p), "swapped pane");
+    }
+    // Stripped from the baseline matches, the next diff would report the pane closed.
+    step(&fx).await;
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// The same swap against `seat_observation::observe` directly: no clone is left in `out.unbound`.
+#[tokio::test]
+async fn seat_observation_swap_leaves_no_clone_unbound() {
+    use super::matcher::match_snapshot;
+    use super::seat_observation::{ThreadsRead, observe};
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    let snap = snapshot(&fx).await;
+    let desired =
+        crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let mut m = match_snapshot(&snap, &desired);
+    assert_eq!(
+        m.clone_pane.get(&a.id),
+        Some(&pa),
+        "matcher starts unswapped"
+    );
+    let live: std::collections::BTreeSet<_> = [pa.clone(), pb.clone()].into();
+    let read = ThreadsRead::Statuses(
+        [
+            (seat_ref("seat-a"), resolved(&pb)),
+            (seat_ref("seat-b"), resolved(&pa)),
+        ]
+        .into(),
+    );
+    let out = observe(&desired, &read, &live, &mut m, t0());
+    assert!(out.unbound.is_empty(), "{:?}", out.unbound);
+    assert_eq!(m.clone_pane.get(&a.id), Some(&pb));
+    assert_eq!(m.clone_pane.get(&b.id), Some(&pa));
+    assert_eq!(m.panes.get(&pb), Some(&a.id));
+    assert_eq!(m.panes.get(&pa), Some(&b.id));
+}
