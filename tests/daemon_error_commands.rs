@@ -1,0 +1,74 @@
+//! Daemon-calling commands other than `seat` report an unreachable daemon through `cli::daemon_error`
+//! (spec §4.4): exit 5, the generic retry-later text and none of the seat-only sentences.
+mod support;
+
+use herdr_graph::cli::daemon_error::RETRY_LATER;
+use herdr_graph::store::init::init_instance;
+use std::os::unix::net::UnixListener;
+use std::process::{Command, Output};
+use support::isolated::TestRoot;
+
+const BIN: &str = env!("CARGO_BIN_EXE_herdr-graph");
+
+struct Fixture {
+    root: TestRoot,
+    _listener: UnixListener,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let root = TestRoot::new();
+        init_instance(&root.instance()).unwrap();
+        let listener = UnixListener::bind(root.herdr_socket()).unwrap();
+        let l2 = listener.try_clone().unwrap();
+        std::thread::spawn(move || for _conn in l2.incoming() {});
+        Fixture {
+            root,
+            _listener: listener,
+        }
+    }
+
+    fn run_dead(&self, args: &[&str]) -> Output {
+        let dead = self.root.home().join("dead.sock");
+        let mut c: Command = self.root.command(BIN);
+        c.args(args)
+            .env("HERDR_GRAPH_INSTANCE", self.root.instance())
+            .env("HERDR_SOCKET_PATH", &dead);
+        c.output().unwrap()
+    }
+}
+
+fn assert_unavailable(args: &[&str]) {
+    let f = Fixture::new();
+    let out = f.run_dead(args);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(5), "{args:?}: {err}");
+    assert!(
+        err.starts_with("herdr-graph: graph daemon unavailable:"),
+        "{err}"
+    );
+    assert!(err.trim_end().ends_with(RETRY_LATER), "{err}");
+    assert!(!err.contains("Your seat context"), "{err}");
+}
+
+#[test]
+fn plan_without_reachable_daemon_exits_5() {
+    assert_unavailable(&["plan", "--json", "teamspace", "create", "t"]);
+}
+
+#[test]
+fn apply_without_reachable_daemon_exits_5() {
+    assert_unavailable(&[
+        "apply",
+        "pl_x",
+        "--confirm",
+        "h",
+        "--confirmed-by",
+        "user-relay",
+    ]);
+}
+
+#[test]
+fn writer_resume_without_reachable_daemon_exits_5() {
+    assert_unavailable(&["writer", "resume"]);
+}

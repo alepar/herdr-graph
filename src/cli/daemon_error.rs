@@ -5,6 +5,10 @@
 //! the other daemon replies; it also renders a local `StoreError::Integrity` to the same exit-6 text for
 //! daemon-free readers. It never reads the store and never falls back to direct reads: commands must not match
 //! `ClientError::Unavailable` themselves. A new daemon error outcome is added here.
+//!
+//! Exempt by design: `status` (its daemon-free fallback, spec §4.13), `doctor` (the operator's diagnostic,
+//! like `status`) and `session-report` (a hook path that must never fail; on any error it spools the report
+//! for the daemon to ingest instead of reporting to an agent).
 use crate::config::Env;
 use crate::daemon::client::{
     ClientError, EXIT_DAEMON_UNAVAILABLE, EXIT_INTEGRITY, EXIT_NO_INSTANCE,
@@ -271,5 +275,37 @@ mod tests {
         assert_eq!((f.outcome, f.code), (Outcome::Integrity, 6));
         assert!(f.line.contains("st_a: teamspace ts_b"));
         assert!(store_failure(&StoreError::Git("x".into())).is_none());
+    }
+
+    /// Files outside this task's reach that still match `Unavailable` themselves: `seat.rs` only in its tests,
+    /// and who/ops/request/undo until hg-k4l.3 routes them through `daemon_error` (drop them from this list then).
+    const AWAITING_HG_K4L_3: [&str; 4] = ["who.rs", "ops.rs", "request.rs", "undo.rs"];
+
+    #[test]
+    fn no_command_matches_unavailable_itself() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cli");
+        let mut scanned = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|x| x != "rs") {
+                continue;
+            }
+            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+            let text = std::fs::read_to_string(&path).unwrap();
+            scanned += 1;
+            if name == "daemon_error.rs" || AWAITING_HG_K4L_3.contains(&name.as_str()) {
+                continue;
+            }
+            let may_match = ["status.rs", "seat.rs"].contains(&name.as_str());
+            assert!(
+                may_match || !text.contains("ClientError::Unavailable"),
+                "{name} matches ClientError::Unavailable itself; route it through daemon_error"
+            );
+            assert!(
+                !text.contains(".map_err(remote)") && !text.contains("fn remote("),
+                "{name} has its own ClientError rendering; route it through daemon_error"
+            );
+        }
+        assert!(scanned > 5, "scanned only {scanned} files under {dir}");
     }
 }
