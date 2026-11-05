@@ -126,6 +126,7 @@ fn fx() -> Fx {
     kinds.register_mutations(&mut reg, plans.clone());
     crate::observe::register_mutations(&mut reg);
     crate::reconcile::register_mutations(&mut reg);
+    crate::threads::register_mutations(&mut reg);
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -484,6 +485,43 @@ fn undo_tab_close_cascade_restores_seat_and_clones_excluding_already_retired() {
         CloneLifecycle::Retired,
         "the already-retired clone stays retired"
     );
+}
+
+#[test]
+fn undo_of_a_purged_clones_retirement_is_refused() {
+    let fx = fx();
+    alpha(&fx);
+    let seat = active_seat(&fx, "foreman");
+    commit(&fx, "clone add foreman --name seatless");
+    commit(&fx, "clone add foreman --name seated");
+    let find = |name: &str| {
+        clones_of(&fx, &seat.id)
+            .into_iter()
+            .find(|c| c.name == name)
+            .unwrap()
+    };
+    let seated = find("seated");
+    crate::threads::assignment::admit_threads_seat(
+        &*fx.w,
+        &seated.id,
+        &crate::threads::assignment::SeatTransition::Assign {
+            seat: "seat-42".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    for name in ["seatless", "seated"] {
+        let id = find(name).id;
+        let retire = commit(&fx, &format!("clone retire {id}"));
+        // Before the purge the undo plans fine.
+        plan(&fx, &format!("undo {}", retire.action.clone().unwrap()));
+        commit(&fx, &format!("clone purge {id}"));
+        let e = plan_err(&fx, &format!("undo {}", retire.action.unwrap()));
+        assert!(
+            e.contains(id.as_str()) && e.contains("purged"),
+            "{name}: {e}"
+        );
+    }
 }
 
 #[test]

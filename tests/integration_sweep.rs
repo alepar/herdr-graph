@@ -1509,6 +1509,7 @@ mod wiring {
             K::SeatOverride,
             K::CloneAdd,
             K::CloneRetire,
+            K::ClonePurge,
             K::CloneRebind,
             K::ParticipationJoin,
             K::ParticipationLeave,
@@ -1539,6 +1540,7 @@ mod wiring {
                 | K::SeatOverride => {}
                 K::CloneAdd
                 | K::CloneRetire
+                | K::ClonePurge
                 | K::CloneRebind
                 | K::ParticipationJoin
                 | K::ParticipationLeave => {}

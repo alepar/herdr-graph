@@ -7,6 +7,7 @@ use std::time::Duration;
 
 pub mod budget;
 pub mod client;
+pub mod clone_status;
 pub mod compose;
 pub mod doctor;
 pub mod ensure;

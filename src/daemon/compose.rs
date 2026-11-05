@@ -314,7 +314,7 @@ pub async fn compose_with(
     });
     crate::plan::reminders::register_loop(reg, sched, reminder_period);
     register_threads_connection(reg, threads.clone(), paths.root.clone());
-    register_status(reg, &journal);
+    register_status(reg, &journal, &store);
     startup.step("loops")?;
     Ok(())
 }
@@ -440,9 +440,9 @@ fn register_writer_commands(reg: &mut Registry, writer: &Arc<WriterCore>) {
     );
 }
 
-/// Status components owned by the composition: `writer` and `reconciler` (`transcripts` and `threads` come
+/// Status components owned by the composition: `writer`, `reconciler` and `clones` (`transcripts` and `threads` come
 /// from their own registrations).
-fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
+fn register_status(reg: &mut Registry, journal: &Arc<Journal>, store: &Arc<dyn Store>) {
     let j = journal.clone();
     reg.status_provider(
         "writer",
@@ -455,6 +455,17 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
     );
     let j = journal.clone();
     reg.status_provider("reconciler", Arc::new(move || reconciler_status(&j)));
+    let store = store.clone();
+    reg.status_provider(
+        "clones",
+        Arc::new(move || match store.head() {
+            Ok(at) => super::clone_status::clone_status(&crate::store::tree::CommitView {
+                store: &*store,
+                at,
+            }),
+            Err(e) => json!({ "error": e.to_string() }),
+        }),
+    );
 }
 
 /// The `reconciler` status component: open effects, and every effect that needs a human with its last error.
