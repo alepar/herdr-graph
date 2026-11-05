@@ -123,6 +123,15 @@ impl Mutation for SeatFixture {
                     }
                 }
             }
+            "raw_restore" => {
+                rec.threads_seat = None;
+                rec.seat_intent = Some(crate::model::clone::SeatIntent::Restore {
+                    seat: "seat-gone".into(),
+                    epoch: cx.request.args["epoch"].as_str().unwrap().parse().unwrap(),
+                    threads_done: false,
+                    launched: false,
+                });
+            }
             other => panic!("unknown fixture op {other}"),
         }
         if !deleted {
@@ -130,6 +139,34 @@ impl Mutation for SeatFixture {
         }
         Ok(Applied {
             summary: "seat fixture".into(),
+            action: None,
+        })
+    }
+}
+
+/// Test-only stand-in for the observer's binding stamp: token `hg=<clone>`, availability, pane id.
+struct SetBinding;
+impl Mutation for SetBinding {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let clone: CloneId = cx.request.args["clone"].as_str().unwrap().parse().unwrap();
+        let loc = cx.tree.locate(&clone.to_any())?.unwrap();
+        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        let a = &cx.request.args;
+        let mut bound = rec.runtime.bound.clone().expect("clone has a binding");
+        bound.token = a["token"]
+            .as_bool()
+            .unwrap()
+            .then(|| crate::model::launch::graph_token(&clone.to_any()));
+        bound.pane_id = a["pane"].as_str().map(|p| HerdrPaneId(p.into()));
+        rec.runtime.availability = if a["present"].as_bool().unwrap() {
+            crate::model::common::Availability::Present
+        } else {
+            crate::model::common::Availability::Absent
+        };
+        rec.runtime.bound = Some(bound);
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied {
+            summary: "set binding".into(),
             action: None,
         })
     }
@@ -165,6 +202,7 @@ fn fx() -> Fx {
     reg.register("bookkeeping.test_clear_occupant", Arc::new(ClearOccupant));
     reg.register("bookkeeping.test_set_reload", Arc::new(SetReload));
     reg.register("bookkeeping.test_seat_fixture", Arc::new(SeatFixture));
+    reg.register("bookkeeping.test_set_binding", Arc::new(SetBinding));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -1684,7 +1722,10 @@ async fn threads_seat_assign_is_write_once_and_idempotent() {
     assert_eq!(c.threads_seat, None);
     assert_eq!(transition(&fx, &c.id, assign("seat-a")), None);
     let rev = clone_rec(&fx, &c.id).rev;
-    assert_eq!(clone_rec(&fx, &c.id).threads_seat.as_deref(), Some("seat-a"));
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-a")
+    );
     assert_eq!(transition(&fx, &c.id, assign("seat-a")), None);
     assert_eq!(clone_rec(&fx, &c.id).rev, rev, "same seat writes nothing");
 }
@@ -1698,7 +1739,10 @@ async fn threads_seat_assign_rejects_a_different_seat() {
         transition(&fx, &c.id, assign("seat-b")).as_deref(),
         Some("threads_seat_conflict")
     );
-    assert_eq!(clone_rec(&fx, &c.id).threads_seat.as_deref(), Some("seat-a"));
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-a")
+    );
 }
 
 #[tokio::test]
@@ -1715,7 +1759,10 @@ async fn threads_seat_assign_rejects_a_seat_another_live_clone_holds() {
     retire_clone_observed(&fx, &a.id);
     assert_eq!(clone_rec(&fx, &a.id).lifecycle, CloneLifecycle::Retired);
     assert_eq!(transition(&fx, &b.id, assign("seat-a")), None);
-    assert_eq!(clone_rec(&fx, &b.id).threads_seat.as_deref(), Some("seat-a"));
+    assert_eq!(
+        clone_rec(&fx, &b.id).threads_seat.as_deref(),
+        Some("seat-a")
+    );
 }
 
 #[tokio::test]
@@ -1745,15 +1792,28 @@ async fn threads_seat_succession_needs_a_matching_restore_intent() {
         Some("seat_intent_mismatch"),
         "wrong from"
     );
-    assert_eq!(clone_rec(&fx, &c.id).threads_seat.as_deref(), Some("seat-old"));
-    assert_eq!(transition(&fx, &c.id, succeed("seat-new", "seat-old", &epoch)), None);
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-old")
+    );
+    assert_eq!(
+        transition(&fx, &c.id, succeed("seat-new", "seat-old", &epoch)),
+        None
+    );
     let rec = clone_rec(&fx, &c.id);
     assert_eq!(rec.threads_seat.as_deref(), Some("seat-new"));
     assert_eq!(rec.threads_seat_history, vec!["seat-old".to_string()]);
     assert_eq!(rec.seat_intent, restore("seat-new", &epoch, true, false));
     let rev = rec.rev;
-    assert_eq!(transition(&fx, &c.id, succeed("seat-new", "seat-old", &epoch)), None);
-    assert_eq!(clone_rec(&fx, &c.id).rev, rev, "replayed succession is idempotent");
+    assert_eq!(
+        transition(&fx, &c.id, succeed("seat-new", "seat-old", &epoch)),
+        None
+    );
+    assert_eq!(
+        clone_rec(&fx, &c.id).rev,
+        rev,
+        "replayed succession is idempotent"
+    );
 }
 
 #[tokio::test]
@@ -1790,18 +1850,34 @@ async fn seat_intent_acknowledge_sets_threads_done_and_a_stale_epoch_is_a_noop()
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, false, false));
     let before = clone_rec(&fx, &c.id).rev;
     assert_eq!(
-        transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: OpId::new() }),
+        transition(
+            &fx,
+            &c.id,
+            SeatTransition::Acknowledge { epoch: OpId::new() }
+        ),
         None
     );
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, false, false));
     assert_eq!(clone_rec(&fx, &c.id).rev, before);
     assert_eq!(
-        transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: epoch.clone() }),
+        transition(
+            &fx,
+            &c.id,
+            SeatTransition::Acknowledge {
+                epoch: epoch.clone()
+            }
+        ),
         None
     );
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, true, false));
     assert_eq!(
-        transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: epoch.clone() }),
+        transition(
+            &fx,
+            &c.id,
+            SeatTransition::Acknowledge {
+                epoch: epoch.clone()
+            }
+        ),
         None,
         "idempotent"
     );
@@ -1815,7 +1891,11 @@ async fn restore_intent_helper_overwrites_an_older_epoch() {
     transition(&fx, &c.id, assign("seat-a"));
     let (e1, e2) = (OpId::new(), OpId::new());
     write_restore(&fx, &c.id, &e1);
-    transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: e1.clone() });
+    transition(
+        &fx,
+        &c.id,
+        SeatTransition::Acknowledge { epoch: e1.clone() },
+    );
     write_restore(&fx, &c.id, &e2);
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &e2, false, false));
 }
@@ -1846,7 +1926,13 @@ async fn mark_launched_is_once_per_epoch() {
         Some("seat_intent_mismatch"),
         "before threads_done"
     );
-    transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: epoch.clone() });
+    transition(
+        &fx,
+        &c.id,
+        SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    );
     assert_eq!(
         transition(&fx, &c.id, mark(&OpId::new())).as_deref(),
         Some("seat_intent_mismatch"),
@@ -1874,12 +1960,21 @@ async fn clear_on_reattach_clears_only_the_matching_epoch() {
         restore("seat-a", &epoch, false, false),
         "not acknowledged yet"
     );
-    transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: epoch.clone() });
+    transition(
+        &fx,
+        &c.id,
+        SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    );
     assert_eq!(transition(&fx, &c.id, clear(&OpId::new())), None);
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, true, false));
     assert_eq!(transition(&fx, &c.id, clear(&epoch)), None);
     assert_eq!(intent(&fx, &c.id), None);
-    assert_eq!(clone_rec(&fx, &c.id).threads_seat.as_deref(), Some("seat-a"));
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-a")
+    );
 }
 
 #[tokio::test]
@@ -1889,13 +1984,23 @@ async fn pane_close_after_threads_done_retires_and_clears_the_restore_intent() {
     transition(&fx, &c.id, assign("seat-a"));
     let epoch = OpId::new();
     write_restore(&fx, &c.id, &epoch);
-    transition(&fx, &c.id, SeatTransition::Acknowledge { epoch: epoch.clone() });
+    transition(
+        &fx,
+        &c.id,
+        SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    );
     assert_eq!(intent(&fx, &c.id), restore("seat-a", &epoch, true, false));
     retire_clone_observed(&fx, &c.id);
     let rec = clone_rec(&fx, &c.id);
     assert_eq!(rec.lifecycle, CloneLifecycle::Retired);
     assert_eq!(rec.seat_intent, None);
-    assert_eq!(rec.threads_seat.as_deref(), Some("seat-a"), "the seat stays recorded");
+    assert_eq!(
+        rec.threads_seat.as_deref(),
+        Some("seat-a"),
+        "the seat stays recorded"
+    );
 }
 
 #[tokio::test]
@@ -1907,11 +2012,23 @@ async fn purge_tombstone_keeps_identity_and_finalize() {
     retire_clone_observed(&fx, &c.id);
     let live = clone_rec(&fx, &c.id);
     assert!(!live.sessions.is_empty(), "fixture has history to strip");
-    bookkeeping(&fx, "test_seat_fixture", json!({ "clone": c.id, "op": "tombstone" }));
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": c.id, "op": "tombstone" }),
+    );
     let t = clone_rec(&fx, &c.id);
     assert!(t.is_tombstone());
-    assert_eq!(t.seat_intent, Some(SeatIntent::Finalize { seat: "seat-a".into() }));
-    assert_eq!((&t.id, &t.seat, &t.name), (&live.id, &live.seat, &live.name));
+    assert_eq!(
+        t.seat_intent,
+        Some(SeatIntent::Finalize {
+            seat: "seat-a".into()
+        })
+    );
+    assert_eq!(
+        (&t.id, &t.seat, &t.name),
+        (&live.id, &live.seat, &live.name)
+    );
     assert_eq!(t.lifecycle, CloneLifecycle::Retired);
     assert_eq!(t.retired, live.retired);
     assert_eq!(t.threads_seat.as_deref(), Some("seat-a"));
@@ -1925,13 +2042,23 @@ async fn purge_tombstone_of_a_seatless_clone_with_a_reservation_is_release_key()
     let fx = fx();
     let c = base(&fx).await;
     let t = assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).unwrap();
-    assert_eq!(t.seat_intent, Some(SeatIntent::ReleaseKey { key: "key-1".into() }));
+    assert_eq!(
+        t.seat_intent,
+        Some(SeatIntent::ReleaseKey {
+            key: "key-1".into()
+        })
+    );
     assert!(t.is_tombstone());
     assert_eq!(t.threads_seat, None);
     // A held seat wins over a reservation: Finalize, never ReleaseKey.
     transition(&fx, &c.id, assign("seat-a"));
     let t = assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).unwrap();
-    assert_eq!(t.seat_intent, Some(SeatIntent::Finalize { seat: "seat-a".into() }));
+    assert_eq!(
+        t.seat_intent,
+        Some(SeatIntent::Finalize {
+            seat: "seat-a".into()
+        })
+    );
 }
 
 #[tokio::test]
@@ -1951,7 +2078,11 @@ async fn tombstone_done_deletes_only_tombstones() {
         Some("not_a_tombstone")
     );
     retire_clone_observed(&fx, &c.id);
-    bookkeeping(&fx, "test_seat_fixture", json!({ "clone": c.id, "op": "tombstone" }));
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": c.id, "op": "tombstone" }),
+    );
     assert!(clone_rec(&fx, &c.id).is_tombstone());
     assert_eq!(transition(&fx, &c.id, SeatTransition::TombstoneDone), None);
     assert!(
@@ -1960,5 +2091,183 @@ async fn tombstone_done_deletes_only_tombstones() {
             .iter()
             .all(|(_, r)| r.id != c.id),
         "tombstone record is gone"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// resolve-seat want
+// ---------------------------------------------------------------------------------------------
+
+fn resolve_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(fx, EffectKind::Custom(super::effects::RESOLVE_KIND.into()))
+}
+
+/// Stamp the clone's binding the way the observer does (token, Present).
+fn set_binding(fx: &Fx, clone: &CloneId, token: bool, present: bool, pane: Option<&HerdrPaneId>) {
+    bookkeeping(
+        fx,
+        "test_set_binding",
+        json!({ "clone": clone, "token": token, "present": present, "pane": pane.map(|p| p.0.clone()) }),
+    );
+}
+
+#[tokio::test]
+async fn resolve_want_fires_only_on_verified_bindings() {
+    let fx = fx();
+    let c = base(&fx).await;
+    // The launcher already stamped and observed the pane, so base() resolved once (threads had no seat yet).
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    let before = fx.map.resolve_ops().len();
+    assert!(before >= 1);
+    fx.map.set(&pane, "seat-A");
+    for (token, present, has_pane) in [
+        (false, true, true),
+        (true, false, true),
+        (true, true, false),
+    ] {
+        set_binding(&fx, &c.id, token, present, has_pane.then_some(&pane));
+        steps(&fx, 2).await;
+        assert_eq!(
+            fx.map.resolve_ops().len(),
+            before,
+            "{token} {present} {has_pane}"
+        );
+        assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    }
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    steps(&fx, 2).await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-A")
+    );
+    let seated = fx.map.resolve_ops().len();
+    assert!(seated > before);
+    // Already seated: nothing further is resolved.
+    steps(&fx, 2).await;
+    assert_eq!(fx.map.resolve_ops().len(), seated);
+}
+
+#[tokio::test]
+async fn resolve_refusal_defers_and_reuses_the_op_id() {
+    let fx = fx();
+    let c = base(&fx).await;
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    fx.map.set_not_yet(&pane, "restore hold");
+    steps(&fx, 2).await;
+    later(&fx).await;
+    later(&fx).await;
+    let rs = resolve_rows(&fx);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, EffectStatus::Pending);
+    assert_eq!(
+        rs[0].attempts, 0,
+        "a refusal defers without counting an attempt"
+    );
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    fx.map.clear_not_yet(&pane);
+    fx.map.set(&pane, "seat-A");
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-A")
+    );
+    let ops = fx.map.resolve_ops();
+    assert!(ops.len() >= 3, "{ops:?}");
+    assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+}
+
+#[tokio::test]
+async fn live_clones_are_backfilled() {
+    let fx = fx();
+    let c = base(&fx).await;
+    occupy(&fx, &c, "seat-A").await;
+    set_binding(&fx, &c.id, true, true, Some(&pane_of(&c)));
+    steps(&fx, 4).await;
+    let after = clone_rec(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-A"));
+    assert!(after.occupant.is_some());
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        2,
+        "invitations are unaffected"
+    );
+}
+
+#[tokio::test]
+async fn unreachable_threads_writes_no_seat_and_retry_reuses_the_op_id() {
+    let fx = fx();
+    let c = base(&fx).await;
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    fx.map.set(&pane, "seat-A");
+    fx.map.set_failing(true);
+    steps(&fx, 2).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    let failed = fx.map.resolve_ops();
+    assert!(!failed.is_empty());
+    fx.map.set_failing(false);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-A")
+    );
+    let ops = fx.map.resolve_ops();
+    assert!(ops.len() > failed.len());
+    assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+}
+
+#[tokio::test]
+async fn no_resolve_for_a_clone_with_a_pending_restore_intent() {
+    let fx = fx();
+    let c = base(&fx).await;
+    // A seatless clone carrying a Restore intent (a state the commits never write, §14.5) belongs to the
+    // succession want: no resolution even with a verified binding.
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": c.id, "op": "raw_restore", "epoch": OpId::new() }),
+    );
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    fx.map.set(&pane, "seat-new");
+    let rec = clone_rec(&fx, &c.id);
+    assert!(matches!(rec.seat_intent, Some(SeatIntent::Restore { .. })));
+    assert_eq!(rec.threads_seat, None);
+    let before = fx.map.resolve_ops().len();
+    steps(&fx, 3).await;
+    assert_eq!(fx.map.resolve_ops().len(), before);
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+}
+
+#[tokio::test]
+async fn resolve_rejected_by_assignment_needs_revision() {
+    let fx = fx();
+    let a = base(&fx).await;
+    let b = second(&fx).await;
+    assert_eq!(transition(&fx, &a.id, assign("seat-A")), None);
+    let pane = pane_of(&clone_rec(&fx, &b.id));
+    set_binding(&fx, &b.id, true, true, Some(&pane));
+    fx.map.set(&pane, "seat-A");
+    steps(&fx, 3).await;
+    assert_eq!(clone_rec(&fx, &b.id).threads_seat, None);
+    let rs: Vec<_> = resolve_rows(&fx)
+        .into_iter()
+        .filter(|r| r.status == EffectStatus::NeedsRevision)
+        .collect();
+    assert!(!rs.is_empty());
+    assert!(rs.iter().all(|r| r.object.as_str() == b.id.to_string()));
+    let mine: Vec<_> = fx
+        .map
+        .resolve_ops()
+        .into_iter()
+        .filter(|o| o.0.contains(&b.id.to_string()))
+        .collect();
+    assert!(
+        mine.iter().all(|o| o == &mine[0]),
+        "never retried under another op id: {mine:?}"
     );
 }

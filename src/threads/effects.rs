@@ -5,18 +5,24 @@
 //! facts); each want becomes a deterministic effect row whose payload lives in the journal's `meta` table
 //! keyed by effect id. `ThreadsExecutor` performs them through `ThreadsPort`, records what threads actually
 //! reported as bookkeeping mutations, and never records acceptance threads did not report.
-use super::mapping::PaneSeatMap;
+use super::assignment::{SeatTransition, admit_threads_seat};
+use super::mapping::{PaneSeatMap, SeatResolution};
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{
-    CloneRecord, Invitation, InvitationState, InviteConstraint, ThreadsLink,
+    CloneRecord, Invitation, InvitationState, InviteConstraint, SeatIntent, ThreadsLink,
 };
-use crate::model::common::{Channel, CloneLifecycle, CommitId, Lifecycle, NameSource};
+use crate::model::common::{
+    Availability, Channel, CloneLifecycle, CommitId, Lifecycle, NameSource,
+};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
+use crate::model::launch::graph_token;
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
-use crate::model::{AnyId, CloneId, EffectId, IdKind, OpId, SeatId, TeamspaceId, Timestamp};
+use crate::model::{
+    AnyId, CloneId, EffectId, HerdrPaneId, IdKind, OpId, SeatId, TeamspaceId, Timestamp,
+};
 use crate::plan::store::PlanStore;
 use crate::ports::store::StoreError;
 use crate::ports::threads::*;
@@ -31,6 +37,8 @@ use std::sync::{Arc, Mutex};
 
 /// `EffectKind::Custom` name of the membership poll.
 pub const POLL_KIND: &str = "threads.membership";
+/// `EffectKind::Custom` name of the seat resolution of a bound clone without a `threads_seat`.
+pub const RESOLVE_KIND: &str = "threads.resolve_seat";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -233,6 +241,10 @@ pub(crate) enum Payload {
         body: String,
         key: String,
     },
+    /// Resolve the threads seat of the clone's verified pane (a different pane is a different effect).
+    ResolveSeat {
+        pane: HerdrPaneId,
+    },
 }
 
 struct Want {
@@ -348,9 +360,35 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
 }
 
 /// Required and ordinary invitations, requirement release and membership polling for every clone.
+/// The pane to resolve a threads seat for: the clone is active, has no `threads_seat` and no pending Restore
+/// intent (the succession want owns that case), and its binding is verified (present, in a pane, stamped
+/// with the clone's own token).
+fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
+    if !g.clone_active(c)
+        || c.threads_seat.is_some()
+        || matches!(c.seat_intent, Some(SeatIntent::Restore { .. }))
+        || c.runtime.availability != Availability::Present
+    {
+        return None;
+    }
+    let bound = c.runtime.bound.as_ref()?;
+    (bound.token.as_deref() == Some(graph_token(&c.id.to_any()).as_str()))
+        .then(|| bound.pane_id.clone())
+        .flatten()
+}
+
 fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
     for c in g.clones.values() {
         let object = c.id.to_any();
+        if let Some(pane) = resolvable_pane(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESOLVE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ResolveSeat { pane },
+            ));
+        }
         let occupant = g.occupant_of(c);
         let seat = g.seats.get(&c.seat);
 
@@ -1097,6 +1135,58 @@ impl ThreadsExecutor {
         )
     }
 
+    /// Resolve the clone's pane to its threads seat and record it write-once. A threads refusal defers (the
+    /// operation key is stable, so a retry replays the same resolution); a rejected assignment is surfaced,
+    /// never retried with another seat.
+    async fn resolve_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        pane: &HerdrPaneId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if resolvable_pane(&g, clone).as_ref() != Some(pane) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("resolve:{}:{pane}", clone.id),
+        ));
+        let seat = match self.mapping.resolve_seat(pane, &key).await {
+            Ok(SeatResolution::Seat(seat)) => seat,
+            Ok(SeatResolution::NotYet(reason)) => return ExecOutcome::Deferred(reason),
+            Err(err) => return port_outcome(err),
+        };
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Assign { seat: seat.0 },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
+    }
+
     async fn ensure(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
@@ -1428,7 +1518,7 @@ impl EffectExecutor for ThreadsExecutor {
             | EffectKind::ReleaseRequirement
             | EffectKind::Notify
             | EffectKind::SetTopic => true,
-            EffectKind::Custom(k) => k == POLL_KIND,
+            EffectKind::Custom(k) => k == POLL_KIND || k == RESOLVE_KIND,
             _ => false,
         }
     }
@@ -1513,6 +1603,9 @@ impl ThreadsExecutor {
                     ),
                 )
                 .await
+            }
+            (EffectKind::Custom(_), Some(Payload::ResolveSeat { pane })) => {
+                self.resolve_seat(cx, e, &pane).await
             }
             (
                 EffectKind::Custom(_),
