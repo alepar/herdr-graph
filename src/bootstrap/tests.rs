@@ -24,7 +24,7 @@ use crate::plan::store::PlanStore;
 use crate::plan::types::StoredPlan;
 use crate::ports::clock::ManualClock;
 use crate::ports::herdr::{AgentInfo, AgentSession, AgentStatus, PaneInfo};
-use crate::ports::store::Store;
+use crate::ports::store::{Store, StoreError};
 use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::templates::kinds::register_kinds as register_template_kinds;
@@ -124,6 +124,34 @@ impl Mutation for TestPut {
     }
 }
 
+/// Test-only manager pointers (`bookkeeping.test_manager`): `seat` + `manager` set `SeatRecord.manager`;
+/// `node_manager` (an id or null) sets graph.toml's `node_manager_seat`.
+struct TestManager;
+impl Mutation for TestManager {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let a = &cx.request.args;
+        if let Some(seat) = a["seat"].as_str() {
+            let seat: SeatId = seat.parse().unwrap();
+            let loc = layout::locate(&cx.tree, &seat.to_any())?.unwrap();
+            let mut rec: SeatRecord = read_toml(&cx.tree, &loc.record_path)?.unwrap();
+            rec.manager = a["manager"].as_str().map(|m| m.parse().unwrap());
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+        }
+        if a.get("node_manager").is_some() {
+            let mut graph = layout::read_graph(&cx.tree)?;
+            graph.node_manager_seat = a["node_manager"].as_str().map(|m| m.parse().unwrap());
+            cx.tree.put_file(
+                layout::graph_toml(),
+                crate::store::record::to_toml_bytes(&graph)?,
+            );
+        }
+        Ok(Applied {
+            summary: "test manager".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     root: std::path::PathBuf,
@@ -153,6 +181,7 @@ fn fx_with(prepare: impl FnOnce(&Path)) -> Fx {
     kinds.register_mutations(&mut reg, plans.clone());
     reg.register("bookkeeping.test_clone", Arc::new(TestClone));
     reg.register("bookkeeping.test_put", Arc::new(TestPut));
+    reg.register("bookkeeping.test_manager", Arc::new(TestManager));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -1952,6 +1981,62 @@ fn show_list_path_read_committed_state() {
     );
     assert!(show::show(&v, &fx.root, "st_01ARZ3NDEKTSV4RRFFQ69G5FAV").is_err());
     assert!(show::path(&v, &fx.root, "no-such-thing").is_err());
+}
+
+fn set_manager_args(fx: &Fx, args: serde_json::Value) {
+    use crate::ports::writer::Writer;
+    let mut args = args;
+    args["sub"] = json!("test_manager");
+    fx.w.admit(ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args,
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    })
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+#[test]
+fn show_seat_appends_manager_line() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha --active");
+    commit(&fx, "seat create boss --teamspace alpha --active");
+    commit(&fx, "seat create low --teamspace alpha --active");
+    let (boss, low) = (seat_rec(&fx, "boss"), seat_rec(&fx, "low"));
+    // No node manager yet: unassigned.
+    let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
+    assert!(
+        text.contains("name = \"low\"") && text.ends_with("\nmanager: none assigned"),
+        "{text}"
+    );
+    set_manager_args(&fx, json!({ "node_manager": boss.id }));
+    let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
+    assert!(
+        text.ends_with(&format!("\nmanager: boss ({})", boss.id)),
+        "{text}"
+    );
+    // Only seats carry the line.
+    let ts = show::show(&view(&fx), &fx.root, "alpha").unwrap();
+    assert!(!ts.contains("manager:"), "{ts}");
+}
+
+#[test]
+fn show_cycle_is_store_integrity() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha --active");
+    commit(&fx, "seat create a --teamspace alpha --active");
+    commit(&fx, "seat create b --teamspace alpha --active");
+    let (a, b) = (seat_rec(&fx, "a"), seat_rec(&fx, "b"));
+    set_manager_args(&fx, json!({ "seat": a.id, "manager": b.id }));
+    set_manager_args(&fx, json!({ "seat": b.id, "manager": a.id }));
+    let e = show::show(&view(&fx), &fx.root, a.id.as_str()).unwrap_err();
+    assert!(
+        matches!(e, show::ShowError::Store(StoreError::Integrity { .. })),
+        "{e:?}"
+    );
 }
 
 #[test]
