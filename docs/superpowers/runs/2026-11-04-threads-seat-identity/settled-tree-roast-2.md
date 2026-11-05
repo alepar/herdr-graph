@@ -55,7 +55,7 @@
       - [ ] pin at the D1 release; suite green
       - [ ] a clone created after D1 is reserved before its first agent launch, so that launch carries the key (test)
       - [ ] active clones that predate D1 get their key reserved by a backfill and linked to their current seat: via ReserveContinuityKey{key, seat: the clone's recorded threads_seat} (confirmed by threads 2026-11-05, see threads-ht-ma6i-protocol-shapes.md update; for a Resolved or Unresolved seat (refused for retired), the graph must name exactly its recorded threads_seat; the graph's resolve-seat path treats ContinuityKeyPending as Deferred; Conflict surfaces as a key-conflict alert); then a pre-D1 clone survives a headless cold restart on its seat (test)
-      - [ ] purge releases the key reservation (ReleaseContinuityKey) of every clone holding one whose seat is final-retired or absent; reversibly retired seats release through FinalizeRetirement (hg-66u.31) (tests)
+      - [ ] purge releases the key reservation (ReleaseContinuityKey) of a clone that never got a seat; final-retired seats' keys are already deleted by threads; reversibly retired seats release through FinalizeRetirement (hg-66u.31) (tests)
       - [ ] an unseated clone with a live unkeyed agent at D1 is seated by the resolve want on its verified binding and then linked (test)
   - hg-66u.14 · Delete the graph's clone re-matching (observe matcher and LiveIndex) · Spec §6. · deps: hg-66u.1, hg-66u.11, hg-66u.13, hg-66u.23, hg-66u.33
       consumes: SeatObservation.
@@ -127,7 +127,7 @@
       - [ ] an unseated closed clone (closed before the upgrade, no threads_seat) takes a first bind via ResolveSeat when undone or resurrected (test)
       - [ ] undo reopens the tab in its original workspace (no caller-pane adoption) and the agent resumes its last session with exactly one launch (test)
       - [ ] no ResolveSeat is issued for a clone with a pending Restore intent except by the succession want (test)
-      - [ ] after succession, a clone with a recorded key reservation has its key bound to the successor seat (ReserveContinuityKey{key, seat: successor}) before the restore launch; the exact relink path follows threads' answer to mnSG57YUhprU (test against the fake; D1-dependent part runs only once D1 is pinned)
+      - [ ] after succession, a clone with a recorded key reservation has its key bound to the successor seat (ReserveContinuityKey{key, seat: successor}) before the restore launch; relink is a fresh ReserveContinuityKey on the successor (threads deletes the old seat's key at final retirement, answer mnSGq1eyidhP) (test against the fake; D1-dependent part runs only once D1 is pinned)
   - hg-66u.30 · Resume driver: single launcher for restart and restore triggers (session path) · Owns the planner resume rule with two triggers, both requiring the bound or last bound pane id to exist in this incarnation with no agent: restart (seat Unresol · deps: hg-66u.27, hg-66u.28, hg-66u.34
       owns: resume driver — sole launcher for the restart and restore triggers; first-launch rule: the ordinary start rule launches a clone that has never had an agent (including a new post-D1 clone with a reservation and no seat), the resume rule never does.
       - [ ] headless cold-restart simulation resumes each clone with a resumable session into its last pane after grace (test)
