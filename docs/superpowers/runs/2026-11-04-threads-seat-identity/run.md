@@ -22,6 +22,9 @@ approvals:
 - coverage-round-2 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-23..cov-46 applied auto · divergence: findings: 19 → 20 novel: 12/20 (60%) widening: yes 
 
 parked:
+- graph-pass · graph-change · "narrow hg-66u.13 <- hg-66u.30 to hg-66u.13 <- hg-66u.34 + hg-66u.28 (safe no: shared src/reconcile/planner.rs; .13 cold-restart acceptance test needs .30 — move it to .33/.21); depth 8→7"
+- graph-pass · graph-change · "proposal: seam-contract seat_fact between hg-66u.28 and hg-66u.30 (fix the type and read accessor early, e.g. with .27) so .30 builds in parallel; depth 8→6 with the narrow"
+- graph-pass · graph-change · "proposal: split src/reconcile/planner.rs (reserve-key gate, resume rule, unseated restart arm, LiveIndex) so hg-66u.13/.30/.33/.14 do not serialize at merge"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 90 s grace + point-in-time shell-foreground check vs Herdr auto-resume latency (spike: restore 20+ agent panes with a client attached, time foreground transitions, test late attach)"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 assumes a pane seat stays Resolved after its agent exits with the pane open (B8); check on threads v3.0.0: agent checks in, exits, SeatInspect"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "material dissent: §7/§9 assume Herdr never reissues a public workspace/tab/pane id; Herdr reserve_workspace_ids can reissue a deleted highest workspace id after restore"
@@ -32,3 +35,4 @@ redesign-design-1: round 1 · triggers shared-cause, defect-type · amended 2. C
 stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol inferred from (clone active, seat Retired) → persisted SeatIntent (Restore/Finalize) on CloneRecord driving unretire, succession, resume and finalize (dissolves 6)
 - coverage-amend-design-1 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-47..cov-65 applied auto except cov-56, cov-57 rejected auto (see coverage-ledger.md)
 - design-roast exit · converged at round 2 (Should-fix (12 confirmed) [converged]); punch list: all 12 applied inline as spec §14 + bead text, new leaf hg-66u.35 (clone purge command); no re-roast (super-design converged exit)
+graph-pass: depth 8→8 · width 3.5→3.5 · applied 0 · parked 3

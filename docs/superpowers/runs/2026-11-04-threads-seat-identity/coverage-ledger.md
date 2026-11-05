@@ -65,3 +65,7 @@ cov-62 · amend-design-1 · UNOWNED-SEAM · tombstone shape and reader exclusion
 cov-63 · amend-design-1 · UNOWNED-SEAM · .31/.29 owns lines lost on supersession · applied — literal owns: lines added
 cov-64 · amend-design-1 · GAP · .29 cannot assert the restore launch without .30 · applied — .29 depends on .30
 cov-65 · amend-design-1 · GAP · early resolve during restore · applied — .7 .29 .32 acceptance; spec §13
+cov-66 · graph · GRAPH-EDGE · hg-66u.13 <- hg-66u.30 · parked — narrow to .34 + .28, safe no (shared planner.rs, acceptance test needs .30)
+cov-67 · graph · GRAPH-EDGE · nine other critical edges · kept — each carries a real artifact (see graph-pass judge output)
+cov-68 · graph · PROPOSAL · seat_fact seam contract .28/.30 · parked
+cov-69 · graph · PROPOSAL · split src/reconcile/planner.rs · parked
