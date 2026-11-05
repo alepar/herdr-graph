@@ -220,7 +220,13 @@ mod golden {
         }
 
         fn show(&self, id: &str) -> toml::Value {
+            // A seat's `show` appends a `manager: ...` line (spec §4.12) after the record's TOML.
             let text = self.cli_ok(&["show", id]);
+            let text: String = text
+                .lines()
+                .filter(|l| !l.starts_with("manager: "))
+                .map(|l| format!("{l}\n"))
+                .collect();
             toml::Value::Table(
                 text.parse::<toml::Table>()
                     .unwrap_or_else(|e| panic!("show {id} is not toml ({e}): {text}")),
@@ -375,6 +381,18 @@ mod golden {
 
         // Teamspace and both applications.
         rig.plan_apply(&["teamspace", "create", "demo", "--active"]);
+        // The first seat created on the node becomes the node manager, which closure never retires: give the
+        // rig a dedicated first seat so the seats below are ordinary.
+        rig.plan_apply(&[
+            "seat",
+            "create",
+            "nm",
+            "--teamspace",
+            "demo",
+            "--active",
+            "--harness",
+            "shell",
+        ]);
         rig.plan_apply(&[
             "application",
             "apply",

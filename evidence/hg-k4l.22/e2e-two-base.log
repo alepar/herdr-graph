@@ -1,0 +1,181 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.10s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-93d1752fc8bb2e66)
+
+running 2 tests
+test e2e_summary_lands_in_archived_seat_folder ... FAILED
+test e2e_undo_from_bound_pane_adopts_and_keeps_it ... FAILED
+
+failures:
+
+---- e2e_summary_lands_in_archived_seat_folder stdout ----
+
+thread 'e2e_summary_lands_in_archived_seat_folder' (3617994) panicked at tests/e2e_private_herdr.rs:353:37:
+show st_01M6NY6FPABZQBJ252A43AV83M is not toml (TOML parse error at line 34, column 10
+   |
+34 | manager: none assigned
+   |          ^
+key with no value, expected `=`
+): schema = 1
+id = "st_01M6NY6FPABZQBJ252A43AV83M"
+rev = 2
+name = "foreman"
+name_history = []
+teamspace = "ts_01M6NY6FMC0MS748CNCYEJAFA3"
+lifecycle = "active"
+applications = []
+
+[overrides]
+harness = "shell"
+instructions_sections = []
+
+[participation]
+seat_wide = []
+
+[activation]
+last_op = "op_01M6NY6FPHM7RJZTYE7KM5EEHP"
+
+[runtime]
+availability = "present"
+observed_at = "2026-11-05T13:25:59.178007008Z"
+
+[runtime.bound]
+workspace_id = "w1"
+tab_id = "w1:t2"
+
+[runtime.bound.incarnation]
+generation = 1
+server_pid = 3617995
+server_started = "Thu Nov  5 05:25:58 2026"
+
+[channel]
+manager: none assigned
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- e2e_undo_from_bound_pane_adopts_and_keeps_it stdout ----
+
+thread 'e2e_undo_from_bound_pane_adopts_and_keeps_it' (3618179) panicked at tests/e2e_private_herdr.rs:316:9:
+timed out (40s) waiting for B to retire
+daemon log:
+
+status:
+instance: /tmp/hg-01m6ny6gs62s5115kdjt5srg0d/graph
+daemon: running (pid 3618221, up 41s)
+herdr socket: /tmp/hg-01m6ny6gs62s5115kdjt5srg0d/herdr.sock
+reconciler: {"attention":[],"blocked_effects":0,"failed_effects":0,"needs_revision_effects":0,"pending_effects":2,"pending_notices":0,"unknown_effects":0}
+threads: {"connected":false,"error":"threads service disconnected: herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml"}
+transcripts: {"completed":0,"delivery":"fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)","dispatched":0,"pending":0,"undeliverable":[],"unresolved":0}
+writer: {"ops":{"committed":9},"writer_halted":null}
+
+snapshot:
+Ok(
+    HerdrSnapshot {
+        incarnation: Incarnation {
+            generation: 0,
+            server_pid: Some(
+                3618180,
+            ),
+            server_started: Some(
+                "Thu Nov  5 05:25:59 2026",
+            ),
+        },
+        workspaces: [
+            WorkspaceInfo {
+                id: HerdrWorkspaceId(
+                    "w1",
+                ),
+                label: "t",
+                metadata: {
+                    "hg": "hg=ts_01M6NY6H00DJS11NFPQPKWJX3P",
+                },
+                tabs: [
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t1",
+                        ),
+                        label: "1",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p1",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65f876fc35b771",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6ny6gs62s5115kdjt5srg0d/graph",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t2",
+                        ),
+                        label: "foreman",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p3",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65f876fcb27a83",
+                                    ),
+                                ),
+                                label: Some(
+                                    "foreman",
+                                ),
+                                cwd: Some(
+                                    "/tmp/hg-01m6ny6gs62s5115kdjt5srg0d/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M6NY6HFHCZJBR6MCEH7A81F2",
+                                },
+                                agent: None,
+                            },
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p4",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65f876fd764c74",
+                                    ),
+                                ),
+                                label: Some(
+                                    "foreman",
+                                ),
+                                cwd: Some(
+                                    "/tmp/hg-01m6ny6gs62s5115kdjt5srg0d/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M6NY6H1XCS6HPQ2CXKB6Y7TZ",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    },
+)
+open effects:
+[("ensure_thread", "st_01M6NY6H1XCG2M3EYST07PZT07", "Pending", "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml"), ("ensure_thread", "ts_01M6NY6H00DJS11NFPQPKWJX3P", "Pending", "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml")]
+
+
+failures:
+    e2e_summary_lands_in_archived_seat_folder
+    e2e_undo_from_bound_pane_adopts_and_keeps_it
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 28 filtered out; finished in 43.24s
+
+error: test failed, to rerun pass `--test e2e_private_herdr`
+EXIT 101

@@ -229,29 +229,12 @@ impl Pointers {
     }
 }
 
-/// The live seats reporting to `seat` at `tree` (see [`Pointers::reports`]).
-pub fn reports(tree: &dyn TreeRead, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
-    Ok(Pointers::load(tree)?.reports(seat))
-}
-
 pub fn live_node_manager(tree: &dyn TreeRead) -> Result<Option<SeatId>, StoreError> {
     Ok(Pointers::load(tree)?.live_node_manager())
 }
 
-pub fn effective_manager(tree: &dyn TreeRead, seat: &SeatId) -> Result<Option<SeatId>, StoreError> {
-    Pointers::load(tree)?.effective_manager(seat)
-}
-
 pub fn manager_chain(tree: &dyn TreeRead, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
     Pointers::load(tree)?.manager_chain(seat)
-}
-
-pub fn nearest_surviving_manager(
-    tree: &dyn TreeRead,
-    seat: &SeatId,
-    retiring: &BTreeSet<SeatId>,
-) -> Result<Option<SeatId>, StoreError> {
-    Pointers::load(tree)?.nearest_surviving_manager(seat, retiring)
 }
 
 /// Load, apply `edits`, then `cycle_from(subjects)`: the would-create-cycle check (ManagerEdit, the make_plan guard).

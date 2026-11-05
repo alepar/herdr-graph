@@ -123,6 +123,8 @@ impl E2e {
         };
         let out = rig.cli(&["init", rig.instance.to_str().unwrap()]);
         assert!(out.status.success(), "init: {}", stderr(&out));
+        // The first seat created would become the node manager, which closure never retires: opt the graph out.
+        support::node_manager_opt_out(&rig.instance);
         if daemon {
             let out = rig.cli(&["daemon", "--ensure"]);
             assert!(out.status.success(), "daemon --ensure: {}", stderr(&out));
@@ -347,7 +349,13 @@ impl E2e {
 
     /// `herdr-graph show <id>` as TOML.
     fn show(&self, id: &str) -> toml::Value {
+        // A seat's `show` appends a `manager: ...` line (spec §4.12) after the record's TOML.
         let text = self.cli_ok(&["show", id]);
+        let text: String = text
+            .lines()
+            .filter(|l| !l.starts_with("manager: "))
+            .map(|l| format!("{l}\n"))
+            .collect();
         toml::Value::Table(
             text.parse::<toml::Table>()
                 .unwrap_or_else(|e| panic!("show {id} is not toml ({e}): {text}")),
@@ -1657,7 +1665,13 @@ fn e2e_rebind_restamps_token_after_herdr_restart() {
 }
 
 fn json_of(text: &str) -> Value {
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("not json ({e}): {text}"))
+    // A pane capture merges stderr, where the opted-out graph prints the unassigned node-manager warning.
+    let json: String = text
+        .lines()
+        .filter(|l| !l.starts_with("herdr-graph: warning: no node manager is assigned"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    serde_json::from_str(&json).unwrap_or_else(|e| panic!("not json ({e}): {text}"))
 }
 
 #[test]
