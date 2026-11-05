@@ -11,7 +11,7 @@ branch: super-auto/seat-failure-manager-seats
 base: main
 spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
-roastDesignRound: 1
+roastDesignRound: 2
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
 stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
