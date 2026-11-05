@@ -11,6 +11,7 @@ branch: super-auto/seat-failure-manager-seats
 base: main
 spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
+roastDesignRound: 1
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
