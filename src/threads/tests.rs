@@ -620,7 +620,7 @@ async fn membership_records_accepted_after_native_accept() {
 }
 
 #[tokio::test]
-async fn pending_invitations_lists_accept_commands() {
+async fn pending_invitations_report_thread_and_constraint() {
     let fx = fx();
     let clone = base(&fx).await;
     occupy(&fx, &clone, "seat-A").await;
@@ -628,18 +628,15 @@ async fn pending_invitations_lists_accept_commands() {
     let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
     let pending = crate::threads::pending_invitations(&view(&fx), &clone.id);
     assert_eq!(pending.len(), 2);
-    let m = fx.threads.member(&st, &seat_ref("seat-A")).unwrap();
-    let want = format!(
-        "herdr-threads accept-required {} --invitation {} --requirement {} --revision {}",
-        st.0,
-        m.invitation,
-        m.requirement.as_ref().unwrap(),
-        m.revision
-    );
     let got = pending.iter().find(|p| p.thread == st.0).unwrap();
     assert_eq!(got.constraint, InviteConstraint::Required);
-    assert_eq!(got.accept_command, want);
-    assert!(pending.iter().any(|p| p.thread == ts.0));
+    let other = pending.iter().find(|p| p.thread == ts.0).unwrap();
+    assert_eq!(other.constraint, InviteConstraint::Required);
+    // Acceptance belongs to herdr-threads: the entry carries only thread and constraint.
+    let v = serde_json::to_value(&pending[0]).unwrap();
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["constraint", "thread"]);
     // An accepted invitation is no longer pending.
     fx.threads.accept(&st, &seat_ref("seat-A"));
     later(&fx).await;
@@ -648,23 +645,6 @@ async fn pending_invitations_lists_accept_commands() {
     assert_eq!(
         pending.iter().map(|p| p.thread.clone()).collect::<Vec<_>>(),
         vec![ts.0.clone()]
-    );
-    // Ordinary invitations are accepted with plain `accept`.
-    use crate::model::clone::Invitation;
-    let ordinary = Invitation {
-        thread: "th-x".into(),
-        constraint: InviteConstraint::Ordinary,
-        state: InvitationState::Pending,
-        link: None,
-    };
-    assert_eq!(
-        super::accept_command(&ordinary.thread, ordinary.constraint, None),
-        "herdr-threads accept th-x"
-    );
-    assert_eq!(
-        super::accept_command("th-y", InviteConstraint::Required, None),
-        "herdr-threads thread participants th-y",
-        "episode ids unknown: read them from the thread"
     );
     assert!(crate::threads::pending_invitations(&view(&fx), &CloneId::new()).is_empty());
 }
