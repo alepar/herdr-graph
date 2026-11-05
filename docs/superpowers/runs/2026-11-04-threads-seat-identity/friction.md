@@ -11,3 +11,4 @@ Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg
 - [2026-11-05] super-code: host has no C toolchain after the 2026-11-03 reboot; all 6 first-round merges failed mergeCheck; unplanned coordinator stop (in-flight work lost), relaunched with toolbox-wrapped commands (ht-build).
 - [2026-11-05] super-code: two invocations ended ready-drained/stalled while a review bead closed just after the round's readiness query (hg-66u.28 became ready after Finish began); re-entered each time.
 - [2026-11-05] super-code final review: cluster 4 over the 200K window, never written; collection gap recorded, re-entry proceeds (the review is not an input to the next invocation).
+- [2026-11-05] roast-code r1: assembler review input selection: provenance unavailable; captured source available (collection gap inv-4aa37d70 cluster-4); bounded direct review of captured base/head, round unavailable for acceptance.
