@@ -186,19 +186,34 @@ None of that structure is fixed by the model.
 - **Where it can be set.**
   - On a seat.
   - On a teamspace, as the default for that teamspace's seats.
-  - Effective manager = seat override, else teamspace default, else none.
-- **Node manager.** A graph-level `node_manager_seat: Option<SeatId>` in `graph.toml`. There is precedent:
-  `summarizer_seat` already lives there (`src/model/graph.rs:12`). The node manager owns graph repair and
-  receives integrity errors. It is often the root of the manager tree, but not necessarily.
+  - Effective manager = seat override, else teamspace default, else the node manager.
+- **Node manager (decided).** A graph-level `node_manager_seat: SeatId` in `graph.toml`. There is
+  precedent: `summarizer_seat` already lives there (`src/model/graph.rs:12`).
+  - It is the root of everything on the node.
+  - It has no manager, and it cannot be retired.
+  - It owns graph repair and receives integrity errors.
+  - Any hierarchy above node level (for example a global coordinator on the originating node) is
+    outside the graph.
+- **How it changes (decided).** All graph state changes go through the plan/confirm/apply flow
+  (CURRENT-DESIGN.md), so the manager pointer is set and cleared through plans like every other field.
+  There is no separate lightweight command.
 - **Validation at plan time**, like other references:
   - the target exists and is not retired;
-  - no cycles along manager chains.
-  - Retiring a seat that is someone's manager either fails, or reports the orphaned reports in the plan
-    (decide which).
-- **Surfacing.**
+  - no cycles along manager chains;
+  - the node manager has no manager.
+- **Retirement (decided).** When a seat is retired, its direct reports are reparented to the retired
+  seat's own effective manager:
+  - Explicit `manager` pointers on the reports are rewritten.
+  - A teamspace default that names the retired seat is rewritten the same way.
+  - The plan shows every rewrite.
+  - If the parent is retired in the same plan (for example, an application retire), reports go to the
+    nearest surviving ancestor. The node manager cannot be retired, so this always ends at a valid
+    seat, and "everyone becomes their own root" cannot happen.
+- **Surfacing (decided).**
   - `/seat` returns `manager` and `node_manager`, each as a seat id and name, plus that seat's live
     clone's herdr-threads seat when resolvable, so the agent can message it directly.
   - The integrity error carries `node_manager` (A2).
+  - `who` and `show` display the manager chain up to the node manager.
 
 ## What this deliberately does not do
 
@@ -211,12 +226,13 @@ None of that structure is fixed by the model.
 
 ## Open questions
 
-1. Retiring a manager seat: refuse, or allow and list the orphaned reports in the plan?
-2. Should the manager be settable through ordinary graph plans only, or also by a lighter runtime
-   command?
-3. Should the graph-level default go beyond the node manager, i.e. should seats with no seat or teamspace
-   manager fall back to `node_manager_seat`? Simplest: yes.
-4. Should `who` and `show` display the manager chain?
+1. **Moving the node manager role.** The node manager cannot be retired, so there must be a plan that
+   hands the role to another seat (for example `node-manager set <seat>`). After the hand-off, the old
+   seat becomes an ordinary seat and can be retired.
+2. **Bootstrap.**
+   - `node_manager_seat` is mandatory, so `init` must create or designate it.
+   - Existing graphs need a migration plan that designates one.
+   - Until then, the integrity error omits it, and the A3 step says "report to the user".
 
 ---
 
@@ -227,4 +243,4 @@ None of that structure is fixed by the model.
   `request.rs:147`, `undo.rs:45`). That is inconsistent with "the daemon is authoritative".
   - `status` is defensible as an operator diagnostic.
   - The others are candidates for removal.
-  - This is a separate follow-up, outside H3.
+  - This is a separate follow-up, outside H3: Beads hg-3mc.
