@@ -2228,25 +2228,29 @@ async fn seat_unresolved_keeps_the_matcher_result() {
 
 #[tokio::test]
 async fn seat_retired_retires_the_clone_undoably() {
-    let fx = fx();
-    let (c, _) = seated(&fx, "seat-1").await;
+    // One fixture per kind: an undo of a seated clone commits a Restore intent, and while that intent is
+    // pending a Retired reading retires nothing (the succession want settles it first).
     for kind in [RetirementKind::Final, RetirementKind::Reversible] {
+        let fx = fx();
+        let (c, _) = seated(&fx, "seat-1").await;
         fx.seats
             .set(&seat_ref("seat-1"), SeatStatus::Retired { kind });
         step(&fx).await;
         let after = clone_by_id(&fx, &c.id);
         assert_eq!(after.lifecycle, CloneLifecycle::Retired, "{kind:?}");
         let act = after.retired.expect("retirement").action.expect("action");
-        // Undo brings it back.
+        // Undo brings it back, with a Restore intent for its seat.
         commit(&fx, &format!("undo {act}"));
-        assert_eq!(
-            clone_by_id(&fx, &c.id).lifecycle,
-            CloneLifecycle::Active,
-            "{kind:?}"
+        let back = clone_by_id(&fx, &c.id);
+        assert_eq!(back.lifecycle, CloneLifecycle::Active, "{kind:?}");
+        assert!(
+            matches!(
+                back.seat_intent,
+                Some(crate::model::clone::SeatIntent::Restore { .. })
+            ),
+            "{kind:?}: {:?}",
+            back.seat_intent
         );
-        // Reset the view so the loop does not retire it again before the second round.
-        fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
-        settle(&fx).await;
     }
 }
 

@@ -1,6 +1,5 @@
 //! Undo tests: a real writer, git store, journal, plan engine, core + template + undo kinds and the observer's
 //! cascade mutation, so cascades are produced by committing `observed.cascade` requests directly.
-use super::adopt::ADOPT_BINDING_KEY;
 use super::candidates::{list_candidates, render_list};
 use super::preview::CLOSES_PANE_WARNING;
 use super::register_kinds;
@@ -25,7 +24,7 @@ use crate::model::{
 };
 use crate::observe::classify::CascadeRule;
 use crate::observe::mutations::cascade_request;
-use crate::plan::commands::{PlanDeps, admit_apply, admit_apply_with, create_plan};
+use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
 use crate::plan::core_kinds::register_core_kinds;
 use crate::plan::kind::KindRegistry;
 use crate::plan::store::PlanStore;
@@ -192,25 +191,6 @@ fn apply_plan(fx: &Fx, sp: &StoredPlan) -> OpRow {
         sp.plan.id.as_str(),
         Some(&sp.hash),
         "relay",
-    )
-    .unwrap_or_else(|e| panic!("admit: {}", e.message));
-    fx.w.drain().unwrap();
-    fx.w.journal().get(&op).unwrap().unwrap()
-}
-
-/// Apply from the caller's pane: `observed` is the binding `undo.apply` read from Herdr's snapshot.
-fn apply_plan_from_pane(fx: &Fx, sp: &StoredPlan, pane: &str, observed: Option<&Binding>) -> OpRow {
-    let mut extra = serde_json::Map::new();
-    if let Some(b) = observed {
-        extra.insert(ADOPT_BINDING_KEY.into(), serde_json::to_value(b).unwrap());
-    }
-    let op = admit_apply_with(
-        &fx.deps,
-        &caller(Some(pane)),
-        sp.plan.id.as_str(),
-        Some(&sp.hash),
-        "relay",
-        extra,
     )
     .unwrap_or_else(|e| panic!("admit: {}", e.message));
     fx.w.drain().unwrap();
@@ -588,11 +568,14 @@ fn undo_plan_applied_seat_retirement_previews_and_applies_resurrection() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// caller-pane adoption
+// the caller's pane is left alone; restored clones reopen their own tab
 // ---------------------------------------------------------------------------------------------
 
 /// `foreman` (retired by a tab cascade) and `other`, whose only clone is bound to `pane`.
-fn adoption_fixture(fx: &Fx, pane: &str) -> (SeatRecord, CloneRecord, CloneRecord, ActionRecord) {
+fn caller_pane_fixture(
+    fx: &Fx,
+    pane: &str,
+) -> (SeatRecord, CloneRecord, CloneRecord, ActionRecord) {
     alpha(fx);
     let foreman = active_seat(fx, "foreman");
     let other = active_seat(fx, "other");
@@ -607,231 +590,114 @@ fn adoption_fixture(fx: &Fx, pane: &str) -> (SeatRecord, CloneRecord, CloneRecor
     (foreman, f_clone, clone_by_id(fx, &x.id), act)
 }
 
+fn assign_threads_seat(fx: &Fx, clone: &CloneId, seat: &str) {
+    crate::threads::assignment::admit_threads_seat(
+        &*fx.w,
+        clone,
+        &crate::threads::assignment::SeatTransition::Assign { seat: seat.into() },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
 #[test]
-fn adoption_preview_with_bound_caller_pane() {
+fn undo_from_a_bound_pane_leaves_the_callers_pane_alone_and_reopens_the_clones_own_tab() {
     let fx = fx();
-    let (foreman, f_clone, x, act) = adoption_fixture(&fx, "p-caller");
+    let (foreman, f_clone, x, act) = caller_pane_fixture(&fx, "p-caller");
     let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
     assert!(
         sp.plan.repair_required.is_none(),
         "{:?}",
         sp.plan.repair_required
     );
-
-    let adopt = sp
-        .plan
-        .effects
-        .iter()
-        .find(|e| e.kind == "undo.adopt_pane")
-        .expect("the preview names the adoption");
-    assert_eq!(
-        adopt.object,
-        f_clone.id.to_any(),
-        "the caller pane is adopted as the restored clone"
-    );
-    assert_eq!(adopt.detail["pane"], json!("p-caller"));
-    assert_eq!(adopt.detail["displaced_clone"], json!(x.id));
-    assert_eq!(
-        adopt.detail["displaced_binding"]["pane_id"],
-        json!("p-caller"),
-        "the existing binding is shown"
+    assert!(
+        !sp.plan.effects.iter().any(|e| e.kind == "undo.adopt_pane"),
+        "nothing is adopted: {:?}",
+        sp.plan.effects
     );
     assert!(
-        !kinds_of(&sp, "runtime.open_pane").contains(&f_clone.id.to_any()),
-        "no second pane is opened for the adopted clone"
+        !sp.plan.effects.iter().any(|e| e.kind == "clone.retire"),
+        "the clone bound to the caller's pane is not displaced"
     );
-    let retire = sp
-        .plan
-        .effects
-        .iter()
-        .find(|e| e.kind == "clone.retire")
-        .expect("the displaced clone is retired");
-    assert_eq!(retire.object, x.id.to_any());
-    assert_eq!(retire.detail["mechanism"], json!("undo"));
-    assert_eq!(retire.detail["displaced_by_undo"], json!(true));
     assert!(
-        sp.plan
-            .warnings
-            .iter()
-            .any(|w| w.contains("last active clone")),
+        kinds_of(&sp, "runtime.open_tab").contains(&foreman.id.to_any()),
+        "the seat's own tab is reopened"
+    );
+    assert!(
+        kinds_of(&sp, "runtime.open_pane").contains(&f_clone.id.to_any()),
+        "the restored clone gets its own pane"
+    );
+    assert!(
+        !sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING),
         "{:?}",
         sp.plan.warnings
     );
 
-    let observed = Binding {
-        token: None,
-        workspace_id: Some(HerdrWorkspaceId("w9".into())),
-        tab_id: Some(HerdrTabId("t9".into())),
-        pane_id: Some(HerdrPaneId("p-caller".into())),
-        terminal_id: Some(crate::model::HerdrTerminalId("term-caller".into())),
-        incarnation: crate::model::common::Incarnation {
-            generation: 7,
-            server_pid: Some(42),
-            server_started: None,
-        },
-    };
-    let row = apply_plan_from_pane(&fx, &sp, "p-caller", Some(&observed));
+    let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    let displaced = clone_by_id(&fx, &x.id);
-    assert_eq!(displaced.lifecycle, CloneLifecycle::Retired);
-    assert_eq!(displaced.retired.unwrap().mechanism, RetireMechanism::Undo);
-    assert!(
-        displaced.runtime.bound.is_none(),
-        "the pane is no longer the displaced clone's"
-    );
-    let adopted = clone_by_id(&fx, &f_clone.id);
-    assert_eq!(adopted.lifecycle, CloneLifecycle::Active);
-    // The undo commit itself holds the whole binding: nothing is left to admit after the commit, so the
-    // reconciler woken by it finds a clone with a live pane.
-    assert_eq!(adopted.runtime.availability, Availability::Present);
+    let restored = clone_by_id(&fx, &f_clone.id);
+    assert_eq!(restored.lifecycle, CloneLifecycle::Active);
     assert_eq!(
-        adopted.runtime.bound,
-        Some(observed.clone()),
-        "the caller's pane exactly as observed, no token yet"
+        restored.runtime,
+        crate::plan::core_kinds::absent(),
+        "committed with no runtime: the reconciler creates the pane and writes the binding"
     );
-    let foreman_now = seat_by_id(&fx, &foreman.id);
-    assert_eq!(foreman_now.lifecycle, Lifecycle::Active);
+    let kept = clone_by_id(&fx, &x.id);
     assert_eq!(
-        foreman_now.activation.last_op,
-        Some(row.op.clone()),
-        "the adopted pane's StampToken gets a fresh effect id"
+        kept.lifecycle,
+        CloneLifecycle::Active,
+        "the caller's clone stays"
     );
+    assert_eq!(kept.runtime.bound, x.runtime.bound, "its pane is untouched");
     let undo_act = action_of(&fx, &row);
-    assert_eq!(
-        undo_act.compensation["adopt"]["clone"].as_str(),
-        Some(f_clone.id.to_string().as_str())
-    );
-    assert_eq!(
-        undo_act.compensation["adopt"]["pane"].as_str(),
-        Some("p-caller")
-    );
-    assert_eq!(
-        undo_act.compensation["adopt"]["displaced"].as_str(),
-        Some(x.id.to_string().as_str())
-    );
-    assert_eq!(
-        undo_act.compensation["adopt"]["binding"]["tab_id"].as_str(),
-        Some("t9")
-    );
+    assert!(undo_act.compensation.get("adopt").is_none());
 }
 
 #[test]
-fn adoption_preview_from_bound_pane_does_not_warn_pane_closes() {
+fn undo_writes_a_restore_intent_for_a_seated_clone_only() {
     let fx = fx();
-    let (_, f_clone, x, act) = adoption_fixture(&fx, "p-caller");
-    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
-    assert!(
-        !sp.plan.warnings.iter().any(|w| w == CLOSES_PANE_WARNING),
-        "the pane is adopted, not closed: {:?}",
-        sp.plan.warnings
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let f_clone = clones_of(&fx, &foreman.id).remove(0);
+    assign_threads_seat(&fx, &f_clone.id, "seat-A");
+    let act = cascade(
+        &fx,
+        CascadeRule::Tab,
+        &[foreman.id.to_any(), f_clone.id.to_any()],
     );
-    let adopt = sp
-        .plan
-        .effects
-        .iter()
-        .find(|e| e.kind == "undo.adopt_pane")
-        .expect("the adoption is named");
-    assert_eq!(adopt.object, f_clone.id.to_any());
-    assert_eq!(adopt.detail["displaced_clone"], json!(x.id));
-    let retire = sp
-        .plan
-        .effects
-        .iter()
-        .find(|e| e.kind == "clone.retire")
-        .unwrap();
-    assert_eq!(
-        (retire.object.clone(), &retire.detail["displaced_by_undo"]),
-        (x.id.to_any(), &json!(true))
-    );
-    assert_eq!(
-        retire.detail["binding"]["pane_id"],
-        json!("p-caller"),
-        "the displaced clone's binding is shown"
-    );
-}
-
-#[test]
-fn adoption_without_an_observed_pane_stays_unknown_until_the_observer_looks() {
-    let fx = fx();
-    let (_, f_clone, _, act) = adoption_fixture(&fx, "p-caller");
-    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-caller"));
-    // Herdr did not list the pane when the undo was applied: nothing is claimed about it.
-    let row = apply_plan_from_pane(&fx, &sp, "p-caller", None);
+    let row = apply_plan(&fx, &plan(&fx, &format!("undo {}", act.id)));
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    let adopted = clone_by_id(&fx, &f_clone.id);
-    assert_eq!(adopted.runtime.availability, Availability::Unknown);
+    let back = clone_by_id(&fx, &f_clone.id);
     assert_eq!(
-        adopted.runtime.bound.unwrap().pane_id,
-        Some(HerdrPaneId("p-caller".into()))
+        back.seat_intent,
+        Some(crate::model::clone::SeatIntent::Restore {
+            seat: "seat-A".into(),
+            epoch: row.op.clone(),
+            threads_done: false,
+            launched: false,
+        }),
+        "the epoch is the undo commit's operation"
     );
+    assert_eq!(back.threads_seat.as_deref(), Some("seat-A"));
 }
 
 #[test]
-fn adoption_conflict_with_active_occupant_is_repair_required() {
+fn undo_of_a_seatless_clone_writes_no_restore_intent() {
     let fx = fx();
-    let (_, f_clone, x, act) = adoption_fixture(&fx, "p-busy");
-    patch(&fx, json!({ "clone": x.id, "occupy": true }));
-    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-busy"));
-    let why = sp
-        .plan
-        .repair_required
-        .clone()
-        .expect("an occupied displaced clone blocks the undo");
-    assert!(
-        why.contains(x.id.as_str()) && why.contains("active"),
-        "{why}"
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let f_clone = clones_of(&fx, &foreman.id).remove(0);
+    assert_eq!(f_clone.threads_seat, None);
+    let act = cascade(
+        &fx,
+        CascadeRule::Tab,
+        &[foreman.id.to_any(), f_clone.id.to_any()],
     );
-    let err = admit_apply(
-        &fx.deps,
-        &caller(None),
-        sp.plan.id.as_str(),
-        Some(&sp.hash),
-        "relay",
-    )
-    .unwrap_err();
-    assert!(err.message.contains("repair"), "{}", err.message);
-    assert_eq!(
-        clone_by_id(&fx, &f_clone.id).lifecycle,
-        CloneLifecycle::Retired,
-        "nothing was restored"
-    );
-    assert_eq!(
-        clone_by_id(&fx, &x.id).lifecycle,
-        CloneLifecycle::Active,
-        "the occupied clone stays"
-    );
-}
-
-#[test]
-fn occupant_gained_between_preview_and_apply_is_rejected() {
-    let fx = fx();
-    let (_, f_clone, x, act) = adoption_fixture(&fx, "p-race");
-    let sp = plan_as(&fx, &format!("undo {}", act.id), Some("p-race"));
-    assert!(sp.plan.repair_required.is_none(), "the preview was clean");
-    patch(&fx, json!({ "clone": x.id, "occupy": true })); // the race: an agent starts on x
-    let row = apply_plan_from_pane(&fx, &sp, "p-race", None);
-    assert_eq!(row.state, OpState::Rejected);
-    let r = row.rejection.expect("rejection");
-    assert!(
-        matches!(r.reason.as_str(), "stale_plan" | "repair_required"),
-        "{r:?}"
-    );
-    if r.reason == "repair_required" {
-        assert!(
-            r.explanation.contains(x.id.as_str()),
-            "the explanation names the occupied clone: {r:?}"
-        );
-    }
-    assert_eq!(
-        clone_by_id(&fx, &f_clone.id).lifecycle,
-        CloneLifecycle::Retired,
-        "nothing restored"
-    );
-    assert_eq!(
-        clone_by_id(&fx, &x.id).lifecycle,
-        CloneLifecycle::Active,
-        "the occupied clone stays"
-    );
+    let row = apply_plan(&fx, &plan(&fx, &format!("undo {}", act.id)));
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let back = clone_by_id(&fx, &f_clone.id);
+    assert_eq!(back.lifecycle, CloneLifecycle::Active);
+    assert_eq!(back.seat_intent, None);
 }
 
 #[test]
@@ -1477,6 +1343,29 @@ fn seat_resurrect_removes_its_retirements_exclusion() {
     assert_eq!(app(&fx, "one").exclusions, vec![e]);
     commit(&fx, &format!("seat resurrect {} --active", eng.id));
     assert!(app(&fx, "one").exclusions.is_empty());
+}
+
+#[test]
+fn seat_resurrection_writes_a_restore_intent_for_a_seated_clone() {
+    let fx = fx();
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let c = clones_of(&fx, &foreman.id).remove(0);
+    assign_threads_seat(&fx, &c.id, "seat-A");
+    commit(&fx, "seat retire foreman");
+    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Retired);
+    let row = commit(&fx, &format!("seat resurrect {} --active", foreman.id));
+    let back = clone_by_id(&fx, &c.id);
+    assert_eq!(back.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        back.seat_intent,
+        Some(crate::model::clone::SeatIntent::Restore {
+            seat: "seat-A".into(),
+            epoch: row.op.clone(),
+            threads_done: false,
+            launched: false,
+        })
+    );
 }
 
 #[test]

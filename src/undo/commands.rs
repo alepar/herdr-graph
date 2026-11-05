@@ -1,10 +1,9 @@
 //! IPC handlers `undo.list` and `undo.apply` (spec §6, §10). Selecting an action and previewing its undo
 //! reuse `plan.create` with the words `["undo", <act>]`; applying goes through `undo.apply`, which admits the
 //! op and answers at once so the CLI can print the op id before the caller's own pane may close.
-use super::adopt::{ADOPT_BINDING_KEY, caller_binding};
 use super::candidates::{DEFAULT_LIMIT, list_candidates, render_list};
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};
-use crate::plan::commands::{PlanDeps, admit_apply_with};
+use crate::plan::commands::{PlanDeps, admit_apply};
 use crate::plan::kind::KindRegistry;
 use crate::plan::store::PlanStore;
 use crate::ports::clock::Clock;
@@ -82,30 +81,11 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {
                 .and_then(Value::as_str)
                 .unwrap_or("relay")
                 .to_owned();
-            // The caller's pane as Herdr shows it now (workspace, tab, terminal, incarnation): the undo commits
-            // the adopted clone's binding itself, so the reconciler never sees a restored clone without a pane.
-            let mut extra = serde_json::Map::new();
-            if let Some(pane) = cx.caller.pane_id.as_deref()
-                && let Ok(snap) = d.herdr.snapshot().await
-                && let Some(b) = caller_binding(&snap, pane)
-            {
-                extra.insert(
-                    ADOPT_BINDING_KEY.into(),
-                    serde_json::to_value(b).map_err(|e| CommandError::internal(e.to_string()))?,
-                );
-            }
             let op = {
                 let d = d.clone();
                 let caller = cx.caller.clone();
                 tokio::task::spawn_blocking(move || {
-                    admit_apply_with(
-                        &d.plan_deps(),
-                        &caller,
-                        &plan,
-                        confirm.as_deref(),
-                        &mode,
-                        extra,
-                    )
+                    admit_apply(&d.plan_deps(), &caller, &plan, confirm.as_deref(), &mode)
                 })
                 .await
                 .map_err(|e| CommandError::internal(e.to_string()))??
