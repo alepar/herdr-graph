@@ -41,6 +41,10 @@ pub const POLL_KIND: &str = "threads.membership";
 pub const RESOLVE_KIND: &str = "threads.resolve_seat";
 /// `EffectKind::Custom` name of the clear-on-reattach of a finished Restore intent (spec §14.4).
 pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
+/// `EffectKind::Custom` name of the seat succession of an undone or resurrected clone (spec §2, §8 interim).
+pub const SUCCEED_KIND: &str = "threads.succeed_seat";
+/// `EffectKind::Custom` name of the acknowledgement of a Restore whose seat needs no succession.
+pub const ACK_RESTORE_KIND: &str = "threads.ack_restore";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -255,6 +259,16 @@ pub(crate) enum Payload {
     ClearRestore {
         epoch: OpId,
     },
+    /// Resolve the reopened `pane` to a fresh seat and succeed the final-retired seat `from` with it.
+    SucceedSeat {
+        pane: HerdrPaneId,
+        from: String,
+        epoch: OpId,
+    },
+    /// The Restore of `epoch` needs no threads command: its seat is not retired. Sets `threads_done`.
+    AckRestore {
+        epoch: OpId,
+    },
 }
 
 struct Want {
@@ -374,17 +388,65 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
 /// intent (the succession want owns that case), and its binding is verified (present, in a pane, stamped
 /// with the clone's own token).
 fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
-    if !g.clone_active(c)
-        || c.threads_seat.is_some()
-        || matches!(c.seat_intent, Some(SeatIntent::Restore { .. }))
-        || c.runtime.availability != Availability::Present
-    {
+    if c.threads_seat.is_some() || matches!(c.seat_intent, Some(SeatIntent::Restore { .. })) {
+        return None;
+    }
+    verified_pane(g, c)
+}
+
+/// The clone's pane when its binding is verified: the clone is active, present, and the pane carries the
+/// clone's own token.
+fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
+    if !g.clone_active(c) || c.runtime.availability != Availability::Present {
         return None;
     }
     let bound = c.runtime.bound.as_ref()?;
     (bound.token.as_deref() == Some(graph_token(&c.id.to_any()).as_str()))
         .then(|| bound.pane_id.clone())
         .flatten()
+}
+
+/// What an unacknowledged Restore intent asks of threads (spec §2 succession rule, §8 interim).
+#[derive(Debug, PartialEq, Eq)]
+enum Succession {
+    /// The Restore's seat is final-retired: resolve the reopened pane (`pane`) to a fresh seat.
+    Succeed {
+        pane: HerdrPaneId,
+        from: String,
+        epoch: OpId,
+    },
+    /// The Restore's seat is Unresolved or Resolved: nothing to succeed, record `threads_done`.
+    Acknowledge { epoch: OpId },
+}
+
+/// The succession a clone's pending Restore calls for, read from the committed `seat_fact`. No fact (threads
+/// never read, or unreachable since), a key conflict, or a reversible retirement (D2) asks for nothing.
+fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
+    use crate::model::clone::SeatFactState as F;
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: false,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    if !g.clone_active(c) || c.threads_seat.as_ref() != Some(seat) {
+        return None;
+    }
+    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
+    match fact.state {
+        F::Retired { reversible: false } => Some(Succession::Succeed {
+            pane: verified_pane(g, c)?,
+            from: seat.clone(),
+            epoch: epoch.clone(),
+        }),
+        F::Unresolved | F::Resolved { .. } => Some(Succession::Acknowledge {
+            epoch: epoch.clone(),
+        }),
+        F::Retired { reversible: true } | F::KeyConflict { .. } => None,
+    }
 }
 
 /// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
@@ -417,6 +479,23 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 c.rev,
                 Payload::ResolveSeat { pane },
             ));
+        }
+        match succession(g, c) {
+            Some(Succession::Succeed { pane, from, epoch }) => out.push(want(
+                g,
+                EffectKind::Custom(SUCCEED_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::SucceedSeat { pane, from, epoch },
+            )),
+            Some(Succession::Acknowledge { epoch }) => out.push(want(
+                g,
+                EffectKind::Custom(ACK_RESTORE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::AckRestore { epoch },
+            )),
+            None => {}
         }
         if let Some(epoch) = reattached_restore(g, c) {
             out.push(want(
@@ -1208,6 +1287,105 @@ impl ThreadsExecutor {
         }
     }
 
+    fn ack_restore(&self, cx: &ExecCx<'_>, e: &EffectRecord, epoch: &OpId) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if succession(&g, clone)
+            != Some(Succession::Acknowledge {
+                epoch: epoch.clone(),
+            })
+        {
+            return ExecOutcome::Obsolete;
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Acknowledge {
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+        }
+    }
+
+    /// Resolve the reopened pane to a fresh seat and succeed the final-retired one with it. The operation key
+    /// is stable per (clone, epoch), so a retry replays the same resolution; a refusal defers and is never
+    /// retried as a fresh allocation.
+    async fn succeed_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        pane: &HerdrPaneId,
+        from: &str,
+        epoch: &OpId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        let wanted = Succession::Succeed {
+            pane: pane.clone(),
+            from: from.to_owned(),
+            epoch: epoch.clone(),
+        };
+        if succession(&g, clone).as_ref() != Some(&wanted) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("succeed:{}:{epoch}", clone.id),
+        ));
+        let seat = match self.mapping.resolve_seat(pane, &key).await {
+            Ok(SeatResolution::Seat(seat)) => seat,
+            Ok(SeatResolution::NotYet(reason)) => return ExecOutcome::Deferred(reason),
+            Err(err) => return port_outcome(err),
+        };
+        if seat.0 == from {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads resolved the retired seat {from} again for {}",
+                clone.id
+            ));
+        }
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Succeed {
+                seat: seat.0,
+                from: from.to_owned(),
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
+    }
+
     async fn resolve_seat(
         &self,
         cx: &ExecCx<'_>,
@@ -1584,7 +1762,14 @@ impl EffectExecutor for ThreadsExecutor {
             | EffectKind::ReleaseRequirement
             | EffectKind::Notify
             | EffectKind::SetTopic => true,
-            EffectKind::Custom(k) => k == POLL_KIND || k == RESOLVE_KIND || k == CLEAR_RESTORE_KIND,
+            EffectKind::Custom(k) => [
+                POLL_KIND,
+                RESOLVE_KIND,
+                CLEAR_RESTORE_KIND,
+                SUCCEED_KIND,
+                ACK_RESTORE_KIND,
+            ]
+            .contains(&k.as_str()),
             _ => false,
         }
     }
@@ -1675,6 +1860,12 @@ impl ThreadsExecutor {
             }
             (EffectKind::Custom(_), Some(Payload::ClearRestore { epoch })) => {
                 self.clear_restore(cx, e, &epoch)
+            }
+            (EffectKind::Custom(_), Some(Payload::AckRestore { epoch })) => {
+                self.ack_restore(cx, e, &epoch)
+            }
+            (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
+                self.succeed_seat(cx, e, &pane, &from, &epoch).await
             }
             (
                 EffectKind::Custom(_),

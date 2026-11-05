@@ -953,10 +953,10 @@ fn undo_from_pane(rig: &E2e, caller: &str) -> String {
     read()
 }
 
-/// F2 (hg-zmi.54): undo run from a pane bound to another clone A adopts that pane for the restored clone B. A is
-/// retired with its history, and the pane is never closed (no new pane, no closed pane).
+/// F2 (hg-zmi.54), without adoption: undo run from a pane bound to another clone A leaves that pane alone. A
+/// stays active in it, and the restored clone B gets a pane of its own (one pane created, none closed).
 #[test]
-fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {
+fn e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane() {
     let rig = rig!();
     let (_, clones) = seat_with_clones(&rig, "t", "foreman", 1);
     let (a, b) = (&clones[0], &clones[1]);
@@ -971,49 +971,44 @@ fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {
     let panes_before = pane_infos(&rig.snapshot()).len();
 
     let log = undo_from_pane(&rig, &a_pane);
-    rig.wait_until("A's pane to carry the restored clone's token", WAIT, |r| {
-        r.pane_of(&b.id).is_some_and(|p| p.id.0 == a_pane)
+    rig.wait_until("B to get a pane of its own", WAIT, |r| {
+        r.pane_of(&b.id).is_some_and(|p| p.id.0 != a_pane)
     });
     rig.wait_settled();
 
     assert!(
         pane_infos(&rig.snapshot()).iter().any(|p| p.id.0 == a_pane),
-        "the adopted pane survives"
+        "the caller's pane survives"
     );
     assert_eq!(
         pane_infos(&rig.snapshot()).len(),
-        panes_before,
-        "no pane created, none closed"
+        panes_before + 1,
+        "one pane created for B, none closed"
     );
     let (b_now, a_now) = (rig.show(&b.id), rig.show(&a.id));
     assert_eq!(b_now["lifecycle"].as_str(), Some("active"));
-    assert_eq!(
+    assert_ne!(
         tstr(&b_now, "runtime.bound.pane_id"),
         a_pane,
-        "B is bound to the adopted pane"
+        "B is not bound to the caller's pane"
     );
-    assert_eq!(a_now["lifecycle"].as_str(), Some("retired"));
-    assert_eq!(tstr(&a_now, "retired.mechanism"), "undo");
     assert_eq!(
-        a_now.get("sessions").cloned(),
-        sessions_a,
-        "the displaced clone keeps its history"
+        a_now["lifecycle"].as_str(),
+        Some("active"),
+        "A is not displaced"
     );
+    assert_eq!(tstr(&a_now, "runtime.bound.pane_id"), a_pane);
+    assert_eq!(a_now.get("sessions").cloned(), sessions_a);
     assert!(
         !log.contains("closes your pane"),
         "the preview must not warn about closing the pane: {log}"
     );
-    // Later observations do not retire B either.
-    std::thread::sleep(Duration::from_secs(2));
-    rig.wait_settled();
-    assert_eq!(rig.show(&b.id)["lifecycle"].as_str(), Some("active"));
 }
 
-/// D1 regression (hg-zmi.51): undo run from a pane commits with `undo.adopt_pane pane=<caller>` and the undo commit
-/// itself binds the restored clone to that pane, so the reconciler woken by the commit has nothing to create. The
-/// caller's pane becomes the restored clone (spec §6) and no second pane is split.
+/// Undo run from a fresh pane leaves it alone: the restored clone gets a pane of its own in its seat's tab, and
+/// the caller's pane is not bound to anything.
 #[test]
-fn e2e_undo_from_pane_adopts_caller_pane() {
+fn e2e_undo_from_pane_leaves_the_callers_pane_alone() {
     let rig = rig!();
     let (seat, clones) = seat_with_clones(&rig, "t", "foreman", 1);
     let victim = &clones[1];
@@ -1026,45 +1021,47 @@ fn e2e_undo_from_pane_adopts_caller_pane() {
     let panes_before = pane_infos(&rig.snapshot()).len();
 
     let caller = undo_from_new_pane(&rig);
-    rig.wait_until(
-        "the caller pane to carry the restored clone's token",
-        WAIT,
-        |r| r.pane_of(&victim.id).is_some_and(|p| p.id.0 == caller),
-    );
+    rig.wait_until("the clone to get a pane of its own", WAIT, |r| {
+        r.pane_of(&victim.id).is_some_and(|p| p.id.0 != caller)
+    });
+    rig.wait_settled();
     assert_eq!(rig.show(&victim.id)["lifecycle"].as_str(), Some("active"));
     assert_eq!(rig.seat_state(&seat.id), "active");
-    assert_eq!(
-        tstr(&rig.show(&victim.id), "runtime.bound.pane_id"),
-        caller,
-        "bound to the caller's pane"
+    assert_ne!(tstr(&rig.show(&victim.id), "runtime.bound.pane_id"), caller);
+    assert!(
+        pane_infos(&rig.snapshot()).iter().any(|p| p.id.0 == caller),
+        "the caller's pane survives"
     );
-    // The caller's pane was adopted, not joined by a second one: one pane more than before the undo.
     assert_eq!(
         pane_infos(&rig.snapshot()).len(),
-        panes_before + 1,
-        "the caller pane itself (new), nothing else created"
+        panes_before + 2,
+        "the caller's pane, plus one for the restored clone"
     );
     assert_eq!(
         rig.tab_labelled("foreman").unwrap().1.panes.len(),
-        1,
-        "foreman's own tab keeps its surviving clone only"
+        2,
+        "foreman's own tab holds both clones again"
     );
 }
 
-/// D1 regression, tab variant: the undone action closed a whole TAB, so the plan also carries `runtime.open_tab`;
-/// the caller's pane is the restored clone's pane, so no tab is opened for it.
+/// Tab variant: the undone action closed a whole TAB, so the plan carries `runtime.open_tab`; the seat's own
+/// tab is reopened and the caller's pane is left alone.
 #[test]
-fn e2e_undo_tab_close_from_pane_adopts_caller_pane() {
+fn e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab() {
     let rig = rig!();
     rig.create_teamspace_with_seat("t", "foreman");
     let seat = rig.seat("foreman");
     let clone = rig.live_clone(&seat.id);
     close_tab_and_wait(&rig, &seat, std::slice::from_ref(&clone), "foreman");
     let caller = undo_from_new_pane(&rig);
-    rig.wait_until("the caller pane to carry the clone's token", WAIT, |r| {
-        r.pane_of(&clone.id).is_some_and(|p| p.id.0 == caller)
+    rig.wait_until("the clone to get a pane of its own", WAIT, |r| {
+        r.pane_of(&clone.id).is_some_and(|p| p.id.0 != caller)
     });
     assert_eq!(rig.seat_state(&seat.id), "active");
+    assert!(
+        rig.tab_labelled("foreman").is_some(),
+        "the seat's own tab is back"
+    );
 }
 
 /// A template document with the given members, all active shell seats.

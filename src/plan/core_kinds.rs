@@ -521,6 +521,7 @@ pub(crate) fn do_resurrect_seat(
         c.retired = None;
         c.occupant = None;
         c.runtime = absent();
+        crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
         cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         acc.changed(c.id.to_any(), "retired", "active");
         clone_ids.push(c.id.clone());

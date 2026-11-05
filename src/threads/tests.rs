@@ -2598,7 +2598,8 @@ async fn clear_on_reattach_clears_the_restore_and_returns_the_clone_to_the_ordin
         );
     };
     let resolved = json!({ "state": "resolved", "pane": pane_of(&c).0 });
-    fact(resolved.clone());
+    // Reversibly retired: the succession want asks nothing of threads, so the Restore stays unacknowledged.
+    fact(json!({ "state": "retired", "reversible": true }));
     bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
     let clear_rows = || {
         rows(
@@ -2634,5 +2635,286 @@ async fn clear_on_reattach_clears_the_restore_and_returns_the_clone_to_the_ordin
     assert_eq!(
         clone_rec(&fx, &c.id).threads_seat.as_deref(),
         Some("seat-a")
+    );
+}
+
+// --- seat succession on undo and resurrection (hg-66u.29) ---
+
+fn succeed_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(fx, EffectKind::Custom(super::effects::SUCCEED_KIND.into()))
+}
+
+fn ack_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(
+        fx,
+        EffectKind::Custom(super::effects::ACK_RESTORE_KIND.into()),
+    )
+}
+
+fn seat_fact(fx: &Fx, clone: &CloneId, seat: &str, state: serde_json::Value) {
+    bookkeeping(
+        fx,
+        "test_seat_fixture",
+        json!({ "clone": clone, "op": "fact", "seat": seat, "state": state }),
+    );
+}
+
+fn retired_final() -> serde_json::Value {
+    json!({ "state": "retired", "reversible": false })
+}
+
+/// A seated clone with accepted memberships whose pane close retired the seat for good, then an undo:
+/// a Restore intent for the old seat on a reopened pane that threads now maps to `seat-B`.
+async fn undone_clone(fx: &Fx) -> (CloneRecord, OpId, ThreadRef, ThreadRef) {
+    let clone = base(fx).await;
+    occupy(fx, &clone, "seat-A").await;
+    steps(fx, 2).await;
+    let (st, ts) = (thread_of_seat(fx, "foreman"), thread_of_ts(fx));
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    fx.threads.accept(&ts, &seat_ref("seat-A"));
+    later(fx).await;
+    let epoch = OpId::new();
+    write_restore(fx, &clone.id, &epoch);
+    seat_fact(fx, &clone.id, "seat-A", retired_final());
+    let pane = pane_of(&clone_rec(fx, &clone.id));
+    fx.map.set(&pane, "seat-B");
+    (clone, epoch, st, ts)
+}
+
+#[tokio::test]
+async fn pane_close_then_undo_succeeds_onto_the_reopened_pane_seat() {
+    let fx = fx();
+    let (clone, epoch, st, ts) = undone_clone(&fx).await;
+    steps(&fx, 5).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(c.threads_seat_history, vec!["seat-A".to_owned()]);
+    assert_eq!(
+        c.seat_intent,
+        restore("seat-B", &epoch, true, false),
+        "succession acknowledges the Restore in the same write"
+    );
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    assert_eq!(succeed_rows(&fx).len(), 1);
+    assert_eq!(succeed_rows(&fx)[0].status, EffectStatus::Done);
+    // Memberships are re-invited once on the successor and the old seat's requirements released.
+    for t in [&st, &ts] {
+        let a = fx.threads.member(t, &seat_ref("seat-A")).unwrap();
+        let b = fx.threads.member(t, &seat_ref("seat-B")).unwrap();
+        assert_eq!(a.state, InvitationState::Released, "{}", t.0);
+        assert_eq!(
+            (b.constraint, b.state),
+            (InviteConstraint::Required, InvitationState::Pending),
+            "{}",
+            t.0
+        );
+        assert_eq!(inv(&c, t).link.as_ref().unwrap().seat, "seat-B");
+    }
+    let invites = fx.threads.call_count("invite");
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("invite"), invites, "invited once");
+    assert_eq!(succeed_rows(&fx).len(), 1, "no second succession");
+}
+
+#[tokio::test]
+async fn stale_fact_from_before_the_restore_is_not_acted_on() {
+    // A clone retired through the graph keeps the fact it had; undo writes the Restore intent over it. The
+    // old Resolved fact must neither acknowledge the Restore nor start a launch into the final-retired seat.
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": "p-old" }),
+    );
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    assert_eq!(clone_rec(&fx, &clone.id).seat_fact, None);
+    steps(&fx, 1).await;
+    assert!(ack_rows(&fx).is_empty() && succeed_rows(&fx).is_empty());
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, false, false)
+    );
+}
+
+#[tokio::test]
+async fn resurrection_succeeds_the_seat() {
+    // A resurrection commit writes the same Restore intent as an undo (`do_resurrect_seat`); the succession
+    // want reads only the intent and the committed seat fact, so a resurrected clone follows the same path.
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(&fx, &clone.id, "seat-A", retired_final());
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-R");
+    steps(&fx, 4).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-R"));
+    assert_eq!(c.seat_intent, restore("seat-R", &epoch, true, false));
+}
+
+#[tokio::test]
+async fn live_or_unresolved_seat_is_never_succeeded() {
+    for (name, state) in [
+        ("resolved", json!({ "state": "resolved", "pane": "p-live" })),
+        ("unresolved", json!({ "state": "unresolved" })),
+    ] {
+        let fx = fx();
+        let clone = base(&fx).await;
+        seat_the_clone(&fx, &clone, "seat-A");
+        let epoch = OpId::new();
+        write_restore(&fx, &clone.id, &epoch);
+        seat_fact(&fx, &clone.id, "seat-A", state);
+        fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+        let before = fx.map.resolve_ops().len();
+        steps(&fx, 4).await;
+        let c = clone_rec(&fx, &clone.id);
+        assert_eq!(c.threads_seat.as_deref(), Some("seat-A"), "{name}");
+        assert!(c.threads_seat_history.is_empty(), "{name}");
+        assert_eq!(
+            c.seat_intent,
+            restore("seat-A", &epoch, true, false),
+            "{name}: acknowledged with no threads command"
+        );
+        assert_eq!(fx.map.resolve_ops().len(), before, "{name}: no resolve");
+        assert!(succeed_rows(&fx).is_empty(), "{name}");
+        assert_eq!(ack_rows(&fx).len(), 1, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn reversible_retirement_and_key_conflict_are_left_alone() {
+    for (name, state) in [
+        (
+            "reversible",
+            json!({ "state": "retired", "reversible": true }),
+        ),
+        (
+            "key conflict",
+            json!({ "state": "key_conflict", "pane": null }),
+        ),
+    ] {
+        let fx = fx();
+        let clone = base(&fx).await;
+        seat_the_clone(&fx, &clone, "seat-A");
+        let epoch = OpId::new();
+        write_restore(&fx, &clone.id, &epoch);
+        seat_fact(&fx, &clone.id, "seat-A", state);
+        fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+        steps(&fx, 4).await;
+        let c = clone_rec(&fx, &clone.id);
+        assert_eq!(c.threads_seat.as_deref(), Some("seat-A"), "{name}");
+        assert_eq!(
+            c.seat_intent,
+            restore("seat-A", &epoch, false, false),
+            "{name}"
+        );
+        assert!(
+            succeed_rows(&fx).is_empty() && ack_rows(&fx).is_empty(),
+            "{name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unreachable_threads_no_succession() {
+    let fx = fx();
+    let (clone, epoch, _, _) = undone_clone(&fx).await;
+    let setup = fx.map.resolve_ops().len();
+    fx.map.set_failing(true);
+    steps(&fx, 2).await;
+    later(&fx).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert!(c.threads_seat_history.is_empty());
+    assert_eq!(c.seat_intent, restore("seat-A", &epoch, false, false));
+    let failed = fx.map.resolve_ops();
+    assert!(failed.len() > setup, "the resolution was attempted");
+    // Threads returns: the retry replays the same operation key and succeeds.
+    fx.map.set_failing(false);
+    later(&fx).await;
+    later(&fx).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    let ops = fx.map.resolve_ops();
+    assert!(ops.len() > failed.len());
+    let ops = &ops[setup..];
+    assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+    assert!(ops[0].0.contains(&format!("succeed:{}:{epoch}", clone.id)));
+}
+
+#[tokio::test]
+async fn succession_refusal_defers_and_is_never_a_fresh_allocation() {
+    let fx = fx();
+    let (clone, epoch, _, _) = undone_clone(&fx).await;
+    let setup = fx.map.resolve_ops().len();
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set_not_yet(&pane, "restore hold");
+    steps(&fx, 2).await;
+    later(&fx).await;
+    let rs = succeed_rows(&fx);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, EffectStatus::Pending);
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, false, false)
+    );
+    fx.map.clear_not_yet(&pane);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &clone.id).threads_seat.as_deref(),
+        Some("seat-B")
+    );
+    let ops = fx.map.resolve_ops();
+    let ops = &ops[setup..];
+    assert!(ops.len() >= 3, "{ops:?}");
+    assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+}
+
+#[tokio::test]
+async fn no_resolve_for_a_pending_restore_except_succession() {
+    let fx = fx();
+    let (clone, epoch, _, _) = undone_clone(&fx).await;
+    let setup = fx.map.resolve_ops().len();
+    steps(&fx, 5).await;
+    let ops = fx.map.resolve_ops();
+    let ops = &ops[setup..];
+    let key = format!("succeed:{}:{epoch}", clone.id);
+    assert!(!ops.is_empty());
+    assert!(
+        ops.iter().all(|o| o.0.contains(&key)),
+        "only the succession resolves: {ops:?}"
+    );
+    assert!(
+        resolve_rows(&fx)
+            .iter()
+            .all(|r| r.status != EffectStatus::Done || r.object.as_str() != clone.id.to_string()),
+        "the ordinary resolve want never ran for the clone"
+    );
+}
+
+#[tokio::test]
+async fn seatless_closed_clone_takes_a_first_bind_when_undone() {
+    // A clone closed before the upgrade has no threads_seat; the undo writes no Restore (§14.5), so the
+    // ordinary resolve want gives it its first bind once the reopened pane is verified.
+    let fx = fx();
+    let c = base(&fx).await;
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    write_restore(&fx, &c.id, &OpId::new());
+    assert_eq!(intent(&fx, &c.id), None, "no Restore for a seatless clone");
+    fx.map.set(&pane, "seat-first");
+    steps(&fx, 3).await;
+    let after = clone_rec(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-first"));
+    assert!(after.threads_seat_history.is_empty());
+    assert!(
+        succeed_rows(&fx).is_empty(),
+        "a first bind is not a succession"
     );
 }

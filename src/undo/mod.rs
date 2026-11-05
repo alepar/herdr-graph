@@ -1,5 +1,4 @@
-//! Undo candidates, previews, compensating ops, caller-pane adoption (spec §6). Owned by hg-zmi.10.
-pub mod adopt;
+//! Undo candidates, previews, compensating ops, never adopting the caller's pane (spec §6). Owned by hg-zmi.10.
 pub mod candidates;
 pub mod commands;
 pub mod compensate;

@@ -191,6 +191,8 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     init_instance(&root).unwrap();
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
+    crate::templates::register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
@@ -3357,4 +3359,99 @@ async fn key_conflict_never_launches() {
     );
     step(&fx).await;
     assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+/// The workspace listing `pane` in the live snapshot.
+async fn workspace_of(fx: &Fx, pane: &HerdrPaneId) -> Option<crate::model::HerdrWorkspaceId> {
+    let snap = fx.herdr.snapshot().await.unwrap();
+    snap.workspaces
+        .iter()
+        .find(|w| w.tabs.iter().any(|t| t.panes.iter().any(|x| &x.id == pane)))
+        .map(|w| w.id.clone())
+}
+
+#[tokio::test]
+async fn undo_reopens_the_tab_in_its_original_workspace_with_one_launch() {
+    use crate::model::action::ActionKind;
+    let fx = fx();
+    let (c, pane) = ended_clone(&fx).await;
+    let seat_rec = seat(&fx, "foreman");
+    let workspace = workspace_of(&fx, &pane).await.expect("pane is listed");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-1".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+
+    // Retire the seat (the tab closes), then undo it.
+    commit(&fx, "seat retire foreman");
+    step(&fx).await;
+    assert_eq!(
+        workspace_of(&fx, &pane).await,
+        None,
+        "the retired seat's pane is gone"
+    );
+    let retire_act = layout::list_actions(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action");
+    let sp = plan(&fx, &format!("undo {}", retire_act.id));
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit undo: {}", e.message));
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let restored = the_clone(&fx, &c.id);
+    let epoch = row.op.clone();
+    assert_eq!(
+        restored.seat_intent,
+        serde_json::from_value(restore_intent("seat-1", &epoch, false, false)).unwrap()
+    );
+    assert_eq!(restored.runtime, crate::plan::core_kinds::absent());
+
+    // The reconciler reopens the seat's tab and writes the new pane as the binding; threads has not
+    // acknowledged yet, so nothing launches.
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    let reopened = pane_of(&fx, &c);
+    assert_ne!(reopened, pane);
+    assert_eq!(
+        workspace_of(&fx, &reopened).await,
+        Some(workspace),
+        "original workspace"
+    );
+    assert_eq!(seat(&fx, "foreman").id, seat_rec.id);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+
+    // Threads acknowledges the Restore (the succession want's outcome): exactly one resume launch.
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "exactly one launch");
 }

@@ -52,9 +52,12 @@ pub fn admit_threads_seat(
 }
 
 /// Called by the undo/resurrection commit: a Restore intent for a seated clone, nothing for a seatless one
-/// (§14.5). An older Restore is overwritten by the new epoch.
+/// (§14.5). An older Restore is overwritten by the new epoch. The held `seat_fact` is dropped: observation
+/// writes facts only for active clones, so a fact read before the clone was retired is stale, and succession
+/// must act only on a read taken after this commit.
 pub fn write_restore_intent(rec: &mut CloneRecord, epoch: &OpId) {
     if let Some(seat) = &rec.threads_seat {
+        rec.seat_fact = None;
         rec.seat_intent = Some(SeatIntent::Restore {
             seat: seat.clone(),
             epoch: epoch.clone(),
