@@ -27,3 +27,6 @@ parked:
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "material dissent: §7/§9 assume Herdr never reissues a public workspace/tab/pane id; Herdr reserve_workspace_ids can reissue a deleted highest workspace id after restore"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §7 'Herdr preserves tab/workspace ids across restore and handoff' unsourced for tabs and for live handoff on v0.9.5"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 headless cold restart assumes Herdr v0.9.5 restores bare-shell panes with no client attached"
+redesignCycles-design: 1
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended - · lastGood 4795ea116f946a9551a7b59dd1037854bbcbe200 · designRoast - · state started
+stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol inferred from (clone active, seat Retired) → persisted SeatIntent (Restore/Finalize) on CloneRecord driving unretire, succession, resume and finalize (dissolves 6)
