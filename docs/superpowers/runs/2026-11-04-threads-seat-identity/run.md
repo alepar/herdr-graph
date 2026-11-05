@@ -16,3 +16,4 @@ skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/super
 approvals:
 - top-split · auto · hg-66u.1 LEAF, hg-66u.2 LEAF, hg-66u.3 LEAF, hg-66u.4 LEAF, hg-66u.5 LEAF, hg-66u.6 LEAF, hg-66u.7 LEAF, hg-66u.8 LEAF, hg-66u.9 LEAF, hg-66u.10 LEAF, hg-66u.11 LEAF, hg-66u.12 LEAF, hg-66u.13 LEAF, hg-66u.14 LEAF, hg-66u.15 LEAF, hg-66u.16 LEAF, hg-66u.17 LEAF, hg-66u.18 LEAF, hg-66u.19 LEAF, hg-66u.20 LEAF, hg-66u.21 LEAF, hg-66u.22 LEAF (promotion review: SPLIT .7→.19, SPLIT .13→.21, PROMOTE .10 and .16 overruled sp:demoted-by-session; spec amended c77dfe3)
 - coverage-round-1 · R1-R14 (R15-R21 appended from r-new) · specsAt b992cab337bbcbe87dca1bcda205cdba3fa8c455 · requirements: 14 · mapped: 14 · unmapped: 0 · cov-3..cov-22 applied auto except cov-10 rejected auto (see coverage-ledger.md)
+- coverage-round-2 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-23..cov-46 applied auto · divergence: findings: 19 → 20 novel: 12/20 (60%) widening: yes 

@@ -22,3 +22,27 @@ cov-19 · r1 · UNOWNED-SEAM · unretire want · applied — owns line on hg-66u
 cov-20 · r1 · UNOWNED-SEAM · PaneSeatMap / resolve-seat want · applied — owns line on hg-66u.7
 cov-21 · r1 · ORPHAN · hg-66u.20 · applied — kept per reviewer's conditional fix (D2 may slip past this run); interim outcome named in its description
 cov-22 · r1 · ORPHAN · hg-66u.3 · applied — wired to hg-66u.24
+cov-23 · r2 · GAP · R9 key linkage pre-D1 · applied — hg-66u.13 backfill + seat-bearing reserve requested from threads (mnSGjHOtxksb; coordinator recommends accepting) with keyed-relaunch fallback; spec §5
+cov-24 · r2 · GAP · R3 unreachable remaining actuators · applied — acceptance on .7 .13 .22 .24
+cov-25 · r2 · GAP · R10 no release on retirement · applied — hg-66u.8 acceptance and want existence condition
+cov-26 · r2 · GAP · R20 parity blocking · applied — hg-66u.14 blocked on clean post-D1 parity rerun or human open item
+cov-27 · r2 · GAP · R15 D1 pin · applied — owns + acceptance on hg-66u.13; pin acceptance on hg-66u.16 (cov-10 shortfall)
+cov-28 · r2 · GAP · R14 Unsupported service · applied — hg-66u.6 acceptance
+cov-29 · r2 · GAP · R7 interim undo · applied — hg-66u.20 reopens tab, no caller-pane adoption (moved from .22), one launch; spec §8 interim (cov-21 shortfall)
+cov-30 · r2 · GAP · R4 rig-unmet hand-back · applied — clause on .4 .21 .22
+cov-31 · r2 · UNOWNED-SEAM · seat succession · applied — hg-66u.20 owns; .22 consumes
+cov-32 · r2 · UNOWNED-SEAM · SeatStatus extensions · applied — owns lines on .13 and .16
+cov-33 · r2 · GAP · R16 stuck Unknown · applied — hg-66u.12 status remedy; root epic hand-back rule for unreleased gates
+cov-34 · r2 · GAP · R10 finalizers / operator exception · applied — hg-66u.22 cites no threads timer (confirmed by coordinator); operator final retire succession kept as documented exception (operator explicitly chose finality; not a scope change)
+cov-35 · r2 · GAP · R5 daemon reconnect · applied — new leaf hg-66u.25; hg-66u.17 depends on it
+cov-36 · r2 · GAP · R8 harness switch · applied — hg-66u.12 acceptance
+cov-37 · r2 · GAP · R9 first launch keyed · applied — hg-66u.13 reserve at creation (holder = graph service, no seat needed; coordinator confirms)
+cov-38 · r2 · GAP · R9 fresh launch unreserved · applied — hg-66u.21 acceptance
+cov-39 · r2 · GAP · R2 planner naming · applied — hg-66u.14 acceptance
+cov-40 · r2 · GAP · R12 graph retire with pane open · applied — hg-66u.8 acceptance (verify + document)
+cov-41 · r2 · GAP · gates unreleased · applied — root epic Global Constraints
+cov-42 · r2 · UNOWNED-SEAM · resume driver launch owner · applied — hg-66u.12 owns sole launch want; spec §9
+cov-43 · r2 · UNOWNED-SEAM · reservation holder · applied — holder is the graph service, no seat dependency; spec §5
+cov-44 · r2 · UNOWNED-SEAM · shared matcher code · applied — hg-66u.14 depends on hg-66u.11, ownership split stated
+cov-45 · r2 · ORPHAN · hg-66u.5 · applied — kept as baseline-only requirement (B11/R11), no Goal edit
+cov-46 · r2 · GAP · R4 attended cold restart · applied — hg-66u.12 acceptance (C1, grace avoids auto-resume race); spec §9 defines C1

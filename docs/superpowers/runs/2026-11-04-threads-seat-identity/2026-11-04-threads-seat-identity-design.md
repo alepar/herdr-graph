@@ -148,9 +148,12 @@ the resume driver) runs the agent with `HERDR_THREADS_CONTINUITY_KEY=<cl_ id>` i
 Because `StartAgent` has no env and Herdr cannot change (B6), the graph's Herdr port grows an `env`
 parameter that the Herdr adapter realises without Herdr changes (argv prefix `env K=V …` or the
 existing pane-creation env, whichever the installed Herdr API supports for agent start; the
-implementer verifies on the real Herdr). The existing `HERDR_GRAPH_CLONE` pane env stays. Before
-the first keyed launch the graph calls threads' `ReserveContinuityKey{key}` (idempotent for the
-holder); that call and its port wrapper are gated on D1 (§10). The key variable is emitted only for a
+implementer verifies on the real Herdr). The existing `HERDR_GRAPH_CLONE` pane env stays. The
+holder of a reservation is the graph's registered threads service; a key can be reserved before
+the clone has a seat, so the graph reserves at clone creation, before the first launch. Clones that
+predate D1 are backfilled and linked to their current seat through a seat-bearing
+`ReserveContinuityKey{key, seat?}` (requested from threads 2026-11-05; fallback: one keyed relaunch
+per clone). The graph calls `ReserveContinuityKey` (idempotent for the holder); that call and its port wrapper are gated on D1 (§10). The key variable is emitted only for a
 clone whose reservation is recorded, so no agent ever presents an unreserved key (threads records
 an unreserved key as non-service, never un-retirable); until D1 no clone has a reservation.
 Considered: relying on pane shell env (rejected: lost on cold restore, and Herdr's own auto-resume
@@ -196,15 +199,21 @@ no longer adopts the caller's pane (`undo/adopt.rs`): a different pane has its o
 would break 1:1. When the graph's retirement becomes final (purge), the graph releases the key /
 finalizes retirement (operation per D2's published API). After reattachment the graph re-checks its
 wants and releases any requirement it no longer wants. All of this is gated on D2.
-**Before D2 (interim):** undo and resurrection keep today's behaviour (restore through the plan
-path, adopting the caller's pane where they do today); the restored clone's final-retired seat is
-succeeded by the restored pane's seat (§2), and memberships are re-invited and accepted once. The
+**Before D2 (interim):** undo and resurrection reopen the clone's tab in its original workspace
+through the plan path and no longer adopt the caller's pane (it has its own seat); the restored
+clone's final-retired seat is succeeded by the reopened pane's seat (§2), the resume driver resumes
+the last session, and memberships are re-invited and accepted once. The
 D2-gated work replaces this with un-retire for reversibly retired seats; seat succession remains
 only for operator-finalized seats.
 Considered: true un-retire (rejected by the user in favour of reversible state, threads-side);
 new seat on undo (rejected: breaks B1).
 
 ### 9. Resume driver after a headless cold restart (G4)
+
+The resume driver is the sole launcher for clones whose seat is Unresolved (the planner's ordinary
+start rule skips them); undo, resurrection and the fresh-agent path launch through it. "C1" below is
+threads' existing same-native-session continuity claim: a resumed session's check-in reattaches the
+seat it last held.
 
 Recommended: a reconciler step: for a clone whose `threads_seat` is `Unresolved` and whose last
 bound pane id exists in the current incarnation holding a bare shell (no agent, shell foreground via
