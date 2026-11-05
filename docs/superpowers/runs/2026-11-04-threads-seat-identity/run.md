@@ -115,3 +115,4 @@ roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md
 redesignCycles-code: 1
 redesign-code-1: round 1 · triggers shared-cause, defect-type · amended 3. Participation keyed to the seat (H2-identity steps 2–3,  D3), 14. Punch-list resolutions (design roast round 2,  converged), Key abstractions, Unchanged behavior · lastGood 855a59fea7c7d2ed099655dd783a8686d339747d · designRoast - · state beads-filed
 stepBackCode-round-1: redesign — applied: purge always keeps a Finalize tombstone before D2 → purge deletes the record outright until the finalize want exists (D2), per spec §8 (dissolves 5)
+- coverage-amend-code-1 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-70..cov-83 applied auto except cov-72, cov-82, cov-83 rejected auto

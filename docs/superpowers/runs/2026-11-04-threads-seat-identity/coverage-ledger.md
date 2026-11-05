@@ -69,3 +69,17 @@ cov-66 · graph · GRAPH-EDGE · hg-66u.13 <- hg-66u.30 · parked — narrow to 
 cov-67 · graph · GRAPH-EDGE · nine other critical edges · kept — each carries a real artifact (see graph-pass judge output)
 cov-68 · graph · PROPOSAL · seat_fact seam contract .28/.30 · parked
 cov-69 · graph · PROPOSAL · split src/reconcile/planner.rs · parked
+cov-70 · amend-code-1 · GAP · migration re-invite permanent/unbounded (.59) · applied — one-shot migration marker, active Required only (bead text)
+cov-71 · amend-code-1 · GAP · pre-existing Finalize tombstones on disk · applied — .57 deletes on load
+cov-72 · amend-code-1 · GAP · purged clone with live seat pre-D2 · rejected — evidence does not hold: §14.10 a graph retire always closes the pane (hg-66u.8 verified), so the seat is retired threads-side
+cov-73 · amend-code-1 · GAP · not-launchable restore after D1 · applied — .21 acceptance + dep on .58
+cov-74 · amend-code-1 · GAP · undo beads not waiting for key-link want · applied — .32 .18 depend on .68
+cov-75 · amend-code-1 · UNOWNED-SEAM · key-link want vs .43/.44 · applied — .68 owns want + bound-seat field, Restore.seat during restore; .43/.44 consume
+cov-76 · amend-code-1 · GAP · permanent per-seat refusal · applied — .60 seat-lost alert after staleness window
+cov-77 · amend-code-1 · UNOWNED-SEAM · last threads refusal storage · applied — .58 owns, on the Restore intent
+cov-78 · amend-code-1 · GAP · .31 tombstone audit sites · applied — named sites + dep on .57
+cov-79 · amend-code-1 · ORPHAN · hg-66u.67 · applied — kept as process bead serving the final whole-epic review
+cov-80 · amend-code-1 · GAP · mark-failed retry semantics · applied — .58 acceptance
+cov-81 · amend-code-1 · GAP · export-rejecting shells after key-link · applied — .32: C1 with resumable session; stuck_restores remedy otherwise
+cov-82 · amend-code-1 · GAP · purge in a D1-to-D2 window · rejected — evidence does not hold: D1 and D2 ship in one threads release (mnSGq1eyidhP), no window
+cov-83 · amend-code-1 · GAP · R6/R11/R13 without open owner · rejected — delivered by closed beads hg-66u.37 (env delivery), hg-66u.5 (/seat), hg-66u.11 (preserved ids), each with clean review
