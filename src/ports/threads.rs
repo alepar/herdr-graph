@@ -1,8 +1,9 @@
 //! herdr-threads port (spec §7). Real adapter + FakeThreads implemented by hg-zmi.11.
 //! Graph-local value types keep the port fake-friendly; the adapter maps them to herdr_threads::protocol.
-use crate::model::Timestamp;
 use crate::model::clone::{InvitationState, InviteConstraint};
+use crate::model::{HerdrPaneId, Timestamp};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 macro_rules! str_ref {
     ($name:ident) => {
@@ -84,6 +85,38 @@ pub enum ThreadsError {
     Unsupported,
     #[error("threads rejected: {0}")]
     Rejected(String),
+}
+
+/// How a retired seat can come back. v3.0.0 reports every retirement as `Final`; `Reversible` waits on
+/// threads D2 (reversible retirement), so nothing produces it yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetirementKind {
+    Reversible,
+    Final,
+}
+
+/// What threads says about one clone's seat. Owns the closed set of seat states the graph acts on; hides the wire
+/// shapes; carries no graph decision (SeatObservation makes those). Every seat state is a value; only transport
+/// problems are errors (ThreadsSeatView's).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SeatStatus {
+    Resolved { pane: HerdrPaneId },
+    Unresolved,
+    Retired { kind: RetirementKind },
+    KeyConflict { pane: Option<HerdrPaneId> },
+}
+
+/// Read-only view of threads seat state, once per observation step. Never writes to threads, never commits graph
+/// state, never fabricates a state when threads is unreachable.
+#[async_trait::async_trait]
+pub trait ThreadsSeatView: Send + Sync {
+    /// One status per requested seat, or the transport error of the first failing read (no partial map).
+    async fn inspect(
+        &self,
+        seats: &[ThreadsSeatRef],
+    ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError>;
 }
 
 #[async_trait::async_trait]

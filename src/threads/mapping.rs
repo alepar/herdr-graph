@@ -2,11 +2,14 @@
 //! herdr-threads resolves for the clone's exact Herdr host and pane.
 use super::adapter::{api_error, call_budget, operation_id};
 use crate::model::HerdrPaneId;
-use crate::ports::threads::{OpKey, ThreadsError, ThreadsSeatRef};
+use crate::ports::threads::{
+    OpKey, RetirementKind, SeatStatus, ThreadsError, ThreadsSeatRef, ThreadsSeatView,
+};
 use herdr_threads::client::local::LocalSocketClient;
-use herdr_threads::protocol::commands::{Command, ResolveSeat};
-use herdr_threads::protocol::ids::{HostLocator, HostTargetId, OperationId};
-use herdr_threads::protocol::results::{CommandResult, ErrorCode};
+use herdr_threads::protocol::commands::{Command, ResolveSeat, SeatInspectQuery};
+use herdr_threads::protocol::ids::{HostLocator, HostTargetId, OperationId, SeatId};
+use herdr_threads::protocol::pagination::PageRequest;
+use herdr_threads::protocol::results::{CommandResult, ContinuityStatus, ErrorCode, SeatInspection};
 use herdr_threads::protocol::time::Clock as ThreadsClock;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -125,6 +128,62 @@ impl PaneSeatMap for ThreadsSeatMap {
             Err(e) if e.code == ErrorCode::TargetUnresolved => Ok(SeatResolution::NotYet(e.detail)),
             Err(e) => Err(api_error(e)),
         }
+    }
+}
+
+/// Map one v3.0.0 `SeatInspect` result to the graph's closed seat states.
+pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
+    let summary = &i.summary;
+    match summary.continuity {
+        ContinuityStatus::Resolved => match &summary.target {
+            Some(target) => SeatStatus::Resolved {
+                pane: HerdrPaneId(target.as_str().to_owned()),
+            },
+            None => SeatStatus::Unresolved,
+        },
+        ContinuityStatus::Unresolved => SeatStatus::Unresolved,
+        // A seat homed on another node is never bound here.
+        ContinuityStatus::Remote => SeatStatus::Unresolved,
+        // v3.0.0 has no reversible retirement (D2), so every retirement is final.
+        ContinuityStatus::Retired => SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+        // `KeyConflict` is never produced before the continuity key (D1, hg-66u.13) exists.
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadsSeatView for ThreadsSeatMap {
+    async fn inspect(
+        &self,
+        seats: &[ThreadsSeatRef],
+    ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
+        let mut out = BTreeMap::new();
+        for seat in seats {
+            let id = SeatId::parse(seat.0.clone())
+                .map_err(|e| ThreadsError::Rejected(format!("seat id: {e}")))?;
+            let query = SeatInspectQuery {
+                seat: id,
+                page: PageRequest::default(),
+            };
+            let budget = call_budget(&*self.clock, self.timeout);
+            match self
+                .client
+                .call_async(Command::SeatInspect(query), &budget)
+                .await
+            {
+                Ok(CommandResult::SeatInspect(inspection)) => {
+                    out.insert(seat.clone(), seat_status(&inspection));
+                }
+                Ok(_) => {
+                    return Err(ThreadsError::Rejected(
+                        "unexpected result for seat inspection".into(),
+                    ));
+                }
+                Err(e) => return Err(api_error(e)),
+            }
+        }
+        Ok(out)
     }
 }
 
