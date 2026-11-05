@@ -161,7 +161,7 @@ mapping is complete over every `ClientError` variant and `IpcErrorCode`:
 
 | Condition | Source | Exit | stderr |
 |---|---|---|---|
-| not inside a Herdr pane | `HERDR_SOCKET_PATH` unset, checked by the helper first, for every `CallMode` | 2 | `herdr-graph: not inside a Herdr pane; this session has no graph seat` |
+| not inside a Herdr pane | `HERDR_SOCKET_PATH` unset, and the error is a no-reply condition (`Unavailable`, `Frame`, `NoInstance`); a real `Remote` reply from a running daemon keeps its own row | 2 | `herdr-graph: not inside a Herdr pane; this session has no graph seat` |
 | no instance configured | `ClientError::NoInstance` | 2 (`EXIT_NO_INSTANCE`) | its existing line |
 | no well-formed reply from a working daemon | `ClientError::Unavailable`, `ClientError::Frame` (I/O, timeout, truncated or undecodable frame), `Remote{Unavailable}` ("still starting", "failed to start"), `Remote{VersionMismatch}` | 5 | `herdr-graph: graph daemon unavailable: <reason>. Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).` |
 | graph integrity | `Remote{Integrity}` | 6 | `herdr-graph: graph integrity error: <message>. This is not transient; retrying will not help.` |
@@ -251,7 +251,8 @@ Recommended, two choke points:
 - **Observation.** In `src/observe/classify.rs`, the node manager's seat and clones are excluded
   from workspace, tab and pane cascade grouping, and the workspace cascade drops the node manager's
   teamspace from its `retire` list (its other seats are still retired seat by seat; the teamspace
-  stays Active), so a direct closure never retires it; the existing
+  stays Active); `CascadeMutation` re-checks `live_node_manager` when it applies and skips that seat
+  and teamspace, closing the window between classification and a concurrent `node-manager set`, so a direct closure never retires it; the existing
   reconcile planner (`plan_effects` creating a missing tab and panes for an active seat) reopens it
   in its tab (B11). This deliberately overrides "direct tab/workspace closure follows containment
   retirement" (CURRENT-DESIGN.md) for the node manager only; CURRENT-DESIGN.md gets a dated line.
@@ -320,15 +321,15 @@ behaviour (exit codes 2/5/6, warning line) in `tests/` with `TestRoot`. Full sui
 - Owns: `reparent_effects` (the plan-time preview: one `seat.manager` or `teamspace.default_manager` effect per rewritten record); the apply-time reparent, called from inside `do_retire_seat`; the node-manager move rewrites (§4.7, B13); the first-seat assignment decision and its effect (§4.8); the `graph.toml` write together with its `Version::Blob` relied_on; `refuse_node_manager_retirement` (§4.9).
 - Hides: which records a retirement or a move rewrites, how "first seat on the node" is detected, and how `graph.toml` is written safely, since it has no `rev`.
 - Must not: decide who the effective manager is (it delegates to model::manager), parse CLI words (the `OrgKind` impls do that), or touch runtime or observation (classify does that).
-- Relationships: depends on model::manager and the writer overlay. Used by `do_retire_seat`, the three seat-creating kinds (`SeatCreate`, `create_member_seat` in `ApplicationApply`, `TemplateEdit` member additions), the retire-effect builders, `ManagerEdit` and `NodeManagerSet`. The retirement guard runs once in `make_plan` over `body.effects` — the single plan-admission point, which already covers the replan in `plan/apply.rs` and undo (an `OrgKind`), so future retiring kinds need no call site of their own. It refuses a `seat.retire` targeting the node manager, and a set of `clone.retire` effects covering all of its live clones.
+- Relationships: depends on model::manager and the writer overlay. Used by `do_retire_seat`, every seat-creating or -resurrecting path (`SeatCreate`, application apply/hydrate via `create_member_seat`, `TemplateEdit` member additions, `SeatResurrect`, `TeamspaceResurrect`, undo restore), the retire-effect builders, `ManagerEdit` and `NodeManagerSet`. The retirement guard runs once in `make_plan` over `body.effects` — the single plan-admission point, which already covers the replan in `plan/apply.rs` and undo (an `OrgKind`), so future retiring kinds need no call site of their own. It refuses a `seat.retire` targeting the node manager, a set of `clone.retire` effects covering all of its live clones, any change to its placement, any deactivation, and (beside it, the cycle guard) any plan leaving a manager chain cyclic.
 - Lifecycle: stateless functions. Mutable state exists only in the `MutationCx` overlay passed in, which the writer owns for one mutation.
 - Errors: refusals, cycles and "unchanged" become `PlanError::Invalid` with the §4.9 or §4.7 message. Store failures, including integrity, pass through as `PlanError::Store`.
 
 **cli::daemon_error** — new module, the one mapping from `ClientError` to a stderr line and an exit code.
-- Owns: `NoInstance` → its existing line and exit 2; `Unavailable` → the generic first clause and exit 5; `Remote { Integrity }` → the integrity line and exit 6; anything else → the error, exit 1. The constants `EXIT_DAEMON_UNAVAILABLE` and `EXIT_INTEGRITY` sit beside the existing `EXIT_*` in `src/daemon/client.rs`.
+- Owns: the §4.4 condition table, complete over every `ClientError` variant and `IpcErrorCode`: not inside a Herdr pane (no-reply conditions only) → 2; `NoInstance` → 2; no well-formed reply (`Unavailable`, `Frame`, `Remote{Unavailable}`, `Remote{VersionMismatch}`) → 5 with the retry-later text; `Remote{Integrity}` → 6; other `Remote` codes → 1. It also renders a local `StoreError::Integrity` (daemon-free readers such as `show`) to the exit-6 text. The constants `EXIT_DAEMON_UNAVAILABLE` and `EXIT_INTEGRITY` sit beside the existing `EXIT_*` in `src/daemon/client.rs`.
 - Hides: which `ClientError` or `IpcErrorCode` maps to which exit code.
 - Must not: read the store or fall back to direct reads; those direct readers are deleted (§4.13).
-- Relationships: called by `seat`, `who`, `ops`, `request` and `undo`, each replacing its own match arms. `seat` adds its extra sentences by composing them with the generic mapping, not through a mode flag inside it.
+- Relationships: called by every daemon-calling command (`seat`, `who`, `ops`, `request`, `undo`, `plan` and the rest), each replacing its own match arms; command-specific `Remote` arms such as `StillRunning` stay in the command. `seat` adds its extra sentences by composing them with the generic mapping, not through a mode flag inside it.
 - Lifecycle: free functions, called once per CLI invocation.
 
 **StoreError** — extended: a new `Integrity { holder, field, target, reason }` variant, built only by `unresolved(...)`, which replaces `missing()` in `bootstrap/mod.rs` and `bootstrap/instructions.rs`, the three silent skips, and `referenced_seat_template`'s `Corrupt` arms.
@@ -337,9 +338,9 @@ behaviour (exit codes 2/5/6, warning line) in `tests/` with `TestRoot`. Full sui
 
 **OrgKind registry** — extended: two new kinds, `ManagerEdit` and `NodeManagerSet`, registered where the existing kinds are; like `SeatOverride`, neither writes an undoable action.
 
-**observe::classify** — extended: the node manager's seat and clones are excluded from cascade grouping (§4.9).
+**observe::classify** — extended: the node manager's seat and clones are excluded from cascade grouping, and the workspace cascade drops its teamspace from `retire` (§4.9). `CascadeMutation` re-checks `live_node_manager` at apply time and skips that seat and teamspace, so a cascade classified before a role move cannot retire the new node manager.
 
-Variation: seat-retirement routes (seven today) → reparenting lives in `do_retire_seat` and the guard in `make_plan`, so a new route inherits both without a call; seat-creating kinds (three) → one shared first-seat helper in plan::managers; error outcomes are a closed set → a `match` in cli::daemon_error and the `CommandError` classifier; integrity reference kinds → data (holder and field strings) passed to the one `unresolved` helper.
+Variation: seat-retirement routes (seven today) → reparenting lives in `do_retire_seat` and the guard in `make_plan`, so a new route inherits both without a call; seat-creating or -resurrecting paths (six) → one shared first-seat helper in plan::managers; error outcomes are a closed set → a `match` in cli::daemon_error and the `CommandError` classifier; integrity reference kinds → data (holder and field strings) passed to the one `unresolved` helper.
 Walk-through: `/seat` → `seat_reply` hits an application whose template is missing → `unresolved` → `StoreError::Integrity` → classifier → `CommandError::integrity` plus the node-manager suffix → CLI `Remote { Integrity }` → cli::daemon_error prints the line, exit 6. `seat retire A` → `SeatRetire::plan` lists `seat_retire_effects` plus `reparent_effects` (model::manager supplies A's nearest surviving manager) → `make_plan` guard passes → `do_retire_seat` reparents on apply. A future bulk-retiring kind touches one new `OrgKind` and its registration; a future template-level default manager touches only model::manager's precedence rule and the template record.
 Per spec §4.4: the seat-specific sentences appear only for `seat` — a deliberate per-caller addition on top of the shared mapping.
 Per spec §4.13: `status` keeps its fallback, and `show`, `list`, `path`, `instructions show` and `seat --hook-prompt` stay daemon-free readers — deliberate exceptions to cli::daemon_error.

@@ -12,8 +12,9 @@ base: main
 spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
 roastDesignRound: 2
-roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md
+roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md, 2026-11-05-seat-failure-manager-seats-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
+designRoastExit: converged @ r2 · punch list (2 Should-fix [fix-regression], 2 Nit) applied inline as spec/bead text
 stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
