@@ -222,6 +222,7 @@ impl CascadeMutation {
         Ok(false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn retire_teamspace(
         cx: &mut MutationCx<'_>,
         id: &crate::model::TeamspaceId,
