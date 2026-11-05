@@ -1723,6 +1723,78 @@ fn hook_prompt_only_when_graph_env_or_bound_pane() {
 // examples
 // ---------------------------------------------------------------------------------------------
 
+fn shipped_template(fx: &Fx, name: &str) -> crate::model::template::TemplateRecord {
+    layout::list_templates(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("template {name} not installed"))
+}
+
+#[test]
+fn examples_include_node_manager_and_office() {
+    use crate::model::template::TemplateKind;
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    let nm = shipped_template(&fx, "node-manager");
+    assert_eq!(nm.kind, TemplateKind::Seat);
+    let office = shipped_template(&fx, "office");
+    assert_eq!(office.kind, TemplateKind::Team);
+    assert_eq!(office.members.len(), 1);
+    let main = &office.members[0];
+    assert_eq!(main.name, "main");
+    assert_eq!(main.startup, Startup::Active);
+    assert_eq!(main.seat_template.as_ref(), Some(&nm.id));
+    assert!(
+        layout::locate(&view(&fx), &nm.id.to_any())
+            .unwrap()
+            .is_some(),
+        "the node-manager id resolves"
+    );
+}
+
+#[test]
+fn office_on_fresh_graph_assigns_node_manager() {
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    assert!(
+        layout::read_graph(&view(&fx))
+            .unwrap()
+            .node_manager_seat
+            .is_none()
+    );
+    commit(&fx, "teamspace create hq");
+    commit(&fx, "application apply office --teamspace hq --name office");
+    let main = seat_rec(&fx, "main");
+    assert_eq!(
+        layout::read_graph(&view(&fx)).unwrap().node_manager_seat,
+        Some(main.id.clone())
+    );
+    assert_eq!(main.lifecycle, Lifecycle::Active);
+    assert_eq!(clone_of(&fx, &main.id).seat, main.id);
+}
+
+#[test]
+fn node_manager_agents_md_names_duties() {
+    let text = examples::EXAMPLE_FILES
+        .iter()
+        .find(|(rel, _)| *rel == "templates/node-manager/AGENTS.md")
+        .expect("shipped")
+        .1;
+    for needle in [
+        "usage limits",
+        "trust prompts",
+        "conflicts with peer agents",
+        "graph repair",
+        "only through plans",
+    ] {
+        assert!(text.contains(needle), "AGENTS.md lacks {needle:?}");
+    }
+}
+
 #[test]
 fn init_with_examples_templates_hydrate() {
     let fx = fx_with(|root| {
@@ -1740,6 +1812,8 @@ fn init_with_examples_templates_hydrate() {
             "designer",
             "engineer",
             "feature-team",
+            "node-manager",
+            "office",
             "project-team",
             "researcher",
             "reviewer",
@@ -1837,17 +1911,27 @@ fn shipped_templates_are_self_consistent() {
         examples::install_examples(root).unwrap();
     });
     let mut ids = std::collections::BTreeSet::new();
-    for (loc, t) in layout::list_templates(&view(&fx)).unwrap() {
+    let templates = layout::list_templates(&view(&fx)).unwrap();
+    for (loc, t) in &templates {
         assert!(ids.insert(t.id.to_string()), "duplicate id {}", t.id);
         assert_eq!(t.rev, 1);
         for m in &t.members {
             assert!(ids.insert(m.id.to_string()), "duplicate id {}", m.id);
             let md = layout::member_agents_md(&loc.folder, &crate::store::slug::slugify(&m.name));
-            assert!(
+            // A member's instructions are its own file, or (office) those of the seat template it uses.
+            let seat_md = m.seat_template.as_ref().and_then(|id| {
+                templates.iter().find(|(_, s)| &s.id == id).map(|(l, _)| {
+                    RepoPath::new(&format!("{}/AGENTS.md", l.folder.as_str())).unwrap()
+                })
+            });
+            let has = |path: &RepoPath| {
                 fx.store
-                    .read_file(&fx.store.head().unwrap(), &md)
+                    .read_file(&fx.store.head().unwrap(), path)
                     .unwrap()
-                    .is_some(),
+                    .is_some()
+            };
+            assert!(
+                has(&md) || seat_md.as_ref().is_some_and(has),
                 "{} has instructions",
                 m.name
             );
@@ -1857,7 +1941,7 @@ fn shipped_templates_are_self_consistent() {
             format!("templates/{}", crate::store::slug::slugify(&t.name))
         );
     }
-    assert_eq!(ids.len(), 7 + 6);
+    assert_eq!(ids.len(), 9 + 7);
     // A second install would overwrite the instance's own files, so it is refused.
     let err = examples::install_examples(&fx.root).unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
@@ -1924,6 +2008,8 @@ fn show_list_path_read_committed_state() {
             "designer",
             "engineer",
             "feature-team",
+            "node-manager",
+            "office",
             "project-team",
             "researcher",
             "reviewer",
