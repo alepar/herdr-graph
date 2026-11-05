@@ -15,3 +15,4 @@ skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/super
 
 approvals:
 - top-split · auto · hg-k4l.1 LEAF, hg-k4l.2 LEAF, hg-k4l.3 LEAF, hg-k4l.4 LEAF, hg-k4l.5 LEAF, hg-k4l.6 LEAF, hg-k4l.7 LEAF, hg-k4l.8 LEAF, hg-k4l.9 LEAF, hg-k4l.10 LEAF, hg-k4l.11 LEAF, hg-k4l.12 LEAF, hg-k4l.13 LEAF, hg-k4l.14 LEAF, hg-k4l.15 LEAF, hg-k4l.16 LEAF · promotion review: SPLIT .1/.5 applied; PROMOTE .7/.8/.11 resolved by splitting into leaves (sp:demoted-by-session, spec answers the design)
+- coverage-round-1 · canonical R-list: R1..R16 in coverage-round-1-requirements.md, R17..R20 appended from r-new · specsAt baa47d8 · requirements: 16 · mapped: 16 · unmapped: 0 · auto applied C4 C5 C7 C9-C22; auto rejected C6 (sanctioned observed mutation) C8 (S1); flag-sweep C1-C3 kept
