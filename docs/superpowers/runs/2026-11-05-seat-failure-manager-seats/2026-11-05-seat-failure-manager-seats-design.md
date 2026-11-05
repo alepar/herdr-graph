@@ -119,8 +119,13 @@ command until `node-manager set` is applied.
 ### 4.1 Integrity as an IPC code (Part A)
 
 Recommended: add `IpcErrorCode::Integrity` and `CommandError::integrity(msg)`, without bumping
-`IPC_VERSION`. A stale daemon paired with a new CLI can at worst produce a frame error instead of a
-message; a version bump would break every mixed pair until restart. Considered: keep `Internal`
+`IPC_VERSION`. Compatibility rule for the no-bump decision, both skewed pairs: (a) new CLI + old
+daemon — every new reply or record field (`manager`, `node_manager`, `reports`, `threads_seat`,
+`manager_chain`, the record pointers) is `#[serde(default)]`, so the new CLI parses an old reply; an
+old daemon never sends `integrity`. (b) new daemon + old CLI — the old CLI cannot decode the new
+`integrity` code and reports a frame error; that degradation is accepted (the old CLI predates the
+failure path anyway). The new CLI classifies a frame error as a transient daemon failure (exit 5,
+§4.4). A version bump would break every mixed pair until restart. Considered: keep `Internal`
 with a fixed message prefix the CLI matches (rejected: string matching is fragile and invisible to
 the type system); bump `IPC_VERSION` (rejected: turns a rare cosmetic degradation into a guaranteed
 outage at every upgrade).
@@ -145,23 +150,32 @@ on integrity carries no partial paths. Considered: per-reference warnings with p
 Recommended: when `seat.resolve` fails with integrity, the daemon reads `graph.toml`'s
 `node_manager_seat` (independent of the broken object) and appends
 `report it to the node manager seat <name> (<st_id>)` to the message; when unset, it says
-`no node manager is assigned; report it to the user`. The message names the holder, the field, the
-missing target and the HEAD revision.
+`no node manager is assigned; report it to the user`. When the failing caller is itself the node
+manager seat, the suffix uses the "report it to the user" form. The message names the holder, the
+field, the missing target and the HEAD revision.
 
 ### 4.4 CLI exit codes and messages (Parts A and C)
 
-Recommended: a shared helper in `src/cli` (e.g. `cli::daemon_error`) maps
-`ClientError::Unavailable(reason)` → stderr
-`herdr-graph: graph daemon unavailable: <reason>. Your seat context is not loaded. Tell the user,
-carry on with what you can without seat-specific rules, and run /seat again later. Do not guess
-your seat.` and exit **5**; `ClientError::Remote { code: Integrity, message }` → stderr
-`herdr-graph: graph integrity error: <message>. This is not transient; retrying will not help.
-Carry on without seat-specific rules. Do not guess your seat.` and exit **6**;
-`ClientError::NoInstance` → its existing line and `EXIT_NO_INSTANCE` (2). Not being inside a Herdr pane (`HERDR_SOCKET_PATH` unset) is not a daemon outage: it gets its own variant and message (`herdr-graph: not inside a Herdr pane; this session has no graph seat`) and exit 2, never the retry-later text. The generic exit-5 line for every daemon-requiring command ends with `Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).` (B2). Every command that calls the daemon routes its client errors through this helper, not only the five named here. Constants
-`EXIT_DAEMON_UNAVAILABLE = 5`, `EXIT_INTEGRITY = 6` sit next to the existing ones in
-`src/daemon/client.rs`. The seat-specific sentences appear only for `seat`; the other commands use
-the generic first clause plus exit 5. Considered: map only in `seat` (rejected: Part C needs the
-same behaviour in four more commands).
+Recommended: a shared helper in `src/cli` (`cli::daemon_error`) classifies by condition, and its
+mapping is complete over every `ClientError` variant and `IpcErrorCode`:
+
+| Condition | Source | Exit | stderr |
+|---|---|---|---|
+| not inside a Herdr pane | `HERDR_SOCKET_PATH` unset, checked by the helper first, for every `CallMode` | 2 | `herdr-graph: not inside a Herdr pane; this session has no graph seat` |
+| no instance configured | `ClientError::NoInstance` | 2 (`EXIT_NO_INSTANCE`) | its existing line |
+| no well-formed reply from a working daemon | `ClientError::Unavailable`, `ClientError::Frame` (I/O, timeout, truncated or undecodable frame), `Remote{Unavailable}` ("still starting", "failed to start"), `Remote{VersionMismatch}` | 5 | `herdr-graph: graph daemon unavailable: <reason>. Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).` |
+| graph integrity | `Remote{Integrity}` | 6 | `herdr-graph: graph integrity error: <message>. This is not transient; retrying will not help.` |
+| everything else | `Remote{BadRequest, UnknownCommand, Rejected, Internal}` and any other | 1 | `herdr-graph: <error>` |
+
+Command-specific `Remote` arms (e.g. `StillRunning` in plan/request) are handled by the command
+before the helper. For `seat`, exits 5 and 6 append: `Your seat context is not loaded. Tell the user,
+carry on with what you can without seat-specific rules, and run /seat again later (exit 5) / do not
+retry (exit 6). Do not guess your seat.` Every command that calls the daemon routes its client errors
+through this helper. Constants `EXIT_DAEMON_UNAVAILABLE = 5`, `EXIT_INTEGRITY = 6` sit next to the
+existing ones in `src/daemon/client.rs`. Tests cover one row per condition, including a hung daemon
+(read timeout → Frame) and a daemon that is still starting. Considered: map only in `seat`
+(rejected: Part C needs the same behaviour in four more commands); classify by `ClientError`
+variant (rejected by design roast r1: hung, malformed and still-starting daemons fell to exit 1).
 
 ### 4.5 Skill and hook (Part A)
 
@@ -224,6 +238,10 @@ layout exists; seat creation belongs to plans).
 
 ### 4.9 Node manager permanence and reopening (Part B)
 
+Invariant (B8, B11): **the node manager seat and its teamspace are Active, and only a plan can
+change its recorded placement.** Every entry path is checked against it, and the spec promises only
+behaviour an existing mechanism delivers.
+
 Recommended, two choke points:
 - **Plans.** A shared check `refuse_node_manager_retirement(tree, effects)` runs in every plan kind
   that retires seats — `SeatRetire`, `TeamspaceRetire`, `CloneRetire` (last clone), `TemplateEdit`
@@ -231,11 +249,13 @@ Recommended, two choke points:
   the plan with `node manager <name> cannot be retired; move the role first with node-manager set`
   (B8). Its last clone likewise cannot be retired by plan.
 - **Observation.** In `src/observe/classify.rs`, the node manager's seat and clones are excluded
-  from workspace, tab and pane cascade grouping, so a direct closure never retires it; the existing
+  from workspace, tab and pane cascade grouping, and the workspace cascade drops the node manager's
+  teamspace from its `retire` list (its other seats are still retired seat by seat; the teamspace
+  stays Active), so a direct closure never retires it; the existing
   reconcile planner (`plan_effects` creating a missing tab and panes for an active seat) reopens it
   in its tab (B11). This deliberately overrides "direct tab/workspace closure follows containment
   retirement" (CURRENT-DESIGN.md) for the node manager only; CURRENT-DESIGN.md gets a dated line.
-  Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11), as is any effect that deactivates the node manager seat or its last live clone. An observed move of its pane or tab (outside a plan) is not adopted as its placement; reconciliation restores the recorded tab. The undo refusal for the node manager's creating action names the `node-manager set` remedy. More generally, `make_plan` refuses any plan whose effects would leave a manager chain cyclic (seat creation into a teamspace with a default, teamspace moves, resurrection, teamspace default changes), using model::manager's would-create-cycle check over every seat whose effective manager changes.
+  Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11), as is any effect that deactivates the node manager seat or its last live clone. An observed move of its pane or tab outside a plan is tolerated and surfaced, not reverted: Herdr exposes no move primitive, so the existing `moved_out` handling stays and the observer logs a warning naming the node manager; reopening is promised only for closure. `node-manager set` and first-seat assignment require an Active target and teamspace (a dormant target is activated as a listed effect). TemplateEdit, ApplicationRetire and undo compensation are covered by the `make_plan` guard. The undo refusal for the node manager's creating action names the `node-manager set` remedy. More generally, `make_plan` refuses any plan whose effects would leave a manager chain cyclic (seat creation into a teamspace with a default, teamspace moves, resurrection, teamspace default changes), using model::manager's would-create-cycle check over every seat whose effective manager changes.
 Considered: refusing at `do_retire_seat` only (rejected: fails at apply time instead of plan time,
 and the observed path would error instead of reopening).
 
@@ -259,7 +279,7 @@ seat whose explicit `manager` is the retiring seat, and every teamspace whose `d
 the retiring seat, to M (B6). Seats that reached the retiring seat only through a teamspace default
 follow automatically. Every retirement route records each rewrite (`{holder, field, old, new}`) in its action record (plan `Retire`, `ApplicationRetire`, observed cascade, undo-driven). Plan previews: `seat_retire_effects` and the other retire-effect builders list
 a `seat.manager` / `teamspace.default_manager` rewrite effect per record via a shared
-`reparent_effects` helper, so the apply-time diff matches. Observed cascades reparent without a
+`reparent_effects` helper, so the apply-time diff matches. An integrity error while computing M during an observed cascade never aborts the cascade: M falls back to `live_node_manager` (or none), and the action record notes the fallback. Observed cascades reparent without a
 preview, recorded in their action record: observed closure retirement is the existing sanctioned non-plan mutation (CURRENT-DESIGN containment retirement), and reparenting rides along with it; B7 governs deliberate pointer changes. Undo of a retirement (the `Retire` and `ApplicationRetire` action kinds) restores each pointer the reparent rewrote, but only where that pointer still holds the reparent value; others are left and listed in the undo plan. Undo-driven retirement (e.g. undo of a hydrate) reparents through `do_retire_seat` like every other route.
 
 ### 4.12 Surfacing (Part B)

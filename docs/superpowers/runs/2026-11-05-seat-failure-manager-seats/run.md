@@ -14,6 +14,7 @@ epic: hg-k4l
 roastDesignRound: 1
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
+stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
@@ -24,3 +25,4 @@ approvals:
 parked:
 - coverage-ledger.md#C29 · escalation · "B7: observed closure cascades reparent manager pointers outside plans (existing sanctioned observed mutation); human to approve or require a reparent plan"
 - coverage-ledger.md#C34 · escalation · "B12: unassigned-node-manager warning is suppressed for init, setup, daemon, seat --hook-prompt and graphs with no live seat; human to confirm the narrowing"
+- 2026-11-05-seat-failure-manager-seats-roast-design-1.md · degraded-verdict · "B11 partial: an observed out-of-plan move of the node manager's pane or tab is tolerated and surfaced (warning), not reverted — Herdr exposes no move primitive; plan-driven placement changes are refused"
