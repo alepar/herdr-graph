@@ -92,6 +92,10 @@ fn fx() -> Fx {
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
+    reg.register(
+        super::managers::testing::SET_NODE_MANAGER_KEY,
+        Arc::new(super::managers::testing::SetNodeManager),
+    );
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -3444,4 +3448,235 @@ fn seat_override_clear_sections_cap_warning() {
     );
     let sp = plan(&fx, "seat override y --clear sections");
     assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+}
+
+// ---------------------------------------------------------------------------------------------
+// manager set|clear
+// ---------------------------------------------------------------------------------------------
+
+/// Set (or clear with None) the node manager through the test-only bookkeeping mutation.
+fn set_node_manager(fx: &Fx, seat: Option<&SeatId>) {
+    let op = crate::ports::writer::Writer::admit(&*fx.w, super::managers::testing::request(seat))
+        .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+fn plan_err(fx: &Fx, change: &str) -> String {
+    match create_plan(&fx.deps, &CallerInfo::default(), words(change)) {
+        Ok(_) => panic!("{change}: expected a refusal"),
+        Err(e) => e.message,
+    }
+}
+
+/// alpha with seats a, b, c; beta with seats d, e. No node manager.
+fn managers_fx() -> Fx {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(&fx, "teamspace create beta");
+    for s in ["a", "b", "c"] {
+        commit(&fx, &format!("seat create {s} --teamspace alpha"));
+    }
+    for s in ["d", "e"] {
+        commit(&fx, &format!("seat create {s} --teamspace beta"));
+    }
+    fx
+}
+
+fn seat_id(fx: &Fx, name: &str) -> SeatId {
+    seat(fx, name, None).1.id
+}
+
+#[test]
+fn manager_set_seat_writes_pointer() {
+    let fx = managers_fx();
+    let (a, boss) = (seat(&fx, "a", None).1, seat_id(&fx, "b"));
+    let blob = super::managers::graph_relied_on(&view(&fx)).unwrap();
+    let sp = plan(&fx, "manager set a b");
+    assert_eq!(sp.plan.request.kind, RequestKind::ManagerEdit);
+    assert_eq!(
+        sp.plan.effects,
+        vec![super::managers::seat_manager_effect(
+            &a.id,
+            None,
+            Some(&boss)
+        )]
+    );
+    let b_rev = seat(&fx, "b", None).1.rev;
+    assert_eq!(
+        sp.plan.relied_on,
+        vec![
+            core_rev(a.id.clone(), a.rev),
+            core_rev(boss.clone(), b_rev),
+            blob
+        ]
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(row.action, None);
+    assert_eq!(seat(&fx, "a", None).1.manager, Some(boss));
+}
+
+fn core_rev(id: impl Into<AnyId>, rev: u64) -> crate::model::change::ReliedOn {
+    super::core_kinds::rev_of(id, rev)
+}
+
+#[test]
+fn manager_set_teamspace_writes_default() {
+    let fx = managers_fx();
+    let boss = seat_id(&fx, "a");
+    let ts = teamspace(&fx, "beta").1;
+    let sp = plan(&fx, "manager set beta a");
+    assert_eq!(
+        sp.plan.effects,
+        vec![super::managers::default_manager_effect(
+            &ts.id,
+            None,
+            Some(&boss)
+        )]
+    );
+    assert_eq!(sp.plan.relied_on.len(), 3);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(row.action, None);
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, Some(boss));
+}
+
+#[test]
+fn manager_clear_seat() {
+    let fx = managers_fx();
+    let boss = seat_id(&fx, "b");
+    commit(&fx, "manager set a b");
+    let a = seat(&fx, "a", None).1;
+    let sp = plan(&fx, "manager clear a");
+    assert_eq!(
+        sp.plan.effects,
+        vec![super::managers::seat_manager_effect(
+            &a.id,
+            Some(&boss),
+            None
+        )]
+    );
+    // Subject rev and graph.toml blob only: a clear has no manager seat.
+    assert_eq!(sp.plan.relied_on.len(), 2);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(row.action, None);
+    assert_eq!(seat(&fx, "a", None).1.manager, None);
+}
+
+#[test]
+fn manager_clear_teamspace() {
+    let fx = managers_fx();
+    commit(&fx, "manager set beta a");
+    let row = commit(&fx, "manager clear beta");
+    assert_eq!(row.action, None);
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, None);
+}
+
+#[test]
+fn manager_set_rejects_missing_and_retired_manager() {
+    let fx = managers_fx();
+    let c = seat_id(&fx, "c");
+    commit(&fx, "seat retire c");
+    let err = plan_err(&fx, "manager set a nobody");
+    assert!(err.contains("nobody"), "{err}");
+    let err = plan_err(&fx, &format!("manager set a {c}"));
+    assert!(err.contains("retired"), "{err}");
+    let err = plan_err(&fx, &format!("manager set a {}", SeatId::new()));
+    assert!(err.contains("no seat"), "{err}");
+    assert_eq!(seat(&fx, "a", None).1.manager, None);
+}
+
+#[test]
+fn manager_set_rejects_node_manager_subject() {
+    let fx = managers_fx();
+    set_node_manager(&fx, Some(&seat_id(&fx, "a")));
+    let err = plan_err(&fx, "manager set a b");
+    assert!(
+        err.contains("node manager a has no manager (it is the root)"),
+        "{err}"
+    );
+    let err = plan_err(&fx, "manager clear a");
+    assert!(err.contains("it is the root"), "{err}");
+    // Control: a non-node-manager subject is fine.
+    plan(&fx, "manager set b a");
+}
+
+#[test]
+fn manager_set_rejects_unchanged() {
+    let fx = managers_fx();
+    commit(&fx, "manager set a b");
+    let err = plan_err(&fx, "manager set a b");
+    assert!(err.contains("nothing to change"), "{err}");
+    commit(&fx, "manager set beta a");
+    let err = plan_err(&fx, "manager set beta a");
+    assert!(err.contains("nothing to change"), "{err}");
+}
+
+#[test]
+fn manager_clear_rejects_unchanged() {
+    let fx = managers_fx();
+    let err = plan_err(&fx, "manager clear a");
+    assert!(err.contains("nothing to change"), "{err}");
+    let err = plan_err(&fx, "manager clear beta");
+    assert!(err.contains("nothing to change"), "{err}");
+}
+
+#[test]
+fn manager_set_rejects_cycle() {
+    let fx = managers_fx();
+    commit(&fx, "manager set a b");
+    let err = plan_err(&fx, "manager set b a");
+    assert!(err.contains("manager cycle"), "{err}");
+    assert!(
+        err.contains("a") && err.contains("b") && err.contains(" -> "),
+        "{err}"
+    );
+    let err = plan_err(&fx, "manager set c c");
+    assert!(err.contains("manager cycle"), "{err}");
+    assert_eq!(seat(&fx, "b", None).1.manager, None);
+}
+
+#[test]
+fn manager_set_teamspace_default_rejects_cycle_for_any_member() {
+    let fx = managers_fx();
+    // d has no explicit manager, so it inherits beta's default; a sits under d.
+    commit(&fx, "manager set a d");
+    let err = plan_err(&fx, "manager set beta a");
+    assert!(err.contains("manager cycle"), "{err}");
+    assert!(err.contains("d -> a"), "{err}");
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, None);
+}
+
+#[test]
+fn manager_ambiguous_name_is_usage_error() {
+    let fx = managers_fx();
+    commit(&fx, "teamspace create twin");
+    commit(&fx, "seat create twin --teamspace alpha");
+    let err = plan_err(&fx, "manager set twin a");
+    assert!(
+        err.contains("twin names both a seat and a teamspace; use the id"),
+        "{err}"
+    );
+    // The id disambiguates.
+    let ts = teamspace(&fx, "twin").1.id;
+    plan(&fx, &format!("manager set {ts} a"));
+}
+
+#[test]
+fn manager_usage_errors() {
+    let fx = managers_fx();
+    for bad in [
+        "manager",
+        "manager frob a b",
+        "manager set a",
+        "manager clear a b",
+    ] {
+        let err = plan_err(&fx, bad);
+        assert!(err.contains("manager set <seat|teamspace>"), "{bad}: {err}");
+    }
 }
