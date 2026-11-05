@@ -104,6 +104,10 @@ pub struct Invitation {
     /// Which threads seat was invited (attributed to which occupant), and the ids threads reported (hg-zmi.11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<ThreadsLink>,
+    /// Set at the §3 backfill for a Required row the old occupant-keyed path released; cleared by the next
+    /// write-back. While set, the want is unsatisfied and the row is re-invited once.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub migration_reinvite: bool,
 }
 
 /// Threads-side identity of an invitation: enough to release a requirement after the occupant is gone and to
