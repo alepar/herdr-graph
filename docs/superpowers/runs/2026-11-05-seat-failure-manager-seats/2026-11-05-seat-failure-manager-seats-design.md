@@ -74,7 +74,7 @@ Source: the human user's messages in the Claude Code session that produced the H
 
 ### Human scope changes
 
-- none
+- S1 · 2026-11-04 · "lgtm" (in reply to: 'I wrote "the first seat created"' as the reading of "first seat that gets seated") · source: session · affects: B10
 
 ## 1. Problem description
 
@@ -157,7 +157,7 @@ carry on with what you can without seat-specific rules, and run /seat again late
 your seat.` and exit **5**; `ClientError::Remote { code: Integrity, message }` → stderr
 `herdr-graph: graph integrity error: <message>. This is not transient; retrying will not help.
 Carry on without seat-specific rules. Do not guess your seat.` and exit **6**;
-`ClientError::NoInstance` → its existing line and `EXIT_NO_INSTANCE` (2). Constants
+`ClientError::NoInstance` → its existing line and `EXIT_NO_INSTANCE` (2). Not being inside a Herdr pane (`HERDR_SOCKET_PATH` unset) is not a daemon outage: it gets its own variant and message (`herdr-graph: not inside a Herdr pane; this session has no graph seat`) and exit 2, never the retry-later text. The generic exit-5 line for every daemon-requiring command ends with `Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).` (B2). Every command that calls the daemon routes its client errors through this helper, not only the five named here. Constants
 `EXIT_DAEMON_UNAVAILABLE = 5`, `EXIT_INTEGRITY = 6` sit next to the existing ones in
 `src/daemon/client.rs`. The seat-specific sentences appear only for `seat`; the other commands use
 the generic first clause plus exit 5. Considered: map only in `seat` (rejected: Part C needs the
@@ -214,7 +214,7 @@ Recommended: the seat-creating kinds (`SeatCreate`, `ApplicationApply` via `crea
 plan time, `node_manager_seat` is unset and the graph has no non-retired seat (B10). The assignment
 is a listed plan effect and adds the `graph.toml` blob precondition. An application creating several
 seats assigns the first in member order. A graph that already has seats and no node manager is
-never auto-assigned; it gets the warning (§4.10). Shipped templates gain a seat template
+never auto-assigned; it gets the warning (§4.10). Every path that creates or resurrects a seat (`SeatCreate`, application apply/hydrate, `TemplateEdit` additions, `SeatResurrect`, `TeamspaceResurrect`, undo restore) goes through one shared first-seat helper; S1 records the human's approval of "created" as the reading of "seated". Shipped templates gain a seat template
 `node-manager` (`templates/node-manager/template.toml` + `AGENTS.md` describing the duties: listen,
 detect, unblock; owns graph repair; lifecycle issue classes from B5's discussion) and a team
 template `office` with a single active member `main` using it, added to `EXAMPLE_FILES`, so
@@ -235,7 +235,7 @@ Recommended, two choke points:
   reconcile planner (`plan_effects` creating a missing tab and panes for an active seat) reopens it
   in its tab (B11). This deliberately overrides "direct tab/workspace closure follows containment
   retirement" (CURRENT-DESIGN.md) for the node manager only; CURRENT-DESIGN.md gets a dated line.
-  Closing a workspace containing the node manager retires the other seats normally.
+  Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11).
 Considered: refusing at `do_retire_seat` only (rejected: fails at apply time instead of plan time,
 and the observed path would error instead of reopening).
 
@@ -248,7 +248,7 @@ non-retired seat exists, prints to stderr once:
 `herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>`.
 Skipped for `init`, `setup`, `daemon`, `seat --hook-prompt`, and when no instance is configured;
 any read failure prints nothing. This is a read of the committed graph for a warning only; it is
-not a daemon fallback (B1 concerns answering queries).
+not a daemon fallback (B1 concerns answering queries). The same warning fires when `node_manager_seat` names a seat that is missing or retired.
 
 ### 4.11 Reparenting on retirement (Part B)
 
@@ -260,7 +260,7 @@ the retiring seat, to M (B6). Seats that reached the retiring seat only through 
 follow automatically. Plan previews: `seat_retire_effects` and the other retire-effect builders list
 a `seat.manager` / `teamspace.default_manager` rewrite effect per record via a shared
 `reparent_effects` helper, so the apply-time diff matches. Observed cascades reparent without a
-preview, recorded in their action record.
+preview, recorded in their action record: observed closure retirement is the existing sanctioned non-plan mutation (CURRENT-DESIGN containment retirement), and reparenting rides along with it; B7 governs deliberate pointer changes. Undo of a retirement (the `Retire` and `ApplicationRetire` action kinds) restores each pointer the reparent rewrote, but only where that pointer still holds the reparent value; others are left and listed in the undo plan. Undo-driven retirement (e.g. undo of a hydrate) reparents through `do_retire_seat` like every other route.
 
 ### 4.12 Surfacing (Part B)
 
@@ -268,7 +268,7 @@ Recommended: the `seat.resolve` reply gains `manager` and `node_manager`, each `
 `{seat, name, threads_seat}` where `threads_seat` is the manager's live clone's herdr-threads seat
 when the existing binding index resolves it (else `null`). `WhoReply` gains `manager_chain: Vec<{seat, name}>`
 rendered as one line `manager: <name> (<st>) → … → <node manager name> (<st>)` (or
-`manager: none assigned`); `show <seat>` appends the same line after the record (B9).
+`manager: none assigned`); `show <seat>` appends the same line after the record (B9); `show` stays a daemon-free reader and maps a chain integrity failure to the same exit-6 text. The reply also carries `reports` (the seats whose effective manager is this seat), and when it is non-empty the skill tells the session it is a manager: listen for, detect and unblock its reports' lifecycle issues. The text form of `herdr-graph seat` prints `manager:` and `node manager:` lines. When `node_manager_seat` does not resolve to a live seat, the integrity suffix uses the "report it to the user" form.
 
 ### 4.13 Remove daemon-free fallbacks (Part C)
 
