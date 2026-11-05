@@ -56,17 +56,20 @@ impl Rewrite {
 
 /// Apply side, from do_retire_seat before the seat is archived: rewrite every live seat whose explicit manager is
 /// `seat` and every non-retired teamspace whose default_manager is `seat` to `seat`'s nearest surviving manager.
-/// Seats retired earlier in the same mutation are already retired in the overlay, so they are transparent; seats
-/// retiring later in the same mutation are rewritten again when their turn comes, so final pointers match the preview.
+/// `retiring` is every seat the mutation retires (routes that retire several seats fill it; `seat` is added): those
+/// seats are skipped as targets and as holders (a retiring holder's pointer is archived with it), so every live
+/// holder gets one row whose `old` is its original pointer and final pointers match the preview.
 /// `lenient`: an integrity error computing the target falls back to `live_node_manager` (or None) and returns a note;
 /// not lenient, the error propagates (StoreError::Integrity → Fail::Data per hg-k4l.5).
 pub fn reparent(
     tree: &mut Overlay<'_>,
     seat: &SeatId,
+    retiring: &BTreeSet<SeatId>,
     lenient: bool,
 ) -> Result<(Vec<Rewrite>, Option<String>), StoreError> {
     let pointers = Pointers::load(&*tree)?;
-    let retiring = BTreeSet::from([seat.clone()]);
+    let mut retiring = retiring.clone();
+    retiring.insert(seat.clone());
     let (target, note) = match pointers.nearest_surviving_manager(seat, &retiring) {
         Ok(t) => (t, None),
         Err(e @ StoreError::Integrity { .. }) if lenient => {
@@ -83,7 +86,7 @@ pub fn reparent(
     let mut seats: Vec<SeatId> = pointers
         .seats
         .iter()
-        .filter(|(_, p)| !p.retired && p.manager.as_ref() == Some(seat))
+        .filter(|(id, p)| !p.retired && !retiring.contains(*id) && p.manager.as_ref() == Some(seat))
         .map(|(id, _)| id.clone())
         .collect();
     seats.sort();

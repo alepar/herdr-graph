@@ -518,6 +518,9 @@ pub(crate) fn pointer_restores(
     };
     let pointers = Pointers::load(tree)?;
     let (mut effects, mut warnings) = (Vec::new(), Vec::new());
+    // One entry per (holder, field), in first-seen order: `old` from its first row, `new` from its last, so
+    // chained rows (a -> b, then b -> c) judge and restore as a -> c.
+    let mut collapsed: Vec<Rewrite> = Vec::new();
     for row in rows {
         let Some(rw) = Rewrite::from_toml(row) else {
             warnings.push(format!(
@@ -525,6 +528,15 @@ pub(crate) fn pointer_restores(
             ));
             continue;
         };
+        match collapsed
+            .iter_mut()
+            .find(|c| c.holder == rw.holder && c.field == rw.field)
+        {
+            Some(c) => c.new = rw.new,
+            None => collapsed.push(rw),
+        }
+    }
+    for rw in collapsed {
         // `Some(current)` when the holder exists; the pointer it holds is `current`.
         let current: Option<Option<SeatId>> = match (rw.field.as_str(), &rw.holder) {
             ("manager", id) => SeatId::try_from(id.clone())

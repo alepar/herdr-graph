@@ -1803,3 +1803,136 @@ fn undo_leaves_changed_pointer_and_lists_it() {
     assert_ne!(seat_by_id(&fx, &boss).lifecycle, Lifecycle::Retired);
     assert_eq!(seat_by_id(&fx, &r).manager, Some(other));
 }
+
+// ---------------------------------------------------------------------------------------------
+// chained reparent rows on multi-seat retirement (hg-k4l.54)
+// ---------------------------------------------------------------------------------------------
+
+/// x -> a -> b -> nm, a and b both retiring in one mutation (a listed before b), x outside.
+#[test]
+fn undo_two_hop_teamspace_retire_restores_original() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, seat_request},
+    };
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    for n in ["nm", "x"] {
+        commit(&fx, &format!("seat create {n} --teamspace beta"));
+    }
+    for n in ["a", "b"] {
+        commit(&fx, &format!("seat create {n} --teamspace alpha"));
+    }
+    let (nm, x) = (seat_named(&fx, "nm").id, seat_named(&fx, "x").id);
+    let (a, b) = (seat_named(&fx, "a").id, seat_named(&fx, "b").id);
+    commit_request(&fx, crate::plan::managers::testing::request(Some(&nm)));
+    commit_request(&fx, seat_request(&b, Some(&nm)));
+    commit_request(&fx, seat_request(&a, Some(&b)));
+    commit_request(&fx, seat_request(&x, Some(&a)));
+
+    let retire = commit(&fx, "teamspace retire alpha");
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(nm.clone()));
+    let act = action_of(&fx, &retire);
+    assert_eq!(
+        recorded(&act),
+        vec![Rewrite {
+            holder: x.to_any(),
+            field: "manager".into(),
+            old: a.clone(),
+            new: Some(nm.clone()),
+        }]
+    );
+
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    let restores: Vec<_> = sp
+        .plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == "seat.manager")
+        .collect();
+    assert_eq!(restores.len(), 1, "{restores:?}");
+    assert_eq!(restores[0].object, x.to_any());
+    assert_eq!(restores[0].detail["from"], json!(nm));
+    assert_eq!(restores[0].detail["to"], json!(a));
+    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(a));
+}
+
+/// Same chain, retired through an application: a (lead) and b (mid) are the application's seats.
+#[test]
+fn undo_two_hop_application_retire_restores_original() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, seat_request},
+    };
+    let fx = fx();
+    alpha(&fx);
+    for n in ["nm", "x"] {
+        commit(&fx, &format!("seat create {n} --teamspace alpha"));
+    }
+    let (ma, mb) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "pair",
+        &[m(&ma, "a", "deferred"), m(&mb, "b", "deferred")],
+    );
+    apply_app(&fx, "pair", "one");
+    let (nm, x) = (seat_named(&fx, "nm").id, seat_named(&fx, "x").id);
+    let (a, b) = (seat_named(&fx, "a").id, seat_named(&fx, "b").id);
+    commit_request(&fx, crate::plan::managers::testing::request(Some(&nm)));
+    commit_request(&fx, seat_request(&b, Some(&nm)));
+    commit_request(&fx, seat_request(&a, Some(&b)));
+    commit_request(&fx, seat_request(&x, Some(&a)));
+
+    let retire = commit(&fx, "application retire one");
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(nm.clone()));
+    let act = action_of(&fx, &retire);
+    assert_eq!(
+        recorded(&act),
+        vec![Rewrite {
+            holder: x.to_any(),
+            field: "manager".into(),
+            old: a.clone(),
+            new: Some(nm),
+        }]
+    );
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(a));
+}
+
+/// Action records written before the fix list chained rows (a -> b, then b -> nm): undo judges and restores them
+/// as one a -> nm row.
+#[test]
+fn pointer_restores_collapses_chained_rows() {
+    use crate::plan::managers::reparent::{REPARENTED_KEY, Rewrite, testing::seat_request};
+    let fx = fx();
+    let (nm, _boss, x) = boss_world(&fx);
+    let (a, b) = (SeatId::new(), SeatId::new());
+    commit_request(&fx, seat_request(&x, Some(&nm)));
+    let mut act = action_of(&fx, &commit(&fx, "seat retire boss"));
+    let row = |old: &SeatId, new: &SeatId| {
+        Rewrite {
+            holder: x.to_any(),
+            field: "manager".into(),
+            old: old.clone(),
+            new: Some(new.clone()),
+        }
+        .to_toml()
+    };
+    act.compensation.insert(
+        REPARENTED_KEY.into(),
+        toml::Value::Array(vec![row(&a, &b), row(&b, &nm)]),
+    );
+    let (effects, warnings) = super::preview::pointer_restores(&view(&fx), &act).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert_eq!(effects[0].object, x.to_any());
+    assert_eq!(effects[0].detail["from"], json!(nm));
+    assert_eq!(effects[0].detail["to"], json!(a));
+}

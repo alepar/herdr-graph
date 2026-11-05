@@ -324,6 +324,19 @@ impl Mutation for CascadeMutation {
         // Classification may predate a `node-manager set`: the live answer at apply time wins.
         let nm = crate::model::manager::live_node_manager(&cx.tree)?;
         let nm = nm.as_ref();
+        // Every seat this cascade can retire: reparent skips them all (spec §4.11).
+        for ts in &teamspaces {
+            let ts = read_ts(&cx.tree, ts).map_err(mm)?;
+            for (_, s) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
+                if s.lifecycle != Lifecycle::Retired {
+                    acc.retiring.insert(s.id);
+                }
+            }
+        }
+        acc.retiring.extend(seats.iter().cloned());
+        if let Some(nm) = nm {
+            acc.retiring.remove(nm);
+        }
         let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
         let mut kept = 0;
         for ts in &teamspaces {
