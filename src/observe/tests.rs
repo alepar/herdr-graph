@@ -153,6 +153,10 @@ fn fx() -> Fx {
         "bookkeeping.test_node_manager_obs",
         Arc::new(TestNodeManager),
     );
+    reg.register(
+        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
+        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
+    );
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -2301,5 +2305,98 @@ fn baseline_roundtrip_and_corruption() {
     assert!(
         baseline::load(&path).is_none(),
         "a corrupt baseline means a rebind pass"
+    );
+}
+
+// =================================================================================================
+// reparenting on observed closure (hg-k4l.26)
+// =================================================================================================
+
+/// foreman (node manager), bench (active, its own tab) and a dormant `report`; `report.manager` = bench and
+/// `bench.manager` = the node manager, or a seat id that does not exist when `dangling`.
+async fn manager_world(fx: &Fx, dangling: bool) {
+    use crate::plan::managers::reparent::testing::seat_request;
+    activate(fx, "shell");
+    commit(
+        fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(fx, "seat create report --teamspace alpha");
+    settle(fx).await;
+    let foreman = seat(fx, "foreman").id;
+    make_node_manager(fx, &foreman);
+    let bench_manager = if dangling { SeatId::new() } else { foreman };
+    for req in [
+        seat_request(&seat(fx, "bench").id, Some(&bench_manager)),
+        seat_request(&seat(fx, "report").id, Some(&seat(fx, "bench").id)),
+    ] {
+        fx.w.admit(req).unwrap();
+        fx.w.drain().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn reparent_on_observed_cascade() {
+    use crate::plan::managers::reparent::{Rewrite, testing::recorded};
+    let fx = fx();
+    manager_world(&fx, false).await;
+    let foreman = seat(&fx, "foreman").id;
+    let bench = seat(&fx, "bench").id;
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
+    step(&fx).await;
+
+    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: seat(&fx, "report").id.to_any(),
+            field: "manager".into(),
+            old: bench,
+            new: Some(foreman),
+        }]
+    );
+    assert!(
+        !acts[0]
+            .compensation
+            .contains_key(crate::plan::managers::reparent::REPARENT_FALLBACK_KEY),
+        "no fallback when the target resolves"
+    );
+}
+
+#[tokio::test]
+async fn reparent_fallback_on_integrity() {
+    use crate::plan::managers::reparent::{REPARENT_FALLBACK_KEY, Rewrite, testing::recorded};
+    let fx = fx();
+    manager_world(&fx, true).await;
+    let (foreman, bench) = (seat(&fx, "foreman").id, seat(&fx, "bench").id);
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
+    step(&fx).await;
+
+    assert_eq!(
+        seat_by_id(&fx, &bench).1.lifecycle,
+        Lifecycle::Retired,
+        "the cascade still retires the seat"
+    );
+    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: seat(&fx, "report").id.to_any(),
+            field: "manager".into(),
+            old: bench,
+            new: Some(foreman),
+        }]
+    );
+    let notes = acts[0].compensation[REPARENT_FALLBACK_KEY]
+        .as_array()
+        .expect("fallback notes recorded");
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].as_str().unwrap().contains("node manager"),
+        "{notes:?}"
     );
 }

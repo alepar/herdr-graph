@@ -2,6 +2,7 @@
 //! retire/resurrect, clone add/retire (spec §2.2, §3.3, §6). Args shapes are normative for later kinds.
 use super::grammar::{self, Scope, flag, has, positional};
 use super::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
+use super::managers::reparent::{REPARENT_FALLBACK_KEY, REPARENTED_KEY, Rewrite, reparent};
 use super::types::{Plan, PlanEffect, Reserved};
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, ActionRecord, AffectedObject};
@@ -313,6 +314,12 @@ pub(crate) struct Acc {
     /// Application exclusions this retirement added, `(seat, application, member)`; recorded in the
     /// action's compensation so resurrect/undo removes exactly these.
     pub(crate) exclusions_added: Vec<(SeatId, AppId, MemberId)>,
+    /// Manager pointers `do_retire_seat` rewrote (plan::managers::reparent); recorded in the compensation.
+    pub(crate) reparented: Vec<Rewrite>,
+    /// Observed cascades: an integrity error computing the reparent target falls back instead of failing.
+    pub(crate) lenient_reparent: bool,
+    /// Fallback notes from lenient reparenting.
+    pub(crate) notes: Vec<String>,
 }
 
 impl Acc {
@@ -345,6 +352,14 @@ pub(crate) fn write_action(
             })
             .collect();
         compensation.insert("exclusions_added".into(), toml::Value::Array(rows));
+    }
+    if !acc.reparented.is_empty() && !compensation.contains_key(REPARENTED_KEY) {
+        let rows = acc.reparented.iter().map(Rewrite::to_toml).collect();
+        compensation.insert(REPARENTED_KEY.into(), toml::Value::Array(rows));
+    }
+    if !acc.notes.is_empty() && !compensation.contains_key(REPARENT_FALLBACK_KEY) {
+        let rows = acc.notes.iter().cloned().map(toml::Value::String).collect();
+        compensation.insert(REPARENT_FALLBACK_KEY.into(), toml::Value::Array(rows));
     }
     let mut rec = ActionRecord {
         schema: SCHEMA_VERSION,
@@ -406,6 +421,9 @@ pub(crate) fn do_retire_seat(
         acc.already.push(f.rec.id.to_any());
         return Ok(());
     }
+    let (rewrites, note) = reparent(&mut cx.tree, seat, acc.lenient_reparent)?;
+    acc.reparented.extend(rewrites);
+    acc.notes.extend(note);
     let retirement = |cx: &MutationCx<'_>| Retirement {
         op: cx.op.clone(),
         action: Some(act.clone()),
