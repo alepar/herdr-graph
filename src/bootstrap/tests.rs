@@ -1983,7 +1983,7 @@ fn show_list_path_read_committed_state() {
     assert!(show::path(&v, &fx.root, "no-such-thing").is_err());
 }
 
-fn set_manager(fx: &Fx, args: serde_json::Value) {
+fn set_manager_args(fx: &Fx, args: serde_json::Value) {
     use crate::ports::writer::Writer;
     let mut args = args;
     args["sub"] = json!("test_manager");
@@ -2012,7 +2012,7 @@ fn show_seat_appends_manager_line() {
         text.contains("name = \"low\"") && text.ends_with("\nmanager: none assigned"),
         "{text}"
     );
-    set_manager(&fx, json!({ "node_manager": boss.id }));
+    set_manager_args(&fx, json!({ "node_manager": boss.id }));
     let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
     assert!(
         text.ends_with(&format!("\nmanager: boss ({})", boss.id)),
@@ -2030,8 +2030,8 @@ fn show_cycle_is_store_integrity() {
     commit(&fx, "seat create a --teamspace alpha --active");
     commit(&fx, "seat create b --teamspace alpha --active");
     let (a, b) = (seat_rec(&fx, "a"), seat_rec(&fx, "b"));
-    set_manager(&fx, json!({ "seat": a.id, "manager": b.id }));
-    set_manager(&fx, json!({ "seat": b.id, "manager": a.id }));
+    set_manager_args(&fx, json!({ "seat": a.id, "manager": b.id }));
+    set_manager_args(&fx, json!({ "seat": b.id, "manager": a.id }));
     let e = show::show(&view(&fx), &fx.root, a.id.as_str()).unwrap_err();
     assert!(
         matches!(e, show::ShowError::Store(StoreError::Integrity { .. })),
