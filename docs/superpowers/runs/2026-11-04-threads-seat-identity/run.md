@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-04-threads-seat-identity
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: fix-loop
+phase: roast-code
 codeMechanism: Workflow
 runTag: threads-seat-identity-20261105T073527
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -85,8 +85,8 @@ approvals:
 parked:
 - 2026-11-05-threads-seat-identity-roast-pr-1.md · escalation · "UNVERIFIED external (orchestrator evidence added): LiveIndex::bound_pane and tab/workspace preserved-id matching accept a bound id in any incarnation without token/label check. Herdr v0.9.5 src/workspace.rs reserve_workspace_ids sets the workspace counter to max surviving + 1, and pane numbers are per-workspace next_public_pane_number, so an id above the highest surviving one can be reissued after a restart; needs a label/nonce corroboration guard (human decision: confirm as Should-fix)"
 - 2026-11-05-threads-seat-identity-roast-pr-1.md · escalation · "material dissent: real-threads qualification (spec §11) absent from the diff; it is deliberately sequenced as hg-66u.17/.18 behind gate hg-66u.36 (fix loop exited) so it measures the final SHA; recorded deferral, runs after phase 5"
-- ledger run-failure · degraded-verdict · "run-regression open: cargo test --test instruction_writers (default) — instruction_source_writers_are_inventoried: src/plan/core_kinds.rs unexpected raw delete_file writer; claimed introducedBy hg-66u.35 (commit 18a43c5); attribution gap (no run-start baseline); evidence task-16-report.md"
-- ledger run-failure · degraded-verdict · "run-regression open: cargo test --test integration_sweep sweep_action_and_effect (default) — wiring::sweep_action_and_effect_envelopes_round_trip timed out waiting for creation effects; owner unattributed; evidence task-16-report.md"
+- ledger run-failure · degraded-verdict · "run-regression open: cargo test --test instruction_writers (default) — instruction_source_writers_are_inventoried: src/plan/core_kinds.rs unexpected raw delete_file writer; claimed introducedBy hg-66u.35 (commit 18a43c5); attribution gap (no run-start baseline); evidence task-16-report.md · resolved: hg-66u.65 live pass @ tree 50a8cba (task-40-report.md)"
+- ledger run-failure · degraded-verdict · "run-regression open: cargo test --test integration_sweep sweep_action_and_effect (default) — wiring::sweep_action_and_effect_envelopes_round_trip timed out waiting for creation effects; owner unattributed; evidence task-16-report.md · resolved: hg-66u.65 live pass @ tree 50a8cba (task-40-report.md)"
 - code invocation inv-4aa37d70 · degraded-verdict · "final review cluster 4 (runs-top) unreviewed: over the context window; bundle file never written (collection gap, unrecoverable); whole-epic review incomplete for that cluster"
 - graph-pass · graph-change · "narrow hg-66u.13 <- hg-66u.30 to hg-66u.13 <- hg-66u.34 + hg-66u.28 (safe no: shared src/reconcile/planner.rs; .13 cold-restart acceptance test needs .30 — move it to .33/.21); depth 8→7"
 - graph-pass · graph-change · "proposal: seam-contract seat_fact between hg-66u.28 and hg-66u.30 (fix the type and read accessor early, e.g. with .27) so .30 builds in parallel; depth 8→6 with the narrow"
@@ -114,7 +114,7 @@ codeBuckets:
   slowness: round 1: merge queue peaked at 6 — the serial merge lane is the bottleneck; look at mergeCheck duration, seam reviews and rebase conflicts on the Merge: lines
   worktreesKept: 32 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
-roastCodeRound: 1
+roastCodeRound: 2
 roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md
 redesignCycles-code: 1
 redesign-code-1: round 1 · triggers shared-cause, defect-type · amended 3. Participation keyed to the seat (H2-identity steps 2–3,  D3), 14. Punch-list resolutions (design roast round 2,  converged), Key abstractions, Unchanged behavior · lastGood 855a59fea7c7d2ed099655dd783a8686d339747d · designRoast r3 fixed · state applied
