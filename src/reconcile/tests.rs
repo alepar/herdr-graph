@@ -651,6 +651,49 @@ async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguit
 }
 
 #[tokio::test]
+async fn live_index_matches_bound_tab_and_workspace_across_incarnations() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let seat_id = seat(&fx, "foreman").id;
+    let before = fx.herdr.snapshot().await.unwrap();
+    // No tokens survive, so only the bound ids can place the objects.
+    fx.herdr.restart(false, false);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_ne!(snap.incarnation, before.incarnation);
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let ts = desired.workspaces[0].ts.clone();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    let (ws, tab) = idx.tab_for_seat(&seat_id).expect("bound tab id survives");
+    assert_eq!(tab.id, before.workspaces[0].tabs.last().unwrap().id);
+    assert_eq!(ws.id, before.workspaces[0].id);
+    assert_eq!(idx.workspace(&ts).expect("bound workspace id").ws.id, ws.id);
+}
+
+#[tokio::test]
+async fn live_index_does_not_refind_an_absent_bound_tab_or_workspace_by_tokens() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let seat_id = seat(&fx, "foreman").id;
+    // Tokens survive (the seat's clone pane and the workspace stay stamped) but the ids do not.
+    fx.herdr.restart(true, true);
+    fx.herdr.renumber_tabs_and_workspaces();
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.metadata.contains_key("hg")),
+        "a token-stamped clone pane is still live"
+    );
+    assert!(idx.tab_for_seat(&seat_id).is_none());
+}
+
+#[tokio::test]
 async fn lost_response_create_adopted_by_nonce() {
     let fx = fx();
     activate(&fx, "claude");
