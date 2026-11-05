@@ -286,6 +286,58 @@ the existing fixtures (`kinds_extra::testkit`, per-module fixtures driving plan 
 behaviour (exit codes 2/5/6, warning line) in `tests/` with `TestRoot`. Full suite:
 `cargo test` (tiers 1–2); the private-Herdr tier 3 runs where available.
 
+## Key abstractions
+
+**model::manager** — new module, the pure resolver for manager pointers over one tree.
+- Owns: the effective-manager rule from §4.6 (node manager → none; then the seat's explicit `manager`; then its teamspace's `default_manager` if that is not the seat itself; then `node_manager_seat`). Also owns `manager_chain` with its visited-set cycle detection, "nearest surviving manager" given a set of seats retiring together (§4.11), and the "would this edit create a cycle" check used to validate `ManagerEdit`. All lookups are built from that one rule.
+- Hides: the precedence order and the skip rules for the node manager and self-defaults. Callers never read `manager`, `default_manager` or `node_manager_seat` directly to decide who someone's manager is.
+- Must not: write records, build plan effects, render text or know about IPC. Writes belong to plan::managers, rendering to `WhoReply` and `show`, and error classification to `CommandError`.
+- Relationships: depends only on `TreeRead` and the model records. Called by plan::managers, `seat_reply` (§4.12), the `who` handler, `show`, and `ManagerEdit` validation. Nothing in `model` depends on its callers.
+- Lifecycle: free functions over a borrowed tree. Holds no state and lives per call.
+- Errors: returns `StoreError::Integrity` for a cycle or an unresolvable pointer, built through the same `unresolved` helper as Part A. Plain read failures pass through as the other `StoreError` variants.
+
+**plan::managers** — new module, the only writer of manager pointers and the node-manager policy for plans.
+- Owns: `reparent_effects` (the plan-time preview: one `seat.manager` or `teamspace.default_manager` effect per rewritten record); the apply-time reparent, called from inside `do_retire_seat`; the node-manager move rewrites (§4.7, B13); the first-seat assignment decision and its effect (§4.8); the `graph.toml` write together with its `Version::Blob` relied_on; `refuse_node_manager_retirement` (§4.9).
+- Hides: which records a retirement or a move rewrites, how "first seat on the node" is detected, and how `graph.toml` is written safely, since it has no `rev`.
+- Must not: decide who the effective manager is (it delegates to model::manager), parse CLI words (the `OrgKind` impls do that), or touch runtime or observation (classify does that).
+- Relationships: depends on model::manager and the writer overlay. Used by `do_retire_seat`, the three seat-creating kinds (`SeatCreate`, `create_member_seat` in `ApplicationApply`, `TemplateEdit` member additions), the retire-effect builders, `ManagerEdit` and `NodeManagerSet`. The retirement guard runs once in `make_plan` over `body.effects` — the single plan-admission point, which already covers the replan in `plan/apply.rs` and undo (an `OrgKind`), so future retiring kinds need no call site of their own. It refuses a `seat.retire` targeting the node manager, and a set of `clone.retire` effects covering all of its live clones.
+- Lifecycle: stateless functions. Mutable state exists only in the `MutationCx` overlay passed in, which the writer owns for one mutation.
+- Errors: refusals, cycles and "unchanged" become `PlanError::Invalid` with the §4.9 or §4.7 message. Store failures, including integrity, pass through as `PlanError::Store`.
+
+**cli::daemon_error** — new module, the one mapping from `ClientError` to a stderr line and an exit code.
+- Owns: `NoInstance` → its existing line and exit 2; `Unavailable` → the generic first clause and exit 5; `Remote { Integrity }` → the integrity line and exit 6; anything else → the error, exit 1. The constants `EXIT_DAEMON_UNAVAILABLE` and `EXIT_INTEGRITY` sit beside the existing `EXIT_*` in `src/daemon/client.rs`.
+- Hides: which `ClientError` or `IpcErrorCode` maps to which exit code.
+- Must not: read the store or fall back to direct reads; those direct readers are deleted (§4.13).
+- Relationships: called by `seat`, `who`, `ops`, `request` and `undo`, each replacing its own match arms. `seat` adds its extra sentences by composing them with the generic mapping, not through a mode flag inside it.
+- Lifecycle: free functions, called once per CLI invocation.
+
+**StoreError** — extended: a new `Integrity { holder, field, target, reason }` variant, built only by `unresolved(...)`, which replaces `missing()` in `bootstrap/mod.rs` and `bootstrap/instructions.rs`, the three silent skips, and `referenced_seat_template`'s `Corrupt` arms.
+
+**CommandError / IpcErrorCode** — extended: `IpcErrorCode::Integrity` and `CommandError::integrity`, with one store-error classifier (`Integrity` → integrity, everything else → internal) used by `seat_reply`, `who` and `show`, so `manager_chain` cycles surface the same way. The node-manager suffix from §4.3 is added in `seat_reply` only.
+
+**OrgKind registry** — extended: two new kinds, `ManagerEdit` and `NodeManagerSet`, registered where the existing kinds are; like `SeatOverride`, neither writes an undoable action.
+
+**observe::classify** — extended: the node manager's seat and clones are excluded from cascade grouping (§4.9).
+
+Variation: seat-retirement routes (seven today) → reparenting lives in `do_retire_seat` and the guard in `make_plan`, so a new route inherits both without a call; seat-creating kinds (three) → one shared first-seat helper in plan::managers; error outcomes are a closed set → a `match` in cli::daemon_error and the `CommandError` classifier; integrity reference kinds → data (holder and field strings) passed to the one `unresolved` helper.
+Walk-through: `/seat` → `seat_reply` hits an application whose template is missing → `unresolved` → `StoreError::Integrity` → classifier → `CommandError::integrity` plus the node-manager suffix → CLI `Remote { Integrity }` → cli::daemon_error prints the line, exit 6. `seat retire A` → `SeatRetire::plan` lists `seat_retire_effects` plus `reparent_effects` (model::manager supplies A's nearest surviving manager) → `make_plan` guard passes → `do_retire_seat` reparents on apply. A future bulk-retiring kind touches one new `OrgKind` and its registration; a future template-level default manager touches only model::manager's precedence rule and the template record.
+Per spec §4.4: the seat-specific sentences appear only for `seat` — a deliberate per-caller addition on top of the shared mapping.
+Per spec §4.13: `status` keeps its fallback, and `show`, `list`, `path`, `instructions show` and `seat --hook-prompt` stay daemon-free readers — deliberate exceptions to cli::daemon_error.
+Per spec §4.10: the unassigned warning reads `graph.toml` directly in a free function in a non-registration CLI module, called from `main` — a warning, not a fallback.
+Per spec §4.9: classify special-cases the node manager, deliberately overriding containment cascades for that one seat.
+Per spec §4.11: the preview skips seats retiring in the same mutation while `do_retire_seat` retires them sequentially; compare preview and apply on final pointer values, not on the count of writes.
+
+Digest:
+- model::manager: owns the effective-manager precedence, chain walk, cycle detection and nearest surviving manager;
+    a new pointer source goes here;
+    callers never read `manager`, `default_manager` or `node_manager_seat` to decide who someone's manager is.
+- plan::managers: owns every write of manager pointers (reparent on retirement, node-manager move, first-seat assignment, the `graph.toml` blob write) and the node-manager retirement guard in `make_plan`;
+    new pointer-rewriting rules go here;
+    kinds and retirement routes never rewrite pointers or check for node-manager retirement themselves.
+- cli::daemon_error: owns the mapping from `ClientError` to stderr text and exit codes 2, 5 and 6;
+    a new daemon error outcome is added here;
+    commands never match `ClientError::Unavailable` themselves or fall back to direct reads.
+
 ## Post-Implementation Notes
 
 > *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
