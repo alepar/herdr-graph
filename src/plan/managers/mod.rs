@@ -1,0 +1,286 @@
+//! Manager-pointer writes and the node-manager policy for plans (spec §4.7–§4.11; Key abstractions plan::managers).
+//!
+//! Owns every write of manager pointers — reparenting on retirement (`reparent`), the node-manager move
+//! (`node_manager`), manager edits (`edit`), first-seat assignment (`first_seat`) and the graph.toml blob write —
+//! and the two plan-admission guards `make_plan` runs through `admit`: the node-manager retirement guard
+//! (`retire`) and the manager-chain cycle guard (`cycle_guard`). New pointer-rewriting rules go here.
+//! Kinds and retirement routes never rewrite pointers or check for node-manager retirement themselves.
+//! Must not: decide who someone's manager is (model::manager does), parse CLI words beyond its own kinds,
+//! or touch runtime or observation (observe::classify does).
+//! Errors: refusals, cycles and "unchanged" are `PlanError::Invalid`; store failures, integrity included,
+//! pass through as `PlanError::Store`.
+pub mod cycle_guard;
+pub mod edit;
+pub mod first_seat;
+pub mod node_manager;
+pub mod reparent;
+pub mod retire;
+
+use super::kind::{KindRegistry, PlanError};
+use super::types::PlanEffect;
+use crate::model::change::{ReliedOn, Version};
+use crate::model::common::BlobHash;
+use crate::model::graph::GraphRecord;
+use crate::model::seat::SeatRecord;
+use crate::model::teamspace::TeamspaceRecord;
+use crate::model::{GraphId, SeatId, TeamspaceId};
+use crate::ports::store::{StoreError, unresolved};
+use crate::store::record::to_toml_bytes;
+use crate::store::tree::TreeRead;
+use crate::store::{Overlay, layout};
+use crate::writer::MutationError;
+use serde_json::json;
+
+/// The one spelling of the node-manager command in messages (warning, refusals).
+pub const NODE_MANAGER_SET_USAGE: &str = "herdr-graph plan node-manager set <seat>";
+/// Plan effect kinds for pointer writes.
+pub const SEAT_MANAGER: &str = "seat.manager";
+pub const TEAMSPACE_DEFAULT_MANAGER: &str = "teamspace.default_manager";
+pub const GRAPH_NODE_MANAGER: &str = "graph.node_manager_seat";
+
+/// Registers ManagerEdit (`edit`) and NodeManagerSet (`node_manager`); called from `register_core_kinds`.
+pub fn register_kinds(reg: &mut KindRegistry) {
+    edit::register(reg);
+    node_manager::register(reg);
+}
+
+/// Plan admission, run once by `make_plan` over every plan's effects (the single admission point; it also covers
+/// the replan in plan/apply.rs and undo).
+pub fn admit(tree: &dyn TreeRead, effects: &[PlanEffect]) -> Result<(), PlanError> {
+    retire::refuse_node_manager_retirement(tree, effects)?;
+    cycle_guard::refuse_cyclic_chains(tree, effects)
+}
+
+/// Git blob sha of graph.toml at `tree` (same hashing as plan/instructions.rs); graph.toml has no `rev`.
+pub fn graph_blob(tree: &dyn TreeRead) -> Result<BlobHash, StoreError> {
+    let path = layout::graph_toml();
+    let bytes = tree.read_file(&path)?.ok_or_else(|| StoreError::Corrupt {
+        path: path.as_str().into(),
+        reason: "missing".into(),
+    })?;
+    git2::Oid::hash_object(git2::ObjectType::Blob, &bytes)
+        .map(|o| BlobHash(o.to_string()))
+        .map_err(|e| StoreError::Git(e.to_string()))
+}
+
+/// `ReliedOn { object: layout::graph_id(tree)?.to_any(), version: Version::Blob(graph_blob(tree)?) }`.
+pub fn graph_relied_on(tree: &dyn TreeRead) -> Result<ReliedOn, StoreError> {
+    Ok(ReliedOn {
+        object: layout::graph_id(tree)?.to_any(),
+        version: Version::Blob(graph_blob(tree)?),
+    })
+}
+
+/// Serialize `g` and `put_file(layout::graph_toml(), ..)` on the writer overlay.
+pub fn write_graph(tree: &mut Overlay<'_>, g: &GraphRecord) -> Result<(), StoreError> {
+    let path = layout::graph_toml();
+    let bytes = to_toml_bytes(g).map_err(|e| match e {
+        StoreError::Corrupt { reason, .. } => StoreError::Corrupt {
+            path: path.as_str().into(),
+            reason,
+        },
+        other => other,
+    })?;
+    tree.put_file(path, bytes);
+    Ok(())
+}
+
+fn pointer_effect(
+    kind: &str,
+    object: crate::model::AnyId,
+    from: Option<&SeatId>,
+    to: Option<&SeatId>,
+) -> PlanEffect {
+    PlanEffect::new(kind, object, json!({ "from": from, "to": to }))
+}
+
+/// `seat.manager <seat> from=<old|null> to=<new|null>`.
+pub fn seat_manager_effect(
+    seat: &SeatId,
+    from: Option<&SeatId>,
+    to: Option<&SeatId>,
+) -> PlanEffect {
+    pointer_effect(SEAT_MANAGER, seat.to_any(), from, to)
+}
+
+/// `teamspace.default_manager <ts> from=.. to=..`.
+pub fn default_manager_effect(
+    ts: &TeamspaceId,
+    from: Option<&SeatId>,
+    to: Option<&SeatId>,
+) -> PlanEffect {
+    pointer_effect(TEAMSPACE_DEFAULT_MANAGER, ts.to_any(), from, to)
+}
+
+/// `graph.node_manager_seat <gr_> from=.. to=.. graph_sha=<blob at plan time>`: graph_sha makes a recompute
+/// against a changed graph.toml differ, so the apply is rejected stale_plan (org plans admit with empty relied_on).
+pub fn node_manager_effect(
+    graph: &GraphId,
+    from: Option<&SeatId>,
+    to: Option<&SeatId>,
+    graph_sha: &BlobHash,
+) -> PlanEffect {
+    PlanEffect::new(
+        GRAPH_NODE_MANAGER,
+        graph.to_any(),
+        json!({ "from": from, "to": to, "graph_sha": graph_sha.0 }),
+    )
+}
+
+/// Record writes on the overlay; each returns the previous value.
+pub fn set_seat_manager(
+    tree: &mut Overlay<'_>,
+    seat: &SeatId,
+    to: Option<SeatId>,
+) -> Result<Option<SeatId>, StoreError> {
+    let loc = tree
+        .locate(&seat.to_any())?
+        .ok_or_else(|| unresolved(seat, "seat", seat))?;
+    let mut rec: SeatRecord = tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| unresolved(seat, "seat", seat))?;
+    let old = std::mem::replace(&mut rec.manager, to);
+    tree.put_record(loc.record_path, &mut rec)?;
+    Ok(old)
+}
+
+pub fn set_default_manager(
+    tree: &mut Overlay<'_>,
+    ts: &TeamspaceId,
+    to: Option<SeatId>,
+) -> Result<Option<SeatId>, StoreError> {
+    let loc = tree
+        .locate(&ts.to_any())?
+        .ok_or_else(|| unresolved(ts, "teamspace", ts))?;
+    let mut rec: TeamspaceRecord = tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| unresolved(ts, "teamspace", ts))?;
+    let old = std::mem::replace(&mut rec.default_manager, to);
+    tree.put_record(loc.record_path, &mut rec)?;
+    Ok(old)
+}
+
+pub fn set_node_manager(
+    tree: &mut Overlay<'_>,
+    to: Option<SeatId>,
+) -> Result<Option<SeatId>, StoreError> {
+    let mut g = layout::read_graph(tree)?;
+    let old = std::mem::replace(&mut g.node_manager_seat, to);
+    write_graph(tree, &g)?;
+    Ok(old)
+}
+
+/// Apply the listed pointer effects of a confirmed plan (the three kinds above), in plan order. For kinds whose
+/// pointer changes are exactly their listed effects (ManagerEdit, NodeManagerSet).
+pub fn apply_pointer_effects(
+    tree: &mut Overlay<'_>,
+    effects: &[PlanEffect],
+) -> Result<(), MutationError> {
+    for e in effects {
+        if !matches!(
+            e.kind.as_str(),
+            SEAT_MANAGER | TEAMSPACE_DEFAULT_MANAGER | GRAPH_NODE_MANAGER
+        ) {
+            continue;
+        }
+        let to: Option<SeatId> = e
+            .detail
+            .get("to")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|err| {
+                MutationError::Bug(format!("{} {}: malformed to: {err}", e.kind, e.object))
+            })?
+            .flatten();
+        let bug =
+            |err: crate::model::ids::IdError| MutationError::Bug(format!("{}: {err}", e.kind));
+        match e.kind.as_str() {
+            SEAT_MANAGER => {
+                set_seat_manager(tree, &SeatId::try_from(e.object.clone()).map_err(bug)?, to)?;
+            }
+            TEAMSPACE_DEFAULT_MANAGER => {
+                set_default_manager(
+                    tree,
+                    &TeamspaceId::try_from(e.object.clone()).map_err(bug)?,
+                    to,
+                )?;
+            }
+            _ => {
+                set_node_manager(tree, to)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use crate::model::SeatId;
+    use crate::model::change::{ChangeRequest, RequestKind, Requester};
+    use crate::writer::{Applied, Mutation, MutationCx, MutationError};
+    use serde_json::json;
+
+    /// Registry key of `SetNodeManager`; fixtures that need it add one `reg.register(KEY, Arc::new(SetNodeManager))`.
+    pub const SET_NODE_MANAGER_KEY: &str = "bookkeeping.test_node_manager";
+
+    /// Test-only mutation: args `{"sub": "test_node_manager", "seat": "<st>"|null}` → graph.toml node_manager_seat.
+    pub struct SetNodeManager;
+    impl Mutation for SetNodeManager {
+        fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+            let seat: Option<SeatId> = match cx.request.args["seat"].as_str() {
+                Some(s) => Some(s.parse().map_err(|e| {
+                    MutationError::Bug(format!("test_node_manager seat {s:?}: {e}"))
+                })?),
+                None => None,
+            };
+            super::set_node_manager(&mut cx.tree, seat)?;
+            Ok(Applied {
+                summary: "set node manager".into(),
+                action: None,
+            })
+        }
+    }
+
+    /// The ChangeRequest that sets (or clears with None) the node manager through `SetNodeManager`.
+    pub fn request(seat: Option<&SeatId>) -> ChangeRequest {
+        ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_node_manager", "seat": seat }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        }
+    }
+
+    /// Commit (git2, before any writer opens `root`, same pattern as `install_examples`) a graph.toml whose
+    /// node_manager_seat names a seat that does not exist. First-seat assignment never fires (the field is set) and
+    /// `live_node_manager` is None, so fixtures for unrelated behaviour keep their meaning.
+    pub fn opt_out(root: &std::path::Path) {
+        let path = root.join("graph.toml");
+        let mut g: crate::model::graph::GraphRecord =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        g.node_manager_seat = Some(SeatId::new());
+        std::fs::write(&path, toml::to_string(&g).unwrap()).unwrap();
+        let repo = git2::Repository::open(root).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("graph.toml")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = crate::store::git::graph_signature().unwrap();
+        repo.commit(
+            Some("refs/heads/main"),
+            &sig,
+            &sig,
+            "test: node manager opt-out",
+            &tree,
+            &[&parent],
+        )
+        .unwrap();
+    }
+}

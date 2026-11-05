@@ -1290,3 +1290,16 @@ fn recovery_reapplies_missing_supersede() {
         "idempotent"
     );
 }
+
+#[test]
+fn integrity_store_error_is_data_not_infra() {
+    use crate::ports::store::unresolved;
+    assert!(matches!(
+        Fail::from(unresolved("st_a", "manager", "st_b")),
+        Fail::Data(_)
+    ));
+    assert!(matches!(
+        Fail::from(StoreError::Git("boom".into())),
+        Fail::Infra(_)
+    ));
+}

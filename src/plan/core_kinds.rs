@@ -47,6 +47,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(CloneAdd));
     reg.register(Arc::new(CloneRetire));
     reg.register(Arc::new(crate::plan::instructions::InstructionsKind));
+    crate::plan::managers::register_kinds(reg);
 }
 
 // ---------------------------------------------------------------------------------------------
