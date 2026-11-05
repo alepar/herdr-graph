@@ -840,6 +840,77 @@ async fn node_manager_moved_into_closed_tab_is_reopened() {
 }
 
 #[tokio::test]
+async fn node_manager_moved_to_other_workspace_survives_home_workspace_close() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(&fx, "teamspace create beta");
+    commit(
+        &fx,
+        "seat create bob --teamspace beta --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let alpha_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let beta_ws = ts_rec(&fx, "beta")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    assert_ne!(alpha_ws, beta_ws);
+    let fc = only_clone(&fx, "foreman");
+    let bob_clone = only_clone(&fx, "bob");
+    let (bob_tab, bob_pane) = (tab_of_seat(&fx, "bob"), pane_of(&fx, &bob_clone));
+    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &bob_tab);
+    settle(&fx).await;
+    assert!(seat(&fx, "foreman").moved_out);
+    let moved_pane = pane_of(&fx, &fc);
+
+    fx.herdr.user_close_workspace(&alpha_ws);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+
+    let all = calls(&fx);
+    assert_eq!(seat(&fx, "bob").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(ts_rec(&fx, "beta").lifecycle, Lifecycle::Active, "{all:?}");
+    let bob_after = clone_by_id(&fx, &bob_clone.id);
+    assert_eq!(bob_after.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(&fx, &bob_after), bob_pane, "{all:?}");
+    for c in &all {
+        let touches_beta = match c {
+            FakeCall::RenameWorkspace(w, _)
+            | FakeCall::ReportWorkspaceMetadata(w, ..)
+            | FakeCall::CloseWorkspace(w) => *w == beta_ws,
+            FakeCall::CloseTab(t) => *t == bob_tab,
+            FakeCall::CreateTab(ct) => ct.workspace == beta_ws,
+            _ => false,
+        };
+        assert!(!touches_beta, "{c:?} touches beta: {all:?}");
+    }
+    let foreman = seat(&fx, "foreman");
+    assert_eq!(foreman.lifecycle, Lifecycle::Active, "{all:?}");
+    assert!(foreman.moved_out, "{all:?}");
+    let fc_after = clone_by_id(&fx, &fc.id);
+    assert_eq!(fc_after.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(&fx, &fc_after), moved_pane, "{all:?}");
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Retired, "{all:?}");
+    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active, "{all:?}");
+}
+
+#[tokio::test]
 async fn cascade_rechecks_node_manager_at_apply() {
     let fx = fx();
     activate(&fx, "shell");

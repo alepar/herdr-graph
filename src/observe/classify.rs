@@ -191,7 +191,21 @@ fn live_clones<'a>(
         .filter(move |c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
 }
 
-fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool) -> Cascade {
+/// A live clone whose pane was in the baseline and is still matched now: it left the closed container alive.
+fn pane_survives(cx: &ClassifyCx<'_>, clone: &CloneId) -> bool {
+    cx.baseline.is_some_and(|mb| {
+        mb.clone_pane.contains_key(clone) && cx.matches.clone_pane.contains_key(clone)
+    })
+}
+
+/// The seat (when `root`) and its live clones, minus the clones `keep` says outlived the closure.
+fn seat_group(
+    d: &DesiredRuntime,
+    seat: &SeatId,
+    rule: CascadeRule,
+    root: bool,
+    keep: impl Fn(&CloneId) -> bool,
+) -> Cascade {
     let mut retire = Vec::new();
     let mut ends = Vec::new();
     if root
@@ -201,7 +215,7 @@ fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool) 
     {
         retire.push(seat.to_any());
     }
-    for c in live_clones(d, seat) {
+    for c in live_clones(d, seat).filter(|c| !keep(&c.id)) {
         retire.push(c.id.to_any());
         ends.extend(ended_of(c, SessionEndReason::PaneClosed));
     }
@@ -280,7 +294,10 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             .values()
             .filter(|s| &s.teamspace == ts && s.lifecycle != Lifecycle::Retired)
         {
-            let g = seat_group(d, &seat.id, CascadeRule::Workspace, true);
+            // A pane that left the workspace alive is not closed: its clone is not listed (and its session not ended).
+            let g = seat_group(d, &seat.id, CascadeRule::Workspace, true, |c| {
+                pane_survives(cx, c)
+            });
             retire.extend(g.retire);
             group_ends.extend(g.ends);
         }
@@ -299,20 +316,15 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             continue;
         }
         // A pane that left the tab alive is a move, not a closure: the seat stays, flagged moved_out.
-        let survivors = match cx.baseline {
-            Some(mb) => live_clones(d, seat)
-                .filter(|c| {
-                    mb.clone_pane.contains_key(&c.id) && cx.matches.clone_pane.contains_key(&c.id)
-                })
-                .count(),
-            None => 0,
-        };
+        let survivors = live_clones(d, seat)
+            .filter(|c| pane_survives(cx, &c.id))
+            .count();
         if survivors > 0 {
             out.moved_out.insert(seat.clone());
             continue;
         }
         absorbed_seats.insert(seat.clone());
-        let g = seat_group(d, seat, CascadeRule::Tab, true);
+        let g = seat_group(d, seat, CascadeRule::Tab, true, |_| false);
         if !g.retire.is_empty() {
             out.cascades.push(g);
         }
