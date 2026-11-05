@@ -1,11 +1,10 @@
 //! `undo` — owned by hg-zmi.10 (spec §6, §10).
 //!
-//! `undo --list` / `undo --json` print the recent undoable actions (a read: with no daemon running they are
-//! computed from the instance on disk). `undo` on a terminal lists them, asks for a number, shows the concrete
+//! `undo --list` / `undo --json` print the recent undoable actions (a read: with no daemon running they exit 5
+//! through `cli::daemon_error`). `undo` on a terminal lists them, asks for a number, shows the concrete
 //! preview and asks `[y/n]`; there is no bypass. Without a terminal and without flags it prints the list and a hint.
-use crate::config::{Env, InstancePaths, plugin_config_dir_via_herdr};
-use crate::daemon::client::{CallMode, ClientError, call_daemon};
-use crate::store::GitStore;
+use crate::cli::daemon_error;
+use crate::daemon::client::{CallMode, call_daemon};
 use crate::undo::candidates::DEFAULT_LIMIT;
 use clap::Subcommand;
 use serde_json::{Value, json};
@@ -30,29 +29,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn remote(e: ClientError) -> anyhow::Error {
-    anyhow::anyhow!("{e}")
-}
-
-/// `{candidates, rendered}`: from the daemon when one runs, else straight from the committed graph.
-fn candidates() -> anyhow::Result<Value> {
-    match call_daemon(
+/// `{candidates, rendered}` from the daemon; a failure is reported through `cli::daemon_error`.
+fn candidates() -> Result<Value, ExitCode> {
+    call_daemon(
         "undo.list",
         json!({ "limit": DEFAULT_LIMIT }),
         CallMode::NoEnsure,
-    ) {
-        Ok(v) => Ok(v),
-        Err(ClientError::Unavailable(_)) => {
-            let env = Env::from_process();
-            let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
-                .ok_or(ClientError::NoInstance)?;
-            let paths = InstancePaths::new(&root);
-            let store = GitStore::open(&paths.root)?;
-            crate::undo::commands::list_json(&store, DEFAULT_LIMIT)
-                .map_err(|e| anyhow::anyhow!("{}", e.message))
-        }
-        Err(e) => Err(remote(e)),
-    }
+    )
+    .map_err(daemon_error::report)
 }
 
 const UNDO_RELAY_HINT: &str = "to undo an action, run `herdr-graph undo` in a terminal, or `herdr-graph plan undo <act>` and relay the plan to the user";
@@ -66,7 +50,10 @@ fn relay_hint(
 }
 
 fn undo(list: bool, json: bool) -> anyhow::Result<ExitCode> {
-    let reply = candidates()?;
+    let reply = match candidates() {
+        Ok(v) => v,
+        Err(code) => return Ok(code),
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&reply["candidates"])?);
         return Ok(ExitCode::SUCCESS);
@@ -110,12 +97,14 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     };
     let act = pick["act"].as_str().unwrap_or_default().to_owned();
-    let plan = call_daemon(
+    let plan = match call_daemon(
         "plan.create",
         json!({ "words": ["undo", act] }),
         CallMode::Ensure,
-    )
-    .map_err(remote)?;
+    ) {
+        Ok(v) => v,
+        Err(e) => return Ok(daemon_error::report(e)),
+    };
     print!("{}", plan["rendered"].as_str().unwrap_or_default());
     if plan["plan"]["repair_required"].is_string() {
         println!("not applied");
@@ -130,20 +119,24 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {
         println!("not applied");
         return Ok(ExitCode::SUCCESS);
     }
-    let admitted = call_daemon(
+    let admitted = match call_daemon(
         "undo.apply",
         json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "tty" }),
         CallMode::Ensure,
-    )
-    .map_err(remote)?;
+    ) {
+        Ok(v) => v,
+        Err(e) => return Ok(daemon_error::report(e)),
+    };
     // Printed before waiting: the undo may close the very pane this runs in.
     let op = admitted["op"].as_str().unwrap_or("<op>").to_owned();
     println!("op {op} admitted");
     std::io::stdout().flush()?;
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        let reply =
-            call_daemon("ops.get", json!({ "op": op }), CallMode::NoEnsure).map_err(remote)?;
+        let reply = match call_daemon("ops.get", json!({ "op": op }), CallMode::NoEnsure) {
+            Ok(v) => v,
+            Err(e) => return Ok(daemon_error::report(e)),
+        };
         let state = reply["op"]["state"].as_str().unwrap_or("unknown");
         if finished(state) || Instant::now() >= deadline {
             println!("{op} {state}");
