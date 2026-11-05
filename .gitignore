@@ -23,3 +23,6 @@
 research/**/*.json
 research/**/*.json.gz
 research/**/*.jsonl
+
+# superpowers execution workspaces
+.superpowers/
