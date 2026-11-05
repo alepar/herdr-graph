@@ -57,6 +57,8 @@ impl PaneSeatMap for ThreadsSeatMap {
             target,
             host: self.host.clone(),
             operation: OperationId::new(format!("graph-resolve-{}", uuid::Uuid::new_v4())),
+            locator_hint: None,
+            tmux_hint: None,
         };
         let budget = call_budget(&*self.clock, self.timeout);
         match self
