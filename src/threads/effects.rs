@@ -45,6 +45,10 @@ pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
 pub const SUCCEED_KIND: &str = "threads.succeed_seat";
 /// `EffectKind::Custom` name of the acknowledgement of a Restore whose seat needs no succession.
 pub const ACK_RESTORE_KIND: &str = "threads.ack_restore";
+/// `EffectKind::Custom` name of the deletion of a pre-existing `Finalize` tombstone. Pre-D2 drain: before D2
+/// (hg-66u.31) every seat is final and purge deletes a seated clone outright, so a tombstone written by an
+/// earlier build is dropped on load. hg-66u.31 replaces this with the finalize want.
+pub const DROP_TOMBSTONE_KIND: &str = "threads.drop_tombstone";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -269,6 +273,8 @@ pub(crate) enum Payload {
     AckRestore {
         epoch: OpId,
     },
+    /// Delete the pre-existing `Finalize` tombstone record (pre-D2 drain, see `DROP_TOMBSTONE_KIND`).
+    DropTombstone,
 }
 
 struct Want {
@@ -496,6 +502,15 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 Payload::AckRestore { epoch },
             )),
             None => {}
+        }
+        if matches!(c.seat_intent, Some(SeatIntent::Finalize { .. })) {
+            out.push(want(
+                g,
+                EffectKind::Custom(DROP_TOMBSTONE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::DropTombstone,
+            ));
         }
         if let Some(epoch) = reattached_restore(g, c) {
             out.push(want(
@@ -1335,6 +1350,28 @@ impl ThreadsExecutor {
         }
     }
 
+    /// Delete a pre-existing `Finalize` tombstone with no threads command (pre-D2 drain).
+    fn drop_tombstone(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if !matches!(clone.seat_intent, Some(SeatIntent::Finalize { .. })) || !clone.is_tombstone()
+        {
+            return ExecOutcome::Obsolete;
+        }
+        match admit_threads_seat(cx.writer, &clone.id, &SeatTransition::TombstoneDone) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("tombstone delete: {err}")),
+        }
+    }
+
     /// Resolve the reopened pane to a fresh seat and succeed the final-retired one with it. The operation key
     /// is stable per (clone, epoch), so a retry replays the same resolution; a refusal defers and is never
     /// retried as a fresh allocation.
@@ -1797,6 +1834,7 @@ impl EffectExecutor for ThreadsExecutor {
                 CLEAR_RESTORE_KIND,
                 SUCCEED_KIND,
                 ACK_RESTORE_KIND,
+                DROP_TOMBSTONE_KIND,
             ]
             .contains(&k.as_str()),
             _ => false,
@@ -1893,6 +1931,7 @@ impl ThreadsExecutor {
             (EffectKind::Custom(_), Some(Payload::AckRestore { epoch })) => {
                 self.ack_restore(cx, e, &epoch)
             }
+            (EffectKind::Custom(_), Some(Payload::DropTombstone)) => self.drop_tombstone(cx, e),
             (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
                 self.succeed_seat(cx, e, &pane, &from, &epoch).await
             }
