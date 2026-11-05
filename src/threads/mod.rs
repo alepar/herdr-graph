@@ -6,6 +6,7 @@
 //! * `mapping` — clone pane -> threads seat;
 //! * this module — registration, bookkeeping mutations, `who` and the pending-invitations query.
 pub mod adapter;
+pub mod assignment;
 pub mod discovery;
 pub mod effects;
 pub mod fake;
@@ -176,10 +177,14 @@ impl Mutation for SetInvitation {
     }
 }
 
-/// Registers `bookkeeping.channel` and `bookkeeping.invitation`.
+/// Registers `bookkeeping.channel`, `bookkeeping.invitation` and `bookkeeping.threads_seat`.
 pub fn register_mutations(reg: &mut MutationRegistry) {
     reg.register(CHANNEL_KEY, Arc::new(SetChannel));
     reg.register(INVITATION_KEY, Arc::new(SetInvitation));
+    reg.register(
+        assignment::THREADS_SEAT_KEY,
+        Arc::new(assignment::ThreadsSeatMutation),
+    );
 }
 
 // ---------------------------------------------------------------------------------------------

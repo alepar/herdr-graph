@@ -491,6 +491,7 @@ fn displace(
         ));
     }
     rec.lifecycle = CloneLifecycle::Retired;
+    crate::threads::assignment::clear_restore_on_retire(&mut rec);
     rec.retired = Some(Retirement {
         op: cx.op.clone(),
         action: Some(act.clone()),

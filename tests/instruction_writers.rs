@@ -127,6 +127,8 @@ fn instruction_source_writers_are_inventoried() {
         "src/plan/instructions.rs",
         // template kinds write under templates/ only.
         "src/templates/kinds.rs",
+        // TombstoneDone deletes only a purge-tombstone clone record (clone.toml), never an instruction path.
+        "src/threads/assignment.rs",
         // threads reconnect writes mutations/threads-reconnect/ and the namespace marker.
         "src/threads/reconnect.rs",
         // request_complete writes the derived summaries/<tr>-<a>-<b>.md.
