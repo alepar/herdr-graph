@@ -7,6 +7,8 @@
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
 use crate::model::clone::CloneRecord;
+use crate::model::common::CloneLifecycle;
+use crate::model::manager::Pointers;
 use crate::model::seat::SeatRecord;
 use crate::model::{CloneId, CommitId, PlanId, SeatId};
 use crate::plan::commands::{PlanDeps, create_plan};
@@ -20,6 +22,7 @@ use crate::store::tree::{CommitView, TreeRead};
 use crate::threads::pending_invitations;
 use crate::writer::worktree::{read_dirty, view_rev};
 use resolve::{Proposal, Resolution, proposal_words, resolve_caller};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -223,6 +226,60 @@ pub(crate) fn resolve_error(e: StoreError, head: &CommitId, suffix: Option<&str>
     CommandError::integrity(m)
 }
 
+/// A seat named in the seat.resolve reply (manager, node manager, reports).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatRef {
+    pub seat: SeatId,
+    pub name: String,
+    /// The herdr-threads seat of the seat's first Active clone, from the committed binding index
+    /// (`invitations[].link.seat`, the index `who` searches); None when unresolvable.
+    #[serde(default)]
+    pub threads_seat: Option<String>,
+}
+
+/// The [`SeatRef`] for `seat`. Integrity when `seat` is not in the pointer set.
+pub(crate) fn seat_ref(
+    tree: &dyn TreeRead,
+    p: &Pointers,
+    seat: &SeatId,
+) -> Result<SeatRef, StoreError> {
+    let name = p
+        .name(seat)
+        .ok_or_else(|| unresolved(seat, "seat", seat))?
+        .to_owned();
+    let threads_seat = layout::all_clones(tree)?
+        .into_iter()
+        .map(|(_, c)| c)
+        .filter(|c| &c.seat == seat && c.lifecycle == CloneLifecycle::Active)
+        .find_map(|c| {
+            c.invitations
+                .iter()
+                .find_map(|i| i.link.as_ref().map(|l| l.seat.clone()))
+        });
+    Ok(SeatRef {
+        seat: seat.clone(),
+        name,
+        threads_seat,
+    })
+}
+
+/// The integrity suffix (spec §4.3), read from graph.toml independently of the broken object; any read failure
+/// gives the user form.
+pub(crate) fn node_manager_suffix(tree: &dyn TreeRead, caller_seat: Option<&SeatId>) -> String {
+    const USER: &str = "no node manager is assigned; report it to the user";
+    let Ok(p) = Pointers::load(tree) else {
+        return USER.to_owned();
+    };
+    let Some(nm) = p.live_node_manager() else {
+        return USER.to_owned();
+    };
+    if caller_seat == Some(&nm) {
+        return "you are the node manager seat; report it to the user".to_owned();
+    }
+    let name = p.name(&nm).unwrap_or_default();
+    format!("report it to the node manager seat {name} ({nm})")
+}
+
 /// `seat.resolve`: resolution, proposals (stored, never applied), paths, pending ops and invitations.
 pub fn seat_reply(
     d: &BootstrapDeps,
@@ -257,6 +314,8 @@ pub fn seat_reply(
         }
     }
 
+    let mut manager = Value::Null;
+    let mut node_manager = Value::Null;
     let global_rules =
         markdown_in(&view, root, &RepoPath::new("rules").map_err(internal)?).map_err(internal)?;
     let (paths, pending_ops, invitations, reload_required, beads_query, beads_labels, instructions) =
@@ -268,8 +327,21 @@ pub fn seat_reply(
                 native_session,
                 ..
             } => {
-                let bp = bound_paths(&view, root, seat, clone)
-                    .map_err(|e| resolve_error(e, &head, None))?;
+                // The node-manager suffix is computed only when an integrity error needs it.
+                let fail = |e: StoreError| {
+                    let suffix = matches!(e, StoreError::Integrity { .. })
+                        .then(|| node_manager_suffix(&view, Some(seat)));
+                    resolve_error(e, &head, suffix.as_deref())
+                };
+                let bp = bound_paths(&view, root, seat, clone).map_err(fail)?;
+                let p = Pointers::load(&view).map_err(fail)?;
+                let chain = p.manager_chain(seat).map_err(fail)?;
+                if let Some(m) = chain.first() {
+                    manager = json!(seat_ref(&view, &p, m).map_err(fail)?);
+                }
+                if let Some(n) = p.live_node_manager() {
+                    node_manager = json!(seat_ref(&view, &p, &n).map_err(fail)?);
+                }
                 let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
                 let mut labels = json!({
                     "ts": format!("hg-ts:{teamspace}"),
@@ -287,8 +359,8 @@ pub fn seat_reply(
                     json!(format!("bd list --label hg-seat:{seat}")),
                     labels,
                     {
-                        let r = instructions::render_instructions(&view, &head, seat)
-                            .map_err(|e| resolve_error(e, &head, None))?;
+                        let r =
+                            instructions::render_instructions(&view, &head, seat).map_err(fail)?;
                         json!({
                             "rev": r.rev,
                             "parts": r.parts.iter()
@@ -317,6 +389,8 @@ pub fn seat_reply(
         "view_rev": view_rev(root),
         "worktree_dirty": dirty,
         "instance": root.display().to_string(),
+        "manager": manager,
+        "node_manager": node_manager,
         "instructions": instructions,
         "paths": paths,
         "pending_ops": pending_ops,
@@ -368,6 +442,15 @@ pub fn render_seat(reply: &Value) -> String {
             "{other}: this pane is not identified as a graph clone\n"
         )),
         None => out.push_str("unknown resolution\n"),
+    }
+    for (label, v) in [
+        ("manager", &reply["manager"]),
+        ("node manager", &reply["node_manager"]),
+    ] {
+        match v["name"].as_str() {
+            Some(name) => out.push_str(&format!("{label}: {name} ({})\n", text(&v["seat"]))),
+            None => out.push_str(&format!("{label}: none assigned\n")),
+        }
     }
     if let Some(cands) = r["candidates"].as_array().filter(|c| !c.is_empty()) {
         out.push_str("candidates:\n");
