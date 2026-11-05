@@ -110,6 +110,17 @@ impl Clone for StoreError {
             },
             Self::Git(s) => Self::Git(s.clone()),
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
+            Self::Integrity {
+                holder,
+                field,
+                target,
+                reason,
+            } => Self::Integrity {
+                holder: holder.clone(),
+                field: field.clone(),
+                target: target.clone(),
+                reason: reason.clone(),
+            },
         }
     }
 }

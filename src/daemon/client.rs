@@ -171,3 +171,38 @@ pub fn instance_or_none() -> Option<PathBuf> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integrity_reply_is_remote_integrity() {
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let server = std::thread::spawn(move || {
+            let req: IpcRequest = read_frame(&mut b).unwrap();
+            let resp = IpcResponse {
+                version: IPC_VERSION,
+                request_id: req.request_id,
+                result: IpcResult::Error {
+                    code: IpcErrorCode::Integrity,
+                    message: "st_a: template_ref tp_b not found at the committed revision".into(),
+                },
+            };
+            write_frame(&mut b, &resp).unwrap();
+        });
+        a.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut client = Client { stream: a };
+        let err = client
+            .call("seat.resolve", serde_json::json!({}))
+            .unwrap_err();
+        server.join().unwrap();
+        match err {
+            ClientError::Remote { code, message } => {
+                assert_eq!(code, IpcErrorCode::Integrity);
+                assert!(message.contains("tp_b"), "{message}");
+            }
+            other => panic!("expected Remote, got {other:?}"),
+        }
+    }
+}
