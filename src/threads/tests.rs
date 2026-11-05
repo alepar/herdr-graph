@@ -2717,6 +2717,30 @@ async fn pane_close_then_undo_succeeds_onto_the_reopened_pane_seat() {
 }
 
 #[tokio::test]
+async fn stale_fact_from_before_the_restore_is_not_acted_on() {
+    // A clone retired through the graph keeps the fact it had; undo writes the Restore intent over it. The
+    // old Resolved fact must neither acknowledge the Restore nor start a launch into the final-retired seat.
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": "p-old" }),
+    );
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    assert_eq!(clone_rec(&fx, &clone.id).seat_fact, None);
+    steps(&fx, 1).await;
+    assert!(ack_rows(&fx).is_empty() && succeed_rows(&fx).is_empty());
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, false, false)
+    );
+}
+
+#[tokio::test]
 async fn resurrection_succeeds_the_seat() {
     // A resurrection commit writes the same Restore intent as an undo (`do_resurrect_seat`); the succession
     // want reads only the intent and the committed seat fact, so a resurrected clone follows the same path.
