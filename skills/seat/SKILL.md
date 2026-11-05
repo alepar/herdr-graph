@@ -38,6 +38,10 @@ Find out who you are in the graph, then read what applies to you.
    with your environment, conflicts with peer agents, and anything affecting your own ability to operate
    (usage limits, trust prompts). Go to your `manager` first; when it is null, go to the `node_manager`;
    when both are null, tell the user.
+   If `reports` is non-empty, you are the manager of those seats: listen for, detect and unblock their
+   lifecycle issues — their environment, conflicts with peer agents, and their own ability to operate
+   (usage limits, trust prompts). If `is_node_manager` is true, you are the node manager: follow
+   `node_manager_duties` as part of your instructions.
 
 4. Handle `pending_invitations`. Each entry has an exact `accept_command`. Run the commands for
    `constraint: required` invitations now, one by one, exactly as printed.
