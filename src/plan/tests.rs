@@ -100,6 +100,7 @@ fn fx() -> Fx {
         super::managers::testing::SET_NODE_MANAGER_KEY,
         Arc::new(super::managers::testing::SetNodeManager),
     );
+    reg.register(TEST_POINTERS_KEY, Arc::new(TestPointers));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -3455,6 +3456,33 @@ fn seat_override_clear_sections_cap_warning() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// node-manager set (hg-k4l.6)
+// ---------------------------------------------------------------------------------------------
+
+const TEST_POINTERS_KEY: &str = "bookkeeping.test_pointers";
+
+/// Test-only mutation: args `{"sub": "test_pointers", "seat": "<st>", "manager": "<st>"|null}` or
+/// `{"sub": "test_pointers", "teamspace": "<ts>", "default_manager": "<st>"}`.
+struct TestPointers;
+impl crate::writer::Mutation for TestPointers {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<crate::writer::Applied, MutationError> {
+        use super::managers::{set_default_manager, set_seat_manager};
+        let a = cx.request.args.clone();
+        let id = |k: &str| -> Option<SeatId> { a[k].as_str().map(|s| s.parse().unwrap()) };
+        if let Some(seat) = id("seat") {
+            set_seat_manager(&mut cx.tree, &seat, id("manager"))?;
+        } else {
+            let ts = a["teamspace"].as_str().unwrap().parse().unwrap();
+            set_default_manager(&mut cx.tree, &ts, id("default_manager"))?;
+        }
+        Ok(crate::writer::Applied {
+            summary: "test pointers".into(),
+            action: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // manager set|clear
 // ---------------------------------------------------------------------------------------------
 
@@ -3852,6 +3880,24 @@ fn set_nm(fx: &Fx, name: &str) {
     set_node_manager(fx, Some(&seat_id(fx, name)));
 }
 
+fn set_manager(fx: &Fx, seat: &SeatId, manager: &SeatId) {
+    commit_request(
+        fx,
+        ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_pointers", "seat": seat, "manager": manager }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        },
+    );
+}
+
+fn node_manager(fx: &Fx) -> Option<SeatId> {
+    layout::read_graph(&view(fx)).unwrap().node_manager_seat
+}
+
 fn manager_of(fx: &Fx, name: &str) -> Option<SeatId> {
     seat(fx, name, None).1.manager
 }
@@ -3940,4 +3986,222 @@ fn reparent_skips_seats_retired_in_same_mutation() {
         Some(Some(nm)),
         "{rewrites:?}"
     );
+}
+
+/// Active teamspace `alpha` with one active seat per name, node manager unset.
+fn active_seats(fx: &Fx, names: &[&str]) {
+    commit(fx, "teamspace create alpha --active");
+    for n in names {
+        commit(
+            fx,
+            &format!("seat create {n} --teamspace alpha --active --harness shell"),
+        );
+    }
+    set_node_manager(fx, None);
+}
+
+fn effect_kinds_for(sp: &StoredPlan, kind: &str) -> Vec<AnyId> {
+    sp.plan
+        .effects
+        .iter()
+        .filter(|e| e.kind == kind)
+        .map(|e| e.object.clone())
+        .collect()
+}
+
+fn no_cycles(fx: &Fx) {
+    for (_, s) in layout::all_seats(&view(fx)).unwrap() {
+        crate::model::manager::manager_chain(&view(fx), &s.id)
+            .unwrap_or_else(|e| panic!("chain of {}: {e}", s.name));
+    }
+    assert_eq!(
+        crate::model::manager::would_create_cycle(
+            &view(fx),
+            &[],
+            &layout::all_seats(&view(fx))
+                .unwrap()
+                .into_iter()
+                .map(|(_, s)| s.id)
+                .collect::<Vec<_>>()
+        )
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn node_manager_set_assigns_on_unset_graph() {
+    let fx = fx();
+    active_seats(&fx, &["a"]);
+    let a = seat_id(&fx, "a");
+    let sp = plan(&fx, "node-manager set a");
+    assert_eq!(kinds_of(&sp), vec!["graph.node_manager_seat"]);
+    assert_eq!(
+        sp.plan.effects[0].detail["to"],
+        json!(a),
+        "{:?}",
+        sp.plan.effects
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), Some(a));
+    assert!(row.action.is_none(), "the op writes no action");
+}
+
+#[test]
+fn node_manager_set_moves_role() {
+    let fx = fx();
+    active_seats(&fx, &["old", "new", "r1", "r2", "bystander"]);
+    commit(&fx, "teamspace create beta --active");
+    let (old, new) = (seat_id(&fx, "old"), seat_id(&fx, "new"));
+    let (r1, r2) = (seat_id(&fx, "r1"), seat_id(&fx, "r2"));
+    set_node_manager(&fx, Some(&old));
+    set_manager(&fx, &r1, &old);
+    set_manager(&fx, &r2, &old);
+    let beta = teamspace(&fx, "beta").1.id;
+    commit_request(
+        &fx,
+        ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_pointers", "teamspace": beta, "default_manager": old }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        },
+    );
+
+    let sp = plan(&fx, "node-manager set new");
+    assert_eq!(count(&sp, "graph.node_manager_seat"), 1);
+    let mut seats = effect_kinds_for(&sp, "seat.manager");
+    seats.sort();
+    let mut want = vec![r1.to_any(), r2.to_any(), old.to_any()];
+    want.sort();
+    assert_eq!(
+        seats, want,
+        "reports and the old node manager, not bystander"
+    );
+    assert_eq!(
+        effect_kinds_for(&sp, "teamspace.default_manager"),
+        vec![beta.to_any()]
+    );
+    assert_eq!(sp.plan.effects.len(), 5, "{:?}", sp.plan.effects);
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+
+    assert_eq!(node_manager(&fx), Some(new.clone()));
+    for n in ["r1", "r2", "old"] {
+        assert_eq!(manager_of(&fx, n), Some(new.clone()), "{n}");
+    }
+    assert_eq!(manager_of(&fx, "new"), None);
+    assert_eq!(manager_of(&fx, "bystander"), None);
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, Some(new.clone()));
+    for n in ["old", "new", "r1", "r2", "bystander"] {
+        let chain = crate::model::manager::manager_chain(&view(&fx), &seat_id(&fx, n)).unwrap();
+        if n != "new" {
+            assert_eq!(chain.last(), Some(&new), "{n}: {chain:?}");
+        }
+    }
+    no_cycles(&fx);
+}
+
+#[test]
+fn node_manager_set_from_descendant_has_no_cycle() {
+    let fx = fx();
+    active_seats(&fx, &["old", "mid", "new"]);
+    let (old, mid, new) = (
+        seat_id(&fx, "old"),
+        seat_id(&fx, "mid"),
+        seat_id(&fx, "new"),
+    );
+    set_node_manager(&fx, Some(&old));
+    set_manager(&fx, &new, &mid);
+    set_manager(&fx, &mid, &old);
+    commit(&fx, "node-manager set new");
+    assert_eq!(node_manager(&fx), Some(new.clone()));
+    assert_eq!(
+        manager_of(&fx, "new"),
+        None,
+        "the node manager's own manager is cleared"
+    );
+    assert_eq!(manager_of(&fx, "mid"), Some(new.clone()));
+    assert_eq!(manager_of(&fx, "old"), Some(new));
+    no_cycles(&fx);
+}
+
+#[test]
+fn node_manager_set_dangling_behaves_as_assign() {
+    let fx = fx();
+    active_seats(&fx, &["a", "r"]);
+    let (a, r) = (seat_id(&fx, "a"), seat_id(&fx, "r"));
+    let ghost = SeatId::new();
+    set_node_manager(&fx, Some(&ghost));
+    set_manager(&fx, &r, &ghost);
+    let sp = plan(&fx, "node-manager set a");
+    assert_eq!(effect_kinds_for(&sp, "seat.manager"), vec![r.to_any()]);
+    assert!(
+        !sp.plan.effects.iter().any(|e| e.object == ghost.to_any()),
+        "no effect on the ghost record"
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(node_manager(&fx), Some(a.clone()));
+    assert_eq!(manager_of(&fx, "r"), Some(a));
+}
+
+#[test]
+fn node_manager_set_rejects_missing_retired_unchanged() {
+    let fx = fx();
+    active_seats(&fx, &["a", "b", "gone"]);
+    commit(&fx, "seat retire gone");
+    let a = seat_id(&fx, "a");
+    set_node_manager(&fx, Some(&a));
+    let err = |change: &str| {
+        create_plan(&fx.deps, &CallerInfo::default(), words(change))
+            .expect_err(change)
+            .message
+    };
+    err("node-manager set nobody");
+    assert!(err("node-manager set gone").contains("retired"));
+    assert!(err("node-manager set a").contains("already the node manager"));
+    assert_eq!(node_manager(&fx), Some(a));
+}
+
+#[test]
+fn node_manager_set_activates_dormant_target() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(&fx, "seat create d --teamspace alpha --harness shell");
+    set_node_manager(&fx, None);
+    let d = seat_id(&fx, "d");
+    assert_eq!(seat(&fx, "d", None).1.lifecycle, Lifecycle::Dormant);
+    let sp = plan(&fx, "node-manager set d");
+    for k in [
+        "seat.activate",
+        "clone.add",
+        "runtime.open_tab",
+        "teamspace.activate",
+        "graph.node_manager_seat",
+    ] {
+        assert_eq!(count(&sp, k), 1, "{k}: {:?}", kinds_of(&sp));
+    }
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat(&fx, "d", None).1.lifecycle, Lifecycle::Active);
+    assert_eq!(teamspace(&fx, "alpha").1.lifecycle, Lifecycle::Active);
+    assert_eq!(clones_of(&fx, &d).len(), 1);
+    assert_eq!(node_manager(&fx), Some(d));
+}
+
+#[test]
+fn node_manager_set_stale_graph_is_rejected() {
+    let fx = fx();
+    active_seats(&fx, &["a", "b"]);
+    let b = seat_id(&fx, "b");
+    let sp = plan(&fx, "node-manager set a");
+    set_node_manager(&fx, Some(&b));
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Rejected);
+    assert_eq!(row.rejection.unwrap().reason, "stale_plan");
+    assert_eq!(node_manager(&fx), Some(b));
 }

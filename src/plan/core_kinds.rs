@@ -1113,7 +1113,7 @@ fn activation_effects(
     effects
 }
 
-struct SeatActivate;
+pub(crate) struct SeatActivate;
 impl OrgKind for SeatActivate {
     fn kind(&self) -> RequestKind {
         RequestKind::SeatActivate
