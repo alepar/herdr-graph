@@ -1,0 +1,50 @@
+diff --git a/src/observe/matcher.rs b/src/observe/matcher.rs
+index c809680..718cad8 100644
+--- a/src/observe/matcher.rs
++++ b/src/observe/matcher.rs
+@@ -2,9 +2,10 @@
+ //!
+ //! Panes: graph token, else `terminal_id` (same incarnation always; across incarnations only when cwd and, if
+ //! both are known, the agent session also match: live handoff), else the clone's current native session id.
+-//! Tabs carry no token: within one incarnation a seat's tab is its bound tab id; otherwise the tab holding
+-//! its matched panes. Workspaces: token, else bound id (same incarnation), else the workspace holding the
+-//! teamspace's matched panes.
++//! Tabs carry no token: a seat's tab is its bound tab id in any incarnation (Herdr preserves tab ids across
++//! restore and handoff; an absent id is Unknown, never voted); a seat with no bound tab id takes the tab
++//! holding its matched panes. Workspaces: token, else bound id (any incarnation, same rule), else, with no
++//! bound id, the workspace holding the teamspace's matched panes.
+ use crate::model::clone::CloneRecord;
+ use crate::model::common::{CloneLifecycle, Lifecycle};
+ use crate::model::{
+@@ -197,8 +198,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
+         }
+     }
+ 
+-    // Tabs. Within the bound incarnation the bound tab id decides (and a vanished tab stays vanished);
+-    // otherwise the tab holding the seat's matched panes.
++    // Tabs. A bound tab id decides in any incarnation (Herdr preserves it; a vanished id stays vanished, no
++    // vote); only a seat with no bound tab id takes the tab holding its matched panes (first bind).
+     let mut need_containment: Vec<&SeatId> = Vec::new();
+     for (sid, seat) in &d.seats {
+         // A moved-out seat has no tab on purpose; its clones live elsewhere and must not drag a tab back in.
+@@ -206,7 +207,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
+             continue;
+         }
+         match seat.runtime.bound.as_ref() {
+-            Some(b) if b.incarnation == snap.incarnation => {
++            // Herdr preserves tab ids across restore and handoff: a bound id links by equality in any
++            // incarnation. Absent -> no link and no vote (Unknown).
++            Some(b) if b.tab_id.is_some() => {
+                 if let Some(tid) = b.tab_id.as_ref()
+                     && find_tab(snap, tid).is_some()
+                     && !m.tabs.contains_key(tid)
+@@ -254,7 +257,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
+             continue;
+         }
+         match ts.runtime.bound.as_ref() {
+-            Some(b) if b.incarnation == snap.incarnation => {
++            // As for tabs: a bound workspace id links by equality in any incarnation; absent -> Unknown.
++            Some(b) if b.workspace_id.is_some() => {
+                 if let Some(wid) = b.workspace_id.as_ref()
+                     && find_ws(snap, wid).is_some()
+                     && !m.workspaces.contains_key(wid)

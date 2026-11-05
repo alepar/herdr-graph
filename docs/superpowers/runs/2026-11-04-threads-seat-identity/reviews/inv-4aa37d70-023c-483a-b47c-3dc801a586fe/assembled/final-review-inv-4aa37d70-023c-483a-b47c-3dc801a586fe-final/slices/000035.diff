@@ -1,0 +1,69 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md
+new file mode 100644
+index 0000000..f8f2f0d
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md
+@@ -0,0 +1,63 @@
++# Final review: cluster 16 (src-threads), epic hg-66u
++
++## Source and method
++
++Captured source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify <sha>^{commit}`). Cluster files: src/threads/assignment.rs (new), src/threads/mod.rs, src/threads/tests.rs (slices 000055-000057). Spec: docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md at head, which has a `## Requirement baseline` section (B1-B11, human scope changes: none).
++
++Reproduction: a review-owned detached worktree at the head commit (submodule and target reflink-seeded from the caller worktree), `toolbox run -c ht-build ... cargo test --lib threads::` gave 71 passed, 0 failed. The worktree was removed afterwards. Caller checkout observed before and after: HEAD e4984a492e2d3ce8344b9be83d56a3471049fd60, `git status --short` empty.
++
++Bead state observed via `bd list --parent hg-66u --all`: hg-66u.27 (this mutation) and hg-66u.5 (/seat drops accept_command) are closed; hg-66u.4 (v3.0.0 pin), hg-66u.6, hg-66u.7 (resolve-seat want), hg-66u.8 (participation keyed to seat), hg-66u.28, hg-66u.29 (pre-D2 succession), hg-66u.30, hg-66u.31, hg-66u.32 and gates hg-66u.1/.2/.3 are open.
++
++## ThreadsSeatAssignment as written
++
++- `bookkeeping.threads_seat` is registered in `register_mutations` (src/threads/mod.rs:180-188) beside channel and invitation, matching the key-abstraction shape.
++- Assign: idempotent on the same seat (no record rewrite, rev unchanged), rejects a different seat (`threads_seat_conflict`), rejects a seat held by another live, non-tombstone clone (`threads_seat_held`). Matches §2 and the ThreadsSeatAssignment error contract.
++- Succeed: admitted only against `Restore{seat: from, epoch, threads_done: false}` with `threads_seat == from`; pushes `from` to history, sets the new seat and `threads_done = true`; a replay is detected and is a no-op. Matches §2/§8 step 2 final branch.
++- Acknowledge / ClearOnReattach: stale epochs are no-ops; ClearOnReattach requires `threads_done`. MarkLaunched: once per epoch, requires `threads_done` (§14.7).
++- TombstoneDone: deletes the record only when it is a Finalize/ReleaseKey tombstone.
++- Helpers: `write_restore_intent` writes nothing for a seatless clone (§14.5) and overwrites an older epoch; `clear_restore_on_retire` is called from the observe retire, plan retire, and undo-retire commits (src/observe/mutations.rs:252, src/plan/core_kinds.rs:424 and 1811, src/undo/compensate.rs:494); `purge_tombstone` is called from `ClonePurge` plan and mutate (src/plan/core_kinds.rs:1892, 1923) with reservation `None` pending hg-66u.13.
++- The uniqueness invariant lives only inside this mutation's `check_free`; `git grep -i 'validator|fn validate'` over src/writer and src/store finds no writer-level validator, which §2 names ("rejected by the writer's validator").
++
++## /seat pending invitations (H2 Option D)
++
++- `PendingInvitation` now carries only `thread` and `constraint`; `accept_command` and its formatter are removed (src/threads/mod.rs). The test asserts the serialized key set is exactly `["constraint", "thread"]`. `git grep accept_command` at head finds only negative assertions in src/bootstrap/tests.rs:712 and 3348. The render_seat and skills/seat/SKILL.md halves sit in other clusters.
++
++## Requirement baseline trace
++
++- B11: the in-cluster half (pending_invitations reports thread and constraint only) is delivered from the production `/seat` path; the render and skill halves are other clusters' to confirm.
++- B1: no production entry point admits `bookkeeping.threads_seat`. `admit_threads_seat` is called only from src/plan/tests.rs:3458 and src/undo/tests.rs:504; the only non-test writer of `threads_seat` is the `None` initialiser in src/plan/core_kinds.rs:242. The resolve-seat want that would produce Assign (hg-66u.7) is not in the head tree, so no clone ever gets a threads seat in production and the 1:1 mapping is not delivered.
++- B7 / B10: `write_restore_intent` has no production caller (only the test-only `SeatFixture` in src/threads/tests.rs); no undo or resurrection commit writes a Restore intent, and Succeed, Acknowledge, MarkLaunched, ClearOnReattach and TombstoneDone have no production admitter. The ungated pre-D2 interim (§8, hg-66u.29) is not delivered; the reversible branch also waits on gate hg-66u.2.
++- B8: `clone_wants` (src/threads/effects.rs:351-421, unchanged in the range) is still keyed on `occupant_of`/`same_occupant`; `occupancy_end_releases_requirement` and `clone_retirement_releases` still pass at head, while §3 says they flip. Participation does not survive agent exit.
++- B2, B3, B4, B5, B6, B9: their paths (ThreadsSeatView, SeatObservation, matcher, reconcile, launch env, daemon reconnect) leave this cluster and are the seam reviewer's to trace.
++
++## Concerns
++
++- Assign does not check the target clone's lifecycle: a late resolve acknowledgement after the clone retired (or after purge left a ReleaseKey tombstone) writes `threads_seat` onto a retired clone or an "inert" tombstone (§13), since `check_free` only inspects other clones and `rec.lifecycle`/`is_tombstone()` are never consulted for `rec` itself (src/threads/assignment.rs Assign arm).
++- The one-live-clone-per-seat invariant is enforced only on Assign/Succeed, not on other commits: with A on seat-a retired, B may be assigned seat-a (test `threads_seat_assign_rejects_a_seat_another_live_clone_holds` shows exactly this), and a later undo of A's retirement re-activates A with `threads_seat = seat-a` without any check, giving two non-retired clones on one seat; §2 calls for a writer validator.
++- Succeed does not reject `seat == from`: it would push the current seat into history and mark `threads_done` without any actual succession.
++
++## Verdict
++
++not ready (no production producer admits ThreadsSeatAssignment or writes a Restore intent, participation is still occupant-keyed, and pre-D2 purge writes a Finalize tombstone nothing will remove)
++
++## Must fix before landing
++
++- B1 undelivered: `bookkeeping.threads_seat` Assign has no production admitter at head (admit_threads_seat only in src/plan/tests.rs:3458 and src/undo/tests.rs:504; resolve-seat want hg-66u.7 absent), so no clone is ever bound to a threads seat.
++- B7/B10 undelivered (pre-D2 interim, ungated): no undo/resurrection commit calls `write_restore_intent` and no executor admits Succeed/Acknowledge/MarkLaunched/ClearOnReattach, so graph undo cannot restore a closed clone onto its seat or its successor (hg-66u.29/.30/.32 open).
++- B8 undelivered: src/threads/effects.rs `clone_wants` still keys desired/released invitations on the occupant; `occupancy_end_releases_requirement` and `clone_retirement_releases` pass at head, so agent exit and clone retirement still release memberships (hg-66u.8 open).
++- `purge_tombstone` writes `Finalize{seat}` for every seated clone regardless of release: §8 says a pre-D2 (final) seat is purged at once with no intent and §14.2 restricts the always-tombstone rule to after D2; with the finalize want D2-gated (hg-66u.31), every pre-D2 purge of a seated clone would leave a permanent tombstone record.
++
++## Untested scope
++
++- No test drives `bookkeeping.threads_seat` through a production producer (threads executor resolve or succession want); all admissions are test-direct.
++- Restore-intent writing is tested only through the test-only `SeatFixture` mutation, not through the undo or resurrection commits that the spec says write it.
++- No test covers Assign onto a retired clone or onto a tombstone.
++- No test covers an undo that re-activates a clone whose seat another live clone now holds (uniqueness across non-assignment commits).
++- No test covers Succeed with `seat == from`.
++
++## Deferred OK
++
++- §14.4 reservation clearing in the succession commit waits on the reservation field (hg-66u.43, D1-gated).
++- §14.3 ReleaseKey to Finalize tombstone conversion has no SeatTransition yet; it belongs to the D1/D2-gated want work (hg-66u.31/.43).
++- ThreadsLink doc comment in src/model/clone.rs still says it exists to print the exact accept-required command (stale wording, outside this cluster).
++- Task 2 (hg-66u.27) minors: no retained test log and no RED run recorded; the 71-test threads run in this review reproduces the green state at head.

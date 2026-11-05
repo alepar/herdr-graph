@@ -1,0 +1,46 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md
+new file mode 100644
+index 0000000..a5e8560
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md
+@@ -0,0 +1,40 @@
++# Final review: cluster 5 (src-bootstrap), epic hg-66u
++
++Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD e4984a4, clean status, before and during review; no change observed.
++
++Inputs: slices/000030.diff (src/bootstrap/mod.rs) and slices/000031.diff (src/bootstrap/tests.rs) from the assembled bundle, digest.md for context, spec docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md at head (Requirement baseline, section 4).
++
++## Scope of the cluster
++
++The cluster carries the `render_seat` half of spec section 4 (H2 Option D, hg-s6o, baseline row B11): the human `/seat` rendering stops printing acceptance commands and lists each pending invitation as `thread [constraint]` under the header "pending invitations (accept through herdr-threads):". Tests now assert the JSON entry has `constraint` and no `accept_command`, that the rendered text contains the new line and no `herdr-threads accept` string, and that skills/seat/SKILL.md names `accept-required` and `thread participants` and no longer mentions `accept_command`.
++
++## Baseline trace for B11
++
++- Production entry: `herdr-graph seat` (src/cli/seat.rs, `Commands::Seat { json, .. }`) calls daemon `seat.resolve`, which builds the reply in `seat_reply` (src/bootstrap/mod.rs:254-314) from `crate::threads::pending_invitations` (src/threads/mod.rs:202). At head `PendingInvitation` has only `thread` and `constraint`; the `accept_command` formatter is gone (outside this cluster, checked only to trace the row). The text path prints `render_seat(&reply)`, the JSON path prints the reply verbatim; neither can carry an accept command any more.
++- The test `seat_json_includes_paths_pending_ops_invitations_beads_view_rev` drives the real `seat_reply` over a fixture clone record with a pending required invitation, so it exercises the production producer rather than hand-built JSON, and checks both the JSON shape and the rendered text.
++- The SKILL.md step 4 rewrite (required: run the ready `accept-required` from the herdr-threads hook, otherwise `thread participants` then `accept-required`, reread on stale; ordinary: decide by topic and goal) is in another cluster; the `seat_skill_has_instruction_steps` test in this cluster pins its key phrases. The skill text's adequacy is the seat/skills reviewer's to judge.
++- B11 is delivered for the parts this cluster owns. No other baseline row touches src/bootstrap in this diff.
++
++## Code assessment
++
++- The change is minimal and matches the surrounding renderer's style (`text()` helper, two-space indented items).
++- `text(&i["constraint"])` relies on `InviteConstraint` serializing as a lowercase string ("required"); the test asserts exactly that, so a serde rename would be caught.
++- The negative assertion `!text.contains("herdr-threads accept")` is a reasonable guard against the old command form reappearing in the rendering.
++- I did not run cargo here (the build needs the ht-build toolbox and would write the caller worktree's target dir); the verdict rests on static reading of the head tree. The tests are straightforward string and JSON assertions.
++
++## Findings
++
++- none
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- No render test covers an `ordinary` constraint or several pending invitations in one reply; only the single required case is asserted (low risk, the loop is uniform).
++- This reviewer did not execute the bootstrap tests at head; pass status rests on task reports and the integration run.
++
++## Deferred OK
++- Stale doc comment outside this cluster: src/model/clone.rs:81-82 says `ThreadsLink` exists partly to "print the exact `accept-required` command (spec §7.1)", which /seat no longer does after Option D; a one-line comment fix for whoever owns src/model.

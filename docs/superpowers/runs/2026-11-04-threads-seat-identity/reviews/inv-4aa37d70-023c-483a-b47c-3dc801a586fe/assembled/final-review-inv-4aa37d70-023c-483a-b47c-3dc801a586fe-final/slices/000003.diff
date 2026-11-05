@@ -1,0 +1,13 @@
+diff --git a/DESIGN-NOTES.md b/DESIGN-NOTES.md
+index ce29b7b..4b16187 100644
+--- a/DESIGN-NOTES.md
++++ b/DESIGN-NOTES.md
+@@ -328,7 +328,7 @@ Proposed discussion framing: /seat can be the user-facing entry to /load rather
+ - A native-agent exit while its pane remains ends that occupancy without retiring the clone or seat. If last-pane closure also removes the tab, the resulting tab closure retires the seat; follow the resulting containment change rather than assuming the tab survives.
+ - Disconnection or ambiguous observations mark runtime availability unknown without changing organizational lifecycle. Never-activated absent tabs remain intentional. This preserves the approved best-effort observation scope and does not require reconstruction of missed manual actions.
+ - Record a cascade as one action, retaining which descendants it actually retired and their provenance. Undo must distinguish those descendants from objects already retired before the cascade. Correlate graph-issued closures with observed effects to avoid duplicate retirement actions.
+-- Graph owns reconciliation of the required lifecycle thread-membership cleanup even after occupants disappear. Preserve messages and historical attribution; cleanup cannot depend on an absent agent voluntarily leaving.
++- Graph owns reconciliation of the required lifecycle thread-membership cleanup, and it follows seat lifetime, not occupancy: memberships are keyed on the clone's threads seat and last until purge, so agent exit, `/clear` and relaunch on the same pane release nothing and retirement alone releases nothing. Acceptance is not liveness. Preserve messages and historical attribution; cleanup cannot depend on an absent agent voluntarily leaving.
+ - State is archived rather than deleted. Exact observation qualification, native cascade correlation and threads cleanup APIs remain integration details to specify; no new runtime capability is claimed.
+ 
+ ## Undo terminal adoption — approved after design review

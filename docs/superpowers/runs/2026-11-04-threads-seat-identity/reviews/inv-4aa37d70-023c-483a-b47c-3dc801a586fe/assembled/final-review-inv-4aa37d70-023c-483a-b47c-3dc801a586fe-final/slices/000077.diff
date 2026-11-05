@@ -1,0 +1,94 @@
+diff --git a/src/reconcile/herdr_exec.rs b/src/reconcile/herdr_exec.rs
+index a7577e7..8d24988 100644
+--- a/src/reconcile/herdr_exec.rs
++++ b/src/reconcile/herdr_exec.rs
+@@ -5,15 +5,15 @@ use super::bookkeeping::admit_binding;
+ use super::desired::{DesiredPane, DesiredRuntime};
+ use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
+ use super::planner::{
+-    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
+-    set_live_ref, token_of,
++    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launch_env_key, launched_key,
++    live_ref, plan_effects, set_live_ref, token_of,
+ };
+ use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
+ use crate::journal::Journal;
+ use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
+ use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
+ use crate::model::harness::{Harness, profile};
+-use crate::model::launch::{graph_token, nonce_label};
++use crate::model::launch::{agent_env, graph_token, nonce_label};
+ use crate::model::{AnyId, CloneId, SeatId, TeamspaceId};
+ use crate::ports::herdr::{
+     CreateTab, CreateWorkspace, HerdrError, SplitDirection, SplitPane, StartAgent,
+@@ -124,6 +124,16 @@ impl HerdrExecutor {
+             .meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
+     }
+ 
++    /// The variable names the start exported into `pane`'s shell, so a check-in that lacks them can be named
++    /// (the shell may have rejected the export, spec §5).
++    fn record_launch_env(&self, clone: &CloneId, pane: &HerdrPaneId, env: &[(String, String)]) {
++        let vars: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
++        let _ = self.journal.meta_set(
++            &launch_env_key(clone),
++            &serde_json::json!({ "pane": pane.0, "vars": vars }).to_string(),
++        );
++    }
++
+     /// A new pane for `clone` is a bare shell: forget the previous pane's launch so `start_needed` fires again.
+     fn clear_launch(&self, clone: &CloneId) {
+         let _ = self.journal.meta_delete(&launched_key(clone));
+@@ -536,6 +546,7 @@ impl HerdrExecutor {
+             if e.status == EffectStatus::Unknown {
+                 // The earlier start went through; only its response was lost.
+                 self.record_launch(p);
++                self.record_launch_env(&clone, &lp.pane.id, &agent_env(&clone, false));
+                 return ExecOutcome::Done;
+             }
+             return ExecOutcome::NeedsRevision("agent already running on the pane".into());
+@@ -546,18 +557,22 @@ impl HerdrExecutor {
+             Err(err) => return transient_or_failed(err),
+         }
+         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
++        let env = agent_env(&clone, false);
+         let started = cx
+             .herdr
+             .start_agent(StartAgent {
+                 pane: lp.pane.id.clone(),
+                 kind: kind.to_owned(),
+                 args,
++                // No key reservation exists before D1 (hg-66u.13 records it).
++                env: env.clone(),
+             })
+             .await;
+         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
+         let out = start_outcome(started);
+         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
+             self.record_launch(p);
++            self.record_launch_env(&clone, &lp.pane.id, &env);
+         }
+         out
+     }
+@@ -640,9 +655,12 @@ impl HerdrExecutor {
+         let resume = (from == p.harness && to_prof.supports_resume())
+             .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
+             .flatten();
++        let env = agent_env(&clone, false);
+         let to = to_prof.agent_kind.map(|kind| Relaunch {
+             kind,
+             args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
++            // No key reservation exists before D1 (hg-66u.13 records it).
++            env: env.clone(),
+         });
+         let out = advance_replacement(
+             cx.herdr,
+@@ -657,6 +675,9 @@ impl HerdrExecutor {
+         .await;
+         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
+             self.record_launch(p);
++            if to_prof.agent_kind.is_some() {
++                self.record_launch_env(&clone, &lp.pane.id, &env);
++            }
+         }
+         out
+     }

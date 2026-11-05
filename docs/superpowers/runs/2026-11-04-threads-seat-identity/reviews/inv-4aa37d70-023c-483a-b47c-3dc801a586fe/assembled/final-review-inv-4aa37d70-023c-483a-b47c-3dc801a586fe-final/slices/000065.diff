@@ -1,0 +1,12 @@
+diff --git a/src/model/change.rs b/src/model/change.rs
+index 1b9a52f..dc146eb 100644
+--- a/src/model/change.rs
++++ b/src/model/change.rs
+@@ -20,6 +20,7 @@ pub enum RequestKind {
+     SeatOverride,
+     CloneAdd,
+     CloneRetire,
++    ClonePurge,
+     CloneRebind,
+     ParticipationJoin,
+     ParticipationLeave,
