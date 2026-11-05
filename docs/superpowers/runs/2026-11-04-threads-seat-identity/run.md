@@ -28,5 +28,5 @@ parked:
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §7 'Herdr preserves tab/workspace ids across restore and handoff' unsourced for tabs and for live handoff on v0.9.5"
 - 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md · escalation · "UNVERIFIED external: §9 headless cold restart assumes Herdr v0.9.5 restores bare-shell panes with no client attached"
 redesignCycles-design: 1
-redesign-design-1: round 1 · triggers shared-cause, defect-type · amended - · lastGood 4795ea116f946a9551a7b59dd1037854bbcbe200 · designRoast - · state started
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended 2. Clone threads seat (write-once), 5. Launching with the continuity key, 6. Location and liveness from threads; delete clone re-matching, 8. Undo and resurrection onto the same seat (D2), 9. Resume driver after a headless cold restart (G4), Key abstractions, Unchanged behavior · lastGood 4795ea116f946a9551a7b59dd1037854bbcbe200 · designRoast - · state specs-committed
 stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol inferred from (clone active, seat Retired) → persisted SeatIntent (Restore/Finalize) on CloneRecord driving unretire, succession, resume and finalize (dissolves 6)
