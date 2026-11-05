@@ -107,6 +107,10 @@ fn fx() -> Fx {
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
     reg.register("bookkeeping.patch", Arc::new(Patch));
+    reg.register(
+        crate::plan::managers::testing::SET_NODE_MANAGER_KEY,
+        Arc::new(crate::plan::managers::testing::SetNodeManager),
+    );
     kinds.register_mutations(&mut reg, plans.clone());
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
@@ -2773,4 +2777,57 @@ fn template_edit_undo_old_record_with_lossy_text_is_repair_required() {
         assert!(err.message.contains("requires repair"), "{}", err.message);
         assert_eq!(file_bytes(&fx, &lead).unwrap(), b"new\n");
     }
+}
+
+/// Make `seat` the node manager explicitly (independent of first-seat assignment).
+fn make_node_manager(fx: &Fx, seat: &SeatId) {
+    use crate::ports::writer::Writer;
+    let op =
+        fx.w.admit(crate::plan::managers::testing::request(Some(seat)))
+            .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+/// `engineer` of application `auth` is the node manager.
+fn node_manager_app(fx: &Fx) -> (MemberId, SeatId) {
+    alpha(fx);
+    let e = MemberId::new();
+    create_template(fx, "auth-tpl", &[m(&e, "engineer", "active")], &[]);
+    apply_app(fx, "auth-tpl", "auth");
+    let seat = member_seat(fx, "auth", &e);
+    make_node_manager(fx, &seat);
+    (e, seat)
+}
+
+fn assert_guard_refusal(msg: &str) {
+    assert!(msg.contains("node manager engineer"), "{msg}");
+    assert!(msg.contains("cannot be retired"), "{msg}");
+    assert!(
+        msg.contains(crate::plan::managers::NODE_MANAGER_SET_USAGE),
+        "{msg}"
+    );
+}
+
+#[test]
+fn guard_template_withdrawal() {
+    let fx = fx();
+    let (_, seat) = node_manager_app(&fx);
+    let path = write_doc(&fx, &doc_text("auth-tpl", &[], &[]));
+    assert_guard_refusal(&plan_err(
+        &fx,
+        &format!("template edit auth-tpl --from {path}"),
+    ));
+    assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Active);
+}
+
+#[test]
+fn guard_application_retire() {
+    let fx = fx();
+    let (_, seat) = node_manager_app(&fx);
+    assert_guard_refusal(&plan_err(&fx, "application retire auth"));
+    assert_eq!(seat_by_id(&fx, &seat).lifecycle, Lifecycle::Active);
 }

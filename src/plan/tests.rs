@@ -3680,3 +3680,142 @@ fn manager_usage_errors() {
         assert!(err.contains("manager set <seat|teamspace>"), "{bad}: {err}");
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// node manager retirement guard (hg-k4l.8)
+// ---------------------------------------------------------------------------------------------
+
+/// Make `seat` the node manager explicitly (independent of first-seat assignment).
+fn make_node_manager(fx: &Fx, seat: &SeatId) {
+    use crate::ports::writer::Writer;
+    let op =
+        fx.w.admit(super::managers::testing::request(Some(seat)))
+            .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+/// The refusal for `change`; it must name the node manager and the remedy.
+fn guard_refusal(fx: &Fx, change: &str) -> String {
+    let msg = match create_plan(&fx.deps, &CallerInfo::default(), words(change)) {
+        Ok(_) => panic!("{change}: expected the node manager guard to refuse"),
+        Err(e) => e.message,
+    };
+    assert!(msg.contains("cannot be"), "{msg}");
+    assert!(
+        msg.contains(super::managers::NODE_MANAGER_SET_USAGE),
+        "{msg}"
+    );
+    msg
+}
+
+/// `alpha` with an active node manager `foreman` (one clone) and an active `other`.
+fn guard_fixture(fx: &Fx) -> SeatRecord {
+    alpha(fx);
+    commit(
+        fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    let rec = seat(fx, "foreman", None).1;
+    make_node_manager(fx, &rec.id);
+    rec
+}
+
+#[test]
+fn guard_seat_retire() {
+    let fx = fx();
+    let nm = guard_fixture(&fx);
+    let msg = guard_refusal(&fx, "seat retire foreman");
+    assert!(
+        msg.contains(&format!(
+            "node manager foreman ({}) cannot be retired",
+            nm.id
+        )),
+        "{msg}"
+    );
+}
+
+#[test]
+fn guard_teamspace_retire() {
+    let fx = fx();
+    guard_fixture(&fx);
+    let msg = guard_refusal(&fx, "teamspace retire alpha");
+    assert!(msg.contains("node manager foreman"), "{msg}");
+}
+
+#[test]
+fn guard_clone_retire_last_clone() {
+    let fx = fx();
+    let nm = guard_fixture(&fx);
+    commit(&fx, "clone add foreman --name second");
+    let clones = clones_of(&fx, &nm.id);
+    assert_eq!(clones.len(), 2);
+    // One of two clones: allowed, and nothing about the seat changes.
+    let sp = plan(&fx, &format!("clone retire {}", clones[0].1.id));
+    assert_eq!(count(&sp, "seat.retire"), 0);
+    assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+    // The last live clone would retire the seat: refused.
+    let last = clones
+        .iter()
+        .find(|(_, c)| c.id != clones[0].1.id)
+        .unwrap()
+        .1
+        .id
+        .clone();
+    guard_refusal(&fx, &format!("clone retire {last}"));
+}
+
+#[test]
+fn guard_seat_deactivate() {
+    let fx = fx();
+    guard_fixture(&fx);
+    let msg = guard_refusal(&fx, "seat deactivate foreman");
+    assert!(msg.contains("deactivated"), "{msg}");
+}
+
+#[test]
+fn guard_unrelated_plans_pass() {
+    let fx = fx();
+    guard_fixture(&fx);
+    commit(&fx, "seat retire other");
+    assert_eq!(seat(&fx, "foreman", None).1.lifecycle, Lifecycle::Active);
+    assert_eq!(clones_of(&fx, &seat(&fx, "foreman", None).1.id).len(), 1);
+}
+
+/// Synthetic effects exercise the rows of the guard table that no shipped kind reaches on its own.
+#[test]
+fn guard_effect_table() {
+    let fx = fx();
+    let nm = guard_fixture(&fx);
+    let clone = clones_of(&fx, &nm.id).remove(0).1;
+    let ts = teamspace(&fx, "alpha").1;
+    let check =
+        |e: PlanEffect| super::managers::retire::refuse_node_manager_retirement(&view(&fx), &[e]);
+    let ef = |kind: &str, obj: AnyId| PlanEffect::new(kind, obj, json!({}));
+
+    for (kind, obj, what) in [
+        ("clone.retire", clone.id.to_any(), "retired"),
+        ("runtime.close_pane", clone.id.to_any(), "deactivated"),
+        ("runtime.close_tab", nm.id.to_any(), "moved or closed"),
+        ("runtime.close_workspace", ts.id.to_any(), "moved or closed"),
+        ("teamspace.retire", ts.id.to_any(), "moved or closed"),
+    ] {
+        let e = check(ef(kind, obj)).unwrap_err().to_string();
+        assert!(e.contains(&format!("cannot be {what}")), "{kind}: {e}");
+    }
+    // A rebind repairs a stale binding without moving the seat; unrelated objects are untouched.
+    check(ef("clone.rebind", clone.id.to_any())).unwrap();
+    check(ef("runtime.close_tab", SeatId::new().to_any())).unwrap();
+    check(ef(
+        "runtime.close_pane",
+        crate::model::CloneId::new().to_any(),
+    ))
+    .unwrap();
+}
