@@ -260,7 +260,7 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
 - Lifecycle: stateless functions. The key-conflict alert is a journal entry.
 
 **ThreadsSeatAssignment** — new bookkeeping mutation (`bookkeeping.threads_seat`, registered beside `bookkeeping.binding`), the only writer of `CloneRecord.threads_seat`.
-- Owns: the write-once rule and the invariant that at most one non-retired clone holds a given `threads_seat` (§2).
+- Owns: the write-once rule, its one exception (seat succession of a final-retired seat on undo or resurrection, §2), and the invariant that at most one non-retired clone holds a given `threads_seat`.
 - Hides: the overwrite and uniqueness checks against the committed tree.
 - Must not: resolve seats (the threads executor does that through PaneSeatMap) or retire anything.
 - Relationships: one more entry in the existing `MutationRegistry`, the same shape as `bookkeeping.binding`; the threads executor admits it.
@@ -304,7 +304,7 @@ Digest:
 - SeatStatus: owns the closed set of threads seat states; a new state is added as one variant plus one arm in SeatObservation; callers never inspect threads wire results.
 - ThreadsSeatView: owns read-only seat inspection per observation step; new reads are added on this port and its fake; callers never write to threads through it or invent a state when threads is unreachable.
 - SeatObservation: owns turning seat statuses into clone binding, availability and retirement, plus precedence over the old matcher; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
-- ThreadsSeatAssignment: owns the write-once `threads_seat` and its one-live-clone-per-seat invariant; new rules on the field are added in this mutation; callers never write `threads_seat` directly or retry a rejected different seat.
+- ThreadsSeatAssignment: owns the write-once `threads_seat`, its seat-succession exception and its one-live-clone-per-seat invariant; new rules on the field are added in this mutation; callers never write `threads_seat` directly or retry a rejected different seat.
 
 ## Post-Implementation Notes
 
