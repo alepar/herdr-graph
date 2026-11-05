@@ -1,0 +1,3 @@
+[Nit] src/plan/managers/reparent.rs:70
+[Nit] CHANGELOG.md:3
+[Should-fix] evidence/hg-k4l.22/full-suite-head.log:1
