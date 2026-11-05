@@ -6,6 +6,17 @@ pub const ENV_GRAPH: &str = "HERDR_GRAPH";
 pub const ENV_INSTANCE: &str = "HERDR_GRAPH_INSTANCE";
 pub const ENV_SEAT: &str = "HERDR_GRAPH_SEAT";
 pub const ENV_CLONE: &str = "HERDR_GRAPH_CLONE";
+pub const ENV_CONTINUITY_KEY: &str = "HERDR_THREADS_CONTINUITY_KEY";
+
+/// Env for every agent start (spec §5): `HERDR_GRAPH_CLONE` always; the continuity key, valued with the clone's
+/// `cl_` id, only once the clone's key reservation is recorded.
+pub fn agent_env(clone: &CloneId, key_reserved: bool) -> Vec<(String, String)> {
+    let mut v = vec![(ENV_CLONE.to_string(), clone.to_string())];
+    if key_reserved {
+        v.push((ENV_CONTINUITY_KEY.to_string(), clone.to_string()));
+    }
+    v
+}
 
 /// Env passed via `env` on workspace/tab/pane creation. Graph never reads env back.
 pub fn launch_env(

@@ -1187,6 +1187,8 @@ mod fakes {
             pane: HerdrPaneId,
             kind: String,
             args: Vec<String>,
+            #[serde(default)]
+            env: Vec<(String, String)>,
         },
     }
 
@@ -1279,8 +1281,18 @@ mod fakes {
                 Logged::WorkspaceMetadata { id, key, value } => {
                     h.report_workspace_metadata(&id, &key, &value).await
                 }
-                Logged::StartAgent { pane, kind, args } => h
-                    .start_agent(StartAgent { pane, kind, args })
+                Logged::StartAgent {
+                    pane,
+                    kind,
+                    args,
+                    env,
+                } => h
+                    .start_agent(StartAgent {
+                        pane,
+                        kind,
+                        args,
+                        env,
+                    })
                     .await
                     .map(drop),
             }
@@ -1434,6 +1446,7 @@ mod fakes {
                 pane: req.pane.clone(),
                 kind: req.kind.clone(),
                 args: req.args.clone(),
+                env: req.env.clone(),
             };
             self.record(e, self.inner.start_agent(req).await)
         }

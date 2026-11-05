@@ -37,6 +37,7 @@ pub fn start_outcome(r: Result<StartOutcome, HerdrError>) -> ExecOutcome {
 pub struct Relaunch<'a> {
     pub kind: &'a str,
     pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 fn key_input(step: KeyStep) -> Vec<KeyInput> {
@@ -127,6 +128,7 @@ async fn start(
             pane: pane.clone(),
             kind: to.kind.to_owned(),
             args: to.args,
+            env: to.env,
         })
         .await;
     crate::failpoint!("reconcile.after_call.replace_session");
