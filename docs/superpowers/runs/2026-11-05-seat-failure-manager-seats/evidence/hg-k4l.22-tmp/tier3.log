@@ -1,0 +1,116 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.97s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-93d1752fc8bb2e66)
+
+running 30 tests
+test e2e_event_loss_reconnect_converges ... FAILED
+
+thread 'e2e_create_teamspace_seats_tabs_panes_env' (3227619) panicked at tests/e2e_private_herdr.rs:143:47:
+called `Result::unwrap()` on an `Err` value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+
+thread 'e2e_create_teamspace_seats_tabs_panes_env' (3227619) panicked at tests/e2e_private_herdr.rs:560:18:
+called `Result::unwrap()` on an `Err` value: Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+stack backtrace:
+   0:     0x564c8d369e2a - std[52919eca6bce4da3]::backtrace_rs::backtrace::libunwind::trace
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/../../backtrace/src/backtrace/libunwind.rs:117:9
+   1:     0x564c8d369e2a - std[52919eca6bce4da3]::backtrace_rs::backtrace::trace_unsynchronized::<std[52919eca6bce4da3]::sys::backtrace::_print_fmt::{closure#1}>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/../../backtrace/src/backtrace/mod.rs:66:14
+   2:     0x564c8d369e2a - std[52919eca6bce4da3]::sys::backtrace::_print_fmt
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/backtrace.rs:74:9
+   3:     0x564c8d369e2a - <<std[52919eca6bce4da3]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[18c8dd30382e7099]::fmt::Display>::fmt
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/backtrace.rs:44:26
+   4:     0x564c8d38188a - <core[18c8dd30382e7099]::fmt::rt::Argument>::fmt
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/fmt/rt.rs:152:76
+   5:     0x564c8d38188a - core[18c8dd30382e7099]::fmt::write
+   6:     0x564c8d36f0f2 - std[52919eca6bce4da3]::io::default_write_fmt::<alloc[c54872da263eaafc]::vec::Vec<u8>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/io/mod.rs:621:11
+   7:     0x564c8d36f0f2 - <alloc[c54872da263eaafc]::vec::Vec<u8> as std[52919eca6bce4da3]::io::Write>::write_fmt
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/io/mod.rs:1976:13
+   8:     0x564c8d344d2f - <std[52919eca6bce4da3]::sys::backtrace::BacktraceLock>::print
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/backtrace.rs:47:9
+   9:     0x564c8d344d2f - std[52919eca6bce4da3]::panicking::default_hook::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:292:27
+  10:     0x564c8d3600b9 - std[52919eca6bce4da3]::panicking::default_hook
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:316:9
+  11:     0x564c8ce7e88c - <alloc[c54872da263eaafc]::boxed::Box<dyn for<'a, 'b> core[18c8dd30382e7099]::ops::function::Fn<(&'a std[52919eca6bce4da3]::panic::PanicHookInfo<'b>,), Output = ()> + core[18c8dd30382e7099]::marker::Send + core[18c8dd30382e7099]::marker::Sync> as core[18c8dd30382e7099]::ops::function::Fn<(&std[52919eca6bce4da3]::panic::PanicHookInfo,)>>::call
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/boxed.rs:2263:9
+  12:     0x564c8ce7e88c - test[5975feb3c521cd7b]::test_main_with_exit_callback::<test[5975feb3c521cd7b]::test_main::{closure#0}>::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:145:21
+  13:     0x564c8d360332 - <alloc[c54872da263eaafc]::boxed::Box<dyn for<'a, 'b> core[18c8dd30382e7099]::ops::function::Fn<(&'a std[52919eca6bce4da3]::panic::PanicHookInfo<'b>,), Output = ()> + core[18c8dd30382e7099]::marker::Send + core[18c8dd30382e7099]::marker::Sync> as core[18c8dd30382e7099]::ops::function::Fn<(&std[52919eca6bce4da3]::panic::PanicHookInfo,)>>::call
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/boxed.rs:2263:9
+  14:     0x564c8d360332 - std[52919eca6bce4da3]::panicking::panic_with_hook
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:833:13
+  15:     0x564c8d344de8 - std[52919eca6bce4da3]::panicking::panic_handler::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:698:13
+  16:     0x564c8d339869 - std[52919eca6bce4da3]::sys::backtrace::__rust_end_short_backtrace::<std[52919eca6bce4da3]::panicking::panic_handler::{closure#0}, !>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/backtrace.rs:182:18
+  17:     0x564c8d345bed - __rustc[8068f81614cfe5c]::rust_begin_unwind
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:689:5
+  18:     0x564c8d38204c - core[18c8dd30382e7099]::panicking::panic_fmt
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/panicking.rs:80:14
+  19:     0x564c8d381dc2 - core[18c8dd30382e7099]::result::unwrap_failed
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/result.rs:1867:5
+  20:     0x564c8cdf8f69 - core::result::Result<T,E>::unwrap::h7a6482fdebc80d6f
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/result.rs:1233:23
+  21:     0x564c8cdf8f69 - <e2e_private_herdr::E2e as core::ops::drop::Drop>::drop::h258b551570e91257
+                               at /var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22/tests/e2e_private_herdr.rs:560:18
+  22:     0x564c8cdf8223 - core::ptr::drop_in_place<e2e_private_herdr::E2e>::h639f149dd246047a
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/ptr/mod.rs:810:1
+  23:     0x564c8ce51b3c - e2e_private_herdr::e2e_create_teamspace_seats_tabs_panes_env::hce14f67a22f1f585
+                               at /var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22/tests/e2e_private_herdr.rs:669:1
+  24:     0x564c8ce278a7 - e2e_private_herdr::e2e_create_teamspace_seats_tabs_panes_env::{{closure}}::h9c22fdb1ce2ead85
+                               at /var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22/tests/e2e_private_herdr.rs:589:47
+  25:     0x564c8cdf7496 - core::ops::function::FnOnce::call_once::haa1cf2b2ec686f58
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/ops/function.rs:250:5
+  26:     0x564c8ce7298b - <fn() -> core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String> as core[18c8dd30382e7099]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/ops/function.rs:250:5
+  27:     0x564c8ce7298b - test[5975feb3c521cd7b]::__rust_begin_short_backtrace::<core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String>, fn() -> core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:663:18
+  28:     0x564c8ce7f35b - test[5975feb3c521cd7b]::run_test_in_process::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:686:74
+  29:     0x564c8ce7f35b - <core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<test[5975feb3c521cd7b]::run_test_in_process::{closure#0}> as core[18c8dd30382e7099]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/panic/unwind_safe.rs:275:9
+  30:     0x564c8ce7f35b - std[52919eca6bce4da3]::panicking::catch_unwind::do_call::<
+thread 'e2e_create_teamspace_seats_tabs_panes_env' (3227619) panicked at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/panicking.rs:233:5:
+panic in a destructor during cleanup
+thread caused non-unwinding panic. aborting.
+core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<test[5975feb3c521cd7b]::run_test_in_process::{closure#0}>, core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:581:40
+  31:     0x564c8ce7f35b - std[52919eca6bce4da3]::panicking::catch_unwind::<core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String>, core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<test[5975feb3c521cd7b]::run_test_in_process::{closure#0}>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:544:19
+  32:     0x564c8ce7f35b - std[52919eca6bce4da3]::panic::catch_unwind::<core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<test[5975feb3c521cd7b]::run_test_in_process::{closure#0}>, core[18c8dd30382e7099]::result::Result<(), alloc[c54872da263eaafc]::string::String>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panic.rs:359:14
+  33:     0x564c8ce7f35b - test[5975feb3c521cd7b]::run_test_in_process
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:686:27
+  34:     0x564c8ce7f35b - test[5975feb3c521cd7b]::run_test::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:607:43
+  35:     0x564c8ce7aa74 - test[5975feb3c521cd7b]::run_test::{closure#1}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/test/src/lib.rs:637:41
+  36:     0x564c8ce7aa74 - std[52919eca6bce4da3]::sys::backtrace::__rust_begin_short_backtrace::<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/backtrace.rs:166:18
+  37:     0x564c8ce81f62 - std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked::<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/thread/lifecycle.rs:91:13
+  38:     0x564c8ce81f62 - <core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}> as core[18c8dd30382e7099]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/panic/unwind_safe.rs:275:9
+  39:     0x564c8ce81f62 - std[52919eca6bce4da3]::panicking::catch_unwind::do_call::<core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:581:40
+  40:     0x564c8ce81f62 - std[52919eca6bce4da3]::panicking::catch_unwind::<(), core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panicking.rs:544:19
+  41:     0x564c8ce81f62 - std[52919eca6bce4da3]::panic::catch_unwind::<core[18c8dd30382e7099]::panic::unwind_safe::AssertUnwindSafe<std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}::{closure#0}>, ()>
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/panic.rs:359:14
+  42:     0x564c8ce81f62 - std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked::<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/thread/lifecycle.rs:89:26
+  43:     0x564c8ce81f62 - <std[52919eca6bce4da3]::thread::lifecycle::spawn_unchecked<test[5975feb3c521cd7b]::run_test::{closure#1}, ()>::{closure#1} as core[18c8dd30382e7099]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/ops/function.rs:250:5
+  44:     0x564c8d368c7f - <alloc[c54872da263eaafc]::boxed::Box<dyn core[18c8dd30382e7099]::ops::function::FnOnce<(), Output = ()> + core[18c8dd30382e7099]::marker::Send> as core[18c8dd30382e7099]::ops::function::FnOnce<()>>::call_once
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/alloc/src/boxed.rs:2249:9
+  45:     0x564c8d368c7f - <std[52919eca6bce4da3]::sys::thread::unix::Thread>::new::thread_start
+                               at /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/std/src/sys/thread/unix.rs:118:17
+  46:     0x7fe2944eec42 - start_thread
+  47:     0x7fe2945725ac - __clone3
+  48:                0x0 - <unknown>
+error: test failed, to rerun pass `--test e2e_private_herdr`
+
+Caused by:
+  process didn't exit successfully: `/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22/target/debug/deps/e2e_private_herdr-93d1752fc8bb2e66` (signal: 6, SIGABRT: process abort signal)
+EXIT 101

@@ -1,0 +1,263 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-93d1752fc8bb2e66)
+
+running 30 tests
+test e2e_application_retire_closes_exclusive_seats ... ok
+test e2e_cancel_and_reassign_rejected_op ... ok
+test e2e_close_pane_retires_clone ... ok
+test e2e_close_tab_retires_seat_and_clones ... ok
+test e2e_close_while_daemon_down_unknown_not_recreated ... ok
+test e2e_close_workspace_retires_all_incl_dormant ... ok
+test e2e_create_teamspace_seats_tabs_panes_env ... ok
+test e2e_daemon_kill_mid_op_recovers_no_duplicates ... ok
+test e2e_dropped_rename_recovered ... ok
+test e2e_event_loss_reconnect_converges ... ok
+test e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates ... ok
+test e2e_move_only_pane_moved_out_no_recreate ... ok
+test e2e_move_pane_into_other_seat_tab_keeps_that_seats_name ... ok
+test e2e_participation_join_leave_scopes ... ok
+test e2e_plugin_link_status_action_single_daemon ... ok
+test e2e_rebind_restamps_token_after_herdr_restart ... ok
+test e2e_rename_tab_renames_seat_moves_path_history ... ok
+test e2e_rename_while_daemon_down_recorded ... ok
+test e2e_restored_panes_resolve_without_env ... FAILED
+test e2e_resurrect_retired_seat ... ok
+test e2e_retire_last_clone_induced_seat_retirement_once ... ok
+test e2e_seat_deactivate_closes_tab_no_retirement ... ok
+test e2e_seat_override_model_change_recorded_shell_not_replaced ... ok
+test e2e_seat_resolution_in_bound_pane ... FAILED
+test e2e_summary_lands_in_archived_seat_folder ... FAILED
+test e2e_template_edit_adds_member_new_tab ... ok
+test e2e_undo_from_bound_pane_adopts_and_keeps_it ... FAILED
+test e2e_undo_from_pane_adopts_caller_pane ... ok
+test e2e_undo_tab_close_from_pane_adopts_caller_pane ... ok
+test e2e_undo_tab_close_restores_in_new_tab ... ok
+
+failures:
+
+---- e2e_restored_panes_resolve_without_env stdout ----
+
+thread 'e2e_restored_panes_resolve_without_env' (3252354) panicked at tests/e2e_private_herdr.rs:1668:51:
+not json (expected value at line 1 column 1): herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+{
+  "beads_labels": {
+    "clone": "hg-clone:cl_01M6NW4AS7Z4PZXDSZDF1VJSQQ",
+    "seat": "hg-seat:st_01M6NW49YED47E25MBDYGCSR5D",
+    "ts": "hg-ts:ts_01M6NW49WHNBJGNT9Y8EQH8QVE"
+  },
+  "beads_query": "bd list --label hg-seat:st_01M6NW49YED47E25MBDYGCSR5D",
+  "head": "461f64925e0f994b2f3bb010105f6130e877a3b5",
+  "instance": "/tmp/hg-01m6nw49nv24j1fvpapjchpxkj/graph",
+  "instructions": {
+    "parts": [],
+    "rev": "461f64925e0f994b2f3bb010105f6130e877a3b5",
+    "text": "Instructions for seat foreman (st_01M6NW49YED47E25MBDYGCSR5D) at graph revision 461f64925e0f. This replaces any earlier herdr-graph instruction render in this conversation. Sections are ordered general to specific; on conflict the later section wins.\n"
+  },
+  "is_node_manager": false,
+  "manager": null,
+  "node_manager": null,
+  "node_manager_duties": null,
+  "paths": {
+    "applications": [],
+    "clone_folder": "/tmp/hg-01m6nw49nv24j1fvpapjchpxkj/graph/teamspaces/t/seats/foreman/clones/foreman-1vjsqq",
+    "clone_record": "/tmp/hg-01m6nw49nv24j1fvpapjchpxkj/graph/teamspaces/t/seats/foreman/clones/foreman-1vjsqq/clone.toml",
+    "data": [],
+    "rules": {
+      "global": [],
+      "seat": [],
+      "team": []
+    },
+    "seat_agents_md": null,
+    "seat_folder": "/tmp/hg-01m6nw49nv24j1fvpapjchpxkj/graph/teamspaces/t/seats/foreman",
+    "seat_record": "/tmp/hg-01m6nw49nv24j1fvpapjchpxkj/graph/teamspaces/t/seats/foreman/seat.toml",
+    "templates": []
+  },
+  "pending_invitations": [],
+  "pending_ops": [],
+  "reload_required": false,
+  "reports": [],
+  "resolution": {
+    "clone": "cl_01M6NW4AS7Z4PZXDSZDF1VJSQQ",
+    "native_session": null,
+    "seat": "st_01M6NW49YED47E25MBDYGCSR5D",
+    "status": "bound",
+    "teamspace": "ts_01M6NW49WHNBJGNT9Y8EQH8QVE",
+    "via": "binding"
+  },
+  "view_rev": "461f64925e0f994b2f3bb010105f6130e877a3b5",
+  "worktree_dirty": []
+}
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- e2e_seat_resolution_in_bound_pane stdout ----
+
+thread 'e2e_seat_resolution_in_bound_pane' (3255646) panicked at tests/e2e_private_herdr.rs:1668:51:
+not json (expected value at line 1 column 1): herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+{
+  "beads_labels": {
+    "clone": "hg-clone:cl_01M6NW4X6XSYYNVY6R7VY8VYYH",
+    "seat": "hg-seat:st_01M6NW4X6XBXFDVARXV335S4MB",
+    "ts": "hg-ts:ts_01M6NW4X4XYMAF771EZESTHBPN"
+  },
+  "beads_query": "bd list --label hg-seat:st_01M6NW4X6XBXFDVARXV335S4MB",
+  "head": "e4b30a4dfadec841fc072bd725b92bc8bfe057f9",
+  "instance": "/tmp/hg-01m6nw4wxrx5f8v0y6bc7twnqb/graph",
+  "instructions": {
+    "parts": [],
+    "rev": "e4b30a4dfadec841fc072bd725b92bc8bfe057f9",
+    "text": "Instructions for seat foreman (st_01M6NW4X6XBXFDVARXV335S4MB) at graph revision e4b30a4dfade. This replaces any earlier herdr-graph instruction render in this conversation. Sections are ordered general to specific; on conflict the later section wins.\n"
+  },
+  "is_node_manager": false,
+  "manager": null,
+  "node_manager": null,
+  "node_manager_duties": null,
+  "paths": {
+    "applications": [],
+    "clone_folder": "/tmp/hg-01m6nw4wxrx5f8v0y6bc7twnqb/graph/teamspaces/t/seats/foreman/clones/foreman",
+    "clone_record": "/tmp/hg-01m6nw4wxrx5f8v0y6bc7twnqb/graph/teamspaces/t/seats/foreman/clones/foreman/clone.toml",
+    "data": [],
+    "rules": {
+      "global": [],
+      "seat": [],
+      "team": []
+    },
+    "seat_agents_md": null,
+    "seat_folder": "/tmp/hg-01m6nw4wxrx5f8v0y6bc7twnqb/graph/teamspaces/t/seats/foreman",
+    "seat_record": "/tmp/hg-01m6nw4wxrx5f8v0y6bc7twnqb/graph/teamspaces/t/seats/foreman/seat.toml",
+    "templates": []
+  },
+  "pending_invitations": [],
+  "pending_ops": [],
+  "reload_required": false,
+  "reports": [],
+  "resolution": {
+    "clone": "cl_01M6NW4X6XSYYNVY6R7VY8VYYH",
+    "native_session": null,
+    "seat": "st_01M6NW4X6XBXFDVARXV335S4MB",
+    "status": "bound",
+    "teamspace": "ts_01M6NW4X4XYMAF771EZESTHBPN",
+    "via": "binding"
+  },
+  "view_rev": "e4b30a4dfadec841fc072bd725b92bc8bfe057f9",
+  "worktree_dirty": []
+}
+
+
+---- e2e_summary_lands_in_archived_seat_folder stdout ----
+
+thread 'e2e_summary_lands_in_archived_seat_folder' (3256267) panicked at tests/e2e_private_herdr.rs:150:9:
+["content", "write", "--object", "st_01M6NW4Y8N79F7ZKGFWT35BHFW", "--rel", "summaries/sess-1.md", "--from", "/tmp/hg-01m6nw4xzjg6vf9gv7begpd7dw/summary.md"] failed: herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+herdr-graph: content write was removed: summaries use 'herdr-graph request complete <rq> --summary-from <file> --covered <a-b>'; instructions use 'herdr-graph plan instructions set …' then 'herdr-graph apply'
+
+
+---- e2e_undo_from_bound_pane_adopts_and_keeps_it stdout ----
+
+thread 'e2e_undo_from_bound_pane_adopts_and_keeps_it' (3256992) panicked at tests/e2e_private_herdr.rs:318:9:
+timed out (40s) waiting for the action list
+daemon log:
+
+status:
+instance: /tmp/hg-01m6nw51t5npgw6nq0dhvztta9/graph
+daemon: running (pid 3257037, up 41s)
+herdr socket: /tmp/hg-01m6nw51t5npgw6nq0dhvztta9/herdr.sock
+reconciler: {"attention":[],"blocked_effects":0,"failed_effects":0,"needs_revision_effects":0,"pending_effects":2,"pending_notices":0,"unknown_effects":0}
+threads: {"connected":false,"error":"threads service disconnected: herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml"}
+transcripts: {"completed":0,"delivery":"fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)","dispatched":0,"pending":0,"undeliverable":[],"unresolved":0}
+writer: {"ops":{"committed":8},"writer_halted":null}
+herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+
+snapshot:
+Ok(
+    HerdrSnapshot {
+        incarnation: Incarnation {
+            generation: 0,
+            server_pid: Some(
+                3256993,
+            ),
+            server_started: Some(
+                "Thu Nov  5 04:50:14 2026",
+            ),
+        },
+        workspaces: [
+            WorkspaceInfo {
+                id: HerdrWorkspaceId(
+                    "w1",
+                ),
+                label: "t",
+                metadata: {
+                    "hg": "hg=ts_01M6NW521A67QA887SPJAG08RQ",
+                },
+                tabs: [
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t1",
+                        ),
+                        label: "1",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p1",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65f86efe5e6101",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6nw51t5npgw6nq0dhvztta9/graph",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t2",
+                        ),
+                        label: "foreman",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p3",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65f86efed83b93",
+                                    ),
+                                ),
+                                label: Some(
+                                    "foreman",
+                                ),
+                                cwd: Some(
+                                    "/tmp/hg-01m6nw51t5npgw6nq0dhvztta9/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M6NW52H4550KDJ9X81CY82ET",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    },
+)
+open effects:
+[("ensure_thread", "st_01M6NW523CMQNKCGT23857RR7R", "Pending", "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml"), ("ensure_thread", "ts_01M6NW521A67QA887SPJAG08RQ", "Pending", "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/herdr/plugins/herdr-threads); install/start herdr-threads or set threads_state_dir in config.toml")]
+
+
+failures:
+    e2e_restored_panes_resolve_without_env
+    e2e_seat_resolution_in_bound_pane
+    e2e_summary_lands_in_archived_seat_folder
+    e2e_undo_from_bound_pane_adopts_and_keeps_it
+
+test result: FAILED. 26 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 157.98s
+
+error: test failed, to rerun pass `--test e2e_private_herdr`
+EXIT 101

@@ -1,0 +1,25 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.22s
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-25cd96efd648a836)
+
+running 1 test
+test golden::sweep_golden_path ... FAILED
+
+failures:
+
+---- golden::sweep_golden_path stdout ----
+
+thread 'golden::sweep_golden_path' (3233331) panicked at tests/integration_sweep.rs:176:13:
+timed out (40s) waiting for the seat to retire
+daemon log:
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    golden::sweep_golden_path
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 42.60s
+
+error: test failed, to rerun pass `--test integration_sweep`
+EXIT 101

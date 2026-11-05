@@ -1,0 +1,171 @@
+    Checking herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.22)
+warning: redundant field names in struct initialization
+   --> src/transcripts/mutations.rs:641:13
+    |
+641 |             output_ref: output_ref,
+    |             ^^^^^^^^^^^^^^^^^^^^^^ help: replace it with: `output_ref`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#redundant_field_names
+    = note: `#[warn(clippy::redundant_field_names)]` on by default
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> src/daemon/compose.rs:671:16
+    |
+671 |         inner: Arc<Mutex<Option<(Discovered, PathBuf, Arc<ServiceThreads>)>>>,
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: this `if` statement can be collapsed
+   --> src/daemon/compose.rs:707:13
+    |
+707 | /             if let Some((cached, journal, t)) = &*slot {
+708 | |                 if cached == &d && journal == &intents {
+709 | |                     return Ok(t.clone());
+710 | |                 }
+711 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#collapsible_if
+    = note: `#[warn(clippy::collapsible_if)]` on by default
+help: collapse nested if block
+    |
+707 ~             if let Some((cached, journal, t)) = &*slot
+708 ~                 && cached == &d && journal == &intents {
+709 |                     return Ok(t.clone());
+710 ~                 }
+    |
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> src/daemon/compose.rs:835:16
+    |
+835 |         inner: Arc<Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>>,
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> src/templates/kinds.rs:275:6
+    |
+275 | ) -> Result<Vec<(RepoPath, Option<Vec<u8>>)>, StoreError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+
+warning: this `if` statement can be collapsed
+   --> src/threads/effects.rs:602:13
+    |
+602 | /             if let Some(op) = &g.namespace_op {
+603 | |                 if journal
+604 | |                     .get(op)
+605 | |                     .ok()
+...   |
+611 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+602 ~             if let Some(op) = &g.namespace_op
+603 ~                 && journal
+604 |                     .get(op)
+...
+609 |                     continue;
+610 ~                 }
+    |
+
+warning: this `if` statement can be collapsed
+   --> src/threads/effects.rs:746:13
+    |
+746 | /             if let Some(op) = &g.namespace_op {
+747 | |                 if journal
+748 | |                     .get(op)
+749 | |                     .ok()
+...   |
+755 | |             }
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+746 ~             if let Some(op) = &g.namespace_op
+747 ~                 && journal
+748 |                     .get(op)
+...
+753 |                     continue;
+754 ~                 }
+    |
+
+warning: the borrowed expression implements the required traits
+  --> src/threads/namespace.rs:98:29
+   |
+98 |     std::fs::create_dir_all(&dir)?;
+   |                             ^^^^ help: change this to: `dir`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#needless_borrows_for_generic_args
+   = note: `#[warn(clippy::needless_borrows_for_generic_args)]` on by default
+
+warning: this `if` statement can be collapsed
+  --> src/threads/reconnect.rs:55:5
+   |
+55 | /     if let Some(t) = namespace::read(cx.tree)? {
+56 | |         if old != t.node.to_string() {
+57 | |             return Err(invalid(
+58 | |                 "finish the committed reconnect by restoring its matching binding/store before planning another transition",
+...  |
+61 | |     }
+   | |_____^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#collapsible_if
+help: collapse nested if block
+   |
+55 ~     if let Some(t) = namespace::read(cx.tree)?
+56 ~         && old != t.node.to_string() {
+57 |             return Err(invalid(
+58 |                 "finish the committed reconnect by restoring its matching binding/store before planning another transition",
+59 |             ));
+60 ~         }
+   |
+
+warning: `herdr-graph` (lib) generated 9 warnings (run `cargo clippy --fix --lib -p herdr-graph -- ` to apply 6 suggestions)
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> tests/daemon_composed.rs:917:16
+    |
+917 |     let cases: [(InstructionScopeWord, Option<&str>, &str, Vec<&str>, &str); 3] = [
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#type_complexity
+    = note: `#[warn(clippy::type_complexity)]` on by default
+
+warning: `herdr-graph` (test "daemon_composed") generated 1 warning
+warning: redundant closure
+   --> src/bootstrap/tests.rs:164:13
+    |
+164 |     fx_with(|root| crate::plan::managers::testing::opt_out(root))
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the function itself: `crate::plan::managers::testing::opt_out`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#redundant_closure
+    = note: `#[warn(clippy::redundant_closure)]` on by default
+
+warning: this `map_or` can be simplified
+    --> src/bootstrap/tests.rs:3493:13
+     |
+3493 | /             reply["instructions"]["parts"]
+3494 | |                 .as_array()
+3495 | |                 .map_or(true, |ps| ps
+3496 | |                     .iter()
+3497 | |                     .all(|p| !p["body"].as_str().unwrap_or("").contains(SKIPPED))),
+     | |__________________________________________________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_map_or
+     = note: `#[warn(clippy::unnecessary_map_or)]` on by default
+help: use `is_none_or` instead
+     |
+3495 -                 .map_or(true, |ps| ps
+3495 +                 .is_none_or(|ps| ps
+     |
+
+warning: `herdr-graph` (lib test) generated 11 warnings (9 duplicates) (run `cargo clippy --fix --lib -p herdr-graph --tests -- ` to apply 2 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.55s
+EXIT 0

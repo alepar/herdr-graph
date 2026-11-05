@@ -1,0 +1,69 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-25cd96efd648a836)
+
+running 1 test
+test golden::sweep_golden_path ... FAILED
+
+failures:
+
+---- golden::sweep_golden_path stdout ----
+
+thread 'golden::sweep_golden_path' (3231561) panicked at tests/integration_sweep.rs:226:41:
+show st_01M6NVX8726J08A48EH9ZKV9AM is not toml (TOML parse error at line 42, column 10
+   |
+42 | manager: none assigned
+   |          ^
+key with no value, expected `=`
+): schema = 1
+id = "st_01M6NVX8726J08A48EH9ZKV9AM"
+rev = 3
+name = "chief"
+teamspace = "ts_01M6NVX8508P2EWWEWTA3GBJPD"
+lifecycle = "active"
+applications = ["app_01M6NVX870F2YX34Q43N1XX2MX"]
+
+[[name_history]]
+old = "foreman"
+new = "chief"
+observed_at = "2026-11-05T12:46:00.900436704Z"
+source = "observed"
+
+[template_ref]
+template = "tpl_01KHS8ZFFCQ84VXR0V2E9ZWGAT"
+member = "mem_01KGPCQ8FZD22PNBJCA7EA4V2W"
+
+[overrides]
+instructions_sections = []
+
+[participation]
+seat_wide = []
+
+[activation]
+last_op = "op_01M6NVX877CW1HBT9JCMMMMXCV"
+
+[runtime]
+availability = "present"
+observed_at = "2026-11-05T12:45:59.442622665Z"
+
+[runtime.bound]
+workspace_id = "w1"
+tab_id = "w1:t2"
+
+[runtime.bound.incarnation]
+generation = 1
+server_pid = 3231562
+server_started = "Thu Nov  5 04:45:58 2026"
+
+[channel]
+manager: none assigned
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    golden::sweep_golden_path
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 2.12s
+
+error: test failed, to rerun pass `--test integration_sweep`
+EXIT 101
