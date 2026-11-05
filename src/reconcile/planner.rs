@@ -62,6 +62,41 @@ pub fn resume_blocked_key(clone: &CloneId) -> String {
     format!("resume_blocked:{clone}")
 }
 
+/// Journal meta: `{"epoch","error","failures"}` while the launch mark of a pending Restore keeps failing, so
+/// `status` can name it and the planner can give each retry a fresh effect identity.
+pub fn restore_mark_failed_key(clone: &CloneId) -> String {
+    format!("restore_mark_failed:{clone}")
+}
+
+/// Journal meta: `{"reason":"not_launchable"}` while an acknowledged Restore has no resumable session to launch.
+pub fn restore_stuck_key(clone: &CloneId) -> String {
+    format!("restore_stuck:{clone}")
+}
+
+/// Write `want` under `key`, or delete the key when None; only when the stored value differs.
+fn sync_meta(journal: &Journal, key: &str, want: Option<&str>) {
+    let have = journal.meta_get(key).ok().flatten();
+    if have.as_deref() == want {
+        return;
+    }
+    let _ = match want {
+        Some(v) => journal.meta_set(key, v),
+        None => journal.meta_delete(key),
+    };
+}
+
+/// Mark failures recorded for the Restore of `epoch` on `clone`.
+pub fn restore_mark_failures(journal: &Journal, clone: &CloneId, epoch: &OpId) -> u64 {
+    journal
+        .meta_get(&restore_mark_failed_key(clone))
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter(|m| m["epoch"] == epoch.to_string())
+        .and_then(|m| m["failures"].as_u64())
+        .unwrap_or(0)
+}
+
 /// Journal meta: the `incarnation:changed_at` a restart relaunch of `clone` already ran for (one per change).
 pub fn resumed_key(clone: &CloneId) -> String {
     format!("resumed_at:{clone}")
@@ -879,9 +914,9 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
         let any = p.clone.to_any();
         let blocked_key = resume_blocked_key(&p.clone);
         let mut blocked: Option<serde_json::Value> = None;
-        let eligible = p.harness != crate::model::harness::Harness::Shell
-            && p.occupant.is_none()
-            && p.resume.is_some();
+        let startable =
+            p.harness != crate::model::harness::Harness::Shell && p.occupant.is_none();
+        let eligible = startable && p.resume.is_some();
         let pane = idx.bound_pane(&p.clone);
         let key_conflict = p
             .seat_fact
@@ -898,10 +933,11 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
             }) = &p.seat_intent
         {
             if pane.as_ref().is_some_and(|lp| lp.pane.agent.is_none()) {
-                // One launch per epoch: the epoch is the attribution op and the identity revision is fixed.
+                // One launch per epoch is enforced by the launch mark, not by the effect identity: the identity
+                // revision counts failed marks, so a failed mark is retried without a launch.
                 o.mk_as(
                     epoch.clone(),
-                    0,
+                    restore_mark_failures(journal, &p.clone, epoch),
                     p.rev,
                     EffectKind::StartAgent,
                     any,
@@ -947,6 +983,24 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 }
             }
         }
+        // An acknowledged, unlaunched Restore with nothing to resume is named, never launched fresh.
+        let not_launchable = startable
+            && p.resume.is_none()
+            && matches!(
+                p.seat_intent,
+                Some(SeatIntent::Restore {
+                    threads_done: true,
+                    launched: false,
+                    ..
+                })
+            );
+        sync_meta(
+            journal,
+            &restore_stuck_key(&p.clone),
+            not_launchable
+                .then(|| serde_json::json!({ "reason": "not_launchable" }).to_string())
+                .as_deref(),
+        );
         match blocked {
             Some(v) => {
                 let _ = journal.meta_set(&blocked_key, &v.to_string());

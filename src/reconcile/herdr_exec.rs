@@ -6,7 +6,8 @@ use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
     LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, incarnation_changed_at,
-    launch_env_key, launched_key, live_ref, plan_effects, resumed_key, set_live_ref, token_of,
+    launch_env_key, launched_key, live_ref, plan_effects, restore_mark_failed_key,
+    restore_mark_failures, resumed_key, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
@@ -568,20 +569,32 @@ impl HerdrExecutor {
             ..
         }) = &p.seat_intent
         {
-            if !*threads_done || *launched {
+            // Stale: not acknowledged, already launched, or the intent moved to another epoch than this effect's.
+            if !*threads_done || *launched || *epoch != e.op {
                 return ExecOutcome::Obsolete;
             }
-            if admit_threads_seat(
+            let failed_key = restore_mark_failed_key(&clone);
+            if let Err(err) = admit_threads_seat(
                 cx.writer,
                 &clone,
                 &SeatTransition::MarkLaunched {
                     epoch: epoch.clone(),
                 },
-            )
-            .is_err()
-            {
-                return ExecOutcome::Obsolete;
+            ) {
+                // The intent is unchanged: nothing launches, and the planner retries with a new identity.
+                let failures = restore_mark_failures(&self.journal, &clone, epoch) + 1;
+                let _ = self.journal.meta_set(
+                    &failed_key,
+                    &serde_json::json!({
+                        "epoch": epoch.to_string(),
+                        "error": err.to_string(),
+                        "failures": failures,
+                    })
+                    .to_string(),
+                );
+                return ExecOutcome::Failed(format!("restore launch mark: {err}"));
             }
+            let _ = self.journal.meta_delete(&failed_key);
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
         let env = agent_env(&clone, false);

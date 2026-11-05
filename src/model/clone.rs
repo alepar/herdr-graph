@@ -76,6 +76,9 @@ pub enum SeatIntent {
         threads_done: bool,
         #[serde(default)]
         launched: bool,
+        /// The last threads refusal of this epoch's threads step, for status (§14.7).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_refusal: Option<String>,
     },
     /// Purge tombstone of a clone that holds a seat (§14.2).
     Finalize { seat: String },

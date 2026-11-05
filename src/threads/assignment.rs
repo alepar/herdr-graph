@@ -25,6 +25,8 @@ pub enum SeatTransition {
     },
     /// Threads acknowledged the Restore of `epoch`: `threads_done = true`.
     Acknowledge { epoch: OpId },
+    /// Threads refused the Restore's threads step of `epoch`: remember why, for status.
+    RecordRefusal { epoch: OpId, reason: String },
     /// The executor is about to dispatch StartAgent for `epoch`; allowed once per epoch.
     MarkLaunched { epoch: OpId },
     /// The restored clone reattached: drop the finished Restore intent.
@@ -63,6 +65,7 @@ pub fn write_restore_intent(rec: &mut CloneRecord, epoch: &OpId) {
             epoch: epoch.clone(),
             threads_done: false,
             launched: false,
+            last_refusal: None,
         });
     }
 }
@@ -217,6 +220,7 @@ impl Mutation for ThreadsSeatMutation {
                         epoch: epoch.clone(),
                         threads_done: true,
                         launched: false,
+                        last_refusal: None,
                     });
                 }
             }
@@ -224,11 +228,25 @@ impl Mutation for ThreadsSeatMutation {
                 if let Some(SeatIntent::Restore {
                     epoch: e,
                     threads_done,
+                    last_refusal,
                     ..
                 }) = &mut rec.seat_intent
                     && e == epoch
                 {
                     *threads_done = true;
+                    *last_refusal = None;
+                }
+            }
+            SeatTransition::RecordRefusal { epoch, reason } => {
+                if let Some(SeatIntent::Restore {
+                    epoch: e,
+                    threads_done: false,
+                    last_refusal,
+                    ..
+                }) = &mut rec.seat_intent
+                    && e == epoch
+                {
+                    *last_refusal = Some(reason.clone());
                 }
             }
             SeatTransition::MarkLaunched { epoch } => match &mut rec.seat_intent {

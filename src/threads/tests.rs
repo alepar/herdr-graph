@@ -130,6 +130,7 @@ impl Mutation for SeatFixture {
                     epoch: cx.request.args["epoch"].as_str().unwrap().parse().unwrap(),
                     threads_done: false,
                     launched: false,
+                    last_refusal: None,
                 });
             }
             "fact" => {
@@ -1884,6 +1885,7 @@ fn restore(seat: &str, epoch: &OpId, threads_done: bool, launched: bool) -> Opti
         epoch: epoch.clone(),
         threads_done,
         launched,
+        last_refusal: None,
     })
 }
 
@@ -2859,10 +2861,12 @@ async fn succession_refusal_defers_and_is_never_a_fresh_allocation() {
     let rs = succeed_rows(&fx);
     assert_eq!(rs.len(), 1);
     assert_eq!(rs[0].status, EffectStatus::Pending);
-    assert_eq!(
-        clone_rec(&fx, &clone.id).seat_intent,
-        restore("seat-A", &epoch, false, false)
-    );
+    // The refusal is remembered on the intent for status; everything else is as written.
+    let mut pending = clone_rec(&fx, &clone.id).seat_intent;
+    if let Some(SeatIntent::Restore { last_refusal, .. }) = &mut pending {
+        assert_eq!(last_refusal.take().as_deref(), Some("restore hold"));
+    }
+    assert_eq!(pending, restore("seat-A", &epoch, false, false));
     fx.map.clear_not_yet(&pane);
     later(&fx).await;
     later(&fx).await;
@@ -2874,6 +2878,61 @@ async fn succession_refusal_defers_and_is_never_a_fresh_allocation() {
     let ops = &ops[setup..];
     assert!(ops.len() >= 3, "{ops:?}");
     assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+}
+
+#[tokio::test]
+async fn refused_succession_is_shown_with_its_last_refusal() {
+    let fx = fx();
+    let (clone, epoch, _, _) = undone_clone(&fx).await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set_not_yet(&pane, "restore hold");
+    steps(&fx, 2).await;
+    later(&fx).await;
+    let rs = succeed_rows(&fx);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, EffectStatus::Pending, "Deferred, not failed");
+    let Some(SeatIntent::Restore {
+        threads_done: false,
+        last_refusal: Some(why),
+        ..
+    }) = clone_rec(&fx, &clone.id).seat_intent
+    else {
+        panic!("{:?}", clone_rec(&fx, &clone.id).seat_intent);
+    };
+    assert!(why.contains("restore hold"), "{why}");
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    let stuck = st["stuck_restores"].as_array().unwrap();
+    assert_eq!(stuck.len(), 1, "{st}");
+    assert_eq!(stuck[0]["clone"], clone.id.to_string());
+    assert_eq!(stuck[0]["epoch"], epoch.to_string());
+    assert_eq!(stuck[0]["reason"], "threads_pending");
+    assert!(
+        stuck[0]["last_refusal"]
+            .as_str()
+            .unwrap()
+            .contains("restore hold")
+    );
+    fx.map.clear_not_yet(&pane);
+    later(&fx).await;
+    later(&fx).await;
+    let done = clone_rec(&fx, &clone.id);
+    assert_eq!(done.threads_seat.as_deref(), Some("seat-B"));
+    assert!(
+        matches!(
+            done.seat_intent,
+            Some(SeatIntent::Restore {
+                last_refusal: None,
+                ..
+            })
+        ),
+        "{:?}",
+        done.seat_intent
+    );
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    assert!(
+        st["stuck_restores"].as_array().unwrap().is_empty(),
+        "{st}"
+    );
 }
 
 #[tokio::test]

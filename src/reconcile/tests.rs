@@ -2832,6 +2832,7 @@ fn restore_intent(
         epoch: epoch.clone(),
         threads_done,
         launched,
+        last_refusal: None,
     })
     .unwrap()
 }
@@ -3242,11 +3243,140 @@ async fn restore_launch_is_bounded_and_named_stuck() {
     assert_eq!(stuck.len(), 1, "{st}");
     assert_eq!(stuck[0]["clone"], c.id.to_string());
     assert_eq!(stuck[0]["epoch"], epoch.to_string());
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
     assert!(
         stuck[0]["remedy"]
             .as_str()
             .unwrap()
             .contains("retire the clone")
+    );
+}
+
+/// Refuses the restore launch mark at admission while `fail` is set; every other request passes through.
+struct MarkRefusingWriter {
+    inner: Arc<WriterCore>,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl crate::ports::writer::Writer for MarkRefusingWriter {
+    fn admit(
+        &self,
+        request: crate::model::change::ChangeRequest,
+    ) -> Result<OpId, crate::ports::writer::WriterError> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst)
+            && request.args["transition"]["action"] == "mark_launched"
+        {
+            return Err(crate::ports::writer::WriterError::Journal(
+                "disk full".into(),
+            ));
+        }
+        self.inner.admit(request)
+    }
+
+    fn status(
+        &self,
+        op: &OpId,
+    ) -> Result<Option<crate::model::operation::OpState>, crate::ports::writer::WriterError> {
+        self.inner.status(op)
+    }
+}
+
+fn stuck_restores(fx: &Fx) -> Vec<serde_json::Value> {
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(fx), &fx.journal);
+    st["stuck_restores"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn failed_mark_launched_is_retried_without_launching() {
+    let mut fx = fx();
+    let writer = Arc::new(MarkRefusingWriter {
+        inner: fx.w.clone(),
+        fail: std::sync::atomic::AtomicBool::new(true),
+    });
+    let mut cfg = ReconcilerConfig::new(fx._tmp.path().join("inst"));
+    cfg.idle_timeout = Duration::from_millis(100);
+    cfg.exit_timeout = Duration::from_millis(100);
+    cfg.exit_followup = Duration::from_millis(20);
+    fx.rec = Reconciler::new(
+        fx.store.clone(),
+        fx.journal.clone(),
+        writer.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        fx.notes.clone(),
+        cfg,
+    );
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    step(&fx).await;
+    let starts = rows(&fx, EffectKind::StartAgent);
+    assert!(
+        starts.iter().any(|r| r.status == EffectStatus::Failed),
+        "{starts:?}"
+    );
+    assert!(
+        starts.iter().all(|r| r.status != EffectStatus::Obsolete),
+        "{starts:?}"
+    );
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["clone"], c.id.to_string());
+    assert_eq!(stuck[0]["reason"], "mark_failed");
+    assert!(stuck[0]["error"].as_str().unwrap().contains("disk full"));
+    // Still failing: retried every pass, never launched.
+    for _ in 0..2 {
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(stuck_restores(&fx).len(), 1);
+    // The fault clears: the next passes mark and launch exactly once.
+    writer
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    assert_eq!(
+        the_clone(&fx, &c.id).seat_intent,
+        serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
+    );
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+}
+
+#[tokio::test]
+async fn restore_without_resumable_session_is_named_not_launchable() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    let epoch = OpId::new();
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "intent": restore_intent("seat-1", &epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["clone"], c.id.to_string());
+    assert_eq!(stuck[0]["reason"], "not_launchable");
+    assert!(
+        stuck[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("start an agent manually in the reopened pane")
     );
 }
 
