@@ -96,12 +96,16 @@ impl Graph {
             && self.seats.get(&c.seat).is_some_and(|s| self.seat_active(s))
     }
 
-    /// Native session record of the clone's occupant, when the clone is active and occupied.
-    fn occupant_of(&self, c: &CloneRecord) -> Option<String> {
-        if !self.clone_active(c) {
-            return None;
-        }
-        c.occupant.as_ref().map(|o| o.native_session.to_string())
+    /// The threads seat whose memberships this clone holds (spec §3, §14.11): its recorded `threads_seat` while
+    /// the clone is active, or retired and not purged. Occupancy does not matter: invitations wait for the
+    /// first SessionStart and survive an agent exit, `/clear` or relaunch on the same pane.
+    fn membership_seat(&self, c: &CloneRecord) -> Option<String> {
+        let seat = c.threads_seat.as_ref()?;
+        let live = match c.lifecycle {
+            CloneLifecycle::Active => self.clone_active(c),
+            CloneLifecycle::Retired => !c.is_tombstone(),
+        };
+        live.then(|| seat.clone())
     }
 
     fn rev_of(&self, object: &AnyId) -> Option<u64> {
@@ -264,8 +268,8 @@ struct Want {
 enum After {
     /// The `EnsureThread` of this teamspace or seat.
     Ensure(AnyId),
-    /// The `ReleaseRequirement` of this clone's invitation to this thread: the old occupant's episode ends
-    /// before the new occupant's begins.
+    /// The `ReleaseRequirement` of this clone's invitation to this thread: the old seat's episode ends
+    /// before the new seat's begins.
     Release(AnyId, String),
 }
 
@@ -389,12 +393,12 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 Payload::ResolveSeat { pane },
             ));
         }
-        let occupant = g.occupant_of(c);
+        let threads_seat = g.membership_seat(c);
         let seat = g.seats.get(&c.seat);
 
-        // Desired memberships of the current occupant.
+        // Desired memberships of the clone's threads seat.
         let mut desired: Vec<(String, InviteConstraint, Option<AnyId>)> = Vec::new();
-        if occupant.is_some()
+        if threads_seat.is_some()
             && let Some(seat) = seat
         {
             for owner in [seat.id.to_any(), seat.teamspace.to_any()] {
@@ -416,19 +420,18 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 }
             }
         }
-        for (thread, constraint, ensure) in desired {
+        for (thread, constraint, ensure) in desired.iter().cloned() {
             let held = c
                 .invitations
                 .iter()
                 .find(|i| i.thread == thread && i.constraint == constraint);
-            let same_occupant = |i: &Invitation| {
-                i.link.as_ref().and_then(|l| l.occupant.as_ref()) == occupant.as_ref()
-            };
+            let same_seat =
+                |i: &Invitation| i.link.as_ref().map(|l| &l.seat) == threads_seat.as_ref();
             let satisfied = match (held, constraint) {
-                // A Required episode is settled for the occupant it was issued for, whatever became of it.
-                (Some(i), InviteConstraint::Required) => same_occupant(i),
+                // A Required episode is settled for the seat it was issued for, whatever became of it.
+                (Some(i), InviteConstraint::Required) => same_seat(i),
                 (Some(i), InviteConstraint::Ordinary) => {
-                    same_occupant(i)
+                    same_seat(i)
                         && matches!(
                             i.state,
                             InvitationState::Pending | InvitationState::Accepted
@@ -455,15 +458,22 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
 
         for i in &c.invitations {
             let Some(link) = &i.link else { continue };
-            let current = link.occupant == occupant;
-            // Occupancy-keyed cleanup: the requirement belongs to an occupant that is gone (or to a retired or
-            // deactivated clone); release it.
+            // Seat-keyed cleanup: a requirement is released only when the seat it was issued for is no longer
+            // the clone's (succession) or the want is gone (opt-out, channel removed). Occupancy and
+            // retirement release nothing; a purge ends the memberships (threads finalizes the seat).
+            let Some(current_seat) = &threads_seat else {
+                continue;
+            };
+            let current = &link.seat == current_seat;
+            let wanted = desired
+                .iter()
+                .any(|(t, k, _)| *t == i.thread && *k == i.constraint);
             if i.constraint == InviteConstraint::Required
                 && matches!(
                     i.state,
                     InvitationState::Pending | InvitationState::Accepted
                 )
-                && !current
+                && (!current || !wanted)
             {
                 let payload = Payload::Release {
                     thread: i.thread.clone(),
@@ -1085,15 +1095,15 @@ fn admit_bookkeeping(cx: &ExecCx<'_>, mut args: serde_json::Value) -> Result<(),
         .map_err(|e| ExecOutcome::Transient(format!("bookkeeping write: {e}")))
 }
 
-/// One invitation write-back. `expect_occupant`: only apply while the stored invitation still belongs to the
-/// occupant the effect acted for, so a late write about a previous occupant never overwrites the new one's.
+/// One invitation write-back. `expect_seat`: only apply while the stored invitation still belongs to the
+/// threads seat the effect acted for, so a late write about a previous seat never overwrites the new one's.
 struct InvWrite<'a> {
     clone: &'a CloneId,
     thread: &'a str,
     constraint: InviteConstraint,
     state: InvitationState,
     link: &'a ThreadsLink,
-    expect_occupant: Option<&'a str>,
+    expect_seat: Option<&'a str>,
 }
 
 fn short(id: &EffectId) -> &str {
@@ -1130,7 +1140,7 @@ impl ThreadsExecutor {
             cx,
             serde_json::json!({
                 "sub": "invitation", "clone": w.clone, "thread": w.thread, "constraint": w.constraint,
-                "state": w.state, "link": w.link, "expect_occupant": w.expect_occupant,
+                "state": w.state, "link": w.link, "expect_seat": w.expect_seat,
             }),
         )
     }
@@ -1274,18 +1284,11 @@ impl ThreadsExecutor {
         else {
             return ExecOutcome::Obsolete;
         };
-        let Some(occupant) = g.occupant_of(clone) else {
+        if clone.threads_seat.is_none() {
+            return ExecOutcome::Deferred("no threads seat yet".into());
+        }
+        let Some(seat) = g.membership_seat(clone).map(ThreadsSeatRef) else {
             return ExecOutcome::Obsolete;
-        };
-        let Some(pane) = clone.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) else {
-            return ExecOutcome::Deferred("clone has no pane binding yet".into());
-        };
-        let seat = match self.mapping.seat_for(&pane).await {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                return ExecOutcome::Deferred(format!("pane {pane} is not a threads seat yet"));
-            }
-            Err(err) => return port_outcome(err),
         };
         let thread_ref = ThreadRef(thread.to_owned());
         let key = OpKey(format!(
@@ -1313,7 +1316,10 @@ impl ThreadsExecutor {
             .map_or(InvitationState::Pending, |d| d.state);
         let link = ThreadsLink {
             seat: seat.0.clone(),
-            occupant: Some(occupant),
+            occupant: clone
+                .occupant
+                .as_ref()
+                .map(|o| o.native_session.to_string()),
             invitation: detail.as_ref().and_then(|d| d.invitation.clone()),
             requirement: detail.as_ref().and_then(|d| d.requirement.clone()),
             revision: detail.as_ref().and_then(|d| d.revision),
@@ -1326,7 +1332,7 @@ impl ThreadsExecutor {
                 constraint,
                 state,
                 link: &link,
-                expect_occupant: None,
+                expect_seat: None,
             },
         ) {
             Ok(()) => ExecOutcome::Done,
@@ -1383,7 +1389,7 @@ impl ThreadsExecutor {
                     constraint,
                     state: InvitationState::Released,
                     link: &link,
-                    expect_occupant: link.occupant.as_deref(),
+                    expect_seat: Some(link.seat.as_str()),
                 },
             ) {
                 Ok(()) => ExecOutcome::Done,
@@ -1490,7 +1496,7 @@ impl ThreadsExecutor {
                     constraint,
                     state,
                     link: &fresh,
-                    expect_occupant: link.occupant.as_deref(),
+                    expect_seat: Some(link.seat.as_str()),
                 },
             )
         {

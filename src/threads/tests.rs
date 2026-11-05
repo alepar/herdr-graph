@@ -394,11 +394,18 @@ async fn base(fx: &Fx) -> CloneRecord {
     cs.remove(0)
 }
 
-/// The clone gets an occupant and its pane is registered as `threads_seat` with herdr-threads.
+/// The clone's pane is registered as `threads_seat` with herdr-threads and the clone records it (the
+/// resolve-seat want's outcome), then gets an occupant.
 async fn occupy(fx: &Fx, clone: &CloneRecord, threads_seat: &str) {
+    seat_the_clone(fx, clone, threads_seat);
     bookkeeping(fx, "test_set_occupant", json!({ "clone": clone.id }));
+}
+
+/// The clone records `threads_seat` (no occupant): invitations are keyed on it.
+fn seat_the_clone(fx: &Fx, clone: &CloneRecord, threads_seat: &str) {
     fx.map
         .set(&pane_of(&clone_rec(fx, &clone.id)), threads_seat);
+    assert_eq!(transition(fx, &clone.id, assign(threads_seat)), None);
 }
 
 fn thread_of_seat(fx: &Fx, name: &str) -> ThreadRef {
@@ -535,7 +542,7 @@ async fn invite_required_for_occupied_clone_on_seat_and_teamspace_channels() {
     assert_eq!(
         fx.threads.call_count("invite"),
         0,
-        "no occupant, no invitation"
+        "no threads seat, no invitation"
     );
     occupy(&fx, &clone, "seat-A").await;
     steps(&fx, 2).await;
@@ -583,24 +590,53 @@ async fn invite_waits_for_the_pane_to_become_a_threads_seat() {
         0,
         "the pane has no threads seat yet"
     );
-    let invites = rows(&fx, EffectKind::Invite);
-    assert_eq!(invites.len(), 2);
     assert!(
-        invites
-            .iter()
-            .all(|r| r.status == EffectStatus::Pending && r.attempts == 0),
-        "deferred, not failed or counted"
+        rows(&fx, EffectKind::Invite).is_empty(),
+        "no threads seat recorded: no invitation is wanted"
     );
     fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-A");
-    steps(&fx, 2).await;
+    steps(&fx, 4).await;
+    assert_eq!(
+        clone_rec(&fx, &clone.id).threads_seat.as_deref(),
+        Some("seat-A")
+    );
     assert_eq!(fx.threads.call_count("invite"), 2);
+}
+
+#[tokio::test]
+async fn invitation_is_issued_before_first_occupancy() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    assert!(clone_rec(&fx, &clone.id).occupant.is_none());
+    seat_the_clone(&fx, &clone, "seat-A");
+    steps(&fx, 3).await;
+    let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
+    for t in [&st, &ts] {
+        let m = fx.threads.member(t, &seat_ref("seat-A")).expect("invited");
+        assert_eq!(
+            (m.constraint, m.state),
+            (InviteConstraint::Required, InvitationState::Pending)
+        );
+    }
+    assert!(
+        clone_rec(&fx, &clone.id).occupant.is_none(),
+        "no occupant was needed"
+    );
+    assert!(
+        inv(&clone_rec(&fx, &clone.id), &st)
+            .link
+            .as_ref()
+            .unwrap()
+            .occupant
+            .is_none()
+    );
 }
 
 #[tokio::test]
 async fn indefinitely_deferred_invite_backs_off_its_wake() {
     let fx = fx();
     let clone = base(&fx).await;
-    bookkeeping(&fx, "test_set_occupant", json!({ "clone": clone.id })); // never mapped to a threads seat
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": clone.id })); // never resolved to a threads seat
     let start = fx.clock.now();
     let mut n = 0;
     while fx.clock.now() < start + chrono::Duration::minutes(10) {
@@ -621,13 +657,13 @@ async fn indefinitely_deferred_invite_backs_off_its_wake() {
     );
     assert_eq!(fx.threads.call_count("invite"), 0);
     assert!(
-        rows(&fx, EffectKind::Invite)
+        resolve_rows(&fx)
             .iter()
             .all(|r| r.status == EffectStatus::Pending && r.attempts == 0)
     );
 
     fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-A");
-    steps(&fx, 2).await;
+    steps(&fx, 4).await;
     assert_eq!(
         fx.threads.call_count("invite"),
         2,
@@ -728,7 +764,7 @@ async fn pending_invitations_report_thread_and_constraint() {
 // ---------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn occupancy_end_releases_requirement() {
+async fn occupancy_end_keeps_required_memberships() {
     let fx = fx();
     let clone = base(&fx).await;
     occupy(&fx, &clone, "seat-A").await;
@@ -736,50 +772,58 @@ async fn occupancy_end_releases_requirement() {
     let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
     fx.threads.accept(&st, &seat_ref("seat-A"));
     later(&fx).await;
+    // The agent exits with its pane still open.
     bookkeeping(&fx, "test_clear_occupant", json!({ "clone": clone.id }));
-    steps(&fx, 2).await;
-    for t in [&st, &ts] {
-        assert_eq!(
-            fx.threads.member(t, &seat_ref("seat-A")).unwrap().state,
-            InvitationState::Released,
-            "{}",
-            t.0
-        );
-    }
-    assert_eq!(fx.threads.call_count("release_requirement"), 2);
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(fx.threads.call_count("invite"), 2, "nobody to re-invite");
+    assert_eq!(
+        fx.threads.member(&st, &seat_ref("seat-A")).unwrap().state,
+        InvitationState::Accepted
+    );
+    assert_eq!(
+        fx.threads.member(&ts, &seat_ref("seat-A")).unwrap().state,
+        InvitationState::Pending
+    );
     let c = clone_rec(&fx, &clone.id);
     assert!(
         c.invitations
             .iter()
-            .all(|i| i.state == InvitationState::Released),
+            .all(|i| i.state != InvitationState::Released),
         "{:?}",
         c.invitations
     );
-    steps(&fx, 3).await;
-    assert_eq!(
-        fx.threads.call_count("release_requirement"),
-        2,
-        "released once"
-    );
-    assert_eq!(fx.threads.call_count("invite"), 2, "nobody to re-invite");
 }
 
 #[tokio::test]
-async fn new_occupant_reinvited() {
+async fn seat_succession_releases_the_old_seat_and_invites_the_new() {
     let fx = fx();
     let clone = base(&fx).await;
     occupy(&fx, &clone, "seat-A").await;
     steps(&fx, 2).await;
     let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
-    bookkeeping(&fx, "test_clear_occupant", json!({ "clone": clone.id }));
-    steps(&fx, 2).await;
-    // A different agent starts in the same pane and registers as another threads seat.
-    occupy(&fx, &clone, "seat-B").await;
-    steps(&fx, 2).await;
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    later(&fx).await;
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    assert_eq!(
+        transition(
+            &fx,
+            &clone.id,
+            SeatTransition::Succeed {
+                seat: "seat-B".into(),
+                from: "seat-A".into(),
+                epoch,
+            }
+        ),
+        None
+    );
+    steps(&fx, 4).await;
     for t in [&st, &ts] {
         let a = fx.threads.member(t, &seat_ref("seat-A")).unwrap();
         let b = fx.threads.member(t, &seat_ref("seat-B")).unwrap();
-        assert_eq!(a.state, InvitationState::Released);
+        assert_eq!(a.state, InvitationState::Released, "{}", t.0);
         assert_eq!(
             (b.constraint, b.state),
             (InviteConstraint::Required, InvitationState::Pending)
@@ -788,10 +832,11 @@ async fn new_occupant_reinvited() {
     let c = clone_rec(&fx, &clone.id);
     assert_eq!(inv(&c, &st).link.as_ref().unwrap().seat, "seat-B");
     assert_eq!(inv(&c, &st).state, InvitationState::Pending);
+    assert_eq!(fx.threads.call_count("release_requirement"), 2);
 }
 
 #[tokio::test]
-async fn occupant_replaced_in_one_commit_releases_before_reinviting_the_same_seat() {
+async fn clear_or_relaunch_on_the_same_seat_issues_no_release_or_reinvite() {
     let fx = fx();
     let clone = base(&fx).await;
     occupy(&fx, &clone, "seat-A").await;
@@ -799,26 +844,120 @@ async fn occupant_replaced_in_one_commit_releases_before_reinviting_the_same_sea
     fx.threads
         .accept(&thread_of_seat(&fx, "foreman"), &seat_ref("seat-A"));
     later(&fx).await;
-    // The occupant changes without an empty moment; the pane (and so the threads seat) stays.
+    let before = clone_rec(&fx, &clone.id);
+    // /clear or a relaunch: a new occupant on the same pane, so the same threads seat.
     bookkeeping(&fx, "test_set_occupant", json!({ "clone": clone.id }));
     steps(&fx, 3).await;
+    later(&fx).await;
     let st = thread_of_seat(&fx, "foreman");
-    let m = fx.threads.member(&st, &seat_ref("seat-A")).unwrap();
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(fx.threads.call_count("invite"), 2);
     assert_eq!(
-        m.state,
-        InvitationState::Pending,
-        "a fresh episode for the new occupant, not the old release"
+        fx.threads.member(&st, &seat_ref("seat-A")).unwrap().state,
+        InvitationState::Accepted,
+        "the accepted membership is untouched"
     );
     let c = clone_rec(&fx, &clone.id);
-    assert_eq!(inv(&c, &st).state, InvitationState::Pending);
+    assert_ne!(c.occupant, before.occupant, "the occupant did change");
+    assert_eq!(inv(&c, &st).state, InvitationState::Accepted);
     assert_eq!(
         inv(&c, &st).link.as_ref().unwrap().occupant,
-        c.occupant.as_ref().map(|o| o.native_session.to_string())
+        inv(&before, &st).link.as_ref().unwrap().occupant,
+        "the link keeps its attribution"
     );
 }
 
 #[tokio::test]
-async fn clone_retirement_releases() {
+async fn upgrade_with_links_on_the_backfilled_seat_causes_no_reinvite() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    steps(&fx, 2).await;
+    let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
+    // Pre-upgrade state: an occupied clone whose links name the pane's seat (carrying the old occupant)
+    // and which has no threads_seat yet.
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": clone.id }));
+    let occupant = clone_rec(&fx, &clone.id)
+        .occupant
+        .map(|o| o.native_session.to_string());
+    for (t, state) in [(&st, "accepted"), (&ts, "pending")] {
+        bookkeeping(
+            &fx,
+            "invitation",
+            json!({
+                "clone": clone.id, "thread": t.0, "constraint": "required", "state": state,
+                "link": { "seat": "seat-A", "occupant": occupant },
+            }),
+        );
+    }
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        0,
+        "no threads_seat, no wants"
+    );
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    // The backfill (resolve-seat want) records the seat the links name.
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set(&pane, "seat-A");
+    set_binding(&fx, &clone.id, true, true, Some(&pane));
+    steps(&fx, 4).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        0,
+        "links on the seat stay satisfied"
+    );
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(inv(&c, &st).state, InvitationState::Accepted);
+}
+
+#[tokio::test]
+async fn threads_unreachable_issues_no_release_or_invite() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    fx.threads.disconnect();
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("invite"), 0);
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    let c = clone_rec(&fx, &clone.id);
+    assert!(c.invitations.is_empty(), "{:?}", c.invitations);
+    // Succession while unreachable: the release waits too.
+    fx.threads.reconnect();
+    later(&fx).await;
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("invite"), 2);
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    assert_eq!(
+        transition(
+            &fx,
+            &clone.id,
+            SeatTransition::Succeed {
+                seat: "seat-B".into(),
+                from: "seat-A".into(),
+                epoch,
+            }
+        ),
+        None
+    );
+    fx.threads.disconnect();
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(fx.threads.call_count("invite"), 2);
+    fx.threads.reconnect();
+    later(&fx).await;
+    steps(&fx, 4).await;
+    assert_eq!(fx.threads.call_count("release_requirement"), 2);
+    assert_eq!(fx.threads.call_count("invite"), 4);
+}
+
+#[tokio::test]
+async fn graph_clone_retirement_keeps_memberships_until_purge() {
     let fx = fx();
     let first = base(&fx).await;
     plan_and_apply(&fx, "clone add foreman --name second");
@@ -829,33 +968,81 @@ async fn clone_retirement_releases() {
     occupy(&fx, &both[1], "seat-B").await;
     steps(&fx, 2).await;
     let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
+    plan_and_apply(&fx, &format!("clone retire {}", both[0].id));
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &both[0].id).lifecycle,
+        CloneLifecycle::Retired
+    );
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
     for t in [&st, &ts] {
         for s in ["seat-A", "seat-B"] {
             assert_eq!(
                 fx.threads.member(t, &seat_ref(s)).unwrap().state,
-                InvitationState::Pending
+                InvitationState::Pending,
+                "{s}: a retired clone keeps its memberships until purge"
             );
         }
     }
-    plan_and_apply(&fx, &format!("clone retire {}", both[0].id));
-    steps(&fx, 3).await;
-    for t in [&st, &ts] {
-        assert_eq!(
-            fx.threads.member(t, &seat_ref("seat-A")).unwrap().state,
-            InvitationState::Released,
-            "retired clone"
-        );
-        assert_eq!(
-            fx.threads.member(t, &seat_ref("seat-B")).unwrap().state,
-            InvitationState::Pending,
-            "other clone untouched"
-        );
-    }
-    let c = clone_rec(&fx, &both[0].id);
+}
+
+#[tokio::test]
+async fn pane_close_retires_the_clone_and_issues_no_release() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    occupy(&fx, &clone, "seat-A").await;
+    steps(&fx, 2).await;
+    let st = thread_of_seat(&fx, "foreman");
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    later(&fx).await;
+    retire_clone_observed(&fx, &clone.id);
+    assert_eq!(
+        clone_rec(&fx, &clone.id).lifecycle,
+        CloneLifecycle::Retired,
+        "the pane close retired the clone"
+    );
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(fx.threads.call_count("invite"), 2, "no re-invite either");
+    assert_eq!(
+        fx.threads.member(&st, &seat_ref("seat-A")).unwrap().state,
+        InvitationState::Accepted
+    );
+    let c = clone_rec(&fx, &clone.id);
     assert!(
         c.invitations
             .iter()
-            .all(|i| i.state == InvitationState::Released)
+            .all(|i| i.state != InvitationState::Released)
+    );
+}
+
+#[tokio::test]
+async fn tombstone_gets_no_wants() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    occupy(&fx, &clone, "seat-A").await;
+    steps(&fx, 2).await;
+    retire_clone_observed(&fx, &clone.id);
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": clone.id, "op": "tombstone" }),
+    );
+    let t = clone_rec(&fx, &clone.id);
+    assert!(t.is_tombstone());
+    assert_eq!(t.threads_seat.as_deref(), Some("seat-A"));
+    let before = fx.threads.calls().len();
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+    assert_eq!(fx.threads.call_count("invite"), 2);
+    let new: Vec<_> = fx.threads.calls().split_off(before);
+    assert!(
+        new.iter()
+            .all(|c| !c.starts_with("invite") && !c.starts_with("release")),
+        "{new:?}"
     );
 }
 
@@ -1333,18 +1520,21 @@ async fn service_busy_backs_off_no_takeover() {
 async fn seat_map_failure_backs_off() {
     let fx = fx();
     let clone = base(&fx).await;
-    occupy(&fx, &clone, "seat-A").await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set(&pane, "seat-A");
     fx.map.set_failing(true);
     steps(&fx, 3).await;
     assert_eq!(fx.threads.call_count("invite"), 0);
-    let invites = rows(&fx, EffectKind::Invite);
+    let resolves = resolve_rows(&fx);
     assert!(
-        invites
-            .iter()
-            .all(|r| r.status == EffectStatus::Pending && r.attempts >= 1),
-        "{invites:?}"
+        !resolves.is_empty()
+            && resolves
+                .iter()
+                .all(|r| r.status == EffectStatus::Pending && r.attempts >= 1),
+        "{resolves:?}"
     );
     fx.map.set_failing(false);
+    later(&fx).await;
     later(&fx).await;
     later(&fx).await;
     assert_eq!(fx.threads.call_count("invite"), 2);
@@ -1425,31 +1615,28 @@ async fn who_command_is_registered_and_answers() {
 async fn invitation_mutation_ignores_stale_writes() {
     let fx = fx();
     let clone = base(&fx).await;
-    let write = |state: &str, link_occupant: &str, expect: serde_json::Value| {
+    let write = |state: &str, seat: &str, expect: serde_json::Value| {
         json!({
             "clone": clone.id, "thread": "th", "constraint": "required", "state": state,
-            "link": { "seat": "seat-A", "occupant": link_occupant }, "expect_occupant": expect,
+            "link": { "seat": seat, "occupant": "ns_any" }, "expect_seat": expect,
         })
     };
-    bookkeeping(&fx, "invitation", write("pending", "ns_new", json!(null)));
-    // A late release about the previous occupant must not overwrite the new occupant's invitation.
+    bookkeeping(&fx, "invitation", write("pending", "seat-new", json!(null)));
+    // A late release about the previous seat must not overwrite the new seat's invitation.
     bookkeeping(
         &fx,
         "invitation",
-        write("released", "ns_old", json!("ns_old")),
+        write("released", "seat-old", json!("seat-old")),
     );
     let c = clone_rec(&fx, &clone.id);
     assert_eq!(c.invitations.len(), 1);
     assert_eq!(c.invitations[0].state, InvitationState::Pending);
-    assert_eq!(
-        c.invitations[0].link.as_ref().unwrap().occupant.as_deref(),
-        Some("ns_new")
-    );
-    // A write about the current occupant applies.
+    assert_eq!(c.invitations[0].link.as_ref().unwrap().seat, "seat-new");
+    // A write about the current seat applies, whatever the occupant.
     bookkeeping(
         &fx,
         "invitation",
-        write("accepted", "ns_new", json!("ns_new")),
+        write("accepted", "seat-new", json!("seat-new")),
     );
     assert_eq!(
         clone_rec(&fx, &clone.id).invitations[0].state,
@@ -2007,7 +2194,7 @@ async fn pane_close_after_threads_done_retires_and_clears_the_restore_intent() {
 async fn purge_tombstone_keeps_identity_and_finalize() {
     let fx = fx();
     let c = base(&fx).await;
-    occupy(&fx, &c, "seat-pane").await;
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
     transition(&fx, &c.id, assign("seat-a"));
     retire_clone_observed(&fx, &c.id);
     let live = clone_rec(&fx, &c.id);

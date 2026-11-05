@@ -73,7 +73,7 @@ pub struct Invitation {
     pub thread: String,
     pub constraint: InviteConstraint,
     pub state: InvitationState,
-    /// Which threads seat was invited, for which occupant, and the ids threads reported (hg-zmi.11).
+    /// Which threads seat was invited (attributed to which occupant), and the ids threads reported (hg-zmi.11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<ThreadsLink>,
 }
@@ -84,7 +84,8 @@ pub struct Invitation {
 pub struct ThreadsLink {
     /// The threads seat (mapped from the clone's pane) that was invited.
     pub seat: String,
-    /// Native session record of the occupant the invitation was issued for.
+    /// Native session record of the occupant at the time of the invitation: attribution only. Nothing
+    /// branches on it; the invitation belongs to the clone's `threads_seat` (`seat` above).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occupant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
