@@ -123,6 +123,10 @@ fn fx() -> Fx {
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
     reg.register("bookkeeping.patch", Arc::new(Patch));
+    reg.register(
+        crate::plan::managers::testing::SET_NODE_MANAGER_KEY,
+        Arc::new(crate::plan::managers::testing::SetNodeManager),
+    );
     kinds.register_mutations(&mut reg, plans.clone());
     crate::observe::register_mutations(&mut reg);
     crate::reconcile::register_mutations(&mut reg);
@@ -1514,4 +1518,50 @@ fn reconnect_prevents_preboundary_retirement_undo_reactivating_old_references() 
     );
     let err = plan_err(&fx, &format!("undo {}", retired.action.unwrap()));
     assert!(err.contains("previous threads namespace"), "{err}");
+}
+
+/// Make `seat` the node manager explicitly (independent of first-seat assignment).
+fn make_node_manager(fx: &Fx, seat: &SeatId) {
+    use crate::ports::writer::Writer;
+    let op =
+        fx.w.admit(crate::plan::managers::testing::request(Some(seat)))
+            .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+#[test]
+fn guard_undo_of_creating_hydrate() {
+    let fx = fx();
+    alpha(&fx);
+    let e = MemberId::new();
+    create_template(&fx, "team", &[m(&e, "main", "active")]);
+    let row = apply_app(&fx, "team", "crew");
+    let main = seat_named(&fx, "main");
+    make_node_manager(&fx, &main.id);
+
+    let act = action_of(&fx, &row);
+    assert_eq!(act.kind, ActionKind::Hydrate);
+    let msg = plan_err(&fx, &format!("undo {}", act.id));
+    assert!(msg.contains("node manager main"), "{msg}");
+    assert!(msg.contains("cannot be retired"), "{msg}");
+    assert!(
+        msg.contains(crate::plan::managers::NODE_MANAGER_SET_USAGE),
+        "{msg}"
+    );
+    assert_eq!(seat_by_id(&fx, &main.id).lifecycle, Lifecycle::Active);
+}
+
+/// `SeatCreate` writes no action record, so "undo of the node manager's first SeatCreate" cannot exist; the
+/// creating action undo can target is the hydrate (`guard_undo_of_creating_hydrate`).
+#[test]
+fn seat_create_has_no_undoable_action() {
+    let fx = fx();
+    alpha(&fx);
+    let row = commit(&fx, "seat create foreman --teamspace alpha --active");
+    assert_eq!(row.action, None);
+    assert!(list_candidates(&view(&fx), 20).unwrap().is_empty());
 }
