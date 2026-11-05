@@ -116,8 +116,11 @@ names (rejected: B1, threads is authoritative; named seats lack Herdr wake).
 Recommended: in `clone_wants` (`src/threads/effects.rs:351`) a clone's desired invitations exist
 when it is active and `threads_seat` is known — no occupant needed, so invitations wait before the
 first agent's SessionStart. Satisfied when `link.seat == threads_seat` (ordinary: state Pending or
-Accepted). Released only when the clone is retired or `link.seat != threads_seat` (seat
-succession, §2). Graph clone retirement keeps its existing meaning (undoable through `graph undo`
+Accepted). Released only when `link.seat != threads_seat` (seat succession, §2) or the want
+itself disappears (opt-out, channel removed). Clone retirement does not release: threads ends a
+retired seat's memberships itself when retirement is final, and keeps them while it is reversible
+(per the provisional ht-ma6i shapes, `threads-ht-ma6i-protocol-shapes.md`), which is what lets
+undo come back with no re-acceptance. Graph clone retirement keeps its existing meaning (undoable through `graph undo`
 until purge); there is no separate "retired-final" clone state. Agent exit with the pane
 open keeps memberships (B8): `occupancy_end_releases_requirement` and
 `occupant_replaced_in_one_commit_releases_before_reinviting_the_same_seat` flip. The invite
@@ -185,8 +188,8 @@ as fallback (rejected: silent first-wins, the ambiguity the review flagged).
 
 Recommended: closing a clone's pane retires its threads seat (threads does it; the graph issues
 nothing). Graph undo of that retirement, and seat resurrection, reopen the tab/pane through the
-existing plan path, call threads `UnretireSeat{seat}` (seat returns to unresolved, memberships and
-requirement episodes restored by threads, B10), then launch the agent with the key (resuming the
+existing plan path, call threads `UnretireSeat{seat}` (seat returns to unresolved; memberships and
+requirement episodes were kept while reversible, B10), then launch the agent with the key (resuming the
 last session when the harness supports resume) so the key check-in reattaches the same seat. Undo
 no longer adopts the caller's pane (`undo/adopt.rs`): a different pane has its own seat, which
 would break 1:1. When the graph's retirement becomes final (purge), the graph releases the key /
