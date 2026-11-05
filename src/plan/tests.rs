@@ -93,6 +93,10 @@ fn fx() -> Fx {
     let mut reg = MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
     reg.register(
+        super::managers::reparent::testing::SET_POINTER_KEY,
+        Arc::new(super::managers::reparent::testing::SetPointer),
+    );
+    reg.register(
         super::managers::testing::SET_NODE_MANAGER_KEY,
         Arc::new(super::managers::testing::SetNodeManager),
     );
@@ -3818,4 +3822,122 @@ fn guard_effect_table() {
         crate::model::CloneId::new().to_any(),
     ))
     .unwrap();
+}
+
+// ---------------------------------------------------------------------------------------------
+// reparenting on retirement (hg-k4l.26): plan Retire route
+// ---------------------------------------------------------------------------------------------
+
+fn commit_request(fx: &Fx, req: ChangeRequest) {
+    let op = crate::ports::writer::Writer::admit(&*fx.w, req).unwrap();
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+}
+
+/// Dormant seats `names` in `ts`, with the first one made the node manager.
+fn dormant_seats(fx: &Fx, ts: &str, names: &[&str]) {
+    for n in names {
+        commit(fx, &format!("seat create {n} --teamspace {ts}"));
+    }
+}
+
+fn point(fx: &Fx, seat_name: &str, manager: Option<&str>) {
+    use super::managers::reparent::testing::seat_request;
+    let m = manager.map(|m| seat_id(fx, m));
+    commit_request(fx, seat_request(&seat_id(fx, seat_name), m.as_ref()));
+}
+
+fn set_nm(fx: &Fx, name: &str) {
+    set_node_manager(fx, Some(&seat_id(fx, name)));
+}
+
+fn manager_of(fx: &Fx, name: &str) -> Option<SeatId> {
+    seat(fx, name, None).1.manager
+}
+
+#[test]
+fn reparent_on_seat_retire_records_rewrites() {
+    use super::managers::reparent::{Rewrite, testing::recorded};
+    let fx = fx();
+    alpha(&fx);
+    dormant_seats(&fx, "alpha", &["nm", "boss", "r1", "r2"]);
+    set_nm(&fx, "nm");
+    point(&fx, "boss", Some("nm"));
+    point(&fx, "r1", Some("boss"));
+    point(&fx, "r2", Some("boss"));
+    let (nm, boss) = (seat_id(&fx, "nm"), seat_id(&fx, "boss"));
+
+    let row = commit(&fx, "seat retire boss");
+    assert_eq!(manager_of(&fx, "r1"), Some(nm.clone()));
+    assert_eq!(manager_of(&fx, "r2"), Some(nm.clone()));
+    let mut got = recorded(&action_of(&fx, &row));
+    got.sort_by(|a, b| a.holder.cmp(&b.holder));
+    let mut want: Vec<Rewrite> = ["r1", "r2"]
+        .iter()
+        .map(|n| Rewrite {
+            holder: seat_id(&fx, n).to_any(),
+            field: "manager".into(),
+            old: boss.clone(),
+            new: Some(nm.clone()),
+        })
+        .collect();
+    want.sort_by(|a, b| a.holder.cmp(&b.holder));
+    assert_eq!(got, want);
+}
+
+#[test]
+fn reparent_teamspace_default_on_retire() {
+    use super::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "alpha", &["nm", "boss"]);
+    set_nm(&fx, "nm");
+    point(&fx, "boss", Some("nm"));
+    let (nm, boss) = (seat_id(&fx, "nm"), seat_id(&fx, "boss"));
+    let beta = teamspace(&fx, "beta").1.id;
+    commit_request(&fx, teamspace_request(&beta, Some(&boss)));
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, Some(boss.clone()));
+
+    let row = commit(&fx, "seat retire boss");
+    assert_eq!(teamspace(&fx, "beta").1.default_manager, Some(nm.clone()));
+    assert_eq!(
+        recorded(&action_of(&fx, &row)),
+        vec![super::managers::reparent::Rewrite {
+            holder: beta.to_any(),
+            field: "default_manager".into(),
+            old: boss,
+            new: Some(nm),
+        }]
+    );
+}
+
+#[test]
+fn reparent_skips_seats_retired_in_same_mutation() {
+    use super::managers::reparent::testing::recorded;
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "beta", &["nm", "r"]);
+    dormant_seats(&fx, "alpha", &["mid", "boss"]);
+    set_nm(&fx, "nm");
+    point(&fx, "mid", Some("nm"));
+    point(&fx, "boss", Some("mid"));
+    point(&fx, "r", Some("boss"));
+    let nm = seat_id(&fx, "nm");
+
+    let row = commit(&fx, "teamspace retire alpha");
+    // Whichever of mid and boss retires first, r ends at the nearest manager outside the teamspace.
+    assert_eq!(manager_of(&fx, "r"), Some(nm.clone()));
+    let rewrites = recorded(&action_of(&fx, &row));
+    let r = seat_id(&fx, "r").to_any();
+    assert_eq!(
+        rewrites
+            .iter()
+            .rfind(|w| w.holder == r)
+            .map(|w| w.new.clone()),
+        Some(Some(nm)),
+        "{rewrites:?}"
+    );
 }

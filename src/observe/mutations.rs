@@ -293,7 +293,10 @@ impl Mutation for CascadeMutation {
             }
         };
         let act = ActionId::new();
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            lenient_reparent: true,
+            ..Acc::default()
+        };
         let mut teamspaces = Vec::new();
         let mut seats = Vec::new();
         let mut clones = Vec::new();

@@ -124,6 +124,10 @@ fn fx() -> Fx {
     let mut reg = MutationRegistry::default();
     reg.register("bookkeeping.patch", Arc::new(Patch));
     reg.register(
+        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
+        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
+    );
+    reg.register(
         crate::plan::managers::testing::SET_NODE_MANAGER_KEY,
         Arc::new(crate::plan::managers::testing::SetNodeManager),
     );
@@ -1533,6 +1537,53 @@ fn make_node_manager(fx: &Fx, seat: &SeatId) {
     );
 }
 
+// ---------------------------------------------------------------------------------------------
+// reparenting on retirement (hg-k4l.26): ApplicationRetire and undo-driven routes
+// ---------------------------------------------------------------------------------------------
+
+fn commit_request(fx: &Fx, req: ChangeRequest) {
+    let op = fx.w.admit(req).unwrap();
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+}
+
+/// nm (node manager) <- mid <- lead (created by application `one` from template `lead-tpl`); `r`, outside the
+/// application, reports to lead. Returns (hydrate row, ids of nm, lead, r).
+fn lead_world(fx: &Fx) -> (OpRow, SeatId, SeatId, SeatId) {
+    use crate::plan::managers::reparent::testing::seat_request;
+    alpha(fx);
+    for n in ["nm", "mid", "r"] {
+        commit(fx, &format!("seat create {n} --teamspace alpha"));
+    }
+    let lead_member = MemberId::new();
+    create_template(fx, "lead-tpl", &[m(&lead_member, "lead", "deferred")]);
+    let hydrate = apply_app(fx, "lead-tpl", "one");
+    let nm = seat_named(fx, "nm").id;
+    let mid = seat_named(fx, "mid").id;
+    let lead = seat_named(fx, "lead").id;
+    let r = seat_named(fx, "r").id;
+    commit_request(fx, crate::plan::managers::testing::request(Some(&nm)));
+    commit_request(fx, seat_request(&mid, Some(&nm)));
+    commit_request(fx, seat_request(&lead, Some(&mid)));
+    commit_request(fx, seat_request(&r, Some(&lead)));
+    (hydrate, nm, lead, r)
+}
+
+fn assert_rewrote_r(fx: &Fx, act: &ActionRecord, r: &SeatId, lead: &SeatId, mid: &SeatId) {
+    use crate::plan::managers::reparent::{Rewrite, testing::recorded};
+    assert_eq!(seat_by_id(fx, r).manager, Some(mid.clone()));
+    assert_eq!(
+        recorded(act),
+        vec![Rewrite {
+            holder: r.to_any(),
+            field: "manager".into(),
+            old: lead.clone(),
+            new: Some(mid.clone()),
+        }]
+    );
+}
+
 #[test]
 fn guard_undo_of_creating_hydrate() {
     let fx = fx();
@@ -1564,4 +1615,31 @@ fn seat_create_has_no_undoable_action() {
     let row = commit(&fx, "seat create foreman --teamspace alpha --active");
     assert_eq!(row.action, None);
     assert!(list_candidates(&view(&fx), 20).unwrap().is_empty());
+}
+
+#[test]
+fn reparent_on_application_retire_records_rewrites() {
+    let fx = fx();
+    let (_hydrate, _nm, lead, r) = lead_world(&fx);
+    let mid = seat_named(&fx, "mid").id;
+    let row = commit(&fx, "application retire one");
+    assert_eq!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Retired);
+    let act = action_of(&fx, &row);
+    assert_eq!(act.kind, ActionKind::ApplicationRetire);
+    assert_rewrote_r(&fx, &act, &r, &lead, &mid);
+}
+
+#[test]
+fn reparent_on_undo_of_hydrate() {
+    let fx = fx();
+    let (hydrate, _nm, lead, r) = lead_world(&fx);
+    let mid = seat_named(&fx, "mid").id;
+    let h = action_of(&fx, &hydrate);
+    assert_eq!(h.kind, ActionKind::Hydrate);
+    let row = apply_plan(&fx, &plan(&fx, &format!("undo {}", h.id)));
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Retired);
+    let act = action_of(&fx, &row);
+    assert_eq!(act.kind, ActionKind::Undo);
+    assert_rewrote_r(&fx, &act, &r, &lead, &mid);
 }
