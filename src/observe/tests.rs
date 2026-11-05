@@ -3043,10 +3043,77 @@ async fn seat_observation_swap_leaves_no_clone_unbound() {
         ]
         .into(),
     );
-    let out = observe(&desired, &read, &live, &mut m, t0());
+    let out = observe(&desired, &read, &live, &Default::default(), &mut m, t0());
     assert!(out.unbound.is_empty(), "{:?}", out.unbound);
     assert_eq!(m.clone_pane.get(&a.id), Some(&pb));
     assert_eq!(m.clone_pane.get(&b.id), Some(&pa));
     assert_eq!(m.panes.get(&pb), Some(&a.id));
     assert_eq!(m.panes.get(&pa), Some(&b.id));
+}
+
+/// One seat refused by threads (omitted from the read) does not stop the others from being bound by threads.
+#[tokio::test]
+async fn one_refused_seat_leaves_the_others_bound_by_threads() {
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    handoff(&fx).await;
+    fx.seats.set(&seat_ref("seat-a"), resolved(&pa));
+    fx.seats
+        .refuse(&seat_ref("seat-b"), "NotFound: no such seat");
+    step(&fx).await;
+    let after_a = clone_by_id(&fx, &a.id);
+    assert_eq!(bound_pane(&fx, &a.id), Some(pa.clone()));
+    assert_eq!(after_a.runtime.availability, Availability::Present);
+    assert_eq!(
+        fact_state(&fx, &a.id),
+        Some(SeatFactState::Resolved { pane: pa })
+    );
+    // Threads does not speak for B: no fact, and after the handoff the matcher cannot find it either.
+    assert_eq!(fact_state(&fx, &b.id), None);
+    assert_eq!(
+        clone_by_id(&fx, &b.id).runtime.availability,
+        Availability::Unknown
+    );
+    assert_eq!(clone_by_id(&fx, &b.id).lifecycle, CloneLifecycle::Active);
+    let _ = pb;
+}
+
+/// A seat refused beyond the staleness window is Unknown with a seat-lost alert naming the remedy; the entry
+/// clears when the seat reads again.
+#[tokio::test]
+async fn seat_refused_beyond_the_window_is_unknown_with_a_seat_lost_alert() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    fx.seats.refuse(&seat_ref("seat-1"), "NotFound: gone");
+    step(&fx).await;
+    fx.clock.advance(chrono::Duration::seconds(60));
+    step(&fx).await;
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Present,
+        "inside the window nothing changes"
+    );
+    assert!(fx.lp.seat_lost().lock().unwrap().is_empty());
+    fx.clock.advance(chrono::Duration::seconds(40));
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.availability, Availability::Unknown);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active, "never retired");
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-1"), "seat kept");
+    let lost = fx.lp.seat_lost().lock().unwrap().clone();
+    assert_eq!(lost.len(), 1, "{lost:?}");
+    assert_eq!(lost[0]["clone"], c.id.to_string());
+    assert_eq!(lost[0]["seat"], "seat-1");
+    assert!(
+        lost[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("retire and purge the clone"),
+        "{lost:?}"
+    );
+    assert!(lost[0]["since"].is_string() && lost[0]["error"].is_string());
+
+    fx.seats.clear_refusal(&seat_ref("seat-1"));
+    step(&fx).await;
+    assert!(fx.lp.seat_lost().lock().unwrap().is_empty(), "entry clears");
 }

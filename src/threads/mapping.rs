@@ -9,7 +9,9 @@ use herdr_threads::client::local::LocalSocketClient;
 use herdr_threads::protocol::commands::{Command, ResolveSeat, SeatInspectQuery};
 use herdr_threads::protocol::ids::{HostLocator, HostTargetId, OperationId, SeatId};
 use herdr_threads::protocol::pagination::PageRequest;
-use herdr_threads::protocol::results::{CommandResult, ContinuityStatus, ErrorCode, SeatInspection};
+use herdr_threads::protocol::results::{
+    CommandResult, ContinuityStatus, ErrorCode, SeatInspection,
+};
 use herdr_threads::protocol::time::Clock as ThreadsClock;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -48,6 +50,7 @@ pub struct ThreadsSeatMap {
     clock: Arc<dyn ThreadsClock>,
     timeout: Duration,
     host: HostLocator,
+    refusals: SeatRefusals,
 }
 
 impl ThreadsSeatMap {
@@ -62,6 +65,7 @@ impl ThreadsSeatMap {
             clock,
             timeout: Duration::from_secs(5),
             host,
+            refusals: SeatRefusals::default(),
         }
     }
 }
@@ -152,37 +156,80 @@ pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
     }
 }
 
+/// Seats the last `inspect` refused (seat -> message); see `ThreadsSeatMap::refusals`.
+pub type SeatRefusals = Arc<Mutex<BTreeMap<ThreadsSeatRef, String>>>;
+
+/// What one seat's inspection call came to: a status, or a per-seat refusal that omits the seat.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SeatRead {
+    Status(SeatStatus),
+    Refused(String),
+}
+
+/// Classify one seat's call answer. A `Rejected` answer (NotFound, a malformed id, ...) refuses that seat only;
+/// transport errors, `Unsupported` and an unexpected result shape fail the whole read.
+pub(crate) fn classify_inspect(
+    answer: Result<CommandResult, herdr_threads::protocol::results::ApiError>,
+) -> Result<SeatRead, ThreadsError> {
+    match answer {
+        Ok(CommandResult::SeatInspect(inspection)) => {
+            Ok(SeatRead::Status(seat_status(&inspection)))
+        }
+        Ok(_) => Err(ThreadsError::Rejected(
+            "unexpected result for seat inspection".into(),
+        )),
+        Err(e) => match api_error(e) {
+            ThreadsError::Rejected(message) => Ok(SeatRead::Refused(message)),
+            other => Err(other),
+        },
+    }
+}
+
+impl ThreadsSeatMap {
+    /// The seats the last `inspect` omitted as refused, with the message; replaced on every call.
+    pub fn refusals(&self) -> SeatRefusals {
+        self.refusals.clone()
+    }
+}
+
 #[async_trait::async_trait]
 impl ThreadsSeatView for ThreadsSeatMap {
+    /// A seat whose id does not parse or that threads refuses (`Rejected`) is omitted from the map and kept in
+    /// `refusals`; the other seats are still read. Only transport errors, `Unsupported` and an unexpected
+    /// result shape fail the whole read.
     async fn inspect(
         &self,
         seats: &[ThreadsSeatRef],
     ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
         let mut out = BTreeMap::new();
+        let mut refused = BTreeMap::new();
         for seat in seats {
-            let id = SeatId::parse(seat.0.clone())
-                .map_err(|e| ThreadsError::Rejected(format!("seat id: {e}")))?;
+            let id = match SeatId::parse(seat.0.clone()) {
+                Ok(id) => id,
+                Err(e) => {
+                    refused.insert(seat.clone(), format!("seat id: {e}"));
+                    continue;
+                }
+            };
             let query = SeatInspectQuery {
                 seat: id,
                 page: PageRequest::default(),
             };
             let budget = call_budget(&*self.clock, self.timeout);
-            match self
+            let answer = self
                 .client
                 .call_async(Command::SeatInspect(query), &budget)
-                .await
-            {
-                Ok(CommandResult::SeatInspect(inspection)) => {
-                    out.insert(seat.clone(), seat_status(&inspection));
+                .await;
+            match classify_inspect(answer)? {
+                SeatRead::Status(status) => {
+                    out.insert(seat.clone(), status);
                 }
-                Ok(_) => {
-                    return Err(ThreadsError::Rejected(
-                        "unexpected result for seat inspection".into(),
-                    ));
+                SeatRead::Refused(message) => {
+                    refused.insert(seat.clone(), message);
                 }
-                Err(e) => return Err(api_error(e)),
             }
         }
+        *self.refusals.lock().unwrap_or_else(|e| e.into_inner()) = refused;
         Ok(out)
     }
 }
@@ -286,5 +333,54 @@ impl PaneSeatMap for FakePaneSeatMap {
             Some(seat) => Ok(SeatResolution::Seat(ThreadsSeatRef(seat.clone()))),
             None => Ok(SeatResolution::NotYet(format!("no seat for pane {pane}"))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use herdr_threads::protocol::results::ApiError;
+
+    fn api(code: ErrorCode) -> ApiError {
+        ApiError::constructor_for(code)("detail")
+    }
+
+    #[test]
+    fn per_seat_rejections_refuse_the_seat_and_transport_problems_fail_the_read() {
+        let refused = classify_inspect(Err(api(ErrorCode::NotFound))).unwrap();
+        assert!(matches!(refused, SeatRead::Refused(m) if m.contains("detail")));
+        assert!(matches!(
+            classify_inspect(Err(api(ErrorCode::Unsupported))),
+            Err(ThreadsError::Unsupported)
+        ));
+        assert!(matches!(
+            classify_inspect(Err(api(ErrorCode::ServiceBusy))),
+            Err(ThreadsError::ServiceBusy)
+        ));
+        assert!(matches!(
+            classify_inspect(Err(api(ErrorCode::HostUnavailable))),
+            Err(ThreadsError::Disconnected(_))
+        ));
+        assert!(matches!(
+            classify_inspect(Ok(CommandResult::SeatResolved(
+                SeatId::parse("seat-a".to_owned()).unwrap()
+            ))),
+            Err(ThreadsError::Rejected(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_seat_id_is_omitted_not_an_error() {
+        let map = ThreadsSeatMap::new(
+            PathBuf::from("/nonexistent/threads.sock"),
+            herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+            Arc::new(herdr_threads::app::SystemClock::new()),
+            HostLocator::parse("/host-a.sock").unwrap(),
+        );
+        let bad = ThreadsSeatRef(String::new());
+        let read = map.inspect(std::slice::from_ref(&bad)).await.unwrap();
+        assert!(read.is_empty());
+        let refusals = map.refusals().lock().unwrap().clone();
+        assert!(refusals[&bad].starts_with("seat id:"), "{refusals:?}");
     }
 }

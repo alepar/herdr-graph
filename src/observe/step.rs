@@ -21,12 +21,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, ProcessInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::Store;
-use crate::ports::threads::{ThreadsError, ThreadsSeatView};
+use crate::ports::threads::{ThreadsError, ThreadsSeatRef, ThreadsSeatView};
 use crate::ports::writer::Writer;
 use crate::reconcile::desired::DesiredRuntime;
 use crate::reconcile::planner::TOKEN_KEY;
 use crate::reconcile::{Reconciler, StepReport, consume_prediction, predictions};
 use crate::store::tree::CommitView;
+use crate::threads::mapping::SeatRefusals;
 use crate::writer::OpEvent;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -120,7 +121,16 @@ pub struct RuntimeLoop {
     /// Read-only threads seat inspection, once per step (SeatObservation).
     seat_view: Arc<dyn ThreadsSeatView>,
     seat_view_logged: std::sync::atomic::AtomicBool,
+    /// Per-seat refusal messages of the last read, when the seat view keeps them (the real one does).
+    seat_refusals: Mutex<SeatRefusals>,
+    /// When each currently refused seat was first seen refused.
+    refused_since: Mutex<BTreeMap<ThreadsSeatRef, Timestamp>>,
+    /// Seats refused beyond `SEAT_LOST_AFTER`, for the `threads` status component.
+    seat_lost: SeatLost,
 }
+
+/// Seats refused beyond the staleness window: `{clone, seat, error, since, remedy}` entries.
+pub type SeatLost = Arc<Mutex<Vec<serde_json::Value>>>;
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
     ChangeRequest {
@@ -371,7 +381,20 @@ impl RuntimeLoop {
             claude_root: RwLock::new(claude_root),
             seat_view,
             seat_view_logged: Default::default(),
+            seat_refusals: Default::default(),
+            refused_since: Default::default(),
+            seat_lost: Default::default(),
         })
+    }
+
+    /// The slot this loop publishes lost seats to.
+    pub fn seat_lost(&self) -> SeatLost {
+        self.seat_lost.clone()
+    }
+
+    /// Where the seat view keeps the message of each per-seat refusal, for the log and the lost-seat entries.
+    pub fn set_seat_refusals(&self, refusals: SeatRefusals) {
+        *self.seat_refusals.lock().unwrap_or_else(|e| e.into_inner()) = refusals;
     }
 
     pub fn subscribe_session_ended(&self) -> broadcast::Receiver<SessionEnded> {
@@ -504,6 +527,14 @@ impl RuntimeLoop {
             .map(|(_, s)| s)
             .collect();
         if seats.is_empty() {
+            self.refused_since
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            self.seat_lost
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
             return Default::default();
         }
         let read = match self.seat_view.inspect(&seats).await {
@@ -520,8 +551,64 @@ impl RuntimeLoop {
                 ThreadsRead::Unavailable
             }
         };
+        let lost = self.track_refusals(desired, &read, now);
         let live = pane_locs(snap).into_keys().collect();
-        seat_observation::observe(desired, &read, &live, matches, now)
+        seat_observation::observe(desired, &read, &live, &lost, matches, now)
+    }
+
+    /// Track the seats this read omitted (a per-seat refusal). A seat refused for longer than
+    /// `SEAT_LOST_AFTER` is returned as lost and published to the status slot. A failed read leaves the
+    /// tracking as it was: it says nothing about any seat.
+    fn track_refusals(
+        &self,
+        desired: &DesiredRuntime,
+        read: &ThreadsRead,
+        now: Timestamp,
+    ) -> BTreeSet<ThreadsSeatRef> {
+        let ThreadsRead::Statuses(statuses) = read else {
+            return BTreeSet::new();
+        };
+        let messages = self
+            .seat_refusals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut since = self.refused_since.lock().unwrap_or_else(|e| e.into_inner());
+        let mut lost = BTreeSet::new();
+        let mut entries = Vec::new();
+        let mut still_refused = BTreeSet::new();
+        for (clone, seat) in seat_observation::seated_clones(desired) {
+            if statuses.contains_key(&seat) {
+                continue;
+            }
+            let message = messages
+                .get(&seat)
+                .cloned()
+                .unwrap_or_else(|| "refused by threads".into());
+            let first = *since.entry(seat.clone()).or_insert_with(|| {
+                eprintln!(
+                    "herdr-graph: observe: threads refused seat {} of clone {clone}: {message}",
+                    seat.0
+                );
+                now
+            });
+            still_refused.insert(seat.clone());
+            if now - first >= seat_observation::SEAT_LOST_AFTER {
+                entries.push(serde_json::json!({
+                    "clone": clone.to_string(),
+                    "seat": seat.0,
+                    "error": message,
+                    "since": first.to_rfc3339(),
+                    "remedy": seat_observation::SEAT_LOST_REMEDY,
+                }));
+                lost.insert(seat);
+            }
+        }
+        since.retain(|seat, _| still_refused.contains(seat));
+        *self.seat_lost.lock().unwrap_or_else(|e| e.into_inner()) = entries;
+        lost
     }
 
     /// Retirements threads decided and seat facts to commit, after the step's other observed ops.

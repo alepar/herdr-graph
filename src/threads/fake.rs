@@ -406,11 +406,13 @@ impl FakeSeatViewError {
 struct SeatViewState {
     seats: BTreeMap<ThreadsSeatRef, SeatStatus>,
     error: Option<FakeSeatViewError>,
+    refused: BTreeMap<ThreadsSeatRef, String>,
     reads: usize,
 }
 
 /// In-memory `ThreadsSeatView`. A seat never `set` reads `Unresolved`, so an unconfigured fake never makes
-/// threads speak; an injected error fails the whole read like the real view.
+/// threads speak; an injected error fails the whole read like the real view, while a refused seat is only
+/// omitted from the map (a per-seat refusal).
 #[derive(Default)]
 pub struct FakeThreadsSeatView {
     state: Mutex<SeatViewState>,
@@ -425,6 +427,13 @@ impl FakeThreadsSeatView {
     }
     pub fn set_error(&self, error: Option<FakeSeatViewError>) {
         self.lock().error = error;
+    }
+    /// `inspect` omits `seat` from its map, as the real view does for a per-seat refusal.
+    pub fn refuse(&self, seat: &ThreadsSeatRef, message: &str) {
+        self.lock().refused.insert(seat.clone(), message.to_owned());
+    }
+    pub fn clear_refusal(&self, seat: &ThreadsSeatRef) {
+        self.lock().refused.remove(seat);
     }
     /// Number of `inspect` calls so far, failed ones included.
     pub fn reads(&self) -> usize {
@@ -448,6 +457,7 @@ impl ThreadsSeatView for FakeThreadsSeatView {
         }
         Ok(seats
             .iter()
+            .filter(|s| !st.refused.contains_key(s))
             .map(|s| {
                 (
                     s.clone(),
