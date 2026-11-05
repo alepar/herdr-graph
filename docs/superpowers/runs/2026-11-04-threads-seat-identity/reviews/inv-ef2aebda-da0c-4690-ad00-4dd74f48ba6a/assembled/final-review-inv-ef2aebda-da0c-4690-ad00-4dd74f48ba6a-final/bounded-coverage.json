@@ -1,0 +1,217 @@
+{
+ "inspected": [
+  {
+   "path": "src/model/clone.rs",
+   "hunks": [
+    "@@ -1,6 +1,9 @@",
+    "@@ -28,6 +31,97 @@ pub struct CloneRecord {",
+    "@@ -35,9 +129,13 @@ pub struct Invitation {",
+    "@@ -46,7 +144,8 @@ pub struct Invitation {"
+   ]
+  },
+  {
+   "path": "src/model/launch.rs",
+   "hunks": [
+    "@@ -6,6 +6,17 @@ pub const ENV_GRAPH: &str = \"HERDR_GRAPH\";"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -20,6 +20,7 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/herdr/client.rs",
+   "hunks": [
+    "@@ -47,6 +47,29 @@ fn lines_of(v: &[(String, String)]) -> Value {",
+    "@@ -539,6 +562,9 @@ impl HerdrApi for HerdrClient {",
+    "@@ -562,6 +588,16 @@ impl HerdrApi for HerdrClient {"
+   ]
+  },
+  {
+   "path": "src/ports/herdr.rs",
+   "hunks": [
+    "@@ -107,6 +107,8 @@ pub struct StartAgent {"
+   ]
+  },
+  {
+   "path": "src/ports/threads.rs",
+   "hunks": [
+    "@@ -1,8 +1,9 @@",
+    "@@ -86,6 +87,38 @@ pub enum ThreadsError {"
+   ]
+  },
+  {
+   "path": "src/observe/step.rs",
+   "hunks": [
+    "@@ -1,12 +1,14 @@",
+    "@@ -19,11 +21,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};",
+    "@@ -114,8 +118,20 @@ pub struct RuntimeLoop {",
+    "@@ -339,6 +355,7 @@ impl RuntimeLoop {",
+    "@@ -362,9 +379,24 @@ impl RuntimeLoop {",
+    "@@ -482,6 +514,149 @@ impl RuntimeLoop {",
+    "@@ -508,7 +683,8 @@ impl RuntimeLoop {",
+    "@@ -530,7 +706,14 @@ impl RuntimeLoop {",
+    "@@ -549,7 +732,8 @@ impl RuntimeLoop {"
+   ]
+  },
+  {
+   "path": "src/observe/mutations.rs",
+   "hunks": [
+    "@@ -5,7 +5,7 @@ use super::classify::CascadeRule;",
+    "@@ -32,7 +32,10 @@ pub const OCCUPANCY_KEY: &str = \"observed.occupancy\";",
+    "@@ -94,6 +97,18 @@ pub fn move_request(",
+    "@@ -249,6 +264,7 @@ impl CascadeMutation {",
+    "@@ -632,3 +648,36 @@ impl Mutation for AvailabilityMutation {"
+   ]
+  },
+  {
+   "path": "src/observe/matcher.rs",
+   "hunks": [
+    "@@ -2,9 +2,10 @@",
+    "@@ -197,8 +198,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -206,7 +207,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -254,7 +257,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {"
+   ]
+  },
+  {
+   "path": "src/reconcile/planner.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@ use super::desired::{DesiredPane, DesiredRuntime};",
+    "@@ -11,7 +12,7 @@ use crate::model::effect::{",
+    "@@ -51,6 +52,63 @@ pub fn launched_key(clone: &CloneId) -> String {",
+    "@@ -100,9 +158,10 @@ impl Surplus<'_> {",
+    "@@ -144,6 +203,24 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -159,12 +236,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -287,11 +369,10 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -317,12 +398,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -451,7 +537,23 @@ impl Out<'_> {",
+    "@@ -487,9 +589,32 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {",
+    "@@ -747,6 +872,7 @@ pub fn plan_effects(",
+    "@@ -786,6 +912,144 @@ pub fn plan_effects("
+   ]
+  },
+  {
+   "path": "src/reconcile/herdr_exec.rs",
+   "hunks": [
+    "@@ -5,21 +5,24 @@ use super::bookkeeping::admit_binding;",
+    "@@ -124,6 +127,16 @@ impl HerdrExecutor {",
+    "@@ -519,7 +532,8 @@ impl HerdrExecutor {",
+    "@@ -536,6 +550,7 @@ impl HerdrExecutor {",
+    "@@ -545,19 +560,70 @@ impl HerdrExecutor {",
+    "@@ -640,9 +706,12 @@ impl HerdrExecutor {",
+    "@@ -657,6 +726,9 @@ impl HerdrExecutor {"
+   ]
+  },
+  {
+   "path": "src/reconcile/desired.rs",
+   "hunks": [
+    "@@ -1,5 +1,5 @@",
+    "@@ -57,6 +57,13 @@ pub struct DesiredPane {",
+    "@@ -198,6 +205,10 @@ impl DesiredRuntime {"
+   ]
+  },
+  {
+   "path": "src/reconcile/session.rs",
+   "hunks": [
+    "@@ -37,6 +37,7 @@ pub fn start_outcome(r: Result<StartOutcome, HerdrError>) -> ExecOutcome {",
+    "@@ -127,6 +128,7 @@ async fn start("
+   ]
+  },
+  {
+   "path": "src/cli/session.rs",
+   "hunks": [
+    "@@ -54,6 +54,7 @@ fn report(from_hook: &str) -> anyhow::Result<()> {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -457,13 +457,12 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -28,8 +28,13 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "src/threads/assignment.rs",
+   "hunks": [
+    "@@ -0,0 +1,318 @@"
+   ]
+  },
+  {
+   "path": "src/observe/seat_observation.rs",
+   "hunks": [
+    "@@ -0,0 +1,178 @@"
+   ]
+  },
+  {
+   "path": "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md",
+   "hunks": [
+    "@@ -0,0 +1,627 @@"
+   ]
+  },
+  {
+   "path": "src/undo/commands.rs",
+   "hunks": [
+    "@@ -1,10 +1,9 @@",
+    "@@ -82,30 +81,11 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {"
+   ]
+  },
+  {
+   "path": "src/threads/effects.rs",
+   "hunks": [
+    "@@ -5,18 +5,24 @@",
+    "@@ -31,6 +37,18 @@ use std::sync::{Arc, Mutex};",
+    "@@ -88,12 +106,16 @@ impl Graph {",
+    "@@ -233,6 +255,26 @@ pub(crate) enum Payload {",
+    "@@ -252,8 +294,8 @@ struct Want {",
+    "@@ -348,15 +390,143 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {",
+    "@@ -378,27 +548,25 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {",
+    "@@ -417,15 +585,22 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {",
+    "@@ -1019,6 +1194,25 @@ pub struct ThreadsExecutor {",
+    "@@ -1047,15 +1241,15 @@ fn admit_bookkeeping(cx: &ExecCx<'_>, mut args: serde_json::Value) -> Result<(),",
+    "@@ -1184,18 +1585,14 @@ impl ThreadsExecutor {",
+    "@@ -1223,7 +1620,10 @@ impl ThreadsExecutor {",
+    "@@ -1236,7 +1636,7 @@ impl ThreadsExecutor {",
+    "@@ -1293,7 +1693,7 @@ impl ThreadsExecutor {",
+    "@@ -1400,7 +1800,7 @@ impl ThreadsExecutor {",
+    "@@ -1428,7 +1828,15 @@ impl EffectExecutor for ThreadsExecutor {",
+    "@@ -1514,6 +1922,19 @@ impl ThreadsExecutor {"
+   ]
+  },
+  {
+   "path": "src/threads/mod.rs",
+   "hunks": [
+    "@@ -6,6 +6,7 @@",
+    "@@ -19,7 +20,7 @@ mod tests;",
+    "@@ -133,9 +134,9 @@ struct InvitationArgs {",
+    "@@ -148,14 +149,15 @@ impl Mutation for SetInvitation {",
+    "@@ -165,6 +167,7 @@ impl Mutation for SetInvitation {",
+    "@@ -176,10 +179,14 @@ impl Mutation for SetInvitation {",
+    "@@ -190,35 +197,9 @@ pub fn register_mutations(reg: &mut MutationRegistry) {"
+   ]
+  },
+  {
+   "path": "tests/e2e_private_herdr.rs",
+   "hunks": [
+    "@@ -953,10 +953,10 @@ fn undo_from_pane(rig: &E2e, caller: &str) -> String {",
+    "@@ -971,49 +971,44 @@ fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {"
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -1,6 +1,5 @@",
+    "@@ -11,13 +10,11 @@ use crate::model::action::{ActionKind, ActionRecord};",
+    "@@ -212,7 +209,7 @@ impl OrgKind for UndoKind {",
+    "@@ -303,29 +300,17 @@ fn restamp(cx: &mut MutationCx<'_>, id: &AnyId, act: &ActionId) -> Result<(), Mu",
+    "@@ -387,6 +372,7 @@ fn restore_mutate("
+   ]
+  }
+ ]
+}
