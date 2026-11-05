@@ -200,11 +200,12 @@ impl<'a> LiveIndex<'a> {
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
-        // A rebound clone pane (see `pane`) places its teamspace's workspace.
+        // A rebound clone pane (see `pane`) places its teamspace's workspace; a moved-out seat's pane lives in
+        // someone else's workspace, so it never does.
         self.desired
             .panes
             .iter()
-            .filter(|p| p.ts == *ts)
+            .filter(|p| p.ts == *ts && !self.desired.tab(&p.seat).is_some_and(|t| t.moved_out))
             .find_map(|p| self.pane(&p.clone))
             .map(|lp| LiveWorkspace {
                 ws: lp.ws,

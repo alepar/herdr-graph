@@ -24,6 +24,7 @@ use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegist
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 pub const CASCADE_KEY: &str = "observed.cascade";
@@ -159,6 +160,8 @@ struct CascadeMutation;
 
 /// The live node manager's last live pane closed after an observed move: it no longer lives elsewhere, so it is
 /// no longer moved out and the planner reopens it in its own tab (spec §4.9, B11). The move itself was not reverted.
+/// Only the panes the classification listed as closed were absented before this runs, so a pane that survived
+/// elsewhere still counts as bound and keeps the seat moved out.
 fn node_manager_closed(cx: &mut MutationCx<'_>, seat: &SeatId) -> Result<(), MutationError> {
     let f = read_seat(&cx.tree, seat).map_err(mm)?;
     let still_bound = f
@@ -185,6 +188,7 @@ impl CascadeMutation {
         at: Timestamp,
         exclusions: bool,
         nm: Option<&SeatId>,
+        closed: &BTreeSet<CloneId>,
         acc: &mut Acc,
     ) -> Result<bool, MutationError> {
         let f = read_seat(&cx.tree, seat).map_err(mm)?;
@@ -192,9 +196,12 @@ impl CascadeMutation {
             acc.already.push(seat.to_any());
             return Ok(false);
         }
-        // The panes are gone: occupancy ends and the runtime is absent, before the shared retire path runs.
+        // The panes are gone: occupancy ends and the runtime is absent, before the shared retire path runs. For
+        // the node manager only the panes that actually closed: a clone whose pane survived elsewhere stays bound.
         for (loc, c) in &f.clones {
-            if c.lifecycle == CloneLifecycle::Retired {
+            if c.lifecycle == CloneLifecycle::Retired
+                || (nm == Some(seat) && !closed.contains(&c.id))
+            {
                 continue;
             }
             let mut c = c.clone();
@@ -222,6 +229,7 @@ impl CascadeMutation {
         mech: RetireMechanism,
         at: Timestamp,
         nm: Option<&SeatId>,
+        closed: &BTreeSet<CloneId>,
         acc: &mut Acc,
     ) -> Result<usize, MutationError> {
         let ts = read_ts(&cx.tree, id).map_err(mm)?;
@@ -233,7 +241,7 @@ impl CascadeMutation {
         let mut kept = 0;
         for (_, seat) in &seats {
             kept += usize::from(Self::retire_seat(
-                cx, &seat.id, act, mech, at, false, nm, acc,
+                cx, &seat.id, act, mech, at, false, nm, closed, acc,
             )?);
         }
         // Re-read: retiring the seats may have reparented this teamspace's own default_manager; both the kept
@@ -342,6 +350,8 @@ impl Mutation for CascadeMutation {
                 other => return Err(MutationError::Bug(format!("cannot retire a {other:?}"))),
             }
         }
+        // The clones the classification saw close; the rest of a node manager's clones are left as they are.
+        let closed: BTreeSet<CloneId> = clones.iter().cloned().collect();
         // Classification may predate a `node-manager set`: the live answer at apply time wins.
         let nm = crate::model::manager::live_node_manager(&cx.tree)?;
         let nm = nm.as_ref();
@@ -361,12 +371,12 @@ impl Mutation for CascadeMutation {
         let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
         let mut kept = 0;
         for ts in &teamspaces {
-            kept += Self::retire_teamspace(cx, ts, &act, mech, at, nm, &mut acc)?;
+            kept += Self::retire_teamspace(cx, ts, &act, mech, at, nm, &closed, &mut acc)?;
         }
         for seat in &seats {
             if !handled(&acc, &seat.to_any()) {
                 kept += usize::from(Self::retire_seat(
-                    cx, seat, &act, mech, at, exclusions, nm, &mut acc,
+                    cx, seat, &act, mech, at, exclusions, nm, &closed, &mut acc,
                 )?);
             }
         }
