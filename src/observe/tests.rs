@@ -2537,3 +2537,49 @@ async fn reparent_fallback_on_integrity() {
         "{notes:?}"
     );
 }
+
+#[tokio::test]
+async fn observed_workspace_close_keeps_own_default_rewrite() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, teamspace_request},
+    };
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create nm --teamspace beta");
+    settle(&fx).await;
+    let (nm, bench) = (seat(&fx, "nm").id, seat(&fx, "bench").id);
+    make_node_manager(&fx, &nm);
+    let alpha = ts_rec(&fx, "alpha").id;
+    fx.w.admit(teamspace_request(&alpha, Some(&bench))).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(ts_rec(&fx, "alpha").default_manager, Some(bench.clone()));
+
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    step(&fx).await;
+
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: alpha.to_any(),
+            field: "default_manager".into(),
+            old: bench,
+            new: Some(nm.clone()),
+        }]
+    );
+    let stored = ts_rec(&fx, "alpha");
+    assert_eq!(stored.lifecycle, Lifecycle::Retired);
+    assert_eq!(
+        stored.default_manager,
+        Some(nm),
+        "the archived record keeps the reparented default"
+    );
+}

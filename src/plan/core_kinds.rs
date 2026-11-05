@@ -802,7 +802,8 @@ impl OrgKind for TeamspaceRetire {
         for (_, seat) in seats {
             do_retire_seat(cx, &seat.id, &act, mech, &mut acc, false)?;
         }
-        let mut rec = ts.rec.clone();
+        // Re-read: retiring the seats may have reparented this teamspace's own default_manager.
+        let mut rec = read_ts(&cx.tree, &id).map_err(mm)?.rec;
         let before = if rec.lifecycle == Lifecycle::Active {
             "active"
         } else {

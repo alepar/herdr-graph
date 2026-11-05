@@ -230,7 +230,8 @@ impl CascadeMutation {
         } else {
             "dormant"
         };
-        let mut rec = ts.rec.clone();
+        // Re-read: retiring the seats may have reparented this teamspace's own default_manager.
+        let mut rec = read_ts(&cx.tree, id).map_err(mm)?.rec;
         rec.lifecycle = Lifecycle::Retired;
         rec.retired = Some(Retirement {
             op: cx.op.clone(),
