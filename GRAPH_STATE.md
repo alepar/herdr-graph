@@ -66,6 +66,8 @@ Templates with omitted `kind` remain team templates. Legacy `role` fields read a
 
 Keep using the upgraded binary for these instances. Older binaries cannot discover new-layout records, and no downgrade migration is supplied. Git graph-change summaries contain committed mutations; the SQLite journal remains authoritative for live, rejected, failed and cancelled operation lifecycle. Preserve both the Git repository and local journal when backing up or moving an instance.
 
+Clone records written by this version may carry `threads_seat`, `threads_seat_history`, `seat_intent` and `seat_fact`, and `clone purge` deletes retired clone records; older binaries do not know these fields and downgrade is not supported.
+
 ## Threads node boundaries
 
 Threads identities belong to a canonical node, and graph-managed pane resolution also names the exact Herdr host. The local `threads-intents.node.json` binding and committed `threads-namespace.json` prevent references or pending service envelopes from being replayed against another node. A fresh empty graph can bind automatically; a populated or historically populated unbound graph requires an explicit reviewed `threads reconnect` plan. Same-node restart keeps the existing epoch.
