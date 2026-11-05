@@ -855,12 +855,8 @@ mod lazy {
         }
     }
 
-    #[async_trait::async_trait]
-    impl PaneSeatMap for LazyMap {
-        async fn seat_for(
-            &self,
-            pane: &HerdrPaneId,
-        ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
+    impl LazyMap {
+        async fn map(&self) -> Result<Arc<ThreadsSeatMap>, ThreadsError> {
             let _guard = self.endpoint.guard().await?;
             let me = Self {
                 endpoint: self.endpoint.clone(),
@@ -895,7 +891,25 @@ mod lazy {
             })
             .await
             .map_err(|e| ThreadsError::Disconnected(e.to_string()))??;
-            map.seat_for(pane).await
+            Ok(map)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PaneSeatMap for LazyMap {
+        async fn seat_for(
+            &self,
+            pane: &HerdrPaneId,
+        ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
+            self.map().await?.seat_for(pane).await
+        }
+
+        async fn resolve_seat(
+            &self,
+            pane: &HerdrPaneId,
+            op: &crate::ports::threads::OpKey,
+        ) -> Result<crate::threads::mapping::SeatResolution, ThreadsError> {
+            self.map().await?.resolve_seat(pane, op).await
         }
     }
     #[cfg(test)]
