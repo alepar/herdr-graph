@@ -12,6 +12,7 @@ base: main
 spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
 roastDesignRound: 2
+roastCodeRound: 1
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md, 2026-11-05-seat-failure-manager-seats-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 graph-pass: depth 7→7 · width 3.1→3.1 · applied 0 · parked 1
