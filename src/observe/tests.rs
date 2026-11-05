@@ -2495,3 +2495,501 @@ async fn live_handoff_with_resolved_seats_keeps_clones_present() {
         calls(&fx)
     );
 }
+
+// =================================================================================================
+// parity with the old matcher (spec §6, requirement B3)
+//
+// One SeatObservation test per scenario the token / terminal-id / session matcher and the planner's
+// LiveIndex clone lookups handle (docs/superpowers/runs/2026-11-04-threads-seat-identity/parity.md). The
+// fake view answers what herdr-threads v3.0.0 documents for the scenario; where the scenario allows, the
+// clone's token and terminal evidence is gone, so the matcher cannot be what makes the test pass.
+// =================================================================================================
+
+/// Every pane in the snapshot, in Herdr's stable order (a cold restart keeps the order, not the ids).
+async fn all_panes(fx: &Fx) -> Vec<HerdrPaneId> {
+    snapshot(fx)
+        .await
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .map(|p| p.id.clone())
+        .collect()
+}
+
+fn resolved(pane: &HerdrPaneId) -> SeatStatus {
+    SeatStatus::Resolved { pane: pane.clone() }
+}
+
+/// Nothing was observed as closed and nothing was created for any clone.
+fn assert_no_closure_and_no_create(fx: &Fx) {
+    assert!(actions(fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(creates(fx), 0, "{:?}", calls(fx));
+}
+
+fn bound_pane(fx: &Fx, id: &CloneId) -> Option<HerdrPaneId> {
+    clone_by_id(fx, id).runtime.bound.and_then(|b| b.pane_id)
+}
+
+/// The foreman's two clones, each with its own threads seat, and the pane each is in.
+async fn two_seated(fx: &Fx) -> [(CloneRecord, HerdrPaneId); 2] {
+    activate(fx, "claude");
+    commit(fx, "clone add foreman --name second");
+    settle(fx).await;
+    let mut cs = clones_of(fx, &seat(fx, "foreman").id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    assign_seat(fx, &a.id, "seat-a");
+    assign_seat(fx, &b.id, "seat-b");
+    [a, b].map(|c| {
+        let pane = pane_of(fx, &c);
+        (clone_by_id(fx, &c.id), pane)
+    })
+}
+
+/// Pass 1 (graph token): after a handoff dropped every token, threads finds each clone by its seat.
+#[tokio::test]
+async fn parity_token_pass_clone_found_by_seat_when_the_token_is_gone() {
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    fx.seats.set(&seat_ref("seat-a"), resolved(&pa));
+    fx.seats.set(&seat_ref("seat-b"), resolved(&pb));
+    fx.herdr.live_handoff();
+    fx.lp.force_rebind();
+    fx.herdr.clear_calls();
+    for _ in 0..2 {
+        step(&fx).await;
+    }
+    for (c, p) in [(&a, &pa), (&b, &pb)] {
+        assert_eq!(
+            clone_by_id(&fx, &c.id).runtime.availability,
+            Availability::Present
+        );
+        assert_eq!(bound_pane(&fx, &c.id).as_ref(), Some(p), "right pane");
+    }
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Pass 2, same incarnation (terminal id or bound pane id): a steady state in which threads and the
+/// matcher agree changes nothing and writes nothing.
+#[tokio::test]
+async fn parity_same_incarnation_bound_pane_is_a_steady_state() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(&seat_ref("seat-1"), resolved(&pane));
+    step(&fx).await;
+    let head = crate::ports::store::Store::head(&*fx.store).unwrap();
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        step(&fx).await;
+    }
+    assert_eq!(bound_pane(&fx, &c.id), Some(pane));
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Present
+    );
+    assert_eq!(
+        crate::ports::store::Store::head(&*fx.store).unwrap(),
+        head,
+        "no commit per step"
+    );
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Pass 2 across incarnations (terminal id + cwd + session) and pane renumbering: a cold restart gives every
+/// pane a new id and drops tokens and terminal ids; each seat resolves to its clone's new pane.
+#[tokio::test]
+async fn parity_pane_renumbering_after_cold_restart() {
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    let before = all_panes(&fx).await;
+    let idx = |p: &HerdrPaneId| before.iter().position(|q| q == p).unwrap();
+    fx.herdr.restart(false, false);
+    let after = all_panes(&fx).await;
+    assert_ne!(after, before, "every pane has a new id");
+    fx.seats
+        .set(&seat_ref("seat-a"), resolved(&after[idx(&pa)]));
+    fx.seats
+        .set(&seat_ref("seat-b"), resolved(&after[idx(&pb)]));
+    fx.herdr.clear_calls();
+
+    let sum = step(&fx).await;
+    assert_eq!(sum.mode, Some(StepMode::Rebind));
+    settle(&fx).await;
+    let snap = snapshot(&fx).await;
+    for (c, old) in [(&a, &pa), (&b, &pb)] {
+        let now = clone_by_id(&fx, &c.id);
+        assert_eq!(now.lifecycle, CloneLifecycle::Active);
+        assert_eq!(now.runtime.availability, Availability::Present);
+        assert_eq!(bound_pane(&fx, &c.id), Some(after[idx(old)].clone()));
+        assert_eq!(now.runtime.bound.unwrap().incarnation, snap.incarnation);
+    }
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Pass 3 (native session id): a cold restart resumed the clone's agent session in the new pane. Threads'
+/// C1 resume check-in reattaches the seat; the pane's agent need not expose a session id to Herdr.
+#[tokio::test]
+async fn parity_cold_restart_with_resumed_session_reattaches_by_seat() {
+    let fx = fx();
+    let (c, old) = seated(&fx, "seat-1").await;
+    let before = all_panes(&fx).await;
+    let i = before.iter().position(|p| *p == old).unwrap();
+    fx.herdr.restart(false, false);
+    let new = all_panes(&fx).await[i].clone();
+    fx.herdr.set_agent(&new, claude_agent(None));
+    fx.seats.set(&seat_ref("seat-1"), resolved(&new));
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    settle(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &c.id), Some(new));
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Cold restart, headless (no operator): a bare pane with no resumed agent stays Unresolved in threads
+/// until D1, so the clone is Unknown, never retired or recreated: the old matcher's answer.
+#[tokio::test]
+async fn parity_cold_restart_headless_bare_pane_is_unknown_not_recreated() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    fx.herdr.clear_calls();
+    fx.herdr.restart(false, false);
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+
+    step(&fx).await;
+    step(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_eq!(now.runtime.availability, Availability::Unknown);
+    assert_eq!(fact_state(&fx, &c.id), Some(SeatFactState::Unresolved));
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Cold restart, attended: after the headless Unknown, `clone rebind --pane` adopts the bare pane (the
+/// matcher's rebind-adopted branch), which threads Unresolved leaves in force before D1.
+#[tokio::test]
+async fn parity_cold_restart_attended_rebind_adopts_the_pane() {
+    let fx = fx();
+    let (c, old) = seated(&fx, "seat-1").await;
+    let before = all_panes(&fx).await;
+    let i = before.iter().position(|p| *p == old).unwrap();
+    fx.herdr.restart(false, false);
+    let new = all_panes(&fx).await[i].clone();
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown
+    );
+    fx.herdr.clear_calls();
+
+    commit(&fx, &format!("clone rebind {} --pane {}", c.id, new.0));
+    step(&fx).await;
+    step(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &c.id), Some(new));
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Cold restart that keeps pane metadata: the graph token still identifies the clone, threads has nothing
+/// to say about the bare pane (Unresolved), and the matcher's token pass keeps the clone Present (pre-D1).
+#[tokio::test]
+async fn parity_cold_restart_with_surviving_tokens_keeps_the_matcher_result() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    fx.herdr.restart(true, true);
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    settle(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Partial restore: one agent came back and threads resolved its seat, the other pane is still bare.
+#[tokio::test]
+async fn parity_partial_restore_binds_only_what_threads_resolved() {
+    let fx = fx();
+    let [(a, pa), (b, _pb)] = two_seated(&fx).await;
+    let before = all_panes(&fx).await;
+    let i = before.iter().position(|p| *p == pa).unwrap();
+    fx.herdr.restart(false, false);
+    let new_a = all_panes(&fx).await[i].clone();
+    fx.seats.set(&seat_ref("seat-a"), resolved(&new_a));
+    fx.seats.set(&seat_ref("seat-b"), SeatStatus::Unresolved);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    settle(&fx).await;
+    let (a2, b2) = (clone_by_id(&fx, &a.id), clone_by_id(&fx, &b.id));
+    assert_eq!(a2.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &a.id), Some(new_a));
+    assert_eq!(b2.runtime.availability, Availability::Unknown);
+    assert_eq!(b2.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Live handoff (new incarnation, new terminal ids, tokens dropped, pane ids kept): seats stay Resolved at
+/// the same panes via process continuity, so every clone stays Present with no operator step.
+#[tokio::test]
+async fn parity_live_handoff_two_clones_stay_present() {
+    let fx = fx();
+    let [(a, pa), (b, pb)] = two_seated(&fx).await;
+    fx.seats.set(&seat_ref("seat-a"), resolved(&pa));
+    fx.seats.set(&seat_ref("seat-b"), resolved(&pb));
+    step(&fx).await;
+    fx.herdr.clear_calls();
+    fx.herdr.live_handoff();
+    for _ in 0..3 {
+        step(&fx).await;
+        for (c, p) in [(&a, &pa), (&b, &pb)] {
+            let now = clone_by_id(&fx, &c.id);
+            assert_eq!(now.runtime.availability, Availability::Present);
+            assert_eq!(now.lifecycle, CloneLifecycle::Active);
+            assert_eq!(bound_pane(&fx, &c.id).as_ref(), Some(p));
+        }
+    }
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Same-incarnation move: the user drags a clone's pane into another seat's tab. Threads' seat keeps
+/// resolving to the same pane, so the clone follows it, flagged for reload, never closed.
+#[tokio::test]
+async fn parity_pane_moved_between_tabs_keeps_the_binding() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness claude",
+    );
+    commit(&fx, "clone add foreman --name second");
+    settle(&fx).await;
+    let mut cs = clones_of(&fx, &seat(&fx, "foreman").id);
+    let mover = cs.remove(0);
+    assign_seat(&fx, &mover.id, "seat-m");
+    let pane = pane_of(&fx, &mover);
+    let other_tab = tab_of_seat(&fx, "other");
+    fx.seats.set(&seat_ref("seat-m"), resolved(&pane));
+    fx.herdr.user_move_pane(&pane, &other_tab);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let m = clone_by_id(&fx, &mover.id);
+    assert!(m.reload_required);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert_eq!(m.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &mover.id), Some(pane));
+    assert_eq!(m.runtime.bound.unwrap().tab_id, Some(other_tab));
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Same-incarnation move into a tab graph does not know: the matcher's answer (unbound, Unknown, reload
+/// flagged) stands, since threads reports the seat at the pane but the pane's tab is not a graph tab.
+#[tokio::test]
+async fn parity_pane_moved_into_an_unknown_tab_is_unbound() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(&fx, "clone add foreman --name second");
+    settle(&fx).await;
+    let mut cs = clones_of(&fx, &seat(&fx, "foreman").id);
+    let mover = cs.remove(0);
+    assign_seat(&fx, &mover.id, "seat-m");
+    let pane = pane_of(&fx, &mover);
+    let scratch = fx
+        .herdr
+        .create_tab(CreateTab {
+            workspace: workspace_id(&fx).await,
+            label: "scratch".into(),
+            cwd: "/".into(),
+            env: vec![],
+        })
+        .await
+        .unwrap()
+        .tab
+        .unwrap();
+    fx.seats.set(&seat_ref("seat-m"), resolved(&pane));
+    fx.herdr.user_move_pane(&pane, &scratch);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let m = clone_by_id(&fx, &mover.id);
+    assert!(m.reload_required);
+    assert!(m.runtime.bound.is_none(), "unbound");
+    assert_eq!(m.runtime.availability, Availability::Unknown);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    step(&fx).await;
+    assert!(clone_by_id(&fx, &mover.id).runtime.bound.is_none());
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+}
+
+/// Agent resumed in another pane: the clone's session came back in a pane the user added; the token is
+/// gone, the old pane stays open and bare. Threads moves the seat to the pane the agent checked in from.
+#[tokio::test]
+async fn parity_agent_resumed_in_another_pane_follows_the_seat() {
+    let fx = fx();
+    let (c, old) = seated(&fx, "seat-1").await;
+    fx.herdr.live_handoff();
+    fx.lp.force_rebind();
+    let tab = tab_of_seat(&fx, "foreman");
+    let other = fx.herdr.add_user_pane(&tab, "resumed");
+    fx.herdr.set_agent(&other, claude_agent(None));
+    fx.seats.set(&seat_ref("seat-1"), resolved(&other));
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &c.id), Some(other));
+    assert_ne!(bound_pane(&fx, &c.id), Some(old));
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+}
+
+/// Duplicate / ambiguous candidates: two seats claim one pane. Threads resolves one and reports the other
+/// as a key conflict; the pane goes to exactly one clone, the other is Unknown, nothing is closed.
+#[tokio::test]
+async fn parity_duplicate_candidates_pane_goes_to_exactly_one_clone() {
+    let fx = fx();
+    let [(a, _pa), (b, pb)] = two_seated(&fx).await;
+    fx.seats.set(&seat_ref("seat-b"), resolved(&pb));
+    fx.seats.set(
+        &seat_ref("seat-a"),
+        SeatStatus::KeyConflict {
+            pane: Some(pb.clone()),
+        },
+    );
+    fx.herdr.live_handoff();
+    fx.lp.force_rebind();
+    fx.herdr.clear_calls();
+
+    for _ in 0..2 {
+        step(&fx).await;
+    }
+    let (a2, b2) = (clone_by_id(&fx, &a.id), clone_by_id(&fx, &b.id));
+    assert_eq!(b2.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &b.id), Some(pb.clone()));
+    assert_eq!(a2.runtime.availability, Availability::Unknown);
+    assert_ne!(bound_pane(&fx, &a.id), Some(pb));
+    assert_eq!(a2.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        fact_state(&fx, &a.id),
+        Some(SeatFactState::KeyConflict {
+            pane: Some(bound_pane(&fx, &b.id).unwrap())
+        })
+    );
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// A closed pane: threads retires the seat, the clone is retired once through the observed closure
+/// cascade, undoably, and the pane is not recreated.
+#[tokio::test]
+async fn parity_pane_close_retires_the_clone_once() {
+    let fx = fx();
+    let [(a, pa), (b, _)] = two_seated(&fx).await;
+    fx.seats.set(
+        &seat_ref("seat-a"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    fx.herdr.user_close_pane(&pa);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let a2 = clone_by_id(&fx, &a.id);
+    assert_eq!(a2.lifecycle, CloneLifecycle::Retired);
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1, "retired once, not by both mechanisms");
+    assert_eq!(Some(acts[0].id.clone()), a2.retired.unwrap().action);
+    assert_eq!(
+        clone_by_id(&fx, &b.id).lifecycle,
+        CloneLifecycle::Active,
+        "the sibling is untouched"
+    );
+    step(&fx).await;
+    assert_eq!(actions(&fx, ActionKind::ClosureCascade).len(), 1);
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+}
+
+/// Close while the daemon was down: the old matcher could not tell closed from restarted and marked the
+/// clone Unknown. Threads knows the seat retired when the pane closed, so the new daemon retires the clone,
+/// undoably, instead of leaving it Unknown.
+#[tokio::test]
+async fn parity_close_while_daemon_down_is_decided_by_threads() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.herdr.user_close_pane(&pane);
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    let lp2 = fx.restarted_loop();
+    fx.herdr.clear_calls();
+
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.lifecycle, CloneLifecycle::Retired);
+    let act = now.retired.expect("retirement").action.expect("undoable");
+    commit(&fx, &format!("undo {act}"));
+    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
+    assert_eq!(creates(&fx), 0, "never recreation: {:?}", calls(&fx));
+}
+
+/// The same close while the daemon was down, but threads is unreachable: the matcher's answer stands.
+#[tokio::test]
+async fn parity_close_while_daemon_down_with_threads_unreachable_is_unknown() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.herdr.user_close_pane(&pane);
+    fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
+    let lp2 = fx.restarted_loop();
+    fx.herdr.clear_calls();
+
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_eq!(now.runtime.availability, Availability::Unknown);
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Herdr unreachable: threads is not consulted for a binding it cannot check against a snapshot; the clone
+/// is Unknown, never retired, and the rebind restores presence.
+#[tokio::test]
+async fn parity_herdr_disconnect_marks_unknown_never_retires() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    fx.herdr.disconnect_subscribers();
+    fx.herdr.fail_next("session.snapshot", Fault::Unavailable);
+    let sum = step(&fx).await;
+    assert_eq!(sum.mode, Some(StepMode::Disconnected));
+    let down = clone_by_id(&fx, &c.id);
+    assert_eq!(down.runtime.availability, Availability::Unknown);
+    assert_eq!(down.lifecycle, CloneLifecycle::Active);
+    assert!(down.runtime.bound.is_some(), "binding kept for the rebind");
+
+    fx.herdr.clear_calls();
+    let up = step(&fx).await;
+    assert_eq!(up.mode, Some(StepMode::Rebind));
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Present
+    );
+    assert_eq!(bound_pane(&fx, &c.id), Some(pane));
+    assert_no_closure_and_no_create(&fx);
+}
