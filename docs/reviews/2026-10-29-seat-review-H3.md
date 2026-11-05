@@ -190,10 +190,19 @@ None of that structure is fixed by the model.
 - **Node manager (decided).** A graph-level `node_manager_seat: SeatId` in `graph.toml`. There is
   precedent: `summarizer_seat` already lives there (`src/model/graph.rs:12`).
   - It is the root of everything on the node.
-  - It has no manager, and it cannot be retired.
+  - It has no manager.
   - It owns graph repair and receives integrity errors.
   - Any hierarchy above node level (for example a global coordinator on the originating node) is
     outside the graph.
+  - **Assignment.** The first seat created on the node becomes the node manager, and the plan that creates
+    it records `node_manager_seat`. The shipped graph templates provide the defaults that create that first
+    seat with the node-manager role.
+  - **Permanence.** The role cannot be reassigned or moved. The seat cannot be retired; plans that would
+    retire it are refused, including retiring its teamspace or application and undoing its creation.
+  - **Always open.** The node manager keeps its own tab and stays open. If that tab or pane is closed,
+    reconciliation reopens it in the same place instead of retiring the seat. This is an explicit
+    exception to "direct tab/workspace closure follows containment retirement" (CURRENT-DESIGN.md). It
+    fits Herdr, where a machine with no tabs is an awkward state anyway.
 - **How it changes (decided).** All graph state changes go through the plan/confirm/apply flow
   (CURRENT-DESIGN.md), so the manager pointer is set and cleared through plans like every other field.
   There is no separate lightweight command.
@@ -226,13 +235,11 @@ None of that structure is fixed by the model.
 
 ## Open questions
 
-1. **Moving the node manager role.** The node manager cannot be retired, so there must be a plan that
-   hands the role to another seat (for example `node-manager set <seat>`). After the hand-off, the old
-   seat becomes an ordinary seat and can be retired.
-2. **Bootstrap.**
-   - `node_manager_seat` is mandatory, so `init` must create or designate it.
-   - Existing graphs need a migration plan that designates one.
-   - Until then, the integrity error omits it, and the A3 step says "report to the user".
+1. **Existing graphs.** Graphs that already have seats were created before this rule, so none of their
+   seats is the node manager. They need a one-time migration plan. Proposal: designate the earliest-created
+   live seat and show it in the plan for confirmation.
+2. **Until hg-au7 lands**, the integrity error omits the node manager, and the A3 step says "report to
+   the user".
 
 ---
 
