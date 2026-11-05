@@ -150,8 +150,9 @@ parameter that the Herdr adapter realises without Herdr changes (argv prefix `en
 existing pane-creation env, whichever the installed Herdr API supports for agent start; the
 implementer verifies on the real Herdr). The existing `HERDR_GRAPH_CLONE` pane env stays. Before
 the first keyed launch the graph calls threads' `ReserveContinuityKey{key}` (idempotent for the
-holder); that call and its port wrapper are gated on D1 (§10). Until D1 releases, launches set the
-env var (harmless) without reserving.
+holder); that call and its port wrapper are gated on D1 (§10). The key variable is emitted only for a
+clone whose reservation is recorded, so no agent ever presents an unreserved key (threads records
+an unreserved key as non-service, never un-retirable); until D1 no clone has a reservation.
 Considered: relying on pane shell env (rejected: lost on cold restore, and Herdr's own auto-resume
 does not carry it — C1 covers that case instead).
 
@@ -301,7 +302,7 @@ Spec-forced exceptions:
 - Per §6: before D1, threads and the old clone matcher run side by side and threads wins whenever both speak. Deliberate and temporary; the matcher's clone passes are deleted in the D1-gated bead.
 - Per §8: undo no longer adopts the caller's pane (`undo/adopt.rs` removed for clones). Undo commits the clone active; unretire, relaunch and key steps follow from level-triggered wants. The undo code makes no threads calls.
 - Per §3: `ThreadsLink.occupant` stays on the record, but nothing may branch on it any more.
-- Per §5: until D1, launches set the key env var without reserving it.
+- Per §5: the key env var is emitted only once the clone's key reservation is recorded (none before D1).
 
 Digest:
 - SeatStatus: owns the closed set of threads seat states; a new state is added as one variant plus one arm in SeatObservation; callers never inspect threads wire results.
