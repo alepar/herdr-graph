@@ -94,8 +94,13 @@ Recommended: `CloneRecord` gains `threads_seat: Option<SeatId>` (the clone, not 
 it survives rebinding of panes by Herdr moves and undo). A threads effect resolves it once the
 clone's pane binding is verified (stamped token or verified bound pane in the current incarnation),
 via the existing `ThreadsSeatMap::seat_for` (`ResolveSeat`). Rules:
-- Never overwritten once set. If threads later reports the clone's seat retired-final, the clone is
-  retired (see §6); a clone never gets a second seat.
+- Never overwritten once set, with one exception, **seat succession**: when threads reports the
+  clone's seat `Retired` *final* (irreversible: every pane-close retirement before D2, or an
+  operator's final retire after it) and the graph restores the clone (undo or resurrection), the
+  assignment may replace the final-retired seat with the seat resolved for the restored pane. The
+  succession is recorded on the clone (previous seat id kept for history) and the new seat needs
+  memberships re-invited and accepted once, as today. A reversibly retired seat is never succeeded;
+  it is un-retired (§8). At any instant a clone has at most one live seat, so B1's 1:1 holds.
 - `ResolveSeat` refusals (restore holds, pane held for a key conflict) are `Deferred`, never errors,
   and never retried with a fresh allocation while the seat is unresolved — an early resolve on a
   restored pane would allocate a new seat and defeat threads' reattach.
@@ -111,8 +116,9 @@ names (rejected: B1, threads is authoritative; named seats lack Herdr wake).
 Recommended: in `clone_wants` (`src/threads/effects.rs:351`) a clone's desired invitations exist
 when it is active and `threads_seat` is known — no occupant needed, so invitations wait before the
 first agent's SessionStart. Satisfied when `link.seat == threads_seat` (ordinary: state Pending or
-Accepted). Released only when the clone is retired-final or `link.seat != threads_seat` (the
-latter is a repair path; under the write-once rule it should not occur). Agent exit with the pane
+Accepted). Released only when the clone is retired or `link.seat != threads_seat` (seat
+succession, §2). Graph clone retirement keeps its existing meaning (undoable through `graph undo`
+until purge); there is no separate "retired-final" clone state. Agent exit with the pane
 open keeps memberships (B8): `occupancy_end_releases_requirement` and
 `occupant_replaced_in_one_commit_releases_before_reinviting_the_same_seat` flip. The invite
 executor invites the recorded `threads_seat` (no re-resolve, no `Obsolete` for "no occupant");
@@ -151,9 +157,10 @@ does not carry it — C1 covers that case instead).
 Recommended: a `ThreadsSeatView` reader wraps `SeatInspect`/`Seats` (new port methods) and is
 polled per observation step for clones with a `threads_seat`. Mapping: `Resolved` + target pane →
 clone Present, bound to that pane (binding written from threads' target, token re-stamped by the
-existing stamp path); `Unresolved` → Unknown; `Retired` reversible → clone retired (undoable);
-`Retired` final → clone retired-final; key-conflict field → Unknown plus a recorded alert in
-`status`. Threads unreachable → no binding changes (hold last state; Unknown only after the existing
+existing stamp path); `Unresolved` → Unknown; `Retired` (reversible or final) → clone retired
+through the existing undoable retirement (the reversible/final distinction matters only to undo,
+§8); key-conflict field → Unknown plus a recorded alert in `status`. On v3.0.0 every retired seat
+is final (threads retirement is irreversible until D2), and the adapter reports it so. Threads unreachable → no binding changes (hold last state; Unknown only after the existing
 staleness rule). Then delete: the clone passes of `observe/matcher.rs` (token, terminal, native
 session), clone terminal/incarnation tracking used only by them, the clone parts of the planner's
 `LiveIndex` (bound-id, rebind-adopted, journal `live_ref` re-matching; the create-nonce match for a
@@ -185,6 +192,11 @@ no longer adopts the caller's pane (`undo/adopt.rs`): a different pane has its o
 would break 1:1. When the graph's retirement becomes final (purge), the graph releases the key /
 finalizes retirement (operation per D2's published API). After reattachment the graph re-checks its
 wants and releases any requirement it no longer wants. All of this is gated on D2.
+**Before D2 (interim):** undo and resurrection keep today's behaviour (restore through the plan
+path, adopting the caller's pane where they do today); the restored clone's final-retired seat is
+succeeded by the restored pane's seat (§2), and memberships are re-invited and accepted once. The
+D2-gated work replaces this with un-retire for reversibly retired seats; seat succession remains
+only for operator-finalized seats.
 Considered: true un-retire (rejected by the user in favour of reversible state, threads-side);
 new seat on undo (rejected: breaks B1).
 
@@ -202,7 +214,7 @@ held for a key conflict. Considered: waiting for a client to attach (rejected: B
 ### 10. Gating on threads releases
 
 Recommended: three gate beads (`sp:gate`), closed by the orchestrator when the threads coordinator
-announces the release on thread dOqG4VQNjQ4 and the graph pin is bumped to it:
+announces the release on thread dOqG4VQNjQ4 (the pin bump is the first gated bead's job):
 `Gate: herdr-threads D1 continuity key released (ht-ma6i.2)`, `Gate: herdr-threads D2 reversible
 retirement released (ht-ma6i.3)`, `Gate: herdr-threads G5 limbo disposition released (ht-ma6i.4)`.
 Each gated bead's description names its gate. A gate release that comes with a new threads version
