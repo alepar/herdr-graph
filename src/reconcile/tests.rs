@@ -177,6 +177,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     let kinds = Arc::new(kinds);

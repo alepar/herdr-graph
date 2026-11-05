@@ -1063,6 +1063,7 @@ fn seat_lifecycle(d: &Daemon, name: &str) -> herdr_graph::model::common::Lifecyc
 async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
     use herdr_graph::model::common::{Availability, CloneLifecycle};
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
     let victim = clones_of_seat(&d, "foreman")
@@ -1140,6 +1141,7 @@ async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
 async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     use herdr_graph::model::common::{Availability, CloneLifecycle, RetireMechanism};
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
     let pane_of_clone = |c: &herdr_graph::model::clone::CloneRecord| {
@@ -1271,6 +1273,7 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
 async fn undo_tab_close_from_pane_adopts_caller_pane() {
     use herdr_graph::model::common::Lifecycle;
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     d.committed(&["teamspace", "create", "t", "--active"]).await;
     d.committed(&[

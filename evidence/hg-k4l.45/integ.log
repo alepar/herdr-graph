@@ -1,0 +1,42 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto-seat-failure-manager-seats/.worktrees/super-auto-seat-failure-manager-seats--task-hg-k4l.45)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.31s
+     Running tests/daemon_composed.rs (target/debug/deps/daemon_composed-06acb5a7166ec063)
+
+running 15 tests
+test production_threads_port_reports_missing_install ... ok
+test production_threads_port_finds_default_state_dir_without_env ... ok
+test startup_convergence_order ... ok
+test every_kind_and_command_registered ... ok
+test writer_resume_not_halted ... ok
+test writer_resume_over_ipc_clears_halt ... ok
+test composed_daemon_status_shows_threads_discovery_error ... ok
+test composed_daemon_plan_apply_via_ipc_commits ... ok
+test recomposing_against_a_live_herdr_creates_nothing_twice ... ok
+test reminder_loop_fires_on_fake_clock ... ok
+test instructions_edit_apply_and_undo_each_scope ... ok
+test session_end_flows_to_transcripts ... ok
+test undo_tab_close_from_pane_adopts_caller_pane ... ok
+test undo_from_pane_adopts_caller_pane_without_creating_one ... ok
+test undo_from_pane_bound_to_other_clone_keeps_that_pane ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-25bd6f9a34b0610c)
+
+running 13 tests
+test wiring::sweep_every_request_kind_has_a_mutation ... ok
+test wiring::sweep_summary_path_is_never_an_instruction_source ... ok
+test wiring::sweep_harness_gate_install_doctor_uninstall ... ok
+test wiring::sweep_harness_gate_env_resolution ... ok
+test wiring::sweep_launch_env_reaches_create_calls ... ok
+test wiring::sweep_instruction_scopes_render_end_to_end ... ok
+test wiring::sweep_action_and_effect_envelopes_round_trip ... ok
+test wiring::sweep_summary_into_retired_seat_and_instruction_plan_flow ... ok
+test wiring::sweep_capability_switch ... ok
+test wiring::sweep_harness_profiles_used_for_start_and_resume ... ok
+test wiring::sweep_config_values_are_read ... ok
+test wiring::sweep_summary_complete_one_commit_retry_and_conflict ... ok
+test wiring::sweep_summaries_role_defaults_flow_end_to_end ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
