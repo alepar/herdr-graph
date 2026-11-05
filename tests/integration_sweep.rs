@@ -1507,6 +1507,7 @@ mod wiring {
             K::SeatRetire,
             K::SeatResurrect,
             K::SeatOverride,
+            K::ManagerEdit,
             K::CloneAdd,
             K::CloneRetire,
             K::CloneRebind,
@@ -1536,7 +1537,8 @@ mod wiring {
                 | K::SeatRename
                 | K::SeatRetire
                 | K::SeatResurrect
-                | K::SeatOverride => {}
+                | K::SeatOverride
+                | K::ManagerEdit => {}
                 K::CloneAdd
                 | K::CloneRetire
                 | K::CloneRebind
