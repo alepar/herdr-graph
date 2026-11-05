@@ -359,9 +359,61 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
   agent before the incarnation change. A restore gets one launch attempt per Restore epoch; a failed
   attempt is surfaced in status, not retried.
 - **Shell export failure is visible.** A pane shell that rejects the export is named in status with
-  its remedy; if the graph retires a clone whose pane stays open, the key is unset in that shell.
+  its remedy; (withdrawn by §14.10: a graph retire always closes the pane).
 - **Tombstones are inert.** A Finalize tombstone is not planned, listed, undone, resurrected or
   invited; it exists only to drive the finalize want.
+
+### 14. Punch-list resolutions (design roast round 2, converged)
+
+Each item below resolves a sub-Blocking finding of `2026-11-05-threads-seat-identity-roast-design-2.md`
+and supersedes any conflicting sentence earlier in this spec.
+
+1. **Purge exists as an explicit operator command.** The graph has no purge today. A new
+   `herdr-graph clone purge <clone>` (plan/confirm like other mutations) ends a retired clone's undo
+   window; there is no automatic retention timer. Until a clone is purged its reversibly retired
+   seat keeps its memberships and key (accepted cost; `status` lists retired-unpurged clones).
+2. **Purge always writes a tombstone after D2.** Purge of any clone that holds a `threads_seat`
+   writes `Finalize{seat}` regardless of the seat's retirement kind; the finalize want treats a read
+   showing the seat final as acknowledgement. Purge never needs a live threads read.
+3. **Purge of a clone that never got a seat** writes a `ReleaseKey{key}` tombstone when a reservation
+   is recorded. Its want first asks threads for the key's binding (the `ReserveContinuityKey` answer
+   carries `seat`): a bound seat turns the tombstone into `Finalize{seat}`, an unbound key is released
+   with `ReleaseContinuityKey`. `SeatIntent` therefore has three variants: `Restore`, `Finalize`,
+   `ReleaseKey`.
+4. **Key relink is a want, and it gates the restore launch.** Succession clears the clone's recorded
+   reservation in the same commit (threads deleted the old key row at final retirement); the
+   reserve-key want then fires with `seat: Restore.seat`. The restore trigger fires only once the
+   clone has no reservation or its key is bound to `Restore.seat`.
+5. **A seatless clone gets no Restore intent.** Undo or resurrection of a clone with
+   `threads_seat = None` (retired before the upgrade) writes no intent; the reopened pane follows the
+   ordinary resolve want and the ordinary start rule.
+6. **Who writes the intent.** Only ThreadsSeatAssignment writes `seat_intent`, through four
+   transitions: the undo/resurrection/purge helpers write it; the threads executor advances it on
+   acknowledgement (`threads_done`); a **clear-on-reattach want** (Restore with `threads_done`, seat
+   Resolved under `Restore.seat`, agent in the bound pane) clears it; the retire commit clears it on
+   re-retirement.
+7. **One launch per restore epoch is persisted.** `Restore` gains `launched: bool`. The Herdr executor
+   sets it through ThreadsSeatAssignment in the commit that records the `StartAgent` dispatch, before
+   dispatching (at most once per epoch). The restore trigger requires `launched = false`; `status`
+   names a restore with `launched = true` and no reattach as stuck.
+8. **The restart arm skips clones with a pending Restore intent**, so a failed restore is never
+   relaunched through the restart trigger.
+9. **SeatObservation commits the seat fact.** Besides availability and binding, SeatObservation
+   commits a per-clone `seat_fact` (Resolved | Unresolved | KeyConflict | Retired{reversible|final},
+   with the read time) in observation state. SeatStatus still has one mapping (in SeatObservation);
+   the planner and `ThreadsSource::system_wants` read the committed `seat_fact`, never the wire
+   result. The restart trigger requires `seat_fact = Unresolved` (so KeyConflict never launches), and
+   the unretire, succession and finalize wants branch on the committed Retired kind.
+10. **A graph retire always closes the clone's pane** (the reconciler closes it; hg-66u.8 verifies and,
+    if needed, makes it so). The state "retired clone with its pane open" therefore does not exist, and
+    §13's "unset the key in that shell" clause is withdrawn.
+11. **Participation want existence.** A clone's desired invitations exist while it is active, or
+    retired and not purged, with `threads_seat` known; they end at purge (the finalize want ends the
+    seat's memberships threads-side).
+12. **Reversibility needs a bound key.** After D1/D2 a pane close is reversible only for a seat whose
+    key is bound; a keyless seat (shell rejected the export, backfill link not yet done) closes final,
+    and its undo goes through succession with one re-acceptance. Fakes in hg-66u.32 model a keyless
+    pane close as final.
 
 ## Key abstractions
 
@@ -369,7 +421,7 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
 - Owns: the closed set of seat states the graph acts on: `Resolved` (with target pane), `Unresolved`, `Retired` (reversible or final) and `KeyConflict`.
 - Hides: the threads v3 wire shapes of `SeatInspect`/`Seats`. The adapter maps them to these variants and nothing else sees them.
 - Must not: carry graph decisions such as availability or retire requests. SeatObservation makes those.
-- Relationships: produced by ThreadsSeatView and consumed by exactly one `match` in SeatObservation. The resume rule in the planner reads it only through committed state and journal.
+- Relationships: produced by ThreadsSeatView and mapped by exactly one `match` in SeatObservation, which commits the result as the per-clone `seat_fact` (§14.9). The planner and `ThreadsSource::system_wants` read the committed `seat_fact`, never the wire result.
 - Errors: none. Every seat state, including a key conflict, is a value. Only transport problems are errors, and those belong to ThreadsSeatView.
 
 **ThreadsSeatView** — new port trait, a read-only view of threads seat state for a set of seats (§6).
@@ -381,20 +433,20 @@ All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager 
 - Errors: `ThreadsError`. Callers tell `Disconnected`/`ServiceBusy` (hold the last state; Unknown only under the existing staleness rule) apart from `Rejected`/`Unsupported` (log it and change nothing).
 
 **SeatObservation** — new module in `observe/`, turns seat statuses into observation facts for one step.
-- Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. `Retired` (either kind) retires the clone through the existing undoable retirement, except while the clone carries a `Restore` intent whose threads step is unacknowledged (no change: the expected interim state, §8); the reversible/final distinction matters only to the threads step. `KeyConflict` marks it Unknown and sets the clone's key-conflict alert. It also owns pre-D1 precedence (§6): threads speaks for a clone only with `Resolved`, `Retired` or `KeyConflict`; otherwise the old matcher's result stands; a pane claimed by a threads `Resolved` clone is withheld from any matcher-bound clone that step.
+- Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. `Retired` (either kind) retires the clone through the existing undoable retirement, except while the clone carries a `Restore` intent whose threads step is unacknowledged (no change: the expected interim state, §8); the reversible/final distinction matters only to the threads step. `KeyConflict` marks it Unknown and sets the clone's key-conflict alert. It also owns pre-D1 precedence (§6): threads speaks for a clone only with `Resolved`, `Retired` or `KeyConflict`; otherwise the old matcher's result stands; a pane claimed by a threads `Resolved` clone is withheld from any matcher-bound clone that step. It also commits the per-clone `seat_fact` (Resolved | Unresolved | KeyConflict | Retired{reversible|final}) that the planner and wants read (§14.9).
 - Hides: how threads' answer is merged into `Matches`/`build_ops`. The binding, retire and availability request builders stay as they are.
 - Must not: call threads (it receives statuses already read), touch tabs or workspaces (matcher, preserved-id equality, §7), or write or clear a seat intent.
 - Relationships: a function the step calls after `match_snapshot`; takes SeatStatus values and each clone's seat intent and yields entries for `Matches.clone_pane` plus ops.
 - Lifecycle: stateless functions. The key-conflict alert is per-clone observation state committed by the step: set by a successful read showing a conflict, cleared by the next successful read showing none, held across `ThreadsError` (§6).
 
 **ThreadsSeatAssignment** — new bookkeeping mutation (`bookkeeping.threads_seat`, registered beside `bookkeeping.binding`), the only writer of `CloneRecord.threads_seat` and the only mutation that advances or clears `CloneRecord.seat_intent`.
-- Owns: the write-once rule, its one exception (seat succession of a final-retired seat, admitted only against a `Restore` intent with matching seat and epoch, §2), the invariant that at most one non-retired clone holds a given `threads_seat`, and the intent transitions after threads acknowledges: `threads_done` on `SeatUnretired` or succession, clearing `Restore` on reattachment, removing a `Finalize` tombstone on `RetirementFinalized` (§8). An acknowledgement for a stale epoch is an idempotent no-op.
+- Owns: the write-once rule, its one exception (seat succession of a final-retired seat, admitted only against a `Restore` intent with matching seat and epoch, §2), the invariant that at most one non-retired clone holds a given `threads_seat`, and the intent transitions after threads acknowledges: `threads_done` on `SeatUnretired` or succession, clearing `Restore` on reattachment, removing a `Finalize` tombstone on `RetirementFinalized` (§8). An acknowledgement for a stale epoch is an idempotent no-op. Its intent transitions (§14.6-7): write (undo/resurrection/purge helpers), acknowledge (`threads_done`), mark `launched` (Herdr executor, before dispatch), clear on reattach (clear-on-reattach want) and clear on re-retirement (retire commit).
 - Hides: the overwrite and uniqueness checks against the committed tree.
 - Must not: resolve seats (the threads executor does that through PaneSeatMap), retire anything, or create an intent (undo, resurrection and purge commits write it).
 - Relationships: one more entry in the existing `MutationRegistry`, the same shape as `bookkeeping.binding`; the threads executor admits it.
 - Errors: `MutationError`. Writing the seat already set is an idempotent success, distinct from a different seat (rejected) and from a seat another live clone holds (rejected, surfaced, never retried).
 
-**CloneRecord** — extended: gains `threads_seat` (write-once, §2) and `seat_intent: Option<SeatIntent>` (`Restore{seat, epoch, threads_done}` or `Finalize{seat}`, §8). A purged clone whose seat is reversibly retired stays as a tombstone record carrying only its identity and `Finalize` until threads acknowledges. `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
+**CloneRecord** — extended: gains `threads_seat` (write-once, §2) and `seat_intent: Option<SeatIntent>` (`Restore{seat, epoch, threads_done, launched}`, `Finalize{seat}` or `ReleaseKey{key}`, §8, §14). A purged clone that holds a seat (or a recorded reservation) stays as an inert tombstone carrying only its identity and the intent until threads acknowledges (§14.2-3). Observation state gains the per-clone `seat_fact` that SeatObservation commits (§14.9). `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
 
 **PaneSeatMap** — extended: becomes the port for seat-lifecycle commands. It already has resolve; it gains reserving the continuity key (D1), unretiring a seat (D2) and finalizing a retirement or releasing the key (D2, per the published API). Its resolve reports threads' refusals (restore hold, key-conflict hold) as a non-error "not yet" so the executor returns `Deferred` (§2). Implementations stay `ThreadsSeatMap` and `FakePaneSeatMap`.
 
@@ -432,7 +484,7 @@ Spec-forced exceptions:
 Digest:
 - SeatStatus: owns the closed set of threads seat states; a new state is added as one variant plus one arm in SeatObservation; callers never inspect threads wire results.
 - ThreadsSeatView: owns read-only seat inspection per observation step; new reads are added on this port and its fake; callers never write to threads through it or invent a state when threads is unreachable.
-- SeatObservation: owns turning seat statuses into clone binding, availability, retirement and the key-conflict alert level, plus pre-D1 precedence over the old matcher; it reads the seat intent but never writes it; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
+- SeatObservation: owns turning seat statuses into clone binding, availability, retirement, the committed per-clone seat_fact and the key-conflict alert level, plus pre-D1 precedence over the old matcher; it reads the seat intent but never writes it; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
 - ThreadsSeatAssignment: owns the write-once `threads_seat`, its intent-gated seat-succession exception, its one-live-clone-per-seat invariant and the acknowledgement transitions of `seat_intent`; new rules on the field are added in this mutation; callers never write `threads_seat` directly, clear an intent, or retry a rejected different seat.
 
 ## Unchanged behavior

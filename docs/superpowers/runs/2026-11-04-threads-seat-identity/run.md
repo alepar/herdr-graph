@@ -11,7 +11,7 @@ branch: super-auto/threads-seat-identity
 base: main
 epic: hg-66u
 roastDesignRound: 2
-roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md
+roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md, 2026-11-05-threads-seat-identity-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
@@ -31,3 +31,4 @@ redesignCycles-design: 1
 redesign-design-1: round 1 · triggers shared-cause, defect-type · amended 2. Clone threads seat (write-once), 5. Launching with the continuity key, 6. Location and liveness from threads; delete clone re-matching, 8. Undo and resurrection onto the same seat (D2), 9. Resume driver after a headless cold restart (G4), Key abstractions, Unchanged behavior · lastGood 4795ea116f946a9551a7b59dd1037854bbcbe200 · designRoast - · state applied
 stepBackDesign-round-1: redesign — applied: implicit retire/restore protocol inferred from (clone active, seat Retired) → persisted SeatIntent (Restore/Finalize) on CloneRecord driving unretire, succession, resume and finalize (dissolves 6)
 - coverage-amend-design-1 · requirements: 21 · mapped: 21 · unmapped: 0 · cov-47..cov-65 applied auto except cov-56, cov-57 rejected auto (see coverage-ledger.md)
+- design-roast exit · converged at round 2 (Should-fix (12 confirmed) [converged]); punch list: all 12 applied inline as spec §14 + bead text, new leaf hg-66u.35 (clone purge command); no re-roast (super-design converged exit)
