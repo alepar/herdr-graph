@@ -183,7 +183,7 @@ schema bump — nothing reads schema versions). Effective manager of seat S, by 
 node manager → `None`; else S.manager if set; else S's teamspace `default_manager` if set and ≠ S;
 else `node_manager_seat` (which may be `None` on an unassigned graph). `manager_chain(tree, seat)`
 walks it to the root with a visited set; a cycle or an unresolvable pointer is an integrity error
-(it can only arise from out-of-band edits, since plans reject both). Considered: a pointer on
+(it can only arise from out-of-band edits, since plans reject both). A pointer to a seat that exists but is retired is transparent: resolution continues through that seat's own effective manager, so a resurrected seat or a stale pointer never produces an integrity error. A `node_manager_seat` that is missing or retired is treated as unassigned (fallback `None`, warning per §4.10), not as an integrity error; an explicit `manager` naming a missing seat is integrity. `live_node_manager(tree)` is the one helper that answers "who is the live node manager". Considered: a pointer on
 clones (rejected: clones come and go; the seat is the stable identity, B5); a dedicated escalation
 thread maintained by graph (rejected by the human, B5).
 
@@ -202,7 +202,7 @@ Recommended, all through `OrgKind` (B7):
   seat whose explicit `manager` is the old node manager, and every teamspace whose
   `default_manager` is the old node manager, is rewritten to the new one; the old node manager's
   `manager` becomes the new node manager; the new node manager's own `manager` is cleared. Target
-  must exist and be live. Setting it to the current node manager is rejected as unchanged.
+  must exist and be live. Setting it to the current node manager is rejected as unchanged. When the recorded node manager is missing or retired, `set` behaves as an assign that also rewrites pointers naming the dangling id and skips the old record.
 Both kinds list every rewritten record as a plan effect. Neither writes an undoable action (same as
 `SeatOverride`); undo of these edits is out of scope. Considered: setting pointers via
 `seat override` (rejected: overrides are runtime configuration, not organisation).
@@ -235,7 +235,7 @@ Recommended, two choke points:
   reconcile planner (`plan_effects` creating a missing tab and panes for an active seat) reopens it
   in its tab (B11). This deliberately overrides "direct tab/workspace closure follows containment
   retirement" (CURRENT-DESIGN.md) for the node manager only; CURRENT-DESIGN.md gets a dated line.
-  Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11).
+  Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11), as is any effect that deactivates the node manager seat or its last live clone. An observed move of its pane or tab (outside a plan) is not adopted as its placement; reconciliation restores the recorded tab. The undo refusal for the node manager's creating action names the `node-manager set` remedy. More generally, `make_plan` refuses any plan whose effects would leave a manager chain cyclic (seat creation into a teamspace with a default, teamspace moves, resurrection, teamspace default changes), using model::manager's would-create-cycle check over every seat whose effective manager changes.
 Considered: refusing at `do_retire_seat` only (rejected: fails at apply time instead of plan time,
 and the observed path would error instead of reopening).
 
@@ -257,7 +257,7 @@ the retiring seat's effective manager M skipping seats being retired in the same
 surviving ancestor; ultimately the node manager, which cannot be retired), then rewrite every live
 seat whose explicit `manager` is the retiring seat, and every teamspace whose `default_manager` is
 the retiring seat, to M (B6). Seats that reached the retiring seat only through a teamspace default
-follow automatically. Plan previews: `seat_retire_effects` and the other retire-effect builders list
+follow automatically. Every retirement route records each rewrite (`{holder, field, old, new}`) in its action record (plan `Retire`, `ApplicationRetire`, observed cascade, undo-driven). Plan previews: `seat_retire_effects` and the other retire-effect builders list
 a `seat.manager` / `teamspace.default_manager` rewrite effect per record via a shared
 `reparent_effects` helper, so the apply-time diff matches. Observed cascades reparent without a
 preview, recorded in their action record: observed closure retirement is the existing sanctioned non-plan mutation (CURRENT-DESIGN containment retirement), and reparenting rides along with it; B7 governs deliberate pointer changes. Undo of a retirement (the `Retire` and `ApplicationRetire` action kinds) restores each pointer the reparent rewrote, but only where that pointer still holds the reparent value; others are left and listed in the undo plan. Undo-driven retirement (e.g. undo of a hydrate) reparents through `do_retire_seat` like every other route.
@@ -268,7 +268,7 @@ Recommended: the `seat.resolve` reply gains `manager` and `node_manager`, each `
 `{seat, name, threads_seat}` where `threads_seat` is the manager's live clone's herdr-threads seat
 when the existing binding index resolves it (else `null`). `WhoReply` gains `manager_chain: Vec<{seat, name}>`
 rendered as one line `manager: <name> (<st>) → … → <node manager name> (<st>)` (or
-`manager: none assigned`); `show <seat>` appends the same line after the record (B9); `show` stays a daemon-free reader and maps a chain integrity failure to the same exit-6 text. The reply also carries `reports` (the seats whose effective manager is this seat), and when it is non-empty the skill tells the session it is a manager: listen for, detect and unblock its reports' lifecycle issues. The text form of `herdr-graph seat` prints `manager:` and `node manager:` lines. When `node_manager_seat` does not resolve to a live seat, the integrity suffix uses the "report it to the user" form.
+`manager: none assigned`); `show <seat>` appends the same line after the record (B9); `show` stays a daemon-free reader and maps a chain integrity failure to the same exit-6 text. The reply also carries `reports` (the seats whose effective manager is this seat), and when it is non-empty the skill tells the session it is a manager: listen for, detect and unblock its reports' lifecycle issues. The text form of `herdr-graph seat` prints `manager:` and `node manager:` lines. When the session's own seat is the node manager, the reply and skill say so and carry the node-manager duties (shared text with `templates/node-manager/AGENTS.md`), so a moved role is not in name only. When `node_manager_seat` does not resolve to a live seat, the integrity suffix uses the "report it to the user" form.
 
 ### 4.13 Remove daemon-free fallbacks (Part C)
 
