@@ -1,0 +1,14 @@
+diff --git a/tests/instruction_writers.rs b/tests/instruction_writers.rs
+index d22923e..a38c7e9 100644
+--- a/tests/instruction_writers.rs
++++ b/tests/instruction_writers.rs
+@@ -125,6 +125,9 @@ fn instruction_source_writers_are_inventoried() {
+     let expected: BTreeSet<String> = [
+         // InstructionsKind::mutate is the only writer of instruction paths (rules/**, seat AGENTS.md).
+         "src/plan/instructions.rs",
++        // plan::managers::write_graph writes graph.toml (node_manager_seat) only, from the NodeManagerSet and
++        // first-seat plan kinds committed by apply; graph.toml is not an InstructionSource path.
++        "src/plan/managers/mod.rs",
+         // template kinds write under templates/ only.
+         "src/templates/kinds.rs",
+         // threads reconnect writes mutations/threads-reconnect/ and the namespace marker.

@@ -1,0 +1,58 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-9.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-9.md
+new file mode 100644
+index 0000000..93e4551
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-9.md
+@@ -0,0 +1,52 @@
++# Final review: cluster 9 (plan), epic hg-k4l
++
++## Source and method
++
++- Captured range 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784..efc21b65eb225578d3a623b29f23b3688849ea8b; both verified with `git rev-parse --verify <sha>^{commit}`. The review source was bound with `dispatch-text.mjs bind-review-source` (exit 0) before this file was written.
++- Caller checkout observed at HEAD efc21b65eb225578d3a623b29f23b3688849ea8b with a clean status, both at start and before writing. Nothing was switched or restored.
++- Read at head: src/plan/managers/{mod,cycle_guard,edit,first_seat,node_manager,reparent,retire,tests}.rs, the diffs of src/plan/{core_kinds,kind,mod}.rs, and the new test names in src/plan/tests.rs. Opened src/model/manager.rs, src/templates/kinds.rs and the effect constructors elsewhere only to check named risks (cycle-guard input shapes, first-seat callers, the guard's effect table).
++- Tests were not re-run here: the host has no `cc`, and builds need the ht-build toolbox plus a libz shim, as every task report says. Pass evidence comes from the task reports (for example hg-k4l.6: `plan::` 150 passed).
++- Bead state at review time: hg-k4l.14, .17, .19, .20, .22, .24 and .25 are open. The integration branch does not yet contain them.
++
++## Requirement trace (baseline rows touching this cluster)
++
++- B6 (reparent to the retired seat's parent): delivered. `do_retire_seat` (core_kinds.rs:427) calls `reparent` before archiving on every route that converges there. Plan previews come from `reparent_effects` in SeatRetire, TeamspaceRetire and CloneRetire (last clone); ApplicationRetire and TemplateEdit are at templates/kinds.rs:1177 and :1933 (seam). Final pointers of live holders match between preview and apply (`reparent_preview_matches_apply`). Undo restoring reparented pointers (spec §4.11, hg-k4l.17 open) belongs to the undo cluster and is the seam reviewer's to trace.
++- B7 (pointers change only through plans): delivered for deliberate edits. `ManagerEdit` (`plan manager set|clear`) and `NodeManagerSet` (`plan node-manager set`) are registered through `register_core_kinds` → `managers::register_kinds`, so they are reachable from the production `plan` entry point. Both relied_on sets match spec §4.7 (subject rev, manager rev, graph.toml blob). Neither writes an undoable action.
++- B8 (node manager is the root and cannot be retired): delivered on the plan side. `make_plan` calls `managers::admit` (kind.rs:73), which refuses seat.retire, seat.deactivate, runtime.close_tab, teamspace.retire and runtime.close_workspace on the node manager or its teamspace, plus clone.retire or close_pane effects covering all of its live clones. `ManagerEdit` refuses the node manager as a subject, and `NodeManagerSet` clears the target's own manager. The observation choke point is the observe cluster's.
++- B10 (the first seat becomes node manager, and shipped templates create that first seat): only half delivered. SeatCreate assigns the role and forces the seat Active (core_kinds.rs:996, :1063, :1084; tests `first_seat_create_assigns_node_manager` and `first_dormant_seat_is_created_active`). The template half is missing at head. `first_seat::assignment` has exactly one caller in the tree (SeatCreate). ApplicationApply and TemplateEdit additions in src/templates/kinds.rs never call it (hg-k4l.24 open). No `node-manager` or `office` template exists anywhere in the tree (hg-k4l.14 open). So `init --with-examples` followed by `application apply office` cannot produce a node manager. That call site belongs to the templates cluster, but the row is verifiably undelivered at the reviewed head and no human scope change covers it (S1 only fixes the reading of "seated" as "created").
++- B11 (same tab, stays open): the plan side is delivered by the same guard (close_tab, close_workspace, teamspace.retire, all-clones close_pane), with `clone.rebind` allowed by design. Reopening after a direct closure belongs to the observe and reconcile clusters (seam).
++- B12 (CLI command when none is picked): `plan node-manager set <seat>` is delivered and assigns on an unset graph (`node_manager_set_assigns_on_unset_graph`). The per-command warning belongs to the cli cluster.
++- B13 (moving the role rewrites the old manager's immediate children and the old manager itself): delivered. node_manager.rs:122-150 rewrites live seats whose explicit manager is the old node manager, the live old node manager itself, and non-retired teamspaces whose default is the old node manager. Fallback children follow automatically. A dangling or retired recorded node manager behaves as an assign that rewrites pointers naming that id (`node_manager_set_dangling_behaves_as_assign`). A dormant target is activated as a listed effect.
++
++## Code analysis
++
++- Spec §4.8 says every seat-creating or seat-resurrecting path goes through the one first-seat helper. SeatResurrect (core_kinds.rs:1496) and TeamspaceResurrect (core_kinds.rs:797), both in this cluster, never call `first_seat::assignment`. Neither does undo restore. Resurrecting a seat into a graph where every seat is retired and `node_manager_seat` is unset leaves the graph with no node manager and no automatic assignment (hg-k4l.25 open).
++- The cycle guard's effect mapping matches every producer of `seat.create` in the tree. Both core_kinds.rs:1003 and templates/kinds.rs:415 carry `name` and `teamspace` in detail, so the guard does not wrongly refuse application or template plans as "malformed". `cycle_from` ignores resolution errors (`while let Ok(Some(..))`), so a pre-existing dangling pointer cannot make the guard refuse unrelated plans. `ManagerEdit` relies on the same tolerance, which keeps `manager clear` usable as the repair path.
++- Asymmetry in reparenting: apply-side `reparent` (reparent.rs:70) resolves the retiring seat's nearest surviving manager unconditionally. The preview `reparent_effects` resolves only when some live holder points at the retiring seat. A seat whose own explicit manager dangles out of band, and that nobody reports to, therefore plans cleanly and then fails at apply with an integrity error (Fail::Data). The observed route is lenient and unaffected; `manager clear <seat>` is the workaround.
++- `admit` now runs on every plan. `refuse_node_manager_retirement` always loads `Pointers` (all seat and teamspace records plus graph.toml), and the cycle guard loads them again for pointer-relevant plans. One corrupt unrelated seat record now fails every plan with a store error, where some kinds previously did not read it. The cost is two full record scans per plan.
++- `NodeManagerSet::mutate` does not re-validate. It relies on relied_on revs and the `graph_sha` in the effect detail to make a recompute against a changed graph differ, which is consistent with spec §4.7. A seat created after planning that points at the old node manager is not covered by relied_on (task 11 already notes this race).
++
++## Verdict
++
++not ready (B10 template path and §4.8 resurrect paths do not use the first-seat helper at head; hg-k4l.24, .25, .14 open)
++
++## Must fix before landing
++
++- B10 not delivered at head (seam with the templates cluster): `first_seat::assignment` has one caller, SeatCreate (src/plan/core_kinds.rs:996); ApplicationApply/TemplateEdit additions in src/templates/kinds.rs never call it and no node-manager/office template ships (hg-k4l.24, hg-k4l.14 open).
++- Spec §4.8: SeatResurrect (src/plan/core_kinds.rs:1496), TeamspaceResurrect (src/plan/core_kinds.rs:797) and undo restore skip the first-seat helper, so a resurrect into an all-retired unassigned graph assigns no node manager (hg-k4l.25 open).
++
++## Untested scope
++
++- NodeManagerSet refusal of an Active target in a non-Active teamspace (src/plan/managers/node_manager.rs:100) has no test.
++- Lenient reparent fallback with no live node manager (src/plan/managers/reparent.rs:72) is untested.
++- ManagerEdit retired-subject rejections (src/plan/managers/edit.rs:82, :98) are untested.
++- Planned retirement of a seat with a dangling explicit manager and no reports (plan passes, apply fails) is not exercised.
++- Cluster tests were not re-run by this review (no C toolchain on host); pass status rests on task reports.
++
++## Deferred OK
++
++- src/plan/managers/reparent.rs:70 resolves the retiring seat's nearest surviving manager even when nothing reports to it, so a seat with an out-of-band dangling manager plans cleanly but fails apply; `manager clear` is the remedy; resolve only when there is something to rewrite.
++- `admit` loads all pointers on every plan (twice for pointer-relevant plans); one corrupt unrelated seat record now fails every plan, plus the cost of two full scans per plan.
++- src/plan/managers/tests.rs `admit_stubs_pass` is named for the pre-implementation stubs and only checks empty effects; rename or drop it.
++- TeamspaceRetire preview can list a default_manager rewrite for the teamspace being retired (task 27 note); harmless.
++- NodeManagerSet relied_on does not cover seats or teamspaces created after planning that point at the old node manager (task 11 note).

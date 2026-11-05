@@ -1,0 +1,47 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-11.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-11.md
+new file mode 100644
+index 0000000..8144466
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-11.md
+@@ -0,0 +1,41 @@
++# Final review: cluster 11 (reconcile), epic hg-k4l
++
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify <sha>^{commit}`). The review-source binding command exited 0. The caller checkout stayed at HEAD efc21b6 with a clean status throughout.
++
++Cluster files: src/reconcile/desired.rs and src/reconcile/tests.rs (slices 000067 and 000068).
++
++## What the cluster changes
++
++- `DesiredRuntime` gains `node_manager: Option<SeatId>`, filled in `DesiredRuntime::load` from `model::manager::live_node_manager(tree)?`. The reconcile planner (`plan_effects`) never reads it. Its only consumer is `observe::classify` (lines 279 to 331 at head), which uses it to exclude the node manager from cascade grouping. That is a seam into the observe cluster.
++- tests.rs adds a test-only `bookkeeping.test_node_manager` mutation and the test `node_manager_with_absent_runtime_gets_tab_and_panes`. The test checks two cases. When the workspace is closed and the node manager's bindings are Absent, `plan_effects` plans CreateWorkspace before CreateTab and also a pane effect. When only the tab is closed, the plan includes CreateTab and no CreateWorkspace.
++
++## Requirement baseline trace (B11)
++
++- B11 ("same tab, stays open, gets reopened if it ever is closed"). The spec (section 4.9) assigns reopening to the existing reconcile planner. Its only precondition is that the observer does not retire the node manager. At head, `plan_effects` reopens any Active seat whose bindings are Absent. It recreates the workspace when needed, then the tab, then the panes. The new test confirms this for both workspace closure and tab closure. Nothing in this cluster is node-manager specific: the test's `assert_eq!(d.node_manager, ...)` only checks the loader. The planner would behave the same for any active seat.
++- The production path runs: Herdr closure, then observe classify excludes the node manager from the cascade, then the seat stays Active with Absent bindings, then reconcile reopens it. The middle step belongs to the observe cluster, and the hand-off between them is the seam reviewer's to trace. The observe tests `node_manager_tab_close_is_not_retired_and_reopens` and `node_manager_pane_close_is_not_retired` drive that path end to end. The reconcile half of B11 is delivered at head.
++
++## Test run evidence
++
++The run used a review-owned detached worktree at the head commit. Its target directory was reflinked from the run worktree. The command was `cargo test --lib --locked --offline reconcile::`, run in the ht-build toolbox: 51 passed, 5 failed.
++- Failing tests: `retire_after_queued_create_is_obsolete`, `close_effects_predict_induced_closures`, `deactivated_seat_closes_its_tab`, `reactivated_seat_starts_agent_again`, `relaunch_refused_for_dormant_seat`.
++- All five panic in the fixture helper `plan()` (src/reconcile/tests.rs:242) on the same guard. One example: "seat deactivate foreman: node manager foreman (st_...) cannot be deactivated; move the role first with herdr-graph plan node-manager set <seat>". The other four are similar ("cannot be retired" for `seat retire` and the last `clone retire`).
++- Cause, as observed: in these tests `activate()` creates `foreman` as the first seat on the node. First-seat assignment (B10) makes it the node manager. The section 4.9 `make_plan` guard then refuses to retire, deactivate or retire the last clone of the node manager, which is what the spec requires. The production behaviour is correct. The pre-existing reconcile tests were not updated for the new invariant.
++- The new test `node_manager_with_absent_runtime_gets_tab_and_panes` passes on its own. Its `test_node_manager` bookkeeping step is redundant at head, because first-seat assignment has already made `foreman` the node manager. It is harmless.
++
++## Other observations
++
++- `DesiredRuntime::load` now calls `Pointers::load`, which lists every teamspace and every seat, retired and archived included. `load` also walks the teamspaces itself, so each observe and reconcile pass scans the tree twice. This only affects efficiency and does not change correctness.
++- `load` now also needs graph.toml to be present and parseable (`read_graph` returns Corrupt "missing" otherwise). The store initialiser always writes graph.toml, so no reachable state should break here. If graph.toml were corrupt, observe and reconcile would now both fail every cycle; before, only graph.toml readers failed. This is acceptable, since it is an integrity condition.
++
++## Verdict
++not ready (5 pre-existing reconcile unit tests fail at head because the first seat now becomes an unretirable node manager)
++
++## Must fix before landing
++- src/reconcile/tests.rs: `retire_after_queued_create_is_obsolete`, `close_effects_predict_induced_closures`, `deactivated_seat_closes_its_tab`, `reactivated_seat_starts_agent_again` and `relaunch_refused_for_dormant_seat` fail at efc21b6 (`cargo test --lib reconcile::`: 51 passed, 5 failed). The section 4.9 node-manager guard refuses to retire or deactivate `foreman`, which first-seat assignment makes the node manager. Fix the tests, not the guard: make another seat the first seat in these tests (for example, seat a separate node manager in the fixture before `activate`), or move the role with `node-manager set` before the retire or deactivate step. The global constraint requires a passing `cargo test`.
++
++## Untested scope
++- The reconcile test bypasses the observer: it admits Absent bindings directly, so the classifier-to-planner hand-off is covered only by the observe cluster's tests. No reconcile-side test covers workspace closure through the observer for the node manager (seam reviewer's to confirm).
++
++## Deferred OK
++- `DesiredRuntime::load` scans the teamspaces and seats twice per pass, because `Pointers::load` repeats the walk `load` already does. This is a minor efficiency cost.
++- The `bookkeeping.test_node_manager` step in `node_manager_with_absent_runtime_gets_tab_and_panes` is redundant now that first-seat assignment sets the node manager. It could be replaced with an assertion that `foreman` is already the node manager.

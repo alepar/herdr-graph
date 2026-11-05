@@ -1,0 +1,98 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8/final-review-inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8/final-review-inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8.md
+new file mode 100644
+index 0000000..7b79b19
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8/final-review-inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8.md
+@@ -0,0 +1,92 @@
++# Final whole-epic review: hg-k4l (seat failure path and manager seats)
++
++Invocation: inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8
++Integration branch: super-auto/seat-failure-manager-seats
++Captured source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head ca9c4b15f80d329b0b10c18720744a1e631c777e (both verified with `git rev-parse --verify <sha>^{commit}`).
++Caller checkout at review start: HEAD ca9c4b1, working tree clean. Nothing in the caller checkout was switched, restored or edited; the review source binding was appended to the ledger by `dispatch-text.mjs bind-review-source` (exit 0).
++
++## Route and inputs
++
++- Selection sidecar `assembled/final-review-inv-8b6d4df1-...-final/review-inputs.json`: base/head match, `sourceAvailable: true`, `status: complete`, `wholeRangeReady: false`, `gaps: []`, 91 `omitted` entries (archived artifacts of the earlier invocation inv-17c351e9 under docs/superpowers/runs/.../reviews/), 26 `outOfRange` notes about older runs. Status is not `unavailable` and there are no gaps, so the normal route applied, not the bounded route.
++- Review package built with `review-package` (77 commits, 2,011,612 bytes) at `final-review-inv-8b6d4df1-b3a2-4791-b5ba-05eaf7c61ee8.md.diff`. Of 117 changed paths, 75 are source, tests, skill and top-level docs (6,783 insertions, 282 deletions); the rest are run documents, earlier review archives and four committed evidence logs.
++- Spec: `bd show hg-k4l` and `docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md` at head. The spec has a `## Requirement baseline` section (B1 to B14, scope change S1), so it is the acceptance standard.
++- Source was read with `git show <head>:<path>` and `git grep <head>`; no worktree was created.
++- Child beads at review time (`bd list --parent hg-k4l --all`): hg-k4l.14, .19, .22, .24 and .25 are **open**; everything else is closed.
++
++## Own view: requirement baseline trace
++
++Each row was traced from a production entry point at head.
++
++- B1 / B14 (no daemon-free fallback in who/ops/request/undo): delivered. `src/cli/who.rs`, `ops.rs`, `request.rs` and `undo.rs` route every `call_daemon` error through `daemon_error::report`; the direct readers are deleted. `status` keeps its fallback, as the spec allows.
++- B2 / B3 (daemon down: tell the agent to retry, sessions carry on): delivered. `cli::daemon_error::classify` maps Unavailable, Frame, Remote{Unavailable} and Remote{VersionMismatch} to exit 5 with the retry text. `seat_failure` adds the seat sentences. SKILL.md step 1 has the failure branch and HOOK_PROMPT names it.
++- B4 (named integrity error; silent drops become fatal): delivered. `StoreError::Integrity` and `unresolved` are added, the three silent skips in `bootstrap/instructions.rs::template_participation` now fail, `referenced_seat_template` maps to integrity, and `seat_reply` returns `CommandError::integrity` with HEAD and the node-manager suffix. The CLI exits 6.
++- B5 (optional manager pointer naming a seat): delivered for data, resolution and surfacing. `SeatRecord.manager`, `TeamspaceRecord.default_manager` and `GraphRecord.node_manager_seat` are added, `model::manager` resolves them, `seat.resolve` returns `manager` and `node_manager`, and SKILL.md step 3 lists them. The manager side of the request is not delivered (see the B-request duties item below).
++- B6 (children of a retired seat reparented to its parent): delivered on every route through `do_retire_seat -> plan::managers::reparent::reparent`. That covers SeatRetire, TeamspaceRetire, CloneRetire (last clone), ApplicationRetire and TemplateEdit withdrawal (`templates/kinds.rs`), undo through `app_retire`, and the observed cascade with `lenient_reparent`. Previews list `reparent_effects` in every builder.
++- B7 (pointer changes only through plans): delivered. ManagerEdit, NodeManagerSet and first-seat assignment are OrgKind effects. Reparenting during observed cascades rides on the sanctioned containment mutation, as the spec says.
++- B8 (node manager is the root, cannot be retired, has no parent): delivered. `make_plan -> managers::admit -> refuse_node_manager_retirement` refuses seat.retire, seat.deactivate, runtime.close_tab on the seat, teamspace.retire and close_workspace on its teamspace, and all-clones retire or close. `effective_manager` returns None for the live node manager. ManagerEdit refuses to set a manager on the node manager, and NodeManagerSet clears the new holder's own manager.
++- B9 (who and show display the manager chain): delivered. `WhoReply.manager_chain` and `manager_line` are added, `show <seat>` appends the line, and a chain integrity failure exits 6 in both.
++- B10 (first seat on the node becomes node manager; graph templates provide default templates that create the first seat with the node-manager role): **not delivered**. `first_seat::assignment` has exactly one caller, `SeatCreate::plan` (src/plan/core_kinds.rs:996). ApplicationApply/hydrate (`create_member_seat`), TemplateEdit member additions, SeatResurrect, TeamspaceResurrect and undo restore never call it (hg-k4l.24 and .25 are open). So `application apply` on an empty graph, the template-driven path the human described, creates seats without assigning the role. No `templates/node-manager` or `office` template exists in the tree at head (hg-k4l.14 is open). S1 only changes "seated" to "created"; it does not narrow which paths count.
++- B11 (node manager stays open, gets reopened when closed): delivered for closure. `observe::classify` diverts the node manager's pane, tab and workspace to `gone`, `CascadeMutation` re-checks `live_node_manager` at apply time, and `DesiredRuntime.node_manager` lets the reconcile planner reopen it. An observed move is warned about, not reverted, which matches the spec.
++- B12 (CLI command to pick one; every command warns while none is assigned): delivered. `plan node-manager set <seat>` exists. `node_manager_warning::warn` runs from `cli::main` before dispatch, skips init, setup, daemon and `seat --hook-prompt`, and treats a missing or retired node manager as unassigned.
++- B13 (same command moves the role; old node manager and its immediate children report to the new one): delivered. NodeManagerSet rewrites explicit `manager` and `default_manager` pointers naming the old holder, points the old holder at the new one, and clears the target's own manager. Implicit children follow automatically through `node_manager_seat`.
++- Human request, "managers are tasked with listening, detecting, unblocking" (spec §4.12): **not delivered**. `seat.resolve` has no `reports` field, and neither the reply nor the skill tells a seat that it is a manager or the node manager, or what its duties are (`git grep '"reports"'` finds nothing in src/bootstrap or src/threads; hg-k4l.19 is open). A seat that holds the role, including one moved there with `node-manager set`, gets no duty text, so the role exists in name only. This is what §4.12 warns against.
++
++## Own view: cross-task seams
++
++- Undo after a multi-seat retirement can restore the wrong pointer (hg-k4l.26 apply-side reparenting composed with hg-k4l.17 undo). `do_retire_seat` reparents one seat at a time against the live overlay. When retiring seats chain into each other, the action records several rows for one holder. Example: TeamspaceRetire or ApplicationRetire retires A then B, with outside seat C.manager = A and A.manager = B. Retiring A records `C: A -> B`; retiring B records `C: B -> nm`. `undo::preview::pointer_restores` loads pointers once and checks each row on its own against the current value. Row 1 (current nm, not B) is skipped with a false "changed since the retirement" warning; row 2 (current nm) restores C to B. After undo, C reports to B instead of its original A. When B happens to retire first, the rows come out right, so the result depends on `list_seats` order. Every test in src/undo/tests.rs covers a single hop (boss_world, lead_world with mid outside the application), so this case is not tested. A fix is to collapse rows per (holder, field) to the first `old` and last `new` before comparing, or to replay rows in reverse against a running copy of the pointers.
++- Docs overstate first-seat behaviour. README.md and CURRENT-DESIGN.md (hg-k4l.20) say "the node manager is the first seat created on a graph" and "the first seat created on a graph that has none is assigned the role". At head that holds only for `seat create`. This is the same root cause as B10.
++- `WhoReply::render` now prints two lines: the identity line plus the manager line. `tests/real_agent_smoke.rs::claude_pane_of` matches a pane when `who` stdout contains the seat name anywhere, so a pane whose manager chain names that seat can now match. This affects only the real-agent tier; no production consumer parses `who` text.
++- NodeManagerSet, ManagerEdit, first-seat assignment and the two `make_plan` guards compose cleanly. The cycle guard sees `seat.create`, `seat.resurrect`, pointer and node-manager effects in plan order. The retirement guard reads the live node manager from the plan tree, and NodeManagerSet emits no retire effects, so the role can always be moved before a retirement.
++- Writer: `StoreError::Integrity` maps to `Fail::Data`, not Infra, so a dangling pointer at apply time fails deterministically instead of retrying forever. Correct.
++
++## Ledger triage
++
++- Recurring minor `[missing-evidence]` (hg-k4l.4, .18, .3; process class): about report format only, with no product effect. OK to defer.
++- hg-k4l.17 fix pass: the first attempt never ran its tests (no C linker on the host); the fix pass recorded FIXED. No full-suite run of the merged branch exists, so the undo pointer-restore paths are verified only at the task level.
++- `[evidence-logs-committed]` (hg-k4l.45): the branch adds `evidence/hg-k4l.45/{final,integ,lib-after,lib-before}.log` (3,157 lines). The repo had no `evidence/` directory before; these are run artifacts and belong in the git-ignored `.superpowers/` workspace. Cheap to remove; should not land on main.
++- `[chain-cycle-risk]` and `[restore-skip-silent]` (hg-k4l.17): the restore plan passes through the `make_plan` cycle guard, and apply recomputes and compares, so the risk is bounded. OK to defer. The chained-row defect above is separate and was not raised by the task review.
++- `[plan-race-gap]` (hg-k4l.6): apply recomputes the plan and rejects a stale one, so seats created after planning are caught. OK to defer.
++- `[silent-error-swallow]` (hg-k4l.4, `cycle_from`): ManagerEdit resolves the manager seat as live before the cycle check, so a dangling target cannot get through. OK to defer.
++- `[suffix-read-scope]` (hg-k4l.11), `[short-rev-length]`, `[extra-helper]`, `[unused-new-api]`, `[unused-constant]`, `[too-many-arguments]`, `[duplicated-test-helper]`, `[test-duplication]`, `[weak-assertion]` (x2), `[preview-self-rewrite]`, `[brief-deviation]`, `[test-placement]`, `[test-gate-change]`, `[error-text-regression]`: cosmetic, or harmless at head. OK to defer.
++- `[stale-fallback-sites]` (hg-k4l.2) and `[deferred-call-sites]` (hg-k4l.18): resolved at head; hg-k4l.3 removed every listed site and `git grep ClientError::Unavailable src/cli` shows only daemon_error and status.
++- `[unverified-doc-claims]` (hg-k4l.20): checked. The daemon-free reader list and the warning's exclusion list match the code. The first-seat claim does not (see the docs item above).
++- Test gaps noted by task reviews (`[missing-cli-test]` exit 6 and still-starting as spawned binaries, exit 5 on mutating commands, daemon-backed `who` manager line and `show` exit 6 end to end, the warning's no-instance path, ManagerEdit retired-subject branches, lenient cascade fallback with no node manager, direct set_seat_manager/set_default_manager tests) are listed under the untested scope below.
++- No `parked`, `parked finding` or `BLOCKED-AUTH` lines exist. Metrics show ledger-check ok and no METRICS INVALID line.
++
++## Verdict
++not ready (B10 first-seat assignment and shipped node-manager templates missing, manager duties/reports missing, undo misrestores chained reparent rows; 5 epic tasks open; no full-suite run)
++
++## Must fix before landing
++- B10 not delivered: `first_seat::assignment` is called only from SeatCreate (src/plan/core_kinds.rs:996); ApplicationApply/hydrate (`create_member_seat`), TemplateEdit additions, SeatResurrect, TeamspaceResurrect and undo restore never assign the node manager on an empty graph (open beads hg-k4l.24, hg-k4l.25).
++- B10 not delivered: the shipped `node-manager` seat template and `office` team template (spec §4.8; "graph templates just provide default templates which create the first seat with the node manager role") do not exist at head and EXAMPLE_FILES is unchanged (open bead hg-k4l.14).
++- Human request "managers are tasked with listening, detecting, unblocking" / spec §4.12 not delivered: `seat.resolve` has no `reports` field and neither reply nor skill gives a manager or the node manager its duties, so a moved role is in name only (open bead hg-k4l.19).
++- Undo after a multi-seat retirement can restore the wrong manager: `do_retire_seat` records chained rows per holder (e.g. `C: A->B` then `C: B->nm`), and `undo::preview::pointer_restores` judges each row on its own against the pre-undo value, so C is restored to B instead of A and a false "changed since the retirement" warning is listed (src/undo/preview.rs pointer_restores; src/plan/managers/reparent.rs reparent); collapse rows per holder/field or replay them in reverse, and add a two-hop test.
++- README.md and CURRENT-DESIGN.md say the first seat created on a graph becomes the node manager; true at head only for `seat create`. Correct once B10 lands, or narrow the text.
++- Remove the committed run logs `evidence/hg-k4l.45/*.log` (3,157 lines, new top-level `evidence/` directory) from the branch; they belong in the git-ignored `.superpowers/` workspace.
++
++## Untested scope
++- No full-suite measurement of this branch exists: the caller runs `cargo test` after this invocation, so the merged branch is not yet tested.
++- hg-k4l.22 (end-to-end integration sweep for the seat failure path and manager seats) is open; no end-to-end test drives /seat exit 5/6, manager chain rendering, node-manager reopen and reparenting together.
++- Exit 6 and a still-starting daemon (Remote{Unavailable}) are covered only by `daemon_error::classify` unit tests, not by spawned-binary tests.
++- Exit 5 on the mutating commands (ops cancel, reassign, request ack/complete, undo apply) is not covered by a test.
++- Daemon-backed `who` output with the manager line and the `show` exit-6 path have no integration test.
++- The unassigned-node-manager warning's no-instance path (prints nothing) has no integration test.
++- The ManagerEdit retired-subject rejection branches (src/plan/managers/edit.rs) are untested.
++- The lenient observed-cascade reparent fallback with no live node manager (target None) is untested.
++- `set_seat_manager` and `set_default_manager` have no direct unit tests.
++- The undo pointer restore for a multi-seat retirement with chained managers is untested (see the chained-row item above).
++- The hg-k4l.17 undo tests were first written on a host without a linker; their runtime verification relies on the fix pass, not a branch-level run.
++- tests/real_agent_smoke.rs `claude_pane_of` matches on `who` stdout containing a seat name, and `who` now also prints the manager chain; the real-agent tier was not run.
++
++## Deferred OK
++- Recurring minor [missing-evidence] (hg-k4l.4, hg-k4l.18, hg-k4l.3): report-format process issue with no product effect.
++- [chain-cycle-risk] hg-k4l.17: the restore plan passes through the make_plan cycle guard and the apply-time recompute.
++- [restore-skip-silent] hg-k4l.17: apply-time skip of a changed row matches the plan-time warning semantics.
++- [plan-race-gap] hg-k4l.6: apply recomputes and rejects a stale NodeManagerSet plan.
++- [silent-error-swallow] hg-k4l.4 cycle_from: ManagerEdit resolves its target as a live seat before the cycle check.
++- [suffix-read-scope] hg-k4l.11: an unrelated corrupt record only degrades the suffix to the report-to-user form.
++- [preview-self-rewrite] hg-k4l.27: the TeamspaceRetire preview lists a default_manager rewrite on the retiring teamspace; apply does the same.
++- [error-text-regression] hg-k4l.2: every Ensure caller now prints through daemon_error's NOT_IN_HERDR line.
++- [stale-fallback-sites] hg-k4l.2 and [deferred-call-sites] hg-k4l.18: resolved at head by hg-k4l.3.
++- [extra-helper], [unused-new-api], [unused-constant], [short-rev-length], [too-many-arguments], [duplicated-test-helper], [test-duplication], [weak-assertion] x2, [brief-deviation], [test-placement], [test-gate-change], [no-red-run]/[missing-red-run]: cosmetic or process-only.
++- WhoReply::render now prints a second line (manager chain); no production consumer parses `who` text.

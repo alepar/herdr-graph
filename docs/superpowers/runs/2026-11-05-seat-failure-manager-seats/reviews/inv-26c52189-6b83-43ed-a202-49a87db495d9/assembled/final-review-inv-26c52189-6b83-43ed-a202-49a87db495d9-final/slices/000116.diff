@@ -1,0 +1,57 @@
+diff --git a/tests/integration_sweep.rs b/tests/integration_sweep.rs
+index 5a34d3e..1a48a72 100644
+--- a/tests/integration_sweep.rs
++++ b/tests/integration_sweep.rs
+@@ -8,7 +8,7 @@
+ //!
+ //! Nothing here touches a live Herdr, live threads or the memory observer.
+ 
+-#[cfg(any(feature = "private-herdr", feature = "test-support"))]
++// Always compiled: `wiring` (default tier) uses `support::node_manager_opt_out`.
+ mod support;
+ 
+ // =============================================================================================
+@@ -1214,6 +1214,7 @@ mod wiring {
+     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+     async fn sweep_summary_into_retired_seat_and_instruction_plan_flow() {
+         let (dir, root) = new_instance();
++        super::support::node_manager_opt_out(&root);
+         let d = Daemon::start(&root).await;
+         d.committed(&["teamspace", "create", "alpha", "--active"])
+             .await;
+@@ -1507,6 +1508,8 @@ mod wiring {
+             K::SeatRetire,
+             K::SeatResurrect,
+             K::SeatOverride,
++            K::ManagerEdit,
++            K::NodeManagerSet,
+             K::CloneAdd,
+             K::CloneRetire,
+             K::CloneRebind,
+@@ -1536,7 +1539,9 @@ mod wiring {
+                 | K::SeatRename
+                 | K::SeatRetire
+                 | K::SeatResurrect
+-                | K::SeatOverride => {}
++                | K::SeatOverride
++                | K::ManagerEdit
++                | K::NodeManagerSet => {}
+                 K::CloneAdd
+                 | K::CloneRetire
+                 | K::CloneRebind
+@@ -1788,6 +1793,7 @@ mod wiring {
+     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+     async fn sweep_harness_profiles_used_for_start_and_resume() {
+         let (_dir, root) = new_instance();
++        super::support::node_manager_opt_out(&root);
+         let d = Daemon::start(&root).await;
+         d.committed(&["teamspace", "create", "t", "--active"]).await;
+         d.committed(&[
+@@ -1898,6 +1904,7 @@ mod wiring {
+     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+     async fn sweep_action_and_effect_envelopes_round_trip() {
+         let (_dir, root) = new_instance();
++        super::support::node_manager_opt_out(&root);
+         let d = Daemon::start(&root).await;
+         d.committed(&["teamspace", "create", "t", "--active"]).await;
+         d.committed(&[

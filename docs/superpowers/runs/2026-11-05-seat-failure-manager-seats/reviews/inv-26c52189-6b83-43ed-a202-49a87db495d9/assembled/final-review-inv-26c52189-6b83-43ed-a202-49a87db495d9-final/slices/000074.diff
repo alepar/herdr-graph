@@ -1,0 +1,12 @@
+diff --git a/src/model/mod.rs b/src/model/mod.rs
+index 83cd412..465d65b 100644
+--- a/src/model/mod.rs
++++ b/src/model/mod.rs
+@@ -11,6 +11,7 @@ pub mod graph;
+ pub mod harness;
+ pub mod ids;
+ pub mod launch;
++pub mod manager;
+ pub mod native_session;
+ pub mod operation;
+ pub mod request;

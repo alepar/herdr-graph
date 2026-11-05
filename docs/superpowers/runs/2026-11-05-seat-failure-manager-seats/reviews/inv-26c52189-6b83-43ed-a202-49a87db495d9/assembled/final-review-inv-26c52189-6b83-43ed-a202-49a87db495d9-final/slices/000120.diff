@@ -1,0 +1,20 @@
+diff --git a/tests/writer_concurrency.rs b/tests/writer_concurrency.rs
+index bee0184..5841f8a 100644
+--- a/tests/writer_concurrency.rs
++++ b/tests/writer_concurrency.rs
+@@ -51,6 +51,7 @@ impl Mutation for Seed {
+             retired: None,
+             runtime: Default::default(),
+             project_repo: None,
++            default_manager: None,
+             channel: Default::default(),
+         };
+         cx.tree
+@@ -66,6 +67,7 @@ impl Mutation for Seed {
+             retired: None,
+             system_duty: None,
+             template_ref: None,
++            manager: None,
+             applications: vec![],
+             overrides: Default::default(),
+             participation: Default::default(),

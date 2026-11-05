@@ -1,0 +1,50 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-16.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-16.md
+new file mode 100644
+index 0000000..3c2a376
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-16.md
+@@ -0,0 +1,44 @@
++# Final review: cluster 16 (writer)
++
++Epic hg-k4l, integration branch super-auto/seat-failure-manager-seats.
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify`).
++Cluster inputs: src/writer/mod.rs, src/writer/tests.rs (slices 000078, 000079).
++Caller checkout observed at head efc21b65, working tree clean, before and during the review.
++
++## Scope of the change
++
++- `impl From<StoreError> for Fail` (src/writer/mod.rs:91-99) now maps `StoreError::Integrity { .. }` to `Fail::Data`, beside `Corrupt`. Every other variant still maps to `Fail::Infra`.
++- src/writer/tests.rs adds `default_manager: None` and `manager: None` to the `TestSeed` teamspace and seat literals, which the new record fields from hg-k4l.4 require.
++- New unit test `integrity_store_error_is_data_not_infra` checks that `unresolved(..)` converts to `Fail::Data` and that `StoreError::Git` still converts to `Fail::Infra`.
++
++## Analysis
++
++- The mapping matters. In `step_inner`, `Fail::Infra` from `apply_phase` requeues the op with `requeue(&row.op, false, now)` and does not count an attempt, so the `max_attempts` poison guard never fires. Before this change, a mutation that hit a dangling reference (for example a `manager_chain` walk over an out-of-band pointer edit, as spec section 4.6 describes) would requeue forever and keep raising `infra_failures`. Now the op fails terminally (`finish_failed`) and the FIFO moves on. That matches what the spec says integrity means ("not transient; retrying will not help", section 4.4) and requirement B4's split between non-transient and transient errors.
++- Coverage of the paths: `MutationError::Store(e)` from `mutation.apply`, `recheck_relied_on`, `write_operation_record` and `build_tree` all run inside `apply_phase`. An Integrity error from any of them therefore reaches the `Fail::Data` arm in `step_inner` and becomes a terminal failure. A `Data` raised outside `apply_phase` (journal reads in `step_inner` itself) is still counted as infrastructure by `step`'s fallback arm. That is the existing documented behaviour, and the journal raises no `StoreError::Integrity` anyway.
++- Interaction with observed cascades (B6, spec section 4.11 and the design-roast r1 rule): if an Integrity error escaped `do_retire_seat` during an observed cascade, this mapping would now fail the cascade op terminally instead of looping. The spec requires the reparent target computation to fall back to `live_node_manager` so the error never escapes. That fallback belongs to plan::managers::reparent (hg-k4l.26), which sits in another cluster. Whether it holds end to end is a question for the seam reviewer.
++- Spec conformance: the spec routes integrity to exit 6 through `seat_reply`, `who` and `show` (sections 4.1-4.4 and the CommandError classifier). It does not ask that an apply-time writer failure surface as `IpcErrorCode::Integrity`. The writer change is the follow-up named in the hg-k4l.1 report and its deferred minor ("writer Fail mapping"). It lowers no baseline row. Requirement rows B1-B14 are delivered by the CLI, daemon, plan and model clusters, not by this one. None of them depends only on the writer mapping.
++- Global constraints: no IPC_VERSION bump, no schema change, no graph write outside a mutation. Nothing in this cluster touches src/cli/mod.rs.
++- Test evidence: the task-7 report (hg-k4l.5) records `cargo test --lib -- plan::managers writer::tests plan::` with 183 passed and 0 failed, including `writer::tests::integrity_store_error_is_data_not_infra`. src/writer has not changed between b29b813 (hg-k4l.5) and the reviewed head. No `pub` record fields were added in src/model after that point; the only model change is two new `RequestKind` variants, and `kind_name` handles those through serde rather than an exhaustive match. So the recorded run still applies to these files. I did not re-run it at the reviewed head: the host build needs the task-environment toolchain shim. The end-to-end data-failure path (op ends `Failed` and the FIFO proceeds) is already exercised by the existing `TestCorrupt` mutation test. `Integrity` shares that match arm, so the new conversion test plus the existing path test are enough for this one-line change.
++- Wording: a terminal integrity failure is recorded as `corrupt data: <holder>: <field> <target> not found at the committed revision`. The "corrupt data" prefix slightly mislabels a dangling reference, but the holder, field and target are kept, so the record stays diagnosable. This is cosmetic.
++
++## Findings
++
++- none
++
++## Concerns
++
++- The writer records a terminal integrity failure under the "corrupt data:" prefix (src/writer/mod.rs step_inner Data arm), which mislabels dangling references. The holder, field and target are kept, so this is cosmetic only.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- writer::tests was not re-run at the reviewed head efc21b65; the passing run is recorded at hg-k4l.5 (b29b813), where src/writer and the record field shapes are identical. The full-suite run at the end of the epic covers it.
++- No writer-level test drives a mutation that returns MutationError::Store(StoreError::Integrity) through step() to a terminal Failed op. It is covered indirectly by the conversion unit test plus the existing TestCorrupt end-to-end test, which shares the match arm.
++
++## Deferred OK
++- The "corrupt data:" prefix on terminal integrity failures in the writer journal reason could name integrity explicitly; cosmetic.
++- The observed-cascade fallback that keeps Integrity from escaping do_retire_seat (hg-k4l.26, plan::managers::reparent) is the seam reviewer's to trace against this writer mapping.

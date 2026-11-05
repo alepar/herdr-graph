@@ -1,0 +1,42 @@
+diff --git a/src/model/effective.rs b/src/model/effective.rs
+index f75e2e6..de4633d 100644
+--- a/src/model/effective.rs
++++ b/src/model/effective.rs
+@@ -7,7 +7,7 @@ use crate::model::harness::{Harness, profile};
+ use crate::model::seat::{InstructionSection, SeatRecord};
+ use crate::model::template::{TemplateKind, TemplateMember, TemplateRecord};
+ use crate::plan::types::PlanEffect;
+-use crate::ports::store::StoreError;
++use crate::ports::store::{StoreError, unresolved};
+ use crate::store::layout;
+ use crate::store::record::read_toml;
+ use crate::store::tree::TreeRead;
+@@ -123,22 +123,17 @@ pub fn referenced_seat_template(
+     tree: &dyn TreeRead,
+     member: Option<&TemplateMember>,
+ ) -> Result<Option<TemplateRecord>, StoreError> {
+-    let Some(id) = member.and_then(|m| m.seat_template.as_ref()) else {
++    let Some((holder, id)) = member.and_then(|m| Some((&m.id, m.seat_template.as_ref()?))) else {
+         return Ok(None);
+     };
+-    let bad = |reason| StoreError::Corrupt {
+-        path: "templates".into(),
+-        reason,
+-    };
+-    let loc = layout::locate(tree, &id.to_any())?
+-        .ok_or_else(|| bad(format!("missing seat template {id}")))?;
+-    let rec: TemplateRecord = read_toml(tree, &loc.record_path)?
+-        .ok_or_else(|| bad(format!("missing seat template {id}")))?;
++    let no_template = || unresolved(holder, "seat_template", id);
++    let loc = layout::locate(tree, &id.to_any())?.ok_or_else(no_template)?;
++    let rec: TemplateRecord = read_toml(tree, &loc.record_path)?.ok_or_else(no_template)?;
+     if rec.kind != TemplateKind::Seat {
+-        return Err(bad(format!("{id} is not a seat template")));
++        return Err(no_template().because("is not a seat template"));
+     }
+     if !rec.members.is_empty() || !rec.relationships.is_empty() {
+-        return Err(bad(format!("seat template {id} contains team structure")));
++        return Err(no_template().because("is a seat template that contains team structure"));
+     }
+     Ok(Some(rec))
+ }
