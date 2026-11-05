@@ -12,6 +12,13 @@ Find out who you are in the graph, then read what applies to you.
 ## Steps
 
 1. Run `herdr-graph seat --json` and read the JSON it prints.
+   If the command fails, read its exit code and the line it printed:
+   - Exit 5 (graph daemon unavailable): show the user the line. Carry on with what you can
+     without seat-specific rules and run `/seat` again later. Do not try to repair the daemon
+     unless you are instructed to.
+   - Exit 6 (graph integrity error): do not retry. Report the error to the node manager seat the
+     line names, or to the user when the line says so, then carry on with what you can.
+   - Any other failure: show the user the line. Do not guess your seat.
 
 2. Look at `resolution.status`.
    - `bound`: you are the clone `resolution.clone` of seat `resolution.seat` in teamspace
