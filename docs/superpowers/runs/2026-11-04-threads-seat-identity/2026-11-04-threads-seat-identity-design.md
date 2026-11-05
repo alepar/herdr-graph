@@ -223,6 +223,77 @@ run against the user's live graph instance or live Herdr layout: private rigs on
 
 All herdr-threads changes (owned by ht-ma6i); any Herdr change (B6); H3 manager seats (hg-au7).
 
+## Key abstractions
+
+**SeatStatus** — new enum (graph-local value type beside the threads port types), what threads says about one clone's seat.
+- Owns: the closed set of seat states the graph acts on: `Resolved` (with target pane), `Unresolved`, `Retired` (reversible or final) and `KeyConflict`.
+- Hides: the threads v3 wire shapes of `SeatInspect`/`Seats`. The adapter maps them to these variants and nothing else sees them.
+- Must not: carry graph decisions such as availability or retire requests. SeatObservation makes those.
+- Relationships: produced by ThreadsSeatView and consumed by exactly one `match` in SeatObservation. The resume rule in the planner reads it only through committed state and journal.
+- Errors: none. Every seat state, including a key conflict, is a value. Only transport problems are errors, and those belong to ThreadsSeatView.
+
+**ThreadsSeatView** — new port trait, a read-only view of threads seat state for a set of seats (§6).
+- Owns: inspecting the `threads_seat` of every clone that has one, once per observation step.
+- Hides: whether the reads are batched (`Seats`) or per seat (`SeatInspect`), the host qualification, and the socket client.
+- Must not: write to threads (no resolve, reserve or unretire; PaneSeatMap does those), commit graph state (SeatObservation decides and the step commits), or fabricate a state when threads is unreachable.
+- Relationships: a port in `src/ports/`, like the others, with a real implementation (the same struct as `ThreadsSeatMap`, sharing its client, host and clock) and a fake (§11). `RuntimeLoop` holds an `Arc<dyn ThreadsSeatView>`. The dependency runs from observe to the port, never the reverse.
+- Lifecycle: built once in daemon compose next to `ThreadsSeatMap`, shared by `Arc`, lives as long as the process; no state apart from the client connection.
+- Errors: `ThreadsError`. Callers tell `Disconnected`/`ServiceBusy` (hold the last state; Unknown only under the existing staleness rule) apart from `Rejected`/`Unsupported` (log it and change nothing).
+
+**SeatObservation** — new module in `observe/`, turns seat statuses into observation facts for one step.
+- Owns: the single `match` on SeatStatus. `Resolved` binds the clone to threads' pane and marks it Present (the existing stamp path re-stamps the token). `Unresolved` marks it Unknown. Reversible `Retired` retires the clone undoably; final `Retired` retires it finally. `KeyConflict` marks it Unknown and records an alert that `status` reads. It also owns precedence: before D1, threads wins whenever it and the old matcher both claim a clone.
+- Hides: how threads' answer is merged into `Matches`/`build_ops`. The binding, retire and availability request builders stay as they are.
+- Must not: call threads (it receives statuses already read), or touch tabs or workspaces (matcher, preserved-id equality, §7).
+- Relationships: a function the step calls after `match_snapshot`; takes SeatStatus values and yields entries for `Matches.clone_pane` plus ops.
+- Lifecycle: stateless functions. The key-conflict alert is a journal entry.
+
+**ThreadsSeatAssignment** — new bookkeeping mutation (`bookkeeping.threads_seat`, registered beside `bookkeeping.binding`), the only writer of `CloneRecord.threads_seat`.
+- Owns: the write-once rule and the invariant that at most one non-retired clone holds a given `threads_seat` (§2).
+- Hides: the overwrite and uniqueness checks against the committed tree.
+- Must not: resolve seats (the threads executor does that through PaneSeatMap) or retire anything.
+- Relationships: one more entry in the existing `MutationRegistry`, the same shape as `bookkeeping.binding`; the threads executor admits it.
+- Errors: `MutationError`. Writing the seat already set is an idempotent success, distinct from a different seat (rejected) and from a seat another live clone holds (rejected, surfaced, never retried).
+
+**CloneRecord** — extended: gains `threads_seat` (write-once, §2). `ThreadsLink.occupant` becomes attribution only, and `SetInvitation`'s `expect_occupant` guard becomes `expect_seat` (§3).
+
+**PaneSeatMap** — extended: becomes the port for seat-lifecycle commands. It already has resolve; it gains reserving the continuity key (D1), unretiring a seat (D2) and finalizing a retirement or releasing the key (D2, per the published API). Its resolve reports threads' refusals (restore hold, key-conflict hold) as a non-error "not yet" so the executor returns `Deferred` (§2). Implementations stay `ThreadsSeatMap` and `FakePaneSeatMap`.
+
+**ThreadsSource / ThreadsExecutor (`Payload`)** — extended: new want kinds, still chosen in `system_wants` and dispatched in `execute_scoped`:
+- resolve seat: for an active clone with a verified pane binding and no `threads_seat`; it admits ThreadsSeatAssignment.
+- reserve key: for an active clone with no recorded reservation, before its first keyed launch.
+- unretire seat: for an active clone whose seat threads reports as reversibly retired, the state undo or resurrection leaves.
+- finalize retirement: on purge.
+
+`clone_wants` keys desired, satisfied and released on `threads_seat` instead of the occupant (§3). The invite executor invites the recorded seat and does not re-resolve it.
+
+**StartAgent / HerdrApi adapter** — extended: `StartAgent` gains `env`. The Herdr client adapter alone decides how to deliver it (an `env K=V` argv prefix or the agent-start env, §5).
+
+**`model::launch`** — extended: gains the continuity-key env constant and one function that builds the env for every agent start (`HERDR_GRAPH_CLONE` plus `HERDR_THREADS_CONTINUITY_KEY=<cl_ id>`). Every start site calls it: `HerdrExecutor` start/relaunch, `session::start` for ReplaceSession, and the resume rule. No site builds the env by hand.
+
+**Reconcile planner (`plan_effects`, `LiveIndex`)** — extended:
+- A resume rule plans the existing `StartAgent` effect for a clone in the §9 situation: its seat is Unresolved, its last bound pane id exists in this incarnation, and that pane has no agent. The executor already applies the 90 s grace, checks for a shell foreground and chooses resume over fresh. The rule skips clones that carry a key-conflict alert.
+- The clone side of `LiveIndex` shrinks to a lookup by committed binding plus the create-nonce match. Rebind adoption and `live_ref` re-matching are removed after D1 (§6).
+
+**Matcher** — extended (narrowed): tabs and workspaces match by token, else by preserved-id equality, and become Unknown when the id is absent (§7). The clone passes are deleted once D1 lands (§6).
+
+Variation: threads seat states (G5 limbo is pending) → one closed enum, SeatStatus, matched only in SeatObservation. Threads seat commands (resolve, reserve, unretire, finalize) → fixed operations on PaneSeatMap, with effect kinds chosen in `ThreadsSource::system_wants`. Agent start sites → one env builder in `model::launch`. How env reaches Herdr → hidden in the Herdr client adapter. Release gates are delivery order (gate beads), not runtime flags: before D1 the code simply has no reserve want, with no capability switch.
+
+Walk-through, cold restart headless: the new incarnation forces a rebind step; `RuntimeLoop` snapshots Herdr and asks ThreadsSeatView about each clone's `threads_seat`; threads answers `Unresolved`, SeatObservation marks the clone Unknown; the planner's resume rule sees the last bound pane present with no agent and plans `StartAgent`; the executor waits out the grace, confirms the shell foreground and starts the agent with the `model::launch` env and `--resume` where supported; threads reattaches the seat by C1 or D1 evidence; the next step reads `Resolved{pane}`, SeatObservation writes the binding and marks the clone Present; `clone_wants` finds `link.seat == threads_seat` satisfied, so nothing is re-invited.
+
+Future change, G5 limbo disposition: one new SeatStatus variant, mapped in the adapter, and one new arm in SeatObservation's `match`. No caller changes.
+
+Spec-forced exceptions:
+- Per §6: before D1, threads and the old clone matcher run side by side and threads wins whenever both speak. Deliberate and temporary; the matcher's clone passes are deleted in the D1-gated bead.
+- Per §8: undo no longer adopts the caller's pane (`undo/adopt.rs` removed for clones). Undo commits the clone active; unretire, relaunch and key steps follow from level-triggered wants. The undo code makes no threads calls.
+- Per §3: `ThreadsLink.occupant` stays on the record, but nothing may branch on it any more.
+- Per §5: until D1, launches set the key env var without reserving it.
+
+Digest:
+- SeatStatus: owns the closed set of threads seat states; a new state is added as one variant plus one arm in SeatObservation; callers never inspect threads wire results.
+- ThreadsSeatView: owns read-only seat inspection per observation step; new reads are added on this port and its fake; callers never write to threads through it or invent a state when threads is unreachable.
+- SeatObservation: owns turning seat statuses into clone binding, availability and retirement, plus precedence over the old matcher; new seat-state handling is added in its single match; callers never map seat states to graph changes elsewhere.
+- ThreadsSeatAssignment: owns the write-once `threads_seat` and its one-live-clone-per-seat invariant; new rules on the field are added in this mutation; callers never write `threads_seat` directly or retry a rejected different seat.
+
 ## Post-Implementation Notes
 
 *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
