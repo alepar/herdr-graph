@@ -2,7 +2,7 @@
 //! Paths printed are absolute working-tree paths of the committed revision's locations.
 use crate::cli::template::render_template;
 use crate::model::template::TemplateRecord;
-use crate::model::{AnyId, IdKind};
+use crate::model::{AnyId, IdKind, SeatId};
 use crate::plan::grammar;
 use crate::ports::store::{EntryKind, ObjectLocation, RepoPath, StoreError};
 use crate::store::layout;
@@ -152,6 +152,15 @@ pub fn show(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<String, Sh
         && let Some(rec) = read_toml::<TemplateRecord>(tree, &loc.record_path)?
     {
         return Ok(render_template(&rec));
+    }
+    if loc.id.kind() == IdKind::Seat {
+        let seat = SeatId::parse(loc.id.as_str()).map_err(|e| ShowError::Invalid(e.to_string()))?;
+        let chain = crate::threads::named_manager_chain(tree, &seat)?;
+        let sep = if text.ends_with('\n') { "" } else { "\n" };
+        return Ok(format!(
+            "{text}{sep}{}",
+            crate::threads::manager_line(&chain)
+        ));
     }
     Ok(text)
 }
