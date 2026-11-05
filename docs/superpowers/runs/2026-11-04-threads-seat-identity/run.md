@@ -11,7 +11,7 @@ branch: super-auto/threads-seat-identity
 base: main
 epic: hg-66u
 roastDesignRound: 3
-roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md, 2026-11-05-threads-seat-identity-roast-design-2.md
+roast-design: 2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md, 2026-11-05-threads-seat-identity-roast-design-2.md, 2026-11-05-threads-seat-identity-roast-design-3.md
 findingsLedgerDesign: findings-ledger-design.md
 spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
