@@ -91,6 +91,10 @@ fn fx() -> Fx {
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
+    reg.register(
+        super::managers::testing::SET_NODE_MANAGER_KEY,
+        Arc::new(super::managers::testing::SetNodeManager),
+    );
     kinds.register_mutations(&mut reg, plans.clone());
     reg.register(
         super::managers::reparent::testing::SET_POINTER_KEY,
