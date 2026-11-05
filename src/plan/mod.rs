@@ -12,6 +12,7 @@ pub mod hash;
 pub mod instructions;
 pub mod kind;
 pub mod line_diff;
+pub mod managers;
 pub mod store;
 pub mod types;
 

@@ -1,0 +1,207 @@
+use super::*;
+use crate::journal::Journal;
+use crate::model::operation::OpState;
+use crate::ports::clock::ManualClock;
+use crate::ports::store::Store;
+use crate::ports::writer::Writer;
+use crate::store::GitStore;
+use crate::store::init::init_instance;
+use crate::writer::{MutationRegistry, WriterConfig, WriterCore};
+use chrono::TimeZone;
+use std::sync::Arc;
+
+#[test]
+fn effect_constructors_shape() {
+    let (a, b) = (SeatId::new(), SeatId::new());
+    let ts = TeamspaceId::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let (_root, store) = open(&tmp);
+    let gr = layout::graph_id(&store.at(&store.head().unwrap())).unwrap();
+
+    let e = seat_manager_effect(&a, Some(&b), None);
+    assert_eq!(e.kind, SEAT_MANAGER);
+    assert_eq!(e.kind, "seat.manager");
+    assert_eq!(e.object, a.to_any());
+    assert_eq!(e.detail, json!({ "from": b, "to": null }));
+    assert_eq!(e.describe(), format!("seat.manager {a} from={b} to=null"));
+
+    let e = default_manager_effect(&ts, None, Some(&a));
+    assert_eq!(e.kind, TEAMSPACE_DEFAULT_MANAGER);
+    assert_eq!(e.object, ts.to_any());
+    assert_eq!(e.detail, json!({ "from": null, "to": a }));
+
+    let sha = BlobHash("ab".repeat(20));
+    let e = node_manager_effect(&gr, Some(&a), Some(&b), &sha);
+    assert_eq!(e.kind, GRAPH_NODE_MANAGER);
+    assert_eq!(e.object, gr.to_any());
+    assert_eq!(e.detail, json!({ "from": a, "to": b, "graph_sha": sha.0 }));
+    // A recompute against a changed graph.toml must differ.
+    assert_ne!(
+        e,
+        node_manager_effect(&gr, Some(&a), Some(&b), &BlobHash("cd".repeat(20)))
+    );
+}
+
+fn t0() -> crate::model::Timestamp {
+    chrono::Utc.with_ymd_and_hms(2026, 11, 5, 12, 0, 0).unwrap()
+}
+
+fn open(tmp: &tempfile::TempDir) -> (std::path::PathBuf, GitStore) {
+    let root = tmp.path().join("inst");
+    init_instance(&root).unwrap();
+    let store = GitStore::open(&root).unwrap();
+    (root, store)
+}
+
+#[test]
+fn write_graph_updates_node_manager_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_root, store) = open(&tmp);
+    let head = store.head().unwrap();
+    let before = layout::read_graph(&store.at(&head)).unwrap();
+    let mut ov = Overlay::new(&store, head);
+    let x = SeatId::new();
+    assert_eq!(set_node_manager(&mut ov, Some(x.clone())).unwrap(), None);
+    let after = layout::read_graph(&ov).unwrap();
+    assert_eq!(after.node_manager_seat, Some(x.clone()));
+    assert_eq!(
+        after,
+        GraphRecord {
+            node_manager_seat: Some(x.clone()),
+            ..before
+        }
+    );
+    // The previous value comes back.
+    assert_eq!(set_node_manager(&mut ov, None).unwrap(), Some(x));
+    assert_eq!(layout::read_graph(&ov).unwrap().node_manager_seat, None);
+}
+
+#[test]
+fn graph_relied_on_is_blob_of_graph_toml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (root, store) = open(&tmp);
+    let view = store.at(&store.head().unwrap());
+    let r = graph_relied_on(&view).unwrap();
+    let bytes = std::fs::read(root.join("graph.toml")).unwrap();
+    let want = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).unwrap();
+    assert_eq!(r.version, Version::Blob(BlobHash(want.to_string())));
+    assert_eq!(r.object, layout::graph_id(&view).unwrap().to_any());
+}
+
+fn writer_fx(tmp: &tempfile::TempDir) -> Arc<WriterCore> {
+    let root = tmp.path().join("inst");
+    init_instance(&root).unwrap();
+    let mut reg = MutationRegistry::default();
+    reg.register(
+        testing::SET_NODE_MANAGER_KEY,
+        Arc::new(testing::SetNodeManager),
+    );
+    let store = Arc::new(GitStore::open(&root).unwrap());
+    let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
+    WriterCore::new(
+        store,
+        journal,
+        Arc::new(reg),
+        Arc::new(ManualClock::new(t0())),
+        WriterConfig::default(),
+    )
+}
+
+fn with_graph_blob(
+    mut req: crate::model::change::ChangeRequest,
+    r: ReliedOn,
+) -> crate::model::change::ChangeRequest {
+    req.args["path"] = json!("graph.toml");
+    req.relied_on = vec![r];
+    req
+}
+
+#[test]
+fn stale_graph_blob_fails_writer_precondition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let w = writer_fx(&tmp);
+    let (a, b, c) = (SeatId::new(), SeatId::new(), SeatId::new());
+    let relied = |w: &WriterCore| {
+        let head = w.store().head().unwrap();
+        graph_relied_on(&w.store().at(&head)).unwrap()
+    };
+    let r = relied(&w);
+
+    let first = w.admit(testing::request(Some(&a))).unwrap();
+    let stale = w
+        .admit(with_graph_blob(testing::request(Some(&b)), r))
+        .unwrap();
+    w.drain().unwrap();
+    let row = |op| w.journal().get(op).unwrap().unwrap();
+    assert_eq!(row(&first).state, OpState::Committed);
+    let r2 = row(&stale);
+    assert_eq!(r2.state, OpState::Rejected);
+    assert_eq!(r2.rejection.unwrap().reason, "precondition_failed");
+    let head = w.store().head().unwrap();
+    assert_eq!(
+        layout::read_graph(&w.store().at(&head))
+            .unwrap()
+            .node_manager_seat,
+        Some(a)
+    );
+
+    // Control: a fresh blob commits.
+    let fresh = w
+        .admit(with_graph_blob(testing::request(Some(&c)), relied(&w)))
+        .unwrap();
+    w.drain().unwrap();
+    assert_eq!(row(&fresh).state, OpState::Committed);
+    let head = w.store().head().unwrap();
+    assert_eq!(
+        layout::read_graph(&w.store().at(&head))
+            .unwrap()
+            .node_manager_seat,
+        Some(c)
+    );
+}
+
+#[test]
+fn admit_stubs_pass() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_root, store) = open(&tmp);
+    let view = store.at(&store.head().unwrap());
+    admit(&view, &[]).unwrap();
+}
+
+#[test]
+fn apply_pointer_effects_writes_node_manager_and_rejects_malformed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_root, store) = open(&tmp);
+    let head = store.head().unwrap();
+    let gr = layout::graph_id(&store.at(&head)).unwrap();
+    let x = SeatId::new();
+    let mut ov = Overlay::new(&store, head);
+    let sha = graph_blob(&ov).unwrap();
+    apply_pointer_effects(&mut ov, &[node_manager_effect(&gr, None, Some(&x), &sha)]).unwrap();
+    assert_eq!(layout::read_graph(&ov).unwrap().node_manager_seat, Some(x));
+    let bad = PlanEffect::new(GRAPH_NODE_MANAGER, gr.to_any(), json!({ "to": 7 }));
+    assert!(matches!(
+        apply_pointer_effects(&mut ov, &[bad]),
+        Err(MutationError::Bug(_))
+    ));
+}
+
+#[test]
+fn opt_out_makes_live_node_manager_none() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("inst");
+    init_instance(&root).unwrap();
+    testing::opt_out(&root);
+    let store = GitStore::open(&root).unwrap();
+    let view = store.at(&store.head().unwrap());
+    assert!(
+        layout::read_graph(&view)
+            .unwrap()
+            .node_manager_seat
+            .is_some()
+    );
+    assert_eq!(
+        crate::model::manager::live_node_manager(&view).unwrap(),
+        None
+    );
+}
