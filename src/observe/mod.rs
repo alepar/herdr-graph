@@ -4,6 +4,7 @@ pub mod classify;
 pub mod diff;
 pub mod matcher;
 pub mod mutations;
+pub mod seat_observation;
 pub mod sessions;
 pub mod step;
 #[cfg(test)]

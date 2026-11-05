@@ -77,7 +77,9 @@ pub fn clear_restore_on_retire(rec: &mut CloneRecord) {
 pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<CloneRecord> {
     let seat_intent = match (&rec.threads_seat, reservation) {
         (Some(seat), _) => SeatIntent::Finalize { seat: seat.clone() },
-        (None, Some(key)) => SeatIntent::ReleaseKey { key: key.to_owned() },
+        (None, Some(key)) => SeatIntent::ReleaseKey {
+            key: key.to_owned(),
+        },
         (None, None) => return None,
     };
     Some(CloneRecord {
@@ -98,6 +100,7 @@ pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<C
         threads_seat: rec.threads_seat.clone(),
         threads_seat_history: rec.threads_seat_history.clone(),
         seat_intent: Some(seat_intent),
+        seat_fact: None,
     })
 }
 
@@ -168,7 +171,10 @@ impl Mutation for ThreadsSeatMutation {
                 Some(cur) => {
                     return Err(reject(
                         "threads_seat_conflict",
-                        format!("clone {} is bound to threads seat {cur}, not {seat}", a.clone),
+                        format!(
+                            "clone {} is bound to threads seat {cur}, not {seat}",
+                            a.clone
+                        ),
                     ));
                 }
                 None => {

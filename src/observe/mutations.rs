@@ -5,7 +5,7 @@ use super::classify::CascadeRule;
 use super::sessions::SessionCapture;
 use crate::model::action::ActionKind;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
-use crate::model::clone::CloneRecord;
+use crate::model::clone::{CloneRecord, SeatFact};
 use crate::model::common::{
     Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource, Occupant,
     RetireMechanism, Retirement,
@@ -32,7 +32,10 @@ pub const OCCUPANCY_KEY: &str = "observed.occupancy";
 pub const MOVE_KEY: &str = "observed.move";
 pub const AVAILABILITY_KEY: &str = "observed.availability";
 
+pub const SEAT_FACT_KEY: &str = "bookkeeping.seat_fact";
+
 pub fn register_mutations(reg: &mut MutationRegistry) {
+    reg.register(SEAT_FACT_KEY, Arc::new(SeatFactMutation));
     reg.register(CASCADE_KEY, Arc::new(CascadeMutation));
     reg.register(RENAME_KEY, Arc::new(RenameMutation));
     reg.register(OCCUPANCY_KEY, Arc::new(OccupancyMutation));
@@ -92,6 +95,18 @@ pub fn move_request(
     observed(
         json!({ "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out }),
     )
+}
+
+/// `bookkeeping.seat_fact`: SeatObservation's committed read of a clone's threads seat.
+pub fn seat_fact_request(clone: &CloneId, fact: &SeatFact) -> ChangeRequest {
+    ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args: json!({ "sub": "seat_fact", "clone": clone, "fact": fact }),
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    }
 }
 
 pub fn availability_request(object: &AnyId, availability: Availability) -> ChangeRequest {
@@ -629,6 +644,39 @@ impl Mutation for AvailabilityMutation {
         }
         Ok(Applied {
             summary: format!("{} is {:?}", a.object, a.availability),
+            action: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// bookkeeping.seat_fact
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SeatFactArgs {
+    clone: CloneId,
+    fact: SeatFact,
+}
+
+struct SeatFactMutation;
+
+impl Mutation for SeatFactMutation {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let a: SeatFactArgs = parse(cx)?;
+        let any = a.clone.to_any();
+        let loc = cx.tree.locate(&any)?.ok_or_else(|| gone(&any))?;
+        let mut rec: CloneRecord = cx
+            .tree
+            .read_record(&loc.record_path)?
+            .ok_or_else(|| gone(&any))?;
+        // Idempotent: an equal fact is not rewritten.
+        if rec.seat_fact.as_ref() != Some(&a.fact) {
+            rec.seat_fact = Some(a.fact);
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+        }
+        Ok(Applied {
+            summary: format!("seat fact {}", a.clone),
             action: None,
         })
     }

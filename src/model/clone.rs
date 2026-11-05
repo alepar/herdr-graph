@@ -1,5 +1,8 @@
 //! Clone record (spec §2.4): a seat's live incarnation(s) and their session history.
-use crate::model::common::{CloneLifecycle, NameChange, Occupant, Retirement, Runtime, is_false};
+use crate::model::HerdrPaneId;
+use crate::model::common::{
+    CloneLifecycle, NameChange, Occupant, Retirement, Runtime, Timestamp, is_false,
+};
 use crate::model::ids::{CloneId, OpId, SeatId};
 use crate::model::native_session::NativeSession;
 use serde::{Deserialize, Serialize};
@@ -38,6 +41,28 @@ pub struct CloneRecord {
     /// Graph-initiated threads lifecycle intent (spec §8, §14). Written only by ThreadsSeatAssignment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_intent: Option<SeatIntent>,
+    /// What threads last said about `threads_seat` (spec §14.9). Written only by SeatObservation
+    /// (`bookkeeping.seat_fact`); the key-conflict alert level is `state == KeyConflict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_fact: Option<SeatFact>,
+}
+
+/// One successful threads read of a clone's seat, with its read time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatFact {
+    pub seat: String,
+    #[serde(flatten)]
+    pub state: SeatFactState,
+    pub read_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SeatFactState {
+    Resolved { pane: HerdrPaneId },
+    Unresolved,
+    KeyConflict { pane: Option<HerdrPaneId> },
+    Retired { reversible: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

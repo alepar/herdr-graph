@@ -242,6 +242,7 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR
         threads_seat: None,
         threads_seat_history: vec![],
         seat_intent: None,
+        seat_fact: None,
     }
 }
 
