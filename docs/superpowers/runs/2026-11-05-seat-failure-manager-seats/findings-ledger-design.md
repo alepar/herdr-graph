@@ -1,0 +1,14 @@
+# findings ledger — design — through r1
+triggers: none
+blocking: r0=- r1=0 carriedB=- regressedB=- degraded=none not-computable=no-progress,returned,regressed
+ignored-overrides: 0
+- [Should-fix] §4.9 Observation bullet; Key abstractions observe::classify · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Should-fix] §4.9 'An observed move of its pane or tab (outside a plan) is not adopted as its placement; reconciliation restores the recorded tab.' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Should-fix] §4.4 / Key abstractions cli::daemon_error "anything else → the error, exit 1" · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Should-fix] §4.4 / cli::daemon_error closed mapping · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.3 integrity suffix; §4.5 step 6; §4.6 'if S is the node manager → None' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.1 'A stale daemon paired with a new CLI can at worst produce a frame error instead of a message' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.12 'WhoReply gains manager_chain: Vec<{seat, name}>'; §4.1 'without bumping IPC_VERSION' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.7 'Target must exist and be live'; §4.8 first-seat assignment; §4.9 reopen 'for an active seat' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.11 'inside do_retire_seat ... compute the retiring seat's effective manager M'; Key abstractions model::manager Errors · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
+- [Nit] §4.4 'Not being inside a Herdr pane (HERDR_SOCKET_PATH unset) is not a daemon outage: it gets its own variant ... never the retry-later text' · raised r1@- · open · source roast · text docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md
