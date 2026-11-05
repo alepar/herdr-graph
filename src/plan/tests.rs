@@ -4411,7 +4411,7 @@ fn stale_graph_toml_rejects_first_seat_plan() {
     assert_eq!(row.rejection.unwrap().reason, "stale_plan");
 }
 
-fn manager_of(fx: &Fx, seat_name: &str, manager: &str) {
+fn point_manager_of(fx: &Fx, seat_name: &str, manager: &str) {
     set_pointers(
         fx,
         json!({ "seat_manager": [seat_id(fx, seat_name), seat_id(fx, manager)] }),
@@ -4439,8 +4439,8 @@ fn cycle_guard_seat_create_into_cyclic_default() {
     commit(&fx, "seat create a --teamspace beta");
     commit(&fx, "seat create b --teamspace beta");
     default_of(&fx, "beta", "a");
-    manager_of(&fx, "a", "b");
-    manager_of(&fx, "b", "a");
+    point_manager_of(&fx, "a", "b");
+    point_manager_of(&fx, "b", "a");
 
     let msg = refusal(&fx, "seat create s --teamspace beta");
     assert!(msg.contains("would make a manager cycle"), "{msg}");
@@ -4454,7 +4454,7 @@ fn cycle_guard_default_change_closes_loop() {
     commit(&fx, "teamspace create beta");
     commit(&fx, "seat create x --teamspace beta");
     commit(&fx, "seat create a --teamspace beta");
-    manager_of(&fx, "a", "x");
+    point_manager_of(&fx, "a", "x");
     let (x, a) = (seat_id(&fx, "x"), seat_id(&fx, "a"));
     let ts = teamspace(&fx, "beta").1.id;
 
@@ -4485,7 +4485,7 @@ fn cycle_guard_resurrection_closes_loop() {
     commit(&fx, "seat create x --teamspace beta");
     commit(&fx, "seat retire s");
     // Stale pointer to the retired seat (retired seats are transparent), then a default that leads back.
-    manager_of(&fx, "x", "s");
+    point_manager_of(&fx, "x", "s");
     default_of(&fx, "beta", "x");
 
     let msg = refusal(&fx, "seat resurrect s");
@@ -4499,8 +4499,8 @@ fn cycle_guard_ignores_plans_without_pointer_impact() {
     commit(&fx, "teamspace create beta");
     commit(&fx, "seat create a --teamspace beta");
     commit(&fx, "seat create b --teamspace beta");
-    manager_of(&fx, "a", "b");
-    manager_of(&fx, "b", "a");
+    point_manager_of(&fx, "a", "b");
+    point_manager_of(&fx, "b", "a");
 
     // An existing out-of-band cycle elsewhere does not block plans that touch no pointer.
     plan(&fx, "seat rename a c");
