@@ -226,6 +226,9 @@ pub(crate) fn resolve_error(e: StoreError, head: &CommitId, suffix: Option<&str>
     CommandError::integrity(m)
 }
 
+/// The node-manager duty text, shared with the shipped `node-manager` seat template's AGENTS.md.
+pub(crate) const NODE_MANAGER_DUTIES: &str = include_str!("../../templates/node-manager/AGENTS.md");
+
 /// A seat named in the seat.resolve reply (manager, node manager, reports).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeatRef {
@@ -316,6 +319,8 @@ pub fn seat_reply(
 
     let mut manager = Value::Null;
     let mut node_manager = Value::Null;
+    let mut reports: Vec<SeatRef> = Vec::new();
+    let mut is_node_manager = false;
     let global_rules =
         markdown_in(&view, root, &RepoPath::new("rules").map_err(internal)?).map_err(internal)?;
     let (paths, pending_ops, invitations, reload_required, beads_query, beads_labels, instructions) =
@@ -341,6 +346,10 @@ pub fn seat_reply(
                 }
                 if let Some(n) = p.live_node_manager() {
                     node_manager = json!(seat_ref(&view, &p, &n).map_err(fail)?);
+                    is_node_manager = &n == seat;
+                }
+                for r in p.reports(seat) {
+                    reports.push(seat_ref(&view, &p, &r).map_err(fail)?);
                 }
                 let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
                 let mut labels = json!({
@@ -391,6 +400,9 @@ pub fn seat_reply(
         "instance": root.display().to_string(),
         "manager": manager,
         "node_manager": node_manager,
+        "reports": reports,
+        "is_node_manager": is_node_manager,
+        "node_manager_duties": is_node_manager.then_some(NODE_MANAGER_DUTIES),
         "instructions": instructions,
         "paths": paths,
         "pending_ops": pending_ops,
@@ -450,6 +462,18 @@ pub fn render_seat(reply: &Value) -> String {
         match v["name"].as_str() {
             Some(name) => out.push_str(&format!("{label}: {name} ({})\n", text(&v["seat"]))),
             None => out.push_str(&format!("{label}: none assigned\n")),
+        }
+    }
+    if let Some(reports) = reply["reports"].as_array().filter(|r| !r.is_empty()) {
+        out.push_str("reports:\n");
+        for r in reports {
+            out.push_str(&format!("  {} ({})\n", text(&r["name"]), text(&r["seat"])));
+        }
+    }
+    if let Some(duties) = reply["node_manager_duties"].as_str() {
+        out.push_str("you are the node manager seat; duties:\n");
+        for line in duties.lines() {
+            out.push_str(&format!("  {line}\n"));
         }
     }
     if let Some(cands) = r["candidates"].as_array().filter(|c| !c.is_empty()) {

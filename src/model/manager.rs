@@ -185,6 +185,20 @@ impl Pointers {
             .collect())
     }
 
+    /// The live seats whose first live manager is `seat`, in id order (retired seats are not reports). A seat whose
+    /// own chain is an integrity error is skipped here, not fatal: that error belongs to its own `seat.resolve`.
+    pub fn reports(&self, seat: &SeatId) -> Vec<SeatId> {
+        self.seats
+            .iter()
+            .filter(|(id, s)| !s.retired && *id != seat)
+            .filter(|(id, _)| {
+                self.manager_chain(id)
+                    .is_ok_and(|c| c.first() == Some(seat))
+            })
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     /// The first live seat above `seat` that is not in `retiring`.
     pub fn nearest_surviving_manager(
         &self,
@@ -213,6 +227,11 @@ impl Pointers {
         }
         None
     }
+}
+
+/// The live seats reporting to `seat` at `tree` (see [`Pointers::reports`]).
+pub fn reports(tree: &dyn TreeRead, seat: &SeatId) -> Result<Vec<SeatId>, StoreError> {
+    Ok(Pointers::load(tree)?.reports(seat))
 }
 
 pub fn live_node_manager(tree: &dyn TreeRead) -> Result<Option<SeatId>, StoreError> {
@@ -297,6 +316,9 @@ mod tests {
             self.p.node_manager_seat = Some(id);
             self
         }
+        fn clone_p(&self) -> Pointers {
+            self.p.clone()
+        }
         fn id(&self, name: &str) -> SeatId {
             self.ids[name].clone()
         }
@@ -317,6 +339,28 @@ mod tests {
             } => (holder, field, target, reason),
             other => panic!("expected Integrity, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn reports_skips_retired_and_other_managers() {
+        let b = B::new()
+            .seat("boss", None, false)
+            .seat("r1", Some("boss"), false)
+            .seat("gone", Some("boss"), true)
+            .seat("other", None, false)
+            .seat("r2", Some("other"), false)
+            .seat("nm", None, false)
+            .node("nm");
+        assert_eq!(b.names(&b.p.reports(&b.id("boss"))), vec!["r1"]);
+        assert_eq!(b.names(&b.p.reports(&b.id("r1"))), Vec::<String>::new());
+        // The node manager reports for every seat with no nearer live manager, itself excluded.
+        let mut nm = b.names(&b.p.reports(&b.id("nm")));
+        nm.sort();
+        assert_eq!(nm, vec!["boss", "other"]);
+        // A seat whose own chain is broken is skipped, not fatal.
+        let mut broken = b.clone_p();
+        broken.seats.get_mut(&b.id("r1")).unwrap().manager = Some(SeatId::new());
+        assert_eq!(broken.reports(&b.id("boss")), Vec::<SeatId>::new());
     }
 
     #[test]

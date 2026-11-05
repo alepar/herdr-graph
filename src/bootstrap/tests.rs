@@ -4089,3 +4089,132 @@ fn old_reply_without_fields_renders() {
     assert!(out.contains("\nmanager: none assigned\n"), "{out}");
     assert!(out.contains("\nnode manager: none assigned\n"), "{out}");
 }
+
+// ---- seat.resolve reports and node-manager duties (hg-k4l.19) ----
+
+/// Bind `seat`'s only clone to `pane`.
+fn bind_pane(fx: &Fx, seat: &SeatRecord, pane: &str) {
+    let clone = clone_of(fx, &seat.id);
+    patch_clone(
+        fx,
+        &clone.id,
+        json!({ "pane": pane, "availability": "present" }),
+    );
+}
+
+fn report_names(reply: &Value) -> Vec<String> {
+    reply["reports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn reports_explicit_pointer() {
+    let (fx, one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    bind_pane(&fx, &boss, "p2");
+    set_manager(&fx, &one, &boss);
+    let reply = seat_reply(&fx.deps, &caller("p2"), None).unwrap();
+    assert_eq!(report_names(&reply), vec!["one"]);
+    assert_eq!(reply["reports"][0]["seat"], json!(one.id));
+    assert_eq!(reply["reports"][0]["threads_seat"], Value::Null);
+    assert_eq!(reply["is_node_manager"], json!(false));
+    assert_eq!(reply["node_manager_duties"], Value::Null);
+    // Typed readers parse a reply entry; an old reply without `reports` still parses via #[serde(default)].
+    let typed: SeatRef = serde_json::from_value(reply["reports"][0].clone()).unwrap();
+    assert_eq!(typed.seat, one.id);
+}
+
+#[test]
+fn reports_teamspace_default() {
+    let (fx, _one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    bind_pane(&fx, &boss, "p2");
+    commit(&fx, "teamspace create beta --active");
+    commit(&fx, "seat create member --teamspace beta --active");
+    let beta = teamspace(&fx, "beta");
+    let mut rec = layout::list_teamspaces(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.id == beta)
+        .unwrap();
+    rec.default_manager = Some(boss.id.clone());
+    let bytes = crate::store::record::to_toml_bytes(&rec).unwrap();
+    assert_eq!(
+        put(&fx, beta.as_str(), "teamspace.toml", &bytes).state,
+        OpState::Committed
+    );
+    let reply = seat_reply(&fx.deps, &caller("p2"), None).unwrap();
+    assert_eq!(report_names(&reply), vec!["member"]);
+}
+
+#[test]
+fn reports_node_manager_implicit() {
+    let (fx, one, boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&one.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    let mut names = report_names(&reply);
+    names.sort();
+    assert_eq!(names, vec!["boss", "nm"]);
+    assert!(
+        reply["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| { r["seat"] == json!(boss.id) || r["seat"] == json!(nm.id) })
+    );
+    assert_eq!(reply["is_node_manager"], json!(true));
+    assert_eq!(
+        reply["node_manager_duties"].as_str().unwrap(),
+        include_str!("../../templates/node-manager/AGENTS.md")
+    );
+    assert!(
+        reply["node_manager_duties"]
+            .as_str()
+            .unwrap()
+            .contains("Listen for, detect and unblock")
+    );
+}
+
+#[test]
+fn reports_empty_for_leaf() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["reports"], json!([]));
+    assert_eq!(reply["is_node_manager"], json!(false));
+    assert_eq!(reply["node_manager_duties"], Value::Null);
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["reports"], json!([]));
+    assert_eq!(reply["is_node_manager"], json!(false));
+}
+
+#[test]
+fn render_seat_lists_reports_and_duties() {
+    let r = SeatId::new();
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "reports": [{ "seat": r, "name": "worker", "threads_seat": null }],
+        "is_node_manager": true,
+        "node_manager_duties": "# Node manager\nDo things.\n",
+    }));
+    assert!(
+        out.contains(&format!("reports:\n  worker ({r})\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains("you are the node manager seat; duties:\n  # Node manager\n  Do things.\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn reply_without_reports_renders() {
+    let out = render_seat(&json!({ "resolution": { "status": "bound" } }));
+    assert!(!out.contains("reports:"), "{out}");
+    assert!(!out.contains("duties"), "{out}");
+}
