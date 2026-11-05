@@ -1438,6 +1438,19 @@ mod subprocess {
             ])
         }
 
+        /// No Herdr-facing effect is pending or unknown. `threads.*` effects are left out: with the fake services
+        /// a clone's seat is never resolved (the fake pane map has no entries), so its `threads.resolve_seat`
+        /// effect waits for threads for as long as the daemon runs.
+        fn herdr_effects_settled(&self) -> bool {
+            use herdr_graph::model::effect::{EffectKind, EffectStatus};
+            let journal = Journal::open(&self.paths().journal).unwrap();
+            journal
+                .effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
+                .unwrap()
+                .iter()
+                .all(|e| matches!(e.kind, EffectKind::Custom(_)))
+        }
+
         fn fake_log(&self) -> Vec<Value> {
             std::fs::read(self.paths().local.join("fake-herdr.json"))
                 .ok()
@@ -1574,9 +1587,8 @@ mod subprocess {
         let mut last = (usize::MAX, 0);
         loop {
             let status = f.client().call("status", json!({})).unwrap();
-            let r = &status["components"]["reconciler"];
             let calls = f.fake_log().len();
-            if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+            if f.herdr_effects_settled() {
                 // Quiet for two polls in a row: the effects planned by the last command have all run.
                 if last.0 == calls {
                     last.1 += 1;
@@ -1641,7 +1653,7 @@ mod subprocess {
         loop {
             let status = f.client().call("status", json!({})).unwrap();
             let r = &status["components"]["reconciler"];
-            if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+            if f.herdr_effects_settled() {
                 assert_eq!(
                     r["needs_revision_effects"], 0,
                     "a lost outcome must be adopted, not sent for revision: {status}"
