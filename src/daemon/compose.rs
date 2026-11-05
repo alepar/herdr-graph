@@ -891,6 +891,13 @@ mod lazy {
         }
     }
 
+    /// A seat map together with the shared `threads-calls.lock` guard taken before it was located; keep it
+    /// alive until the delegated threads call returns so a ThreadsReconnect cannot commit mid-call.
+    struct Guarded {
+        _guard: std::fs::File,
+        map: Arc<ThreadsSeatMap>,
+    }
+
     pub struct LazyMap {
         endpoint: Arc<Endpoint>,
         inner: Arc<Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>>,
@@ -912,8 +919,8 @@ mod lazy {
         }
 
         /// The seat map for the currently located endpoint, rebuilt when discovery points elsewhere.
-        async fn map(&self) -> Result<Arc<ThreadsSeatMap>, ThreadsError> {
-            let _guard = self.endpoint.guard().await?;
+        async fn map(&self) -> Result<Guarded, ThreadsError> {
+            let guard = self.endpoint.guard().await?;
             let me = Self {
                 endpoint: self.endpoint.clone(),
                 inner: self.inner.clone(),
@@ -948,7 +955,7 @@ mod lazy {
             })
             .await
             .map_err(|e| ThreadsError::Disconnected(e.to_string()))??;
-            Ok(map)
+            Ok(Guarded { _guard: guard, map })
         }
     }
 
@@ -958,7 +965,8 @@ mod lazy {
             &self,
             pane: &HerdrPaneId,
         ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
-            self.map().await?.seat_for(pane).await
+            let g = self.map().await?;
+            g.map.seat_for(pane).await
         }
 
         async fn resolve_seat(
@@ -966,7 +974,8 @@ mod lazy {
             pane: &HerdrPaneId,
             op: &crate::ports::threads::OpKey,
         ) -> Result<crate::threads::mapping::SeatResolution, ThreadsError> {
-            self.map().await?.resolve_seat(pane, op).await
+            let g = self.map().await?;
+            g.map.resolve_seat(pane, op).await
         }
     }
 
@@ -976,7 +985,11 @@ mod lazy {
             &self,
             seats: &[ThreadsSeatRef],
         ) -> Result<std::collections::BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
-            let read = async { self.map().await?.inspect(seats).await }.await;
+            let read = async {
+                let g = self.map().await?;
+                g.map.inspect(seats).await
+            }
+            .await;
             // A refusal is remembered for `status`; transient transport errors leave it as it was.
             let mut slot = self
                 .seat_view_error
@@ -1098,6 +1111,61 @@ mod lazy {
                 store.head().unwrap(),
                 head,
                 "a refused read commits nothing"
+            );
+        }
+
+        #[tokio::test]
+        async fn delegated_seat_call_holds_the_threads_calls_guard() {
+            let dir = tempfile::tempdir().unwrap();
+            let socket = dir.path().join("t.sock");
+            // Accepts connections and never answers: the delegated call stays in flight.
+            let _idle = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+            let endpoint = Arc::new(Endpoint {
+                inputs: DiscoveryInputs::default(),
+                explicit: Ok(Some(Discovered {
+                    socket,
+                    instance: herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+                })),
+                herdr_socket: dir.path().join("host.sock"),
+                intents: dir.path().join("graph/.graph-local/threads-intents"),
+                graph_root: dir.path().join("graph"),
+            });
+            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
+            let root = endpoint.graph_root.clone();
+            // What a ThreadsReconnect needs: the calls lock exclusively, without waiting.
+            let reconnect_can_commit = move || {
+                use std::os::fd::AsRawFd;
+                let f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(root.join(".graph-local").join("threads-calls.lock"))
+                    .unwrap();
+                let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                (rc == 0, std::io::Error::last_os_error().raw_os_error())
+            };
+            assert!(reconnect_can_commit().0, "idle: nothing holds the lock");
+            let lazy_map = Arc::new(LazyMap::new(endpoint));
+            let call = {
+                let lazy_map = lazy_map.clone();
+                tokio::spawn(async move { lazy_map.seat_for(&HerdrPaneId("w1:p1".into())).await })
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            assert!(
+                !call.is_finished(),
+                "the delegated call must still be in flight"
+            );
+            let (acquired, errno) = reconnect_can_commit();
+            assert!(
+                !acquired && errno == Some(libc::EWOULDBLOCK),
+                "a reconnect must not commit while a delegated call is in flight ({errno:?})"
+            );
+            call.abort();
+            let _ = call.await;
+            assert!(
+                reconnect_can_commit().0,
+                "the guard is released with the call"
             );
         }
 
