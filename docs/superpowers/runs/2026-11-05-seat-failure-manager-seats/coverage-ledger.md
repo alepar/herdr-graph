@@ -37,3 +37,8 @@ C35 · r2 · GAP · R8 undo of first create · applied — hg-k4l.8 refusal name
 C36 · r2 · GAP · B13 duties after move · applied — hg-k4l.19 acceptance; spec §4.12
 C37 · r2 · UNOWNED-SEAM · CURRENT-DESIGN ordering · applied — hg-k4l.20 depends on .9/.6/.17/.18
 C38 · r2 · GAP · R19 entry points · applied — hg-k4l.18 acceptance enumerates client entry points
+C39 · graph · GRAPH-EDGE · hg-k4l.20 <- hg-k4l.17 · parked — drop is safe no (doc bead describes landed undo behaviour); would cut depth 7→6
+C39k · graph · GRAPH-EDGE · hg-k4l.17 <- hg-k4l.15 · kept — carries a real artifact
+C39k · graph · GRAPH-EDGE · hg-k4l.15 <- hg-k4l.5 · kept — carries a real artifact
+C39k · graph · GRAPH-EDGE · hg-k4l.5 <- hg-k4l.4 · kept — carries a real artifact
+C39k · graph · GRAPH-EDGE · hg-k4l.4 <- hg-k4l.1 · kept — carries a real artifact
