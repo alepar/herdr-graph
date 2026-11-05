@@ -158,6 +158,7 @@ struct CascadeArgs {
 struct CascadeMutation;
 
 impl CascadeMutation {
+    #[allow(clippy::too_many_arguments)]
     fn retire_seat(
         cx: &mut MutationCx<'_>,
         seat: &SeatId,
@@ -165,8 +166,13 @@ impl CascadeMutation {
         mech: RetireMechanism,
         at: Timestamp,
         exclusions: bool,
+        nm: Option<&SeatId>,
         acc: &mut Acc,
     ) -> Result<(), MutationError> {
+        // The node manager is never retired by an observed closure (re-checked here, at apply time).
+        if nm == Some(seat) {
+            return Ok(());
+        }
         let f = read_seat(&cx.tree, seat).map_err(mm)?;
         if f.rec.lifecycle == Lifecycle::Retired {
             acc.already.push(seat.to_any());
@@ -194,6 +200,7 @@ impl CascadeMutation {
         act: &ActionId,
         mech: RetireMechanism,
         at: Timestamp,
+        nm: Option<&SeatId>,
         acc: &mut Acc,
     ) -> Result<(), MutationError> {
         let ts = read_ts(&cx.tree, id).map_err(mm)?;
@@ -201,8 +208,13 @@ impl CascadeMutation {
             acc.already.push(id.to_any());
             return Ok(());
         }
-        for (_, seat) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
-            Self::retire_seat(cx, &seat.id, act, mech, at, false, acc)?;
+        let seats = layout::list_seats(&cx.tree, &ts.loc.folder)?;
+        for (_, seat) in &seats {
+            Self::retire_seat(cx, &seat.id, act, mech, at, false, nm, acc)?;
+        }
+        // The node manager's teamspace stays Active: its other seats are retired seat by seat.
+        if nm.is_some_and(|n| seats.iter().any(|(_, s)| &s.id == n)) {
+            return Ok(());
         }
         let before = if ts.rec.lifecycle == Lifecycle::Active {
             "active"
@@ -234,6 +246,7 @@ impl CascadeMutation {
         act: &ActionId,
         mech: RetireMechanism,
         at: Timestamp,
+        nm: Option<&SeatId>,
         acc: &mut Acc,
     ) -> Result<(), MutationError> {
         let any = id.to_any();
@@ -242,6 +255,9 @@ impl CascadeMutation {
             .tree
             .read_record(&loc.record_path)?
             .ok_or_else(|| gone(&any))?;
+        if nm == Some(&rec.seat) {
+            return Ok(());
+        }
         if rec.lifecycle == CloneLifecycle::Retired {
             acc.already.push(any);
             return Ok(());
@@ -291,18 +307,21 @@ impl Mutation for CascadeMutation {
                 other => return Err(MutationError::Bug(format!("cannot retire a {other:?}"))),
             }
         }
+        // Classification may predate a `node-manager set`: the live answer at apply time wins.
+        let nm = crate::model::manager::live_node_manager(&cx.tree)?;
+        let nm = nm.as_ref();
         let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
         for ts in &teamspaces {
-            Self::retire_teamspace(cx, ts, &act, mech, at, &mut acc)?;
+            Self::retire_teamspace(cx, ts, &act, mech, at, nm, &mut acc)?;
         }
         for seat in &seats {
             if !handled(&acc, &seat.to_any()) {
-                Self::retire_seat(cx, seat, &act, mech, at, exclusions, &mut acc)?;
+                Self::retire_seat(cx, seat, &act, mech, at, exclusions, nm, &mut acc)?;
             }
         }
         for clone in &clones {
             if !handled(&acc, &clone.to_any()) {
-                Self::retire_clone(cx, clone, &act, mech, at, &mut acc)?;
+                Self::retire_clone(cx, clone, &act, mech, at, nm, &mut acc)?;
             }
         }
         let (n, already) = (acc.retired.len(), acc.already.len());

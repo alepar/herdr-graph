@@ -549,6 +549,9 @@ impl RuntimeLoop {
             },
             elements,
         );
+        for w in &classified.warnings {
+            eprintln!("{w}");
+        }
         let ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
 
         let mut summary = StepSummary {
