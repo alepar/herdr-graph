@@ -155,6 +155,8 @@ pub fn observe(
         }
         m.panes.insert(pane.clone(), clone.clone());
         m.clone_pane.insert(clone.clone(), pane);
+        // An earlier answer may have displaced this clone; it is bound again now.
+        out.unbound.retain(|c| c != &clone);
     }
     out
 }
