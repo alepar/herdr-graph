@@ -53,7 +53,7 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             let reply = match call_daemon("seat.resolve", serde_json::json!({}), CallMode::Ensure) {
                 Ok(v) => v,
                 Err(e) => {
-                    let (code, line) = seat_failure(&e, Env::from_process().herdr_socket.is_some());
+                    let (code, line) = seat_failure(&e);
                     eprintln!("{line}");
                     return Ok(ExitCode::from(code));
                 }
@@ -74,8 +74,8 @@ pub const SEAT_UNAVAILABLE: &str = "Your seat context is not loaded. Tell the us
 pub const SEAT_INTEGRITY: &str = "Your seat context is not loaded. Tell the user, carry on with what you can without seat-specific rules, and do not retry. Do not guess your seat.";
 
 /// The full stderr text and exit code of a failed `seat`: the generic failure plus the seat sentences for exits 5 and 6.
-pub fn seat_failure(e: &ClientError, in_herdr: bool) -> (u8, String) {
-    let f = classify(e, in_herdr);
+pub fn seat_failure(e: &ClientError) -> (u8, String) {
+    let f = classify(e);
     let line = match f.outcome {
         Outcome::Unavailable => format!("{} {SEAT_UNAVAILABLE}", f.line),
         Outcome::Integrity => format!("{} {SEAT_INTEGRITY}", f.line),
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn seat_failure_appends_retry_sentences_for_5() {
-        let (code, line) = seat_failure(&ClientError::Unavailable("x".into()), true);
+        let (code, line) = seat_failure(&ClientError::Unavailable("x".into()));
         assert_eq!(code, 5);
         assert_eq!(
             line,
@@ -211,7 +211,7 @@ mod tests {
             code: crate::ipc::IpcErrorCode::Integrity,
             message: "st_a: teamspace ts_b not found".into(),
         };
-        let (code, line) = seat_failure(&e, true);
+        let (code, line) = seat_failure(&e);
         assert_eq!(code, 6);
         assert_eq!(
             line,
@@ -226,11 +226,11 @@ mod tests {
     #[test]
     fn seat_failure_leaves_other_codes_alone() {
         assert_eq!(
-            seat_failure(&ClientError::NotInHerdr, false),
+            seat_failure(&ClientError::NotInHerdr),
             (2, crate::cli::daemon_error::NOT_IN_HERDR.to_owned())
         );
         assert_eq!(
-            seat_failure(&ClientError::NoInstance, true),
+            seat_failure(&ClientError::NoInstance),
             (2, ClientError::NoInstance.to_string())
         );
     }

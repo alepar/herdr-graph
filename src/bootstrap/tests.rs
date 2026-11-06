@@ -4053,7 +4053,7 @@ fn full_exit_6_text_end_to_end() {
         message: err.message.clone(),
     };
     assert_eq!(
-        seat_failure(&remote, true),
+        seat_failure(&remote),
         (
             6,
             format!(
