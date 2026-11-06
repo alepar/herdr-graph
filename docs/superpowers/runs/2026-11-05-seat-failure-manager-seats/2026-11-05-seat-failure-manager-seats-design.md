@@ -320,7 +320,7 @@ Recommended: inside `do_retire_seat` (all seven routes converge there), before a
 the retiring seat's effective manager M skipping seats being retired in the same mutation (nearest
 surviving ancestor; ultimately the node manager, which cannot be retired), then rewrite every live
 seat whose explicit `manager` is the retiring seat, and every teamspace whose `default_manager` is
-the retiring seat, to M (B6). "Live" holders exclude seats (and teamspaces) retiring in the same
+the retiring seat, to M (B6). "Live" holders exclude seats (not teamspaces: a teamspace retiring in the same mutation keeps its own default_manager rewrite on its archived record, as hg-k4l.56 lands and its tests pin) retiring in the same
 mutation, in preview and in sequential apply alike, so the answer does not depend on retirement
 order: when A and B retire together and B.manager is A, retiring A finds no live holder and never
 walks A's chain. M is computed only when at least one such live seat or teamspace

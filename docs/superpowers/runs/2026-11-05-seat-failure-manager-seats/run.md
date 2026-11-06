@@ -33,6 +33,7 @@ scopeFilter-round-2: [Should-fix] src/observe/mutations.rs:242 in-scope — Show
 scope-filter: 2 in-scope · 0 punch-listed
 stepBackCode-round-2: local — stale teamspace write-back repeat and node-manager closure ordering; clusters stale-teamspace-writeback, node-manager-closure-ordering, committed-evidence-logs
 stepBackCode-round-3: redesign — applied: three modules re-derive clone survival from different signals (classify pane_survives, CascadeMutation nm-only closed exemption, planner seat-level moved_out) → one per-clone survival fact decided by CascadeMutation at apply time; moved_out never gates reconciliation (dissolves 5)
+decision-hg-s2f: hg-k4l.71 live-holder set is seats only (option A); a co-retiring teamspace keeps its own default_manager rewrite; spec §4.11 over-generalisation from f1a0b4c corrected
 graph-pass: depth 7→7 · width 3.1→3.1 · applied 0 · parked 1
 stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
