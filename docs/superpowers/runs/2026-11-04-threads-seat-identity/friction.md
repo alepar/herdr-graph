@@ -16,3 +16,4 @@ Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg
 - [2026-11-05] roast-code r2: same assembler provenance gap (inv-4aa37d70 cluster-4); bounded direct review.
 - [2026-11-06] roast-code r2: reporter failed (account usage limit); report is the engine fallback (raw seat severities, default routes); degraded round.
 - [2026-11-06] fix loop r2: finding-route records not written per occurrence (manual routing to beads in run.md/bead text); projection routes may show unrouted.
+- [2026-11-06] phase-6 sweep: private-herdr tier hit a rustc ICE (failed to spawn work thread, EAGAIN); 51 stale private test herdr servers (HOME=/tmp/hg-*, 29-31h old) are still running; terminating them was refused by the permission layer — human action: stop them (pgrep -u $USER -f 'herdr server' with HOME under /tmp/hg-*) and remove their /tmp/hg-* dirs.
