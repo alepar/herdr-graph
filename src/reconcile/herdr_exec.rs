@@ -148,7 +148,10 @@ impl HerdrExecutor {
             EffectKind::RenameWorkspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
             EffectKind::CreateTab => seat_of(e)
                 .and_then(|s| d.tab(&s))
-                .is_some_and(|t| !t.moved_out && !t.is_unknown()),
+                // Spec §4.9 Reopening: `moved_out` never gates the node manager's tab recreation.
+                .is_some_and(|t| {
+                    (!t.moved_out || d.node_manager.as_ref() == Some(&t.seat)) && !t.is_unknown()
+                }),
             EffectKind::RenameTab => seat_of(e).and_then(|s| d.tab(&s)).is_some(),
             EffectKind::StampToken => match e.object.kind() {
                 crate::model::IdKind::Teamspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
@@ -777,5 +780,76 @@ impl EffectExecutor for HerdrExecutor {
                 ExecOutcome::Failed(format!("herdr executor does not handle {}", other.as_str()))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::OpId;
+    use crate::reconcile::desired::DesiredTab;
+
+    fn create_tab_row(seat: &SeatId) -> EffectRecord {
+        let op = OpId::new();
+        let object = seat.to_any();
+        EffectRecord {
+            id: EffectRecord::identity(&op, &object, &EffectKind::CreateTab, 1),
+            op,
+            object,
+            kind: EffectKind::CreateTab,
+            object_rev: 1,
+            fencing_rev: 1,
+            status: EffectStatus::Pending,
+            predicted: vec![],
+            nonce_label: None,
+            attempts: 0,
+            last_error: None,
+            updated_at: chrono::Utc::now(),
+            sched: Default::default(),
+        }
+    }
+
+    fn desired_with_tab(seat: &SeatId, node_manager: bool, moved_out: bool) -> DesiredRuntime {
+        DesiredRuntime {
+            tabs: vec![DesiredTab {
+                seat: seat.clone(),
+                ts: TeamspaceId::new(),
+                name: "seat".into(),
+                cwd: "/".into(),
+                env: vec![],
+                moved_out,
+                bound: None,
+                availability: Availability::Present,
+                rev: 1,
+            }],
+            node_manager: node_manager.then(|| seat.clone()),
+            ..Default::default()
+        }
+    }
+
+    /// Spec §4.9 Reopening: `moved_out` never gates the node manager's tab recreation; every other seat keeps
+    /// the gate.
+    #[test]
+    fn moved_out_node_manager_create_tab_is_implied() {
+        let dir = tempfile::tempdir().unwrap();
+        let exec = HerdrExecutor {
+            journal: Arc::new(Journal::open(&dir.path().join("journal.sqlite3")).unwrap()),
+            cfg: ReconcilerConfig::new(dir.path().to_path_buf()),
+            cache: Arc::new(DesiredCache::default()),
+        };
+        let seat = SeatId::new();
+        let row = create_tab_row(&seat);
+        assert!(
+            exec.implied(&desired_with_tab(&seat, true, true), &row),
+            "a moved-out node manager's CreateTab is not cancelled"
+        );
+        assert!(
+            !exec.implied(&desired_with_tab(&seat, false, true), &row),
+            "a moved-out plain seat's CreateTab is cancelled"
+        );
+        assert!(
+            exec.implied(&desired_with_tab(&seat, false, false), &row),
+            "a seat that is not moved out keeps its CreateTab"
+        );
     }
 }
