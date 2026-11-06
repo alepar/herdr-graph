@@ -144,6 +144,25 @@ impl<'a> LiveIndex<'a> {
         })
     }
 
+    /// The live workspace belongs to a teamspace other than `ts`: its graph token names another teamspace, or
+    /// another desired teamspace's committed binding (this incarnation) names it. Such a workspace never places
+    /// `ts`'s workspace nor holds its tabs (spec §4.9 Workspace placement).
+    pub fn foreign_to(&self, ws: &WorkspaceInfo, ts: &TeamspaceId) -> bool {
+        if token_of(&ws.metadata)
+            .and_then(|t| TeamspaceId::parse(t.as_str()).ok())
+            .is_some_and(|t| t != *ts)
+        {
+            return true;
+        }
+        self.desired.teamspaces.iter().any(|(id, t)| {
+            id != ts
+                && t.runtime.bound.as_ref().is_some_and(|b| {
+                    b.incarnation == self.snap.incarnation
+                        && b.workspace_id.as_ref() == Some(&ws.id)
+                })
+        })
+    }
+
     pub fn workspace(&self, ts: &TeamspaceId) -> Option<LiveWorkspace<'a>> {
         let any = ts.to_any();
         if let Some(ws) = self
@@ -200,13 +219,14 @@ impl<'a> LiveIndex<'a> {
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
-        // A rebound clone pane (see `pane`) places its teamspace's workspace; a moved-out seat's pane lives in
-        // someone else's workspace, so it never does.
+        // A rebound clone pane (see `pane`) places its teamspace's workspace, unless it sits in a workspace that
+        // belongs to another teamspace (a moved clone lives in someone else's). Placement reads the pane's
+        // workspace, never `moved_out`: a node manager with a clone elsewhere still has its own workspace.
         self.desired
             .panes
             .iter()
-            .filter(|p| p.ts == *ts && !self.desired.tab(&p.seat).is_some_and(|t| t.moved_out))
-            .find_map(|p| self.pane(&p.clone))
+            .filter(|p| p.ts == *ts)
+            .find_map(|p| self.pane(&p.clone).filter(|lp| !self.foreign_to(lp.ws, ts)))
             .map(|lp| LiveWorkspace {
                 ws: lp.ws,
                 stamped: false,

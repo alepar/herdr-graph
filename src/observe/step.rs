@@ -5,7 +5,8 @@ use super::classify::{Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
 use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
 use super::mutations::{
-    availability_request, cascade_request, move_request, occupancy_request, rename_request,
+    applied_ends, availability_request, cascade_request_with, move_request, occupancy_request,
+    rename_request,
 };
 use crate::config::InstancePaths;
 use crate::journal::Journal;
@@ -97,6 +98,9 @@ struct LoopState {
 struct PlannedOp {
     request: ChangeRequest,
     ends: Vec<EndedSession>,
+    /// A cascade: it decides at apply time which listed clones end, so `ends` is a plan and only the ends the
+    /// committed tree shows are emitted.
+    verify_ends: bool,
 }
 
 pub struct RuntimeLoop {
@@ -179,6 +183,23 @@ fn runtime_of<'a>(d: &'a DesiredRuntime, object: &AnyId) -> Option<&'a Runtime> 
         .map(|r| &r.runtime)
 }
 
+/// The operator warning for a node manager that was moved outside a plan (one per step): a recorded move of
+/// one of its clones, or the seat flagged moved out. The placement is not reverted.
+pub(super) fn node_manager_move_warning(d: &DesiredRuntime, c: &Classified) -> Option<String> {
+    let n = d.node_manager.as_ref()?;
+    let moved = c
+        .moves
+        .iter()
+        .any(|m| d.clones.get(&m.clone).is_some_and(|rec| &rec.seat == n))
+        || c.moved_out.contains(n);
+    moved.then(|| {
+        let name = d.seats.get(n).map_or("?", |s| s.name.as_str());
+        format!(
+            "herdr-graph: observe: node manager {name} ({n}) was moved outside a plan; its placement is not reverted"
+        )
+    })
+}
+
 /// Turn a classification into the requests of one step, in commit order: cascades, renames, occupancy,
 /// moves, explained closures, unknowns (rebind only), and finally binding write-backs for matched objects.
 fn build_ops(
@@ -194,12 +215,14 @@ fn build_ops(
     let plain = |request: ChangeRequest| PlannedOp {
         request,
         ends: vec![],
+        verify_ends: false,
     };
 
     for cas in &c.cascades {
         ops.push(PlannedOp {
-            request: cascade_request(cas.rule, &cas.retire, now),
+            request: cascade_request_with(cas.rule, &cas.retire, &cas.survived, now),
             ends: cas.ends.clone(),
+            verify_ends: true,
         });
     }
     for (object, new) in &c.renames {
@@ -214,6 +237,7 @@ fn build_ops(
                 now,
             ),
             ends: oc.end.iter().cloned().collect(),
+            verify_ends: false,
         });
     }
 
@@ -260,6 +284,7 @@ fn build_ops(
             ops.push(PlannedOp {
                 request: occupancy_request(&e.clone, Some(e.reason), None, now),
                 ends: vec![e.clone()],
+                verify_ends: false,
             });
         }
     }
@@ -430,6 +455,27 @@ impl RuntimeLoop {
         }
     }
 
+    /// The planned ends of a committed cascade that the new head shows as ended. A failed head read emits
+    /// nothing: under-emitting is safe, the next diff re-derives the request.
+    fn applied_ends_of(&self, planned: Vec<EndedSession>) -> Vec<EndedSession> {
+        if planned.is_empty() {
+            return planned;
+        }
+        let read = self.store.head().and_then(|at| {
+            applied_ends(
+                &CommitView {
+                    store: &*self.store,
+                    at,
+                },
+                &planned,
+            )
+        });
+        read.unwrap_or_else(|e| {
+            eprintln!("herdr-graph: observe: cannot verify cascade session ends: {e}");
+            Vec::new()
+        })
+    }
+
     /// Admit `ops` in order and wait for each to reach a terminal state. Emits `SessionEnded` for every
     /// committed op that ended sessions. Returns whether all committed.
     async fn commit_ops(
@@ -438,13 +484,13 @@ impl RuntimeLoop {
         limit: Duration,
         summary: &mut StepSummary,
     ) -> bool {
-        let mut admitted: Vec<(OpId, Vec<EndedSession>)> = Vec::new();
+        let mut admitted: Vec<(OpId, Vec<EndedSession>, bool)> = Vec::new();
         let mut all_ok = true;
         for op in ops {
             match self.writer.admit(op.request) {
                 Ok(id) => {
                     summary.observed.push(id.clone());
-                    admitted.push((id, op.ends));
+                    admitted.push((id, op.ends, op.verify_ends));
                 }
                 Err(e) => {
                     eprintln!("herdr-graph: observe: cannot admit observed mutation: {e}");
@@ -453,10 +499,15 @@ impl RuntimeLoop {
                 }
             }
         }
-        for (id, ends) in admitted {
+        for (id, ends, verify) in admitted {
             match self.wait_terminal(&id, limit).await {
                 Some(OpState::Committed) => {
                     summary.committed += 1;
+                    let ends = if verify {
+                        self.applied_ends_of(ends)
+                    } else {
+                        ends
+                    };
                     for e in ends {
                         // No subscribers is fine.
                         let _ = self.session_ended.send(SessionEnded {
@@ -539,7 +590,7 @@ impl RuntimeLoop {
             _ => (diff::rebind(&cx), None),
         };
         let preds = predictions(&self.journal);
-        let classified = classify(
+        let mut classified = classify(
             &ClassifyCx {
                 desired: &desired,
                 journal: &self.journal,
@@ -549,6 +600,9 @@ impl RuntimeLoop {
             },
             elements,
         );
+        classified
+            .warnings
+            .extend(node_manager_move_warning(&desired, &classified));
         for w in &classified.warnings {
             eprintln!("{w}");
         }
@@ -635,6 +689,7 @@ impl RuntimeLoop {
                 ops.push(PlannedOp {
                     request: availability_request(&object, Availability::Unknown),
                     ends: vec![],
+                    verify_ends: false,
                 });
             }
         };

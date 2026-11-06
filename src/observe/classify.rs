@@ -3,6 +3,11 @@
 //!
 //! No wall-clock window: an element is explained when the committed desired state no longer wants the
 //! object, or when an unconsumed prediction of a journaled effect says its container closes.
+//!
+//! Classification reports facts and never decides. A workspace or tab cascade lists every live clone of the
+//! closed container's seats and names, in `survived`, the listed clones whose pane left the container alive.
+//! Whether a survived clone keeps its seat is decided at apply time by `CascadeMutation` against the live node
+//! manager (spec §4.9): this module reads the node manager nowhere.
 use super::diff::DiffElement;
 use super::matcher::Matches;
 use super::sessions::SessionCapture;
@@ -50,7 +55,10 @@ pub struct Cascade {
     pub rule: CascadeRule,
     /// Non-retired objects at the committed head the cascade retires, root first.
     pub retire: Vec<AnyId>,
+    /// Every listed clone with an occupant, survived ones included (`CascadeMutation` ends what it applies).
     pub ends: Vec<EndedSession>,
+    /// The listed clones whose pane left the closed container alive (workspace cascades only).
+    pub survived: Vec<CloneId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,16 +206,18 @@ fn pane_survives(cx: &ClassifyCx<'_>, clone: &CloneId) -> bool {
     })
 }
 
-/// The seat (when `root`) and its live clones, minus the clones `keep` says outlived the closure.
+/// The seat (when `root`) and every live clone of it; `survived` collects the clones `survives` says outlived the
+/// closure (they are still listed: whether they matter is decided at apply time).
 fn seat_group(
     d: &DesiredRuntime,
     seat: &SeatId,
     rule: CascadeRule,
     root: bool,
-    keep: impl Fn(&CloneId) -> bool,
+    survives: impl Fn(&CloneId) -> bool,
 ) -> Cascade {
     let mut retire = Vec::new();
     let mut ends = Vec::new();
+    let mut survived = Vec::new();
     if root
         && d.seats
             .get(seat)
@@ -215,11 +225,19 @@ fn seat_group(
     {
         retire.push(seat.to_any());
     }
-    for c in live_clones(d, seat).filter(|c| !keep(&c.id)) {
+    for c in live_clones(d, seat) {
         retire.push(c.id.to_any());
         ends.extend(ended_of(c, SessionEndReason::PaneClosed));
+        if survives(&c.id) {
+            survived.push(c.id.clone());
+        }
     }
-    Cascade { rule, retire, ends }
+    Cascade {
+        rule,
+        retire,
+        ends,
+        survived,
+    }
 }
 
 pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
@@ -279,10 +297,10 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
     // decides keep-or-retire against the live node manager when it applies (spec 4.9), so classification, made
     // from a head read before the awaited snapshot, cannot disagree with a concurrent `node-manager set`.
     let seat_ts = |s: &SeatId| d.seats.get(s).map(|r| r.teamspace.clone());
-    let nm = d.node_manager.as_ref();
     for ts in &ws_gone {
         let mut retire = Vec::new();
         let mut group_ends = Vec::new();
+        let mut survived = Vec::new();
         if d.teamspaces
             .get(ts)
             .is_some_and(|t| t.lifecycle != Lifecycle::Retired)
@@ -294,18 +312,20 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             .values()
             .filter(|s| &s.teamspace == ts && s.lifecycle != Lifecycle::Retired)
         {
-            // A pane that left the workspace alive is not closed: its clone is not listed (and its session not ended).
+            // A pane that left the workspace alive is listed too and named in `survived`.
             let g = seat_group(d, &seat.id, CascadeRule::Workspace, true, |c| {
                 pane_survives(cx, c)
             });
             retire.extend(g.retire);
             group_ends.extend(g.ends);
+            survived.extend(g.survived);
         }
         if !retire.is_empty() {
             out.cascades.push(Cascade {
                 rule: CascadeRule::Workspace,
                 retire,
                 ends: group_ends,
+                survived,
             });
         }
     }
@@ -347,10 +367,10 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
             ends: ended_of(rec, SessionEndReason::PaneClosed)
                 .into_iter()
                 .collect(),
+            survived: vec![],
         });
     }
     let retired_now = out.retired_now();
-    let mut nm_moved = false;
 
     // Renames: explained by a predicted end state, by an in-flight rename (rebind only), or moot.
     let mut seen: BTreeSet<AnyId> = BTreeSet::new();
@@ -378,21 +398,12 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         if retired_now.contains(&clone.to_any()) {
             continue;
         }
-        nm_moved |= nm.is_some_and(|n| d.clones.get(&clone).is_some_and(|c| &c.seat == n));
         let known = cx.matches.tabs.contains_key(&to_tab);
         out.moves.push(MoveFact {
             clone,
             to_tab,
             known,
         });
-    }
-
-    nm_moved |= nm.is_some_and(|n| out.moved_out.contains(n));
-    if let Some(n) = nm.filter(|_| nm_moved) {
-        let name = d.seats.get(n).map_or("?", |s| s.name.as_str());
-        out.warnings.push(format!(
-            "herdr-graph: observe: node manager {name} ({n}) was moved outside a plan; its placement is not reverted"
-        ));
     }
 
     let mut occ_clones: BTreeSet<CloneId> = ends.keys().chain(starts.keys()).cloned().collect();
