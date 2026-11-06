@@ -68,7 +68,9 @@ pub fn restore_mark_failed_key(clone: &CloneId) -> String {
     format!("restore_mark_failed:{clone}")
 }
 
-/// Journal meta: `{"reason":"not_launchable"}` while an acknowledged Restore has no resumable session to launch.
+/// Journal meta: `{"reason":"not_launchable"}`. No longer written: before D1 every acknowledged Restore of an
+/// agent clone is launchable (resume, else a fresh agent), so the planner only clears a key an earlier build
+/// left behind. `status` still reads it.
 pub fn restore_stuck_key(clone: &CloneId) -> String {
     format!("restore_stuck:{clone}")
 }
@@ -946,7 +948,8 @@ fn put_meta_if_changed(journal: &Journal, key: &str, wanted: Option<&str>) {
 
 /// The resume driver (spec §9, §14.4): the single launcher for the restart and restore triggers. Both need
 /// the clone's bound pane to exist in this snapshot with no agent in it; only the session path exists before
-/// D1, so a resumable session is required. `RelaunchOccupant` carries the 90 s incarnation grace and the
+/// D1, so the restart trigger requires a resumable session; the restore trigger resumes when it can and
+/// otherwise launches a fresh agent. `RelaunchOccupant` carries the 90 s incarnation grace and the
 /// shell-foreground guard; the restore launch runs at once, once per Restore epoch.
 fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
     let changed_at = incarnation_changed_at(journal);
@@ -964,7 +967,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
             .as_ref()
             .is_some_and(|f| matches!(f.state, SeatFactState::KeyConflict { .. }));
 
-        if eligible
+        if startable
             && !key_conflict
             && let Some(SeatIntent::Restore {
                 epoch,
@@ -1024,24 +1027,9 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 }
             }
         }
-        // An acknowledged, unlaunched Restore with nothing to resume is named, never launched fresh.
-        let not_launchable = startable
-            && p.resume.is_none()
-            && matches!(
-                p.seat_intent,
-                Some(SeatIntent::Restore {
-                    threads_done: true,
-                    launched: None,
-                    ..
-                })
-            );
-        sync_meta(
-            journal,
-            &restore_stuck_key(&p.clone),
-            not_launchable
-                .then(|| serde_json::json!({ "reason": "not_launchable" }).to_string())
-                .as_deref(),
-        );
+        // An acknowledged Restore with nothing to resume launches fresh, so it is never "not launchable": clear
+        // a key an earlier build wrote.
+        sync_meta(journal, &restore_stuck_key(&p.clone), None);
         put_meta_if_changed(
             journal,
             &blocked_key,

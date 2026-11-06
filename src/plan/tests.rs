@@ -3502,6 +3502,60 @@ fn plan_error(fx: &Fx, change: &str) -> String {
 }
 
 #[test]
+fn restore_commit_clears_occupant_and_runtime() {
+    use crate::model::clone::{SeatFact, SeatFactState, SeatIntent};
+    use crate::model::common::{Availability, Binding, Occupant};
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness claude",
+    );
+    let (_, rec) = seat(&fx, "foreman", None);
+    let mut c = clones_of(&fx, &rec.id).remove(0).1;
+    let dirty = |c: &mut CloneRecord| {
+        c.occupant = Some(Occupant {
+            native_session: crate::model::NsId::new(),
+            harness: crate::model::harness::Harness::Claude,
+            since: t0(),
+        });
+        c.runtime.availability = Availability::Present;
+        c.runtime.bound = Some(Binding::default());
+        c.runtime.observed_at = Some(t0());
+        c.seat_fact = Some(SeatFact {
+            seat: "seat-7".into(),
+            state: SeatFactState::Retired { reversible: false },
+            read_at: t0(),
+        });
+    };
+    dirty(&mut c);
+    c.threads_seat = Some("seat-7".into());
+    let op = OpId::new();
+    super::core_kinds::restore_commit(&mut c, &op);
+    assert_eq!(c.occupant, None);
+    assert_eq!(c.runtime, super::core_kinds::absent());
+    assert_eq!(c.seat_fact, None);
+    assert_eq!(
+        c.seat_intent,
+        Some(SeatIntent::Restore {
+            seat: "seat-7".into(),
+            epoch: op,
+            threads_done: false,
+            launched: None,
+            last_refusal: None,
+        })
+    );
+
+    // A seatless clone: the survivor is cleared, no intent is written.
+    let mut plain = clones_of(&fx, &rec.id).remove(0).1;
+    dirty(&mut plain);
+    super::core_kinds::restore_commit(&mut plain, &OpId::new());
+    assert_eq!(plain.occupant, None);
+    assert_eq!(plain.runtime, super::core_kinds::absent());
+    assert_eq!(plain.seat_intent, None);
+}
+
+#[test]
 fn seat_activate_writes_a_restore_intent_for_seated_clones_only() {
     let fx = fx();
     alpha(&fx);

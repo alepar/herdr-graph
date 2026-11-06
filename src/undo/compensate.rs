@@ -370,9 +370,7 @@ fn restore_mutate(
         let mut rec = rec;
         rec.lifecycle = CloneLifecycle::Active;
         rec.retired = None;
-        rec.occupant = None;
-        rec.runtime = absent();
-        crate::threads::assignment::write_restore_intent(&mut rec, &cx.op);
+        crate::plan::core_kinds::restore_commit(&mut rec, &cx.op);
         cx.tree.put_record(loc.record_path, &mut rec)?;
         acc.changed(c.to_any(), "retired", "active");
         let f = read_seat(&cx.tree, &rec.seat).map_err(mm)?;

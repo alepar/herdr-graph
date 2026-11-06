@@ -92,6 +92,16 @@ pub(crate) fn absent() -> Runtime {
     }
 }
 
+/// The restore commit for one clone being brought back (resurrection, undo, seat reactivation): the old pane's
+/// occupant and runtime are gone with the closed pane, and a seated clone gets the Restore intent of `op`
+/// (succession pre-D2, un-retire post-D2) so the Retired arm does not retire it. A seatless clone gets no intent
+/// and is started by the ordinary start rule.
+pub(crate) fn restore_commit(c: &mut CloneRecord, op: &crate::model::OpId) {
+    c.occupant = None;
+    c.runtime = absent();
+    crate::threads::assignment::write_restore_intent(c, op);
+}
+
 pub(crate) fn basename(p: &RepoPath) -> &str {
     p.as_str().rsplit('/').next().unwrap_or_default()
 }
@@ -519,9 +529,7 @@ pub(crate) fn do_resurrect_seat(
         let mut c = c.clone();
         c.lifecycle = CloneLifecycle::Active;
         c.retired = None;
-        c.occupant = None;
-        c.runtime = absent();
-        crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
+        restore_commit(&mut c, &cx.op);
         cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         acc.changed(c.id.to_any(), "retired", "active");
         clone_ids.push(c.id.clone());
@@ -1186,13 +1194,15 @@ impl OrgKind for SeatActivate {
         }
         // Reactivating a Dormant seat (and its teamspace) is treated like resurrection: the graph's
         // deactivation close made threads retire the pane's seat, so a seated clone needs a Restore intent
-        // for succession (pre-D2) or un-retire (post-D2). A seatless clone is left untouched.
+        // for succession (pre-D2) or un-retire (post-D2). The old pane's occupant and runtime are cleared as on
+        // resurrection, so a stale occupant can neither block the restore launch nor let the clear-on-reattach
+        // want clear the intent before an agent runs. A seatless clone is left untouched.
         for (loc, c) in f.active_clones() {
             if c.is_tombstone() || c.threads_seat.is_none() {
                 continue;
             }
             let mut c = c.clone();
-            crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
+            restore_commit(&mut c, &cx.op);
             cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         }
         let mut rec = f.rec.clone();
