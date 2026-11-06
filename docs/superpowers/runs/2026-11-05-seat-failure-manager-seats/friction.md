@@ -22,3 +22,4 @@
 - [2026-11-06] code redesign 1: amend roast beads hg-k4l.68..71 wired under hg-k4l.67 (this cycle's own post-amend integration sweep) though the code loop normally adds no sweep edges; deliberate so the sweep verifies the final state
 - [2026-11-06] disk: /var 306G free during invocation 9; removed 8 closed, merged, idle task worktrees → 337G
 - [2026-11-06] hg-k4l.67 evidence: tests/daemon_composed.rs passes with --test-threads=1 and fails in parallel; to be measured by the phase-6 sweep
+- [2026-11-06] report drafter's Write was refused by the harness ('subagents should return findings as text'); orchestrator wrote report.draft.md from the drafter's returned text verbatim, then spliced the status block
