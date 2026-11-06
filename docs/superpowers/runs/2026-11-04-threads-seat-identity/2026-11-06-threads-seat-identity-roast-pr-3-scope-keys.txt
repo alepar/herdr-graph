@@ -1,0 +1,16 @@
+[Nit] src/plan/core_kinds.rs:1187
+[Nit] src/observe/seat_observation.rs:189
+[Nit] CURRENT-DESIGN.md:65
+[Must-fix] Baseline B1 not delivered: the old clone matcher (`match_snapshot` in src/observe/step.rs, planner LiveIndex) still runs beside SeatObservation; deletion beads hg-66u.14/hg-66u.15 open behind gate hg-66u.1 (D1); no human scope change row covers it.
+[Must-fix] Baseline B3 not delivered: re-matching is not delegated to threads; same evidence as B1 (hg-66u.14, hg-66u.15 open, D1 gate open).
+[Must-fix] Baseline B4 not delivered for fresh agents and unseated clones: `restart_covered` needs `had_agent` plus a resumable session and a `threads_seat` (src/reconcile/planner.rs); fresh-agent and unseated paths hg-66u.21/hg-66u.33 open (D1); private-rig smoke hg-66u.17 open.
+[Must-fix] Baseline B7 not delivered as requested: undo succeeds a new seat via `SucceedSeat` (src/threads/effects.rs) instead of un-retiring the original; `UnretireSeat`/finalize beads hg-66u.31/hg-66u.32 open behind gate hg-66u.2 (D2).
+[Must-fix] Baseline B9 not delivered: every start site passes `agent_env(&clone, false)` (src/reconcile/herdr_exec.rs), so `HERDR_THREADS_CONTINUITY_KEY` is never emitted; reservation/keyed-launch/key-link/KeyConflict beads hg-66u.43/.44/.68/.40 open (D1).
+[Must-fix] Baseline B10 not delivered: the interim restore re-invites memberships on the succeeded seat, which need accepting again (not hands-off); un-retire membership restore gated on D2 (hg-66u.31/.32 open).
+[Must-fix] Known product defect hg-66u.80 (open): `seated_clones` (src/observe/seat_observation.rs) ignores Dormant seats and teamspaces, so after deactivation the pre-D2 final-retired pane seat hits the Retired arm and retires the clone; it cannot be restored by reactivation.
+[Must-fix] Misgraded minors naming failing tests: `instruction_source_writers_are_inventoried`, `sweep_action_and_effect_envelopes_round_trip` (Task 16/26) and the `herdr_client` linker abort (Task 52) must be measured green or fixed in the end-of-epic full-suite run; hg-66u.65 closed with no recorded reason.
+[Must-fix] Requirement baseline B3, B7, B9, B10 (and B4/B5 fresh-agent path) are undelivered at 333ba07 with no human scope-change row: land only after gates hg-66u.1/.2 release and hg-66u.14/.15/.21/.31/.32/.33/.40/.43/.44/.68 land, or obtain a human scope-change row
+[Must-fix] hg-66u.80 acceptance item 2 is unproven: restore a fake-backed test (in an allowed file) driving seat activate through SucceedSeat, restore launch and re-invite, which test 6598e80 deleted
+[Must-fix] Verify SeatActivate's Restore path when an occupant survives deactivation: SeatActivate does not clear occupant/runtime as do_resurrect_seat does, and reattached_restore can clear the intent with no launch (src/plan/core_kinds.rs SeatActivate, src/threads/effects.rs reattached_restore)
+[Must-fix] tests/e2e_private_herdr.rs adoption tests rewritten in hg-66u.29 were compile-checked only; run them on a private rig
+[Must-fix] Whole-range final review remains outstanding: this review is bounded (provenance gaps retained)
