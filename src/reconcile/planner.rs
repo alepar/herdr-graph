@@ -1,6 +1,6 @@
 //! Desired-vs-live diff for the Herdr effect family (spec §4.4). Level-triggered and pure: the same
 //! committed state and snapshot always yield the same effect ids.
-use super::desired::{DesiredPane, DesiredRuntime};
+use super::desired::{DesiredPane, DesiredRuntime, DesiredTab};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
@@ -354,7 +354,11 @@ impl<'a> LiveIndex<'a> {
             return Some(found);
         }
         // A moved-out seat's clones live in other tabs: a token search would find (and claim) someone else's tab.
-        if self.desired.tab(seat).is_some_and(|t| t.moved_out) {
+        if self
+            .desired
+            .tab(seat)
+            .is_some_and(|t| gates_recreation(self.desired, t))
+        {
             return None;
         }
         // Spec §4.9: a workspace stamped for or bound to another teamspace never holds this seat's tab, the same
@@ -448,6 +452,11 @@ impl<'a> LiveIndex<'a> {
             .filter(|p| !p.is_unknown() && self.pane(&p.clone).is_none())
             .collect()
     }
+}
+
+/// `moved_out` gates tab and pane recreation for plain seats only; the node manager is reopened whatever it says (spec §4.9 Reopening).
+fn gates_recreation(d: &DesiredRuntime, tab: &DesiredTab) -> bool {
+    tab.moved_out && d.node_manager.as_ref() != Some(&tab.seat)
 }
 
 fn pred(object: AnyId, container: ContainerKind, end: EndState, induced: bool) -> PredictedEnd {
@@ -549,7 +558,9 @@ pub fn plan_effects(
                 // An empty workspace is pointless (and Herdr closes it with its last tab): only create one when
                 // a seat tab is going into it.
                 let wanted = desired.tabs.iter().filter(|t| t.ts == ws.ts).any(|t| {
-                    !t.moved_out && !t.is_unknown() && !idx.missing_clones(&t.seat).is_empty()
+                    !gates_recreation(desired, t)
+                        && !t.is_unknown()
+                        && !idx.missing_clones(&t.seat).is_empty()
                 });
                 if ws.is_unknown() || !wanted {
                     continue;
@@ -633,7 +644,7 @@ pub fn plan_effects(
             match idx.tab_for_seat(&tab.seat) {
                 None => {
                     // r2: no create_tab for a moved-out seat, nor when every active clone already lives elsewhere.
-                    if tab.moved_out || tab.is_unknown() {
+                    if gates_recreation(desired, tab) || tab.is_unknown() {
                         continue;
                     }
                     // A clone adopted into a pane outside the seat's own tab (undo from the caller's pane) is bound
