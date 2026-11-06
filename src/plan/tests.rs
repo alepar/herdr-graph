@@ -4173,6 +4173,49 @@ fn reparent_two_hop_teamspace_retire_records_one_row() {
     );
 }
 
+/// A and B retire together (teamspace retire), B.manager = A, A's own chain dangling. B is a co-retiring seat, so
+/// A has no live holder and A's chain is never walked (spec 4.11), whichever of the two the apply retires first.
+/// `a_first` picks the seat slugs so `layout::list_seats` (slug order) retires A first or B first.
+fn co_retiring_report_of_dangling_seat(a_first: bool) {
+    use super::managers::reparent::testing::{recorded, seat_request};
+    let (a_name, b_name) = if a_first {
+        ("a-boss", "b-report")
+    } else {
+        ("b-boss", "a-report")
+    };
+    let fx = fx();
+    alpha(&fx);
+    commit(&fx, "teamspace create beta");
+    dormant_seats(&fx, "beta", &["nm"]);
+    dormant_seats(&fx, "alpha", &[a_name, b_name]);
+    set_nm(&fx, "nm");
+    let (a, b) = (seat_id(&fx, a_name), seat_id(&fx, b_name));
+    commit_request(&fx, seat_request(&a, Some(&SeatId::new())));
+    commit_request(&fx, seat_request(&b, Some(&a)));
+
+    let sp = plan(&fx, "teamspace retire alpha");
+    assert!(
+        pointer_effects(&sp).is_empty(),
+        "{:?}",
+        pointer_effects(&sp)
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(recorded(&action_of(&fx, &row)).is_empty());
+    // Same final pointers as the (empty) preview: B's archived record still names A.
+    assert_eq!(manager_of(&fx, b_name), Some(a));
+}
+
+#[test]
+fn co_retiring_report_of_dangling_seat_a_retired_first() {
+    co_retiring_report_of_dangling_seat(true);
+}
+
+#[test]
+fn co_retiring_report_of_dangling_seat_b_retired_first() {
+    co_retiring_report_of_dangling_seat(false);
+}
+
 /// Active teamspace `alpha` with one active seat per name, node manager unset.
 fn active_seats(fx: &Fx, names: &[&str]) {
     commit(fx, "teamspace create alpha --active");

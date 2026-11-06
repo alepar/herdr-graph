@@ -60,9 +60,12 @@ struct Holders {
     teamspaces: Vec<TeamspaceId>,
 }
 
-/// The live records whose pointer is `old`: seats not retired and not in `retiring` whose `manager` is `old`, and
-/// teamspaces not Retired whose `default_manager` is `old`. `retiring` holders are skipped (a retiring holder's
-/// pointer is archived with it).
+/// The one live-holder rule (spec §4.11), reached by `reparent` and `reparent_effects` through `lazy_target`: the
+/// live records whose pointer is `old` are seats not retired and not in `retiring` whose `manager` is `old`, and
+/// teamspaces not Retired whose `default_manager` is `old`. Only co-retiring seats are excluded (a retiring seat's
+/// pointer is archived with it). A teamspace retiring in the same mutation stays a holder: it is marked Retired
+/// after its seat loop, and the preview reads the pre-mutation tree, so it keeps its default_manager rewrite on
+/// its archived record (hg-k4l.56; decision hg-s2f, option A).
 fn holders(
     pointers: &Pointers,
     tree: &dyn TreeRead,
@@ -126,7 +129,7 @@ fn lazy_target(
 /// Apply side, from do_retire_seat before the seat is archived: rewrite every live seat whose explicit manager is
 /// `seat` and every non-retired teamspace whose default_manager is `seat` to `seat`'s nearest surviving manager.
 /// `retiring` is every seat the mutation retires (routes that retire several seats fill it; `seat` is added): those
-/// seats are skipped as targets and as holders (a retiring holder's pointer is archived with it), so every live
+/// seats are skipped as targets and as holders (a retiring seat holder's pointer is archived with it), so every live
 /// holder gets one row whose `old` is its original pointer and final pointers match the preview. With no live
 /// holder nothing is computed (see `lazy_target`).
 /// `lenient`: see `lazy_target`.
@@ -170,8 +173,8 @@ pub fn reparent(
 /// in `retiring`, and each non-retired teamspace whose default_manager is in `retiring`, one seat.manager /
 /// teamspace.default_manager effect (`seat_manager_effect` / `default_manager_effect`) from the retiring seat to its
 /// nearest surviving manager, skipping every seat in `retiring`. Seat effects come first (by holder id), then
-/// teamspace effects (by teamspace id). A retiring holder gets no effect: its pointer is archived with it, so
-/// preview and apply agree on final pointers of live holders. Targets come from `lazy_target`, so a retiring seat
+/// teamspace effects (by teamspace id). A retiring seat holder gets no effect: its pointer is archived with it, so
+/// preview and apply agree on final pointers of live holders (a co-retiring teamspace still gets its effect). Targets come from `lazy_target`, so a retiring seat
 /// nothing points at is never walked.
 pub fn reparent_effects(
     tree: &dyn TreeRead,
