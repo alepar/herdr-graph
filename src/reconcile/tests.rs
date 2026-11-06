@@ -193,6 +193,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     register_core_kinds(&mut kinds);
     crate::templates::register_kinds(&mut kinds);
     crate::undo::register_kinds(&mut kinds);
+    crate::plan::kinds_extra::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
@@ -3463,7 +3464,7 @@ async fn failed_mark_launched_is_retried_without_launching() {
 }
 
 #[tokio::test]
-async fn restore_without_resumable_session_is_named_not_launchable() {
+async fn restore_without_resumable_session_launches_fresh() {
     let fx = fx();
     activate(&fx, "claude");
     step(&fx).await;
@@ -3478,21 +3479,30 @@ async fn restore_without_resumable_session_is_named_not_launchable() {
                 "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
     );
     fx.herdr.clear_calls();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].kind, "claude");
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
+        serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
+    );
+    // Launched, not stuck as "not launchable": only the post-launch wait for the agent to reattach is named.
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+    // One launch per epoch.
     for _ in 0..3 {
         fx.clock.advance(chrono::Duration::seconds(300));
         step(&fx).await;
     }
-    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
-    let stuck = stuck_restores(&fx);
-    assert_eq!(stuck.len(), 1, "{stuck:?}");
-    assert_eq!(stuck[0]["clone"], c.id.to_string());
-    assert_eq!(stuck[0]["reason"], "not_launchable");
-    assert!(
-        stuck[0]["remedy"]
-            .as_str()
-            .unwrap()
-            .contains("start an agent manually in the reopened pane")
-    );
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
 }
 
 #[tokio::test]
@@ -3781,4 +3791,203 @@ async fn seatless_restored_pane_is_not_the_resume_drivers() {
     assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
     assert_eq!(starts[0].args, ["--resume", "abc"]);
     assert_eq!(relaunch_rows(&fx), 0);
+}
+
+/// The fixture's reconciler with the threads effect source on fakes: channels, invites, succession.
+fn with_threads(
+    fx: &Fx,
+) -> (
+    Arc<crate::threads::fake::FakeThreads>,
+    Arc<crate::threads::mapping::FakePaneSeatMap>,
+) {
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    crate::threads::register_with(&fx.rec, threads.clone(), map.clone());
+    (threads, map)
+}
+
+async fn steps(fx: &Fx, n: usize) {
+    for _ in 0..n {
+        step(fx).await;
+    }
+}
+
+/// A seated claude clone with accepted memberships on seat-A and an ended session `abc`, whose live occupant
+/// survives the deactivation close (the observer never saw it end); the seat is then reactivated with
+/// `harness`. Drives the reactivation through the succession onto seat-B, the restore launch and the
+/// re-invite, and checks the end state: `resumes` says whether the launch resumes `abc` or starts fresh.
+async fn reactivate_seated(harness: &str, resumes: bool) {
+    use crate::model::clone::{InvitationState, InviteConstraint};
+    use crate::ports::threads::{ThreadRef, ThreadsSeatRef};
+    let fx = fx();
+    let (threads, map) = with_threads(&fx);
+    let a = ThreadsSeatRef("seat-A".into());
+    let b = ThreadsSeatRef("seat-B".into());
+    activate(&fx, "claude");
+    steps(&fx, 3).await;
+    let c = only_clone(&fx, "foreman");
+    map.set(&pane_of(&fx, &c), "seat-A");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-A".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    end_session(&fx, &c, "abc", "claude");
+    // The surviving occupant: the live session the observer never saw end.
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_set_occupant", "clone": c.id, "native": "live", "harness": "claude"}),
+    );
+    assert!(the_clone(&fx, &c.id).occupant.is_some());
+
+    // Channels exist and the clone's Required invitations are accepted on seat-A.
+    steps(&fx, 2).await;
+    let st = ThreadRef(
+        seat(&fx, "foreman")
+            .channel
+            .thread_id
+            .expect("seat channel"),
+    );
+    let ts = ThreadRef(
+        layout::list_teamspaces(&view(&fx))
+            .unwrap()
+            .remove(0)
+            .1
+            .channel
+            .thread_id
+            .expect("teamspace channel"),
+    );
+    threads.accept(&st, &a);
+    threads.accept(&ts, &a);
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step(&fx).await;
+
+    commit(&fx, "seat deactivate foreman");
+    steps(&fx, 2).await; // the tab closes
+    if harness != "claude" {
+        commit(&fx, &format!("seat override foreman --harness {harness}"));
+    }
+    commit(&fx, "seat activate foreman");
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(after.occupant, None, "the helper cleared the survivor");
+    assert_eq!(after.runtime, crate::plan::core_kinds::absent());
+    let Some(SeatIntent::Restore {
+        seat: ref s,
+        threads_done: false,
+        launched: None,
+        ref epoch,
+        ..
+    }) = after.seat_intent
+    else {
+        panic!(
+            "activation writes a Restore intent: {:?}",
+            after.seat_intent
+        );
+    };
+    assert_eq!(s, "seat-A");
+    let epoch = epoch.clone();
+
+    fx.herdr.clear_calls();
+    steps(&fx, 3).await; // the tab and pane are recreated and bound
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Observer stand-in: the closed pane's seat reads final-retired; threads maps the reopened pane to seat-B.
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false }, fx.clock.now()) }),
+    );
+    map.set(&pane_of(&fx, &c), "seat-B");
+    for _ in 0..5 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+
+    let c = the_clone(&fx, &c.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(c.threads_seat_history, vec!["seat-A".to_owned()]);
+    assert_eq!(c.lifecycle, crate::model::common::CloneLifecycle::Active);
+    let succeeded = rows(
+        &fx,
+        EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into()),
+    );
+    assert_eq!(succeeded.len(), 1, "{succeeded:?}");
+    assert_eq!(succeeded[0].status, EffectStatus::Done);
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].kind, harness);
+    if resumes {
+        assert_eq!(starts[0].args, ["--resume", "abc"]);
+    } else {
+        assert!(
+            !starts[0].args.iter().any(|a| a == "--resume"),
+            "{:?}",
+            starts[0].args
+        );
+    }
+    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert!(
+        matches!(
+            c.seat_intent,
+            Some(SeatIntent::Restore { ref seat, epoch: ref e, threads_done: true, launched: Some(_), .. })
+                if seat == "seat-B" && *e == epoch
+        ),
+        "{:?}",
+        c.seat_intent
+    );
+    // The launch is awaiting its reattach; it is not "not launchable".
+    assert!(
+        stuck_restores(&fx)
+            .iter()
+            .all(|s| s["reason"] != "not_launchable"),
+        "{:?}",
+        stuck_restores(&fx)
+    );
+    for t in [&st, &ts] {
+        let ma = threads.member(t, &a).unwrap();
+        let mb = threads.member(t, &b).unwrap();
+        assert_eq!(ma.state, InvitationState::Released, "{}", t.0);
+        assert_eq!(
+            (mb.constraint, mb.state),
+            (InviteConstraint::Required, InvitationState::Pending),
+            "{}",
+            t.0
+        );
+        let link = c
+            .invitations
+            .iter()
+            .find(|i| i.thread == t.0)
+            .and_then(|i| i.link.as_ref())
+            .unwrap_or_else(|| panic!("no invitation link to {}: {:?}", t.0, c.invitations));
+        assert_eq!(link.seat, "seat-B");
+    }
+    let invites = threads.call_count("invite");
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    assert_eq!(threads.call_count("invite"), invites, "invited once");
+    assert_eq!(
+        rows(
+            &fx,
+            EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into())
+        )
+        .len(),
+        1,
+        "no second succession"
+    );
+    assert_eq!(start_calls(&fx).len(), 1, "one launch per epoch");
+}
+
+#[tokio::test]
+async fn seat_reactivation_succeeds_resumes_and_reinvites() {
+    reactivate_seated("claude", true).await;
+}
+
+#[tokio::test]
+async fn seat_reactivation_after_a_harness_change_launches_fresh() {
+    reactivate_seated("codex", false).await;
 }
