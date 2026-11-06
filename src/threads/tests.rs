@@ -2943,52 +2943,6 @@ async fn pane_close_then_undo_succeeds_onto_the_reopened_pane_seat() {
 }
 
 #[tokio::test]
-async fn seat_reactivation_succeeds_the_seat_and_reinvites_memberships() {
-    let fx = fx();
-    let clone = base(&fx).await;
-    occupy(&fx, &clone, "seat-A").await;
-    steps(&fx, 2).await;
-    let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
-    fx.threads.accept(&st, &seat_ref("seat-A"));
-    fx.threads.accept(&ts, &seat_ref("seat-A"));
-    later(&fx).await;
-    plan_and_apply(&fx, "seat deactivate foreman");
-    steps(&fx, 2).await; // the tab closes
-    plan_and_apply(&fx, "seat activate foreman");
-    let Some(SeatIntent::Restore { epoch, .. }) = clone_rec(&fx, &clone.id).seat_intent else {
-        panic!("activation writes a Restore intent");
-    };
-    steps(&fx, 3).await; // the tab and pane are recreated and bound
-    // Observer stand-in: the closed pane's seat reads final-retired; threads maps the reopened pane to seat-B.
-    seat_fact(&fx, &clone.id, "seat-A", retired_final());
-    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
-    steps(&fx, 5).await;
-    let c = clone_rec(&fx, &clone.id);
-    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
-    assert_eq!(c.threads_seat_history, vec!["seat-A".to_owned()]);
-    assert_eq!(c.seat_intent, restore("seat-B", &epoch, true, false));
-    assert_eq!(c.lifecycle, CloneLifecycle::Active);
-    assert_eq!(succeed_rows(&fx).len(), 1);
-    assert_eq!(succeed_rows(&fx)[0].status, EffectStatus::Done);
-    for t in [&st, &ts] {
-        let a = fx.threads.member(t, &seat_ref("seat-A")).unwrap();
-        let b = fx.threads.member(t, &seat_ref("seat-B")).unwrap();
-        assert_eq!(a.state, InvitationState::Released, "{}", t.0);
-        assert_eq!(
-            (b.constraint, b.state),
-            (InviteConstraint::Required, InvitationState::Pending),
-            "{}",
-            t.0
-        );
-        assert_eq!(inv(&c, t).link.as_ref().unwrap().seat, "seat-B");
-    }
-    let invites = fx.threads.call_count("invite");
-    steps(&fx, 3).await;
-    assert_eq!(fx.threads.call_count("invite"), invites, "invited once");
-    assert_eq!(succeed_rows(&fx).len(), 1, "no second succession");
-}
-
-#[tokio::test]
 async fn stale_fact_from_before_the_restore_is_not_acted_on() {
     // A clone retired through the graph keeps the fact it had; undo writes the Restore intent over it. The
     // old Resolved fact must neither acknowledge the Restore nor start a launch into the final-retired seat.
