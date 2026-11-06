@@ -162,8 +162,8 @@ mapping is complete over every `ClientError` variant and `IpcErrorCode`:
 
 | Condition | Source | Exit | stderr |
 |---|---|---|---|
-| not inside a Herdr pane | `HERDR_SOCKET_PATH` unset, and the error is a no-reply condition (`Unavailable`, `Frame`, `NoInstance`); a real `Remote` reply from a running daemon keeps its own row | 2 | `herdr-graph: not inside a Herdr pane; this session has no graph seat` |
-| no instance configured | `ClientError::NoInstance` | 2 (`EXIT_NO_INSTANCE`) | its existing line |
+| not inside a Herdr pane | `ClientError::NotInHerdr` only (the `CallMode::Ensure` pre-call refusal when `HERDR_SOCKET_PATH` is unset); `Unavailable`, `Frame` and `NoInstance` never map here, whatever the environment, so a plain-shell read against a down daemon exits 5 and with no instance configured exits 2 with its own line | 2 | `herdr-graph: not inside a Herdr pane; this session has no graph seat` |
+| no instance configured | `ClientError::NoInstance` (the rows are disjoint: each `ClientError` variant appears in exactly one row, so no precedence rule is needed) | 2 (`EXIT_NO_INSTANCE`) | its existing line |
 | no well-formed reply from a working daemon | `ClientError::Unavailable`, `ClientError::Frame` (I/O, timeout, truncated or undecodable frame), `Remote{Unavailable}` ("still starting", "failed to start"), `Remote{VersionMismatch}` | 5 | `herdr-graph: graph daemon unavailable: <reason>. Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).` |
 | graph integrity | `Remote{Integrity}` | 6 | `herdr-graph: graph integrity error: <message>. This is not transient; retrying will not help.` |
 | everything else | `Remote{BadRequest, UnknownCommand, Rejected, Internal}` and any other | 1 | `herdr-graph: <error>` |
@@ -261,7 +261,8 @@ Recommended, two choke points:
   - the node manager: only its non-survived clones get `end_occupant(PaneClosed)` and an absent
     runtime; survived clones stay bound where they are; the seat and its teamspace are kept Active
     (teamspace runtime absent), so a direct closure never retires it. When no clone of it remains
-    bound after those ends, the mutation clears `moved_out` so the planner reopens it in its tab.
+    bound after those ends, the mutation clears `moved_out`; this is cleanup only, because for the node
+    manager `moved_out` never gates reopening (see *Reopening* below).
   - every other seat: all listed clones, survived included, are ended, absented and retired through
     `do_retire_seat` (the containment rule as on main; a moved pane does not save a plain seat).
   - the teamspace record written after the seat loop is re-read after reparenting, in both the kept
@@ -270,20 +271,33 @@ Recommended, two choke points:
   `SessionEnded` from that list, never from the classify-time `ends`, so a store end and its event
   cannot disagree. The existing reconcile planner (`plan_effects` creating a missing tab and panes
   for an active seat) reopens the node manager's non-survived clones in its tab (B11).
+  **Reopening.** For the node manager seat the planner ignores `moved_out` when deciding tab, pane
+  and workspace recreation: any of its clones with no live pane is recreated in the seat's own tab
+  (and home workspace) whether or not `moved_out` is set, and whether or not another clone survives
+  elsewhere. This covers the tab path (home tab closed while a sibling clone was moved out, so the
+  flag is set and no cascade runs) and a flag already set before the home workspace closes. Survived
+  clones are never touched; `moved_out`'s other effects (no relabel, matcher exclusion) stay as on
+  main. Plain seats keep main's `moved_out` gate.
   **Workspace placement.** `moved_out` is the existing tab-level surfacing flag with its main-branch
   effects; it is not a survival signal and never decides workspace placement. In the planner's
   `LiveIndex::workspace`, a clone pane places its teamspace's workspace only when the live
   workspace holding it is neither token-stamped for a different teamspace nor bound (desired
   runtime) to a different teamspace; otherwise the pane is ignored for placement and reconciliation
   creates a fresh workspace for the teamspace. A survived clone's pane in a foreign workspace is left
-  where it is: the planner does not relabel, re-tag or close that workspace or any tab in it.
+  where it is: the planner does not relabel, re-tag or close that workspace or any tab in it. The
+  same exclusion applies to the planner's tab lookup (`tab_for_seat`): its rebound-clone-pane
+  fallback refuses a tab whose workspace is token-stamped for or bound to another teamspace, so a
+  survived clone's foreign tab is never adopted as the node manager's tab and the missing clone is
+  not split into it.
   Required tests (FakeHerdr): (1) a two-clone node manager with one clone moved into another
   teamspace's tab, then its home workspace closed: the other teamspace's seat stays Active, its
   workspace and tab are untouched, the moved clone stays bound, the node manager's other clone is
-  reopened in a fresh home workspace; (2) a plain seat moved into another teamspace's tab, then its
+  reopened in a fresh home workspace and tab (not in the foreign tab); (2) a plain seat moved into another teamspace's tab, then its
   home workspace closed: the seat is retired and a `SessionEnded` is emitted for its clone; (3) the
   node manager's teamspace `default_manager` names a sibling seat, home workspace closed: the
-  stored pointer equals the reparent rewrite in the action record. This deliberately overrides "direct tab/workspace closure follows containment
+  stored pointer equals the reparent rewrite in the action record. (4) the same node manager with one clone moved to a foreign tab, then its home tab closed: the home
+  clone is reopened in the home tab; (5) `moved_out` already set on the node manager before its home
+  workspace closes: the non-survived clones are reopened in a fresh home workspace and tab. This deliberately overrides "direct tab/workspace closure follows containment
   retirement" (CURRENT-DESIGN.md) for the node manager only; CURRENT-DESIGN.md gets a dated line.
   Closing a workspace containing the node manager retires the other seats normally; reconciliation recreates the workspace if needed, then the tab and panes. A plan whose effects would change the node manager seat's placement (teamspace, tab or workspace) is refused at the same `make_plan` guard ("same tab", B11), as is any effect that deactivates the node manager seat or its last live clone. An observed move of its pane or tab outside a plan is tolerated and surfaced, not reverted: Herdr exposes no move primitive, so the existing `moved_out` surfacing stays (it gates no survival or placement decision, per the Observation bullet) and the observer logs a warning naming the node manager; reopening is promised only for closure. `node-manager set` and first-seat assignment require an Active target and teamspace (a dormant target is activated as a listed effect). TemplateEdit, ApplicationRetire and undo compensation are covered by the `make_plan` guard. The undo refusal for the node manager's creating action names the `node-manager set` remedy. More generally, `make_plan` refuses any plan whose effects would leave a manager chain cyclic (seat creation into a teamspace with a default, teamspace moves, resurrection, teamspace default changes), using model::manager's would-create-cycle check over every seat whose effective manager changes.
 Considered: refusing at `do_retire_seat` only (rejected: fails at apply time instead of plan time,
@@ -306,7 +320,10 @@ Recommended: inside `do_retire_seat` (all seven routes converge there), before a
 the retiring seat's effective manager M skipping seats being retired in the same mutation (nearest
 surviving ancestor; ultimately the node manager, which cannot be retired), then rewrite every live
 seat whose explicit `manager` is the retiring seat, and every teamspace whose `default_manager` is
-the retiring seat, to M (B6). M is computed only when at least one such live seat or teamspace
+the retiring seat, to M (B6). "Live" holders exclude seats (and teamspaces) retiring in the same
+mutation, in preview and in sequential apply alike, so the answer does not depend on retirement
+order: when A and B retire together and B.manager is A, retiring A finds no live holder and never
+walks A's chain. M is computed only when at least one such live seat or teamspace
 exists: a retiring seat that nothing points at needs no target, so its own (possibly broken) chain
 is never walked and preview and apply agree. Seats that reached the retiring seat only through a teamspace default
 follow automatically. Every retirement route records each rewrite (`{holder, field, old, new}`) in its action record (plan `Retire`, `ApplicationRetire`, observed cascade, undo-driven). Plan previews: `seat_retire_effects` and the other retire-effect builders list
@@ -329,7 +346,7 @@ replace the `ClientError::Unavailable` → direct-read branch with the shared he
 5); delete the now-unused direct-read functions. `status` keeps its fallback: it is the operator's
 diagnostic for a dead daemon (prints "daemon: not running"). `show`, `list`, `path`,
 `instructions show` and `seat --hook-prompt` are documented daemon-free readers by design and stay.
-Tests that relied on the fallbacks change to assert exit 5.
+Tests that relied on the fallbacks change to assert exit 5 (set or unset `HERDR_SOCKET_PATH`: the exit does not depend on it).
 
 ### 4.14 Testing
 
@@ -357,7 +374,7 @@ behaviour (exit codes 2/5/6, warning line) in `tests/` with `TestRoot`. Full sui
 - Errors: refusals, cycles and "unchanged" become `PlanError::Invalid` with the §4.9 or §4.7 message. Store failures, including integrity, pass through as `PlanError::Store`.
 
 **cli::daemon_error** — new module, the one mapping from `ClientError` to a stderr line and an exit code.
-- Owns: the §4.4 condition table, complete over every `ClientError` variant and `IpcErrorCode`: not inside a Herdr pane (no-reply conditions only) → 2; `NoInstance` → 2; no well-formed reply (`Unavailable`, `Frame`, `Remote{Unavailable}`, `Remote{VersionMismatch}`) → 5 with the retry-later text; `Remote{Integrity}` → 6; other `Remote` codes → 1. It also renders a local `StoreError::Integrity` (daemon-free readers such as `show`) to the exit-6 text. The constants `EXIT_DAEMON_UNAVAILABLE` and `EXIT_INTEGRITY` sit beside the existing `EXIT_*` in `src/daemon/client.rs`.
+- Owns: the §4.4 condition table, complete over every `ClientError` variant and `IpcErrorCode`: not inside a Herdr pane (`NotInHerdr` only) → 2; `NoInstance` → 2 with its own line; no well-formed reply (`Unavailable`, `Frame`, `Remote{Unavailable}`, `Remote{VersionMismatch}`) → 5 with the retry-later text; `Remote{Integrity}` → 6; other `Remote` codes → 1. It also renders a local `StoreError::Integrity` (daemon-free readers such as `show`) to the exit-6 text. The constants `EXIT_DAEMON_UNAVAILABLE` and `EXIT_INTEGRITY` sit beside the existing `EXIT_*` in `src/daemon/client.rs`.
 - Hides: which `ClientError` or `IpcErrorCode` maps to which exit code.
 - Must not: read the store or fall back to direct reads; those direct readers are deleted (§4.13).
 - Relationships: called by every daemon-calling command (`seat`, `who`, `ops`, `request`, `undo`, `plan` and the rest), each replacing its own match arms; command-specific `Remote` arms such as `StillRunning` stay in the command. `seat` adds its extra sentences by composing them with the generic mapping, not through a mode flag inside it.
@@ -371,7 +388,7 @@ behaviour (exit codes 2/5/6, warning line) in `tests/` with `TestRoot`. Full sui
 
 **observe::classify / CascadeMutation** — extended: classify computes per-clone survival once and lists every live clone of a closed container with its `survived` subset; it holds no node-manager logic (§4.9). `CascadeMutation` is the only place that decides, against `live_node_manager` at apply time: the node manager ends only its non-survived clones and is kept with its teamspace; every other seat ends and retires all its clones. It returns the ends it applied, and `commit_ops` emits `SessionEnded` from exactly those, so a cascade classified before a role move cannot retire the new node manager and store and events cannot disagree.
 
-**reconcile::LiveIndex::workspace** — changed: a clone pane places its teamspace's workspace only when that live workspace is not token-stamped for, or bound to, a different teamspace; `moved_out` is not consulted for placement (§4.9).
+**reconcile::LiveIndex::workspace and tab_for_seat** — changed: a clone pane places its teamspace's workspace, and the rebound-pane fallback of `tab_for_seat` adopts its tab, only when that live workspace is not token-stamped for, or bound to, a different teamspace; `moved_out` is not consulted for placement, and for the node manager seat it does not gate tab or pane recreation (§4.9).
 
 Variation: seat-retirement routes (seven today) → reparenting lives in `do_retire_seat` and the guard in `make_plan`, so a new route inherits both without a call; seat-creating or -resurrecting paths (six) → one shared first-seat helper in plan::managers; error outcomes are a closed set → a `match` in cli::daemon_error and the `CommandError` classifier; integrity reference kinds → data (holder and field strings) passed to the one `unresolved` helper.
 Walk-through: `/seat` → `seat_reply` hits an application whose template is missing → `unresolved` → `StoreError::Integrity` → classifier → `CommandError::integrity` plus the node-manager suffix → CLI `Remote { Integrity }` → cli::daemon_error prints the line, exit 6. `seat retire A` → `SeatRetire::plan` lists `seat_retire_effects` plus `reparent_effects` (model::manager supplies A's nearest surviving manager) → `make_plan` guard passes → `do_retire_seat` reparents on apply. A future bulk-retiring kind touches one new `OrgKind` and its registration; a future template-level default manager touches only model::manager's precedence rule and the template record.
@@ -396,9 +413,9 @@ Digest:
 
 Amend code-1 (node-manager clone survival) must not change:
 - The node manager is never retired by plan, undo or observed closure, and its teamspace stays Active (B8).
-- A closed node manager is reopened in its own tab by the existing reconcile planner (B11); an observed move of its pane or tab is tolerated, surfaced with a warning naming it, and not reverted.
-- Plain (non-node-manager) seats follow the containment rule as on main: closing their workspace or tab retires them and all their clones, with a `SessionEnded` per ended clone.
-- The tab path: a closed tab with a surviving clone is a move that flags the seat `moved_out`, not a cascade; `moved_out`'s other planner effects (no tab recreation, no relabel, matcher exclusion) are as on main.
+- A closed node manager (any non-survived clone, `moved_out` or not) is reopened in its own tab by the existing reconcile planner (B11); an observed move of its pane or tab is tolerated, surfaced with a warning naming it, and not reverted.
+- Plain (non-node-manager) seats follow the containment rule as on main: closing their workspace retires them and all their clones, and closing their tab does so when no clone survives (a survived clone makes it a move, next bullet), with a `SessionEnded` per ended clone.
+- The tab path: a closed tab with a surviving clone is a move that flags the seat `moved_out`, not a cascade; `moved_out`'s planner effects (no tab recreation, no relabel, matcher exclusion) are as on main for plain seats; for the node manager it does not gate recreation (§4.9 Reopening).
 - Reparenting on every retirement route goes through `do_retire_seat` and is recorded in the action record; undo restores pointers that still hold the reparent value.
 - Reconciliation of workspaces with no foreign-teamspace panes places and adopts them as before (stamp, nonce label, rebound clone pane).
 - Plan admission guards (`make_plan` node-manager retirement, placement and cycle refusals) and exit codes 2/5/6.
