@@ -3,7 +3,9 @@
 use super::baseline::{self, Baseline};
 use super::classify::{CascadeRule, Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
-use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
+use super::matcher::{
+    Matches, PaneLoc, current_native_id, find_tab, find_ws, match_snapshot, pane_locs,
+};
 use super::mutations::{
     availability_request, cascade_request, move_request, occupancy_request, rename_request,
     seat_fact_request,
@@ -24,7 +26,7 @@ use crate::ports::store::Store;
 use crate::ports::threads::{ThreadsError, ThreadsSeatRef, ThreadsSeatView};
 use crate::ports::writer::Writer;
 use crate::reconcile::desired::DesiredRuntime;
-use crate::reconcile::planner::TOKEN_KEY;
+use crate::reconcile::planner::{TOKEN_KEY, incarnation_changed_at};
 use crate::reconcile::{Reconciler, StepReport, consume_prediction, predictions};
 use crate::store::tree::CommitView;
 use crate::threads::mapping::SeatRefusals;
@@ -552,8 +554,17 @@ impl RuntimeLoop {
             }
         };
         let lost = self.track_refusals(desired, &read, now);
-        let live = pane_locs(snap).into_keys().collect();
-        seat_observation::observe(desired, &read, &live, &lost, matches, now)
+        let locs = pane_locs(snap);
+        let bare = locs
+            .iter()
+            .filter(|(_, loc)| loc.pane.agent.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        let live = locs.into_keys().collect();
+        let changed_at = incarnation_changed_at(&self.journal);
+        seat_observation::observe(
+            desired, &read, &live, &bare, changed_at, &lost, matches, now,
+        )
     }
 
     /// Track the seats this read omitted (a per-seat refusal). A seat refused for longer than
@@ -626,13 +637,7 @@ impl RuntimeLoop {
                 ends: vec![],
             });
         }
-        let changed_at = self
-            .journal
-            .meta_get("incarnation:changed_at")
-            .ok()
-            .flatten()
-            .and_then(|raw| chrono::DateTime::parse_from_rfc3339(&raw).ok())
-            .map(|t| t.to_utc());
+        let changed_at = incarnation_changed_at(&self.journal);
         for clone in out.unknown() {
             if let Some(rec) = desired.clones.get(clone)
                 && rec.runtime.bound.is_some()
@@ -721,6 +726,19 @@ impl RuntimeLoop {
             }
             _ => (diff::rebind(&cx), None),
         };
+        let mut elements = elements;
+        for clone in &seat_out.ended {
+            let already = elements.iter().any(
+                |e| matches!(e, diff::DiffElement::OccupancyEnded { clone: c, .. } if c == clone),
+            );
+            if !already && let Some(rec) = desired.clones.get(clone) {
+                elements.push(diff::DiffElement::OccupancyEnded {
+                    clone: clone.clone(),
+                    ns_native: current_native_id(rec).map(str::to_owned),
+                    reason: SessionEndReason::Unknown,
+                });
+            }
+        }
         let preds = predictions(&self.journal);
         let classified = classify(
             &ClassifyCx {

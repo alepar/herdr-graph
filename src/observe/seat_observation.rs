@@ -41,6 +41,8 @@ pub struct SeatOutcome {
     /// pane threads gave to another clone). They are Unknown, never "gone": the step also removes them from
     /// the baseline matches so the diff cannot report their pane as closed.
     pub unbound: Vec<CloneId>,
+    /// Seated clones whose occupant is stale after an incarnation change; their occupancy ends this step.
+    pub ended: Vec<CloneId>,
 }
 
 impl SeatOutcome {
@@ -106,10 +108,14 @@ fn unbind(m: &mut Matches, out: &mut SeatOutcome, clone: &CloneId) {
 /// Single match on SeatStatus. Mutates `m` for the clones threads speaks for. `live` is the set of panes in
 /// the snapshot: a Resolved pane that is not there yet cannot be bound, so the matcher's result stands.
 /// `lost` holds the seats refused for longer than `SEAT_LOST_AFTER`: their clones are Unknown, never retired.
+/// `bare` is the set of snapshot panes with no agent; `changed_at` is when the Herdr incarnation last changed.
+#[allow(clippy::too_many_arguments)]
 pub fn observe(
     d: &DesiredRuntime,
     read: &ThreadsRead,
     live: &BTreeSet<HerdrPaneId>,
+    bare: &BTreeSet<HerdrPaneId>,
+    changed_at: Option<Timestamp>,
     lost: &BTreeSet<ThreadsSeatRef>,
     m: &mut Matches,
     now: Timestamp,
@@ -119,6 +125,7 @@ pub fn observe(
         return out;
     };
     let mut resolved: Vec<(CloneId, HerdrPaneId)> = Vec::new();
+    let mut unresolved: Vec<CloneId> = Vec::new();
     for (clone, seat) in seated_clones(d) {
         let Some(status) = statuses.get(&seat) else {
             if lost.contains(&seat) {
@@ -140,7 +147,7 @@ pub fn observe(
                     resolved.push((clone, pane.clone()));
                 }
             }
-            SeatStatus::Unresolved => {}
+            SeatStatus::Unresolved => unresolved.push(clone),
             SeatStatus::Retired { .. } => {
                 let pending_restore = matches!(
                     d.clones.get(&clone).and_then(|c| c.seat_intent.as_ref()),
@@ -173,6 +180,23 @@ pub fn observe(
         m.clone_pane.insert(clone.clone(), pane);
         // An earlier answer may have displaced this clone; it is bound again now.
         out.unbound.retain(|c| c != &clone);
+    }
+    for clone in unresolved {
+        let Some(rec) = d.clones.get(&clone) else {
+            continue;
+        };
+        let stale = rec
+            .occupant
+            .as_ref()
+            .zip(changed_at)
+            .is_some_and(|(o, at)| o.since < at);
+        let last_pane = rec.runtime.bound.as_ref().and_then(|b| b.pane_id.as_ref());
+        if stale
+            && !m.clone_pane.contains_key(&clone)
+            && last_pane.is_some_and(|p| bare.contains(p) && !m.panes.contains_key(p))
+        {
+            out.ended.push(clone);
+        }
     }
     out
 }

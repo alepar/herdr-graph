@@ -3043,7 +3043,16 @@ async fn seat_observation_swap_leaves_no_clone_unbound() {
         ]
         .into(),
     );
-    let out = observe(&desired, &read, &live, &Default::default(), &mut m, t0());
+    let out = observe(
+        &desired,
+        &read,
+        &live,
+        &Default::default(),
+        None,
+        &Default::default(),
+        &mut m,
+        t0(),
+    );
     assert!(out.unbound.is_empty(), "{:?}", out.unbound);
     assert_eq!(m.clone_pane.get(&a.id), Some(&pb));
     assert_eq!(m.clone_pane.get(&b.id), Some(&pa));
@@ -3141,4 +3150,101 @@ async fn seat_refused_beyond_the_window_is_unknown_with_a_seat_lost_alert() {
     fx.seats.clear_refusal(&seat_ref("seat-1"));
     step(&fx).await;
     assert!(fx.lp.seat_lost().lock().unwrap().is_empty(), "entry clears");
+}
+
+// =================================================================================================
+// stale occupant after a headless cold restart (spec §9, §14.4)
+// =================================================================================================
+
+/// A seated claude clone whose observed occupant is session `abc`, then a Herdr restart that keeps pane ids
+/// (spec §9's precondition) but drops tokens and reallocates terminal ids. `agent_survives` keeps the agent.
+async fn restart_after_occupant(fx: &Fx, agent_survives: bool) -> (CloneRecord, HerdrPaneId) {
+    let (c, pane) = seated(fx, "seat-1").await;
+    fx.herdr.set_agent(&pane, claude_agent(Some("abc")));
+    fx.herdr.set_process(&pane, claude_process());
+    step(fx).await;
+    let rec = clone_by_id(fx, &c.id);
+    let occ = rec.occupant.as_ref().expect("the occupant is observed");
+    assert_eq!(
+        crate::observe::matcher::current_native_id(&rec),
+        Some("abc"),
+        "recorded by observation: {occ:?}"
+    );
+    // Time passes between the observed occupant and the restart, so the occupant predates the change.
+    fx.clock.advance(chrono::Duration::seconds(5));
+    // `restart(false, false)` also renumbers pane ids, so nothing could find the clone; the preserved-id
+    // restart is a live handoff (metadata dropped, terminal ids reallocated), and the agent did not survive.
+    fx.herdr.live_handoff();
+    if !agent_survives {
+        fx.herdr.set_agent(&pane, None);
+        fx.herdr.set_process(&pane, shell_process());
+    }
+    // `fx.seats` stays unset for seat-1: threads reads Unresolved, the pre-D1 answer.
+    fx.herdr.clear_calls();
+    (c, pane)
+}
+
+fn relaunch_rows(fx: &Fx) -> Vec<EffectRecord> {
+    use EffectStatus::*;
+    fx.journal
+        .effects_with_status(&[Pending, Done, Obsolete, Failed, Unknown, NeedsRevision])
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.kind == EffectKind::RelaunchOccupant)
+        .collect()
+}
+
+#[tokio::test]
+async fn headless_cold_restart_without_tokens_resumes_the_last_session() {
+    let fx = fx();
+    let (c, pane) = restart_after_occupant(&fx, false).await;
+
+    step(&fx).await;
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert!(after.occupant.is_none(), "the stale occupant ended");
+    let ns = after
+        .sessions
+        .iter()
+        .find(|s| s.native_session_id == "abc")
+        .unwrap();
+    assert!(ns.ended.is_some(), "session abc is ended: {ns:?}");
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
+    assert_eq!(relaunch_rows(&fx).len(), 1, "{:?}", relaunch_rows(&fx));
+    assert!(
+        start_calls(&fx, &pane).is_empty(),
+        "inside the 90 s grace nothing is started: {:?}",
+        calls(&fx)
+    );
+
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    settle(&fx).await;
+    assert_eq!(start_calls(&fx, &pane), vec![vec!["--resume", "abc"]]);
+
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step(&fx).await;
+    assert_eq!(start_calls(&fx, &pane).len(), 1, "no second start");
+}
+
+#[tokio::test]
+async fn live_handoff_with_a_running_agent_keeps_its_occupant() {
+    let fx = fx();
+    let (c, pane) = restart_after_occupant(&fx, true).await;
+
+    step(&fx).await;
+    step(&fx).await;
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    settle(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    let occ = after.occupant.as_ref().expect("occupant kept");
+    assert_eq!(
+        crate::observe::matcher::current_native_id(&after),
+        Some("abc"),
+        "{occ:?}"
+    );
+    assert!(relaunch_rows(&fx).is_empty());
+    assert!(start_calls(&fx, &pane).is_empty(), "{:?}", calls(&fx));
 }
