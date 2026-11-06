@@ -1,0 +1,2 @@
+[Nit] src/observe/seat_observation.rs:189
+[Nit] CURRENT-DESIGN.md:65
