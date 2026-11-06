@@ -131,7 +131,7 @@ codeBuckets:
   worktreesKept: 38 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
 roastCodeRound: 4
-roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md, 2026-11-05-threads-seat-identity-roast-pr-2.md, 2026-11-06-threads-seat-identity-roast-pr-3.md
+roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md, 2026-11-05-threads-seat-identity-roast-pr-2.md, 2026-11-06-threads-seat-identity-roast-pr-3.md, 2026-11-06-threads-seat-identity-roast-pr-4.md
 redesignCycles-code: 1
 redesign-code-1: round 1 · triggers shared-cause, defect-type · amended 3. Participation keyed to the seat (H2-identity steps 2–3,  D3), 14. Punch-list resolutions (design roast round 2,  converged), Key abstractions, Unchanged behavior · lastGood 855a59fea7c7d2ed099655dd783a8686d339747d · designRoast r3 fixed · state applied
 stepBackCode-round-1: redesign — applied: purge always keeps a Finalize tombstone before D2 → purge deletes the record outright until the finalize want exists (D2), per spec §8 (dissolves 5)
@@ -169,3 +169,4 @@ scopeFilter-round-3: [Must-fix] Whole-range final review remains outstanding: th
 cluster dropped: doc-drift — Bring CURRENT-DESIGN.md and GRAPH_STATE.md in line with the round-1 purge decision: a seated clone's record is deleted outright before D2 and there is no Finalize tombstone. Check every other mention of tombstone or Finalize in both files, and write a punch-list entry for any line left on purpose.
 cluster dropped: observation-guard-coverage — Write a negative test for each guard on the stale-occupant `ended` branch: occupant since >= changed_at, last pane already in m.panes, and clone already in clone_pane.
 scope-filter: 14 in-scope · 2 punch-listed
+roastCodeExit: capped
