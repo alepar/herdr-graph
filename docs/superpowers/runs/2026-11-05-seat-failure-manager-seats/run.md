@@ -14,7 +14,7 @@ epic: hg-k4l
 roastDesignRound: 2
 roastCodeRound: 3
 redesignCycles-code: 1
-redesign-code-1: round 3 · triggers shared-cause, defect-type · amended - · lastGood ce72e45 · designRoast - · state amend-checked
+redesign-code-1: round 3 · triggers shared-cause, defect-type · amended §3, §4.9, §4.11, Key abstractions · lastGood ce72e45 · designRoast - · state beads-filed
 roast-code: 2026-11-05-seat-failure-manager-seats-roast-pr-1.md, 2026-11-05-seat-failure-manager-seats-roast-pr-2.md, 2026-11-05-seat-failure-manager-seats-roast-pr-3.md
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md, 2026-11-05-seat-failure-manager-seats-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
