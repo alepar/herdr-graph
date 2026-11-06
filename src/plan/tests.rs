@@ -3502,6 +3502,46 @@ fn plan_error(fx: &Fx, change: &str) -> String {
 }
 
 #[test]
+fn seat_activate_writes_a_restore_intent_for_seated_clones_only() {
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    let (_, rec) = seat(&fx, "foreman", None);
+    let only = clones_of(&fx, &rec.id).remove(0).1.id;
+    assign_seat(&fx, &only, "seat-42");
+    commit(&fx, "seat deactivate foreman");
+    assert!(find_clone(&fx, &only).unwrap().seat_intent.is_none());
+    let row = commit(&fx, "seat activate foreman");
+    let c = find_clone(&fx, &only).unwrap();
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        c.seat_intent,
+        Some(crate::model::clone::SeatIntent::Restore {
+            seat: "seat-42".into(),
+            epoch: row.op.clone(),
+            threads_done: false,
+            launched: None,
+            last_refusal: None,
+        })
+    );
+    assert!(c.seat_fact.is_none());
+
+    // A seatless clone gets no intent: the ordinary start rule applies.
+    commit(
+        &fx,
+        "seat create plain --teamspace alpha --active --harness shell",
+    );
+    let (_, plain) = seat(&fx, "plain", None);
+    let seatless = clones_of(&fx, &plain.id).remove(0).1.id;
+    commit(&fx, "seat deactivate plain");
+    commit(&fx, "seat activate plain");
+    assert!(find_clone(&fx, &seatless).unwrap().seat_intent.is_none());
+}
+
+#[test]
 fn purge_of_a_retired_seated_clone_deletes_the_record() {
     let fx = fx();
     let c = retired_second(&fx, Some("seat-42"));
