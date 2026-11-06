@@ -18,3 +18,4 @@
 - [2026-11-05] roast-code r1: assembler typed result 'provenance unavailable; captured source available' (inv-26c52189 cluster-2 gap); bounded direct review over product paths, docs/superpowers/runs/** unreviewed; [converged] unavailable for this loop · rung: Workflow
 - [2026-11-05] disk: /var free 298G during fix-loop round 1 (another session's worktrees share the disk); removed 5 merged, idle fix-bead task worktrees → 323G
 - [2026-11-05] roast-code r2: same typed provenance result; bounded direct review over product paths · rung: Workflow
+- [2026-11-06] roast-code r3 first attempt died on the claude-1 usage limit (13/16 scouts and the reporter failed; its 'clean' verdict is void); session resumed on claude-2; r3 re-run via resumeFromRunId
