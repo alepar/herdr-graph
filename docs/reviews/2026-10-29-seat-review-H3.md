@@ -197,8 +197,24 @@ None of that structure is fixed by the model.
   - **Assignment.** The first seat created on the node becomes the node manager, and the plan that creates
     it records `node_manager_seat`. The shipped graph templates provide the defaults that create that first
     seat with the node-manager role.
-  - **Permanence.** The role cannot be reassigned or moved. The seat cannot be retired; plans that would
-    retire it are refused, including retiring its teamspace or application and undoing its creation.
+  - **Unassigned graphs.** Graphs created before this rule have no node manager, and nothing is picked
+    automatically. While `node_manager_seat` is unset, every graph command prints a warning on stderr
+    (so `--json` stdout stays clean) saying a node manager should be assigned, and naming the command
+    that assigns one.
+  - **Assigning and moving the role.** One command, through a normal plan (proposed:
+    `herdr-graph plan node-manager set <seat>`), both assigns the role when it is unset and moves it to
+    another seat. On a move:
+    - the old node manager's immediate reports become reports of the new node manager. That covers
+      explicit `manager` pointers and teamspace defaults naming the old node manager. Seats that reached it
+      only through the fallback follow automatically.
+    - the old node manager itself becomes a report of the new node manager. It is now an ordinary seat:
+      it can be retired and is no longer kept open.
+    - the new node manager's own `manager` pointer is cleared. Its existing reports stay with it. Since it
+      now has no manager, no cycle can form, even if it was a descendant of the old node manager.
+    - the plan shows every rewrite.
+  - **Permanence.** The node manager seat cannot be retired while it holds the role. Plans that would
+    retire it are refused: retiring its teamspace or application, or undoing its creation. Move the role
+    first.
   - **Always open.** The node manager keeps its own tab and stays open. If that tab or pane is closed,
     reconciliation reopens it in the same place instead of retiring the seat. This is an explicit
     exception to "direct tab/workspace closure follows containment retirement" (CURRENT-DESIGN.md). It
@@ -235,10 +251,7 @@ None of that structure is fixed by the model.
 
 ## Open questions
 
-1. **Existing graphs.** Graphs that already have seats were created before this rule, so none of their
-   seats is the node manager. They need a one-time migration plan. Proposal: designate the earliest-created
-   live seat and show it in the plan for confirmation.
-2. **Until hg-au7 lands**, the integrity error omits the node manager, and the A3 step says "report to
+1. **Until hg-au7 lands**, the integrity error omits the node manager, and the A3 step says "report to
    the user".
 
 ---
