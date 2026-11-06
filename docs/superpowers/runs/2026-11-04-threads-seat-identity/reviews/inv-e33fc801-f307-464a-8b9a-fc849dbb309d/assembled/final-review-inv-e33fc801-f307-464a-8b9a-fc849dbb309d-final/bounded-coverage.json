@@ -1,0 +1,247 @@
+{
+ "inspected": [
+  {
+   "path": "src/cli/session.rs",
+   "hunks": [
+    "@@ -54,6 +54,7 @@ fn report(from_hook: &str) -> anyhow::Result<()> {"
+   ]
+  },
+  {
+   "path": "src/config.rs",
+   "hunks": [
+    "@@ -28,6 +28,8 @@ pub struct Env {",
+    "@@ -53,6 +55,7 @@ impl Env {"
+   ]
+  },
+  {
+   "path": "src/daemon/mod.rs",
+   "hunks": [
+    "@@ -7,6 +7,7 @@ use std::time::Duration;"
+   ]
+  },
+  {
+   "path": "src/herdr/client.rs",
+   "hunks": [
+    "@@ -47,6 +47,29 @@ fn lines_of(v: &[(String, String)]) -> Value {",
+    "@@ -539,6 +562,9 @@ impl HerdrApi for HerdrClient {",
+    "@@ -562,6 +588,16 @@ impl HerdrApi for HerdrClient {"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -20,6 +20,7 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/model/launch.rs",
+   "hunks": [
+    "@@ -6,6 +6,17 @@ pub const ENV_GRAPH: &str = \"HERDR_GRAPH\";"
+   ]
+  },
+  {
+   "path": "src/ports/herdr.rs",
+   "hunks": [
+    "@@ -107,6 +107,8 @@ pub struct StartAgent {"
+   ]
+  },
+  {
+   "path": "src/ports/threads.rs",
+   "hunks": [
+    "@@ -1,8 +1,9 @@",
+    "@@ -86,6 +87,38 @@ pub enum ThreadsError {"
+   ]
+  },
+  {
+   "path": "src/reconcile/herdr_exec.rs",
+   "hunks": [
+    "@@ -5,21 +5,24 @@ use super::bookkeeping::admit_binding;",
+    "@@ -124,6 +127,16 @@ impl HerdrExecutor {",
+    "@@ -519,7 +532,8 @@ impl HerdrExecutor {",
+    "@@ -536,6 +550,7 @@ impl HerdrExecutor {",
+    "@@ -545,19 +560,70 @@ impl HerdrExecutor {",
+    "@@ -640,9 +706,12 @@ impl HerdrExecutor {",
+    "@@ -657,6 +726,9 @@ impl HerdrExecutor {"
+   ]
+  },
+  {
+   "path": "src/observe/step.rs",
+   "hunks": [
+    "@@ -1,12 +1,16 @@",
+    "@@ -19,11 +23,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};",
+    "@@ -114,8 +120,20 @@ pub struct RuntimeLoop {",
+    "@@ -339,6 +357,7 @@ impl RuntimeLoop {",
+    "@@ -362,9 +381,24 @@ impl RuntimeLoop {",
+    "@@ -482,6 +516,152 @@ impl RuntimeLoop {",
+    "@@ -508,7 +688,8 @@ impl RuntimeLoop {",
+    "@@ -530,7 +711,14 @@ impl RuntimeLoop {",
+    "@@ -538,6 +726,19 @@ impl RuntimeLoop {",
+    "@@ -549,7 +750,8 @@ impl RuntimeLoop {"
+   ]
+  },
+  {
+   "path": "src/observe/mutations.rs",
+   "hunks": [
+    "@@ -5,7 +5,7 @@ use super::classify::CascadeRule;",
+    "@@ -32,7 +32,10 @@ pub const OCCUPANCY_KEY: &str = \"observed.occupancy\";",
+    "@@ -94,6 +97,18 @@ pub fn move_request(",
+    "@@ -249,6 +264,7 @@ impl CascadeMutation {",
+    "@@ -632,3 +648,36 @@ impl Mutation for AvailabilityMutation {"
+   ]
+  },
+  {
+   "path": "src/observe/matcher.rs",
+   "hunks": [
+    "@@ -2,9 +2,10 @@",
+    "@@ -197,8 +198,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -206,7 +207,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -254,7 +257,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {"
+   ]
+  },
+  {
+   "path": "src/observe/mod.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@ pub mod classify;"
+   ]
+  },
+  {
+   "path": "src/observe/seat_observation.rs",
+   "hunks": [
+    "@@ -0,0 +1,207 @@"
+   ]
+  },
+  {
+   "path": "src/threads/assignment.rs",
+   "hunks": [
+    "@@ -0,0 +1,308 @@"
+   ]
+  },
+  {
+   "path": "src/plan/core_kinds.rs",
+   "hunks": [
+    "@@ -46,6 +46,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {",
+    "@@ -91,6 +92,16 @@ pub(crate) fn absent() -> Runtime {",
+    "@@ -238,6 +249,10 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR",
+    "@@ -417,6 +432,7 @@ pub(crate) fn do_retire_seat(",
+    "@@ -505,6 +521,7 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -512,8 +529,7 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -1176,6 +1192,19 @@ impl OrgKind for SeatActivate {",
+    "@@ -1802,6 +1831,7 @@ impl OrgKind for CloneRetire {",
+    "@@ -1826,3 +1856,100 @@ impl OrgKind for CloneRetire {"
+   ]
+  },
+  {
+   "path": "tests/instruction_writers.rs",
+   "hunks": [
+    "@@ -123,10 +123,14 @@ fn instruction_source_writers_are_inventoried() {"
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -1,6 +1,5 @@",
+    "@@ -11,13 +10,11 @@ use crate::model::action::{ActionKind, ActionRecord};",
+    "@@ -212,7 +209,7 @@ impl OrgKind for UndoKind {",
+    "@@ -303,29 +300,17 @@ fn restamp(cx: &mut MutationCx<'_>, id: &AnyId, act: &ActionId) -> Result<(), Mu",
+    "@@ -385,8 +370,7 @@ fn restore_mutate(",
+    "@@ -426,80 +410,6 @@ fn restore_mutate("
+   ]
+  },
+  {
+   "path": "src/undo/commands.rs",
+   "hunks": [
+    "@@ -1,10 +1,9 @@",
+    "@@ -82,30 +81,11 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {"
+   ]
+  },
+  {
+   "path": "src/undo/mod.rs",
+   "hunks": [
+    "@@ -1,5 +1,4 @@"
+   ]
+  },
+  {
+   "path": "src/reconcile/planner.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@ use super::desired::{DesiredPane, DesiredRuntime};",
+    "@@ -11,7 +12,7 @@ use crate::model::effect::{",
+    "@@ -51,6 +52,65 @@ pub fn launched_key(clone: &CloneId) -> String {",
+    "@@ -100,9 +160,10 @@ impl Surplus<'_> {",
+    "@@ -144,6 +205,24 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -159,12 +238,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -287,11 +371,10 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -317,12 +400,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -451,7 +539,23 @@ impl Out<'_> {",
+    "@@ -487,9 +591,32 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {",
+    "@@ -747,6 +874,7 @@ pub fn plan_effects(",
+    "@@ -786,6 +914,130 @@ pub fn plan_effects("
+   ]
+  },
+  {
+   "path": "src/reconcile/desired.rs",
+   "hunks": [
+    "@@ -1,5 +1,5 @@",
+    "@@ -57,6 +57,13 @@ pub struct DesiredPane {",
+    "@@ -198,6 +205,10 @@ impl DesiredRuntime {"
+   ]
+  },
+  {
+   "path": "src/reconcile/session.rs",
+   "hunks": [
+    "@@ -37,6 +37,7 @@ pub fn start_outcome(r: Result<StartOutcome, HerdrError>) -> ExecOutcome {",
+    "@@ -127,6 +128,7 @@ async fn start("
+   ]
+  },
+  {
+   "path": "src/threads/mod.rs",
+   "hunks": [
+    "@@ -6,6 +6,7 @@",
+    "@@ -19,7 +20,7 @@ mod tests;",
+    "@@ -133,9 +134,9 @@ struct InvitationArgs {",
+    "@@ -148,8 +149,8 @@ impl Mutation for SetInvitation {",
+    "@@ -176,10 +177,14 @@ impl Mutation for SetInvitation {",
+    "@@ -190,35 +195,9 @@ pub fn register_mutations(reg: &mut MutationRegistry) {",
+    "@@ -234,7 +213,6 @@ pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingI"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -457,13 +457,12 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -28,8 +28,13 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "src/threads/effects.rs",
+   "hunks": [
+    "@@ -5,18 +5,24 @@",
+    "@@ -31,6 +37,18 @@ use std::sync::{Arc, Mutex};",
+    "@@ -88,12 +106,16 @@ impl Graph {",
+    "@@ -233,6 +255,26 @@ pub(crate) enum Payload {",
+    "@@ -252,8 +294,8 @@ struct Want {",
+    "@@ -348,15 +390,143 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {",
+    "@@ -378,27 +548,24 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {",
+    "@@ -417,15 +584,22 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {"
+   ]
+  },
+  {
+   "path": "src/daemon/compose.rs",
+   "hunks": [
+    "@@ -47,11 +47,24 @@ pub const STARTUP_STEPS: [&str; 6] = [",
+    "@@ -68,6 +81,9 @@ impl Services {",
+    "@@ -89,14 +105,13 @@ impl Services {",
+    "@@ -106,13 +121,33 @@ pub fn production_threads(",
+    "@@ -181,6 +216,9 @@ pub async fn compose_with(",
+    "@@ -229,7 +267,9 @@ pub async fn compose_with(",
+    "@@ -313,8 +353,17 @@ pub async fn compose_with(",
+    "@@ -378,6 +427,28 @@ pub fn register_threads_connection(",
+    "@@ -385,7 +456,33 @@ pub fn register_threads_connection("
+   ]
+  }
+ ]
+}
