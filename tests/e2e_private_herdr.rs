@@ -398,7 +398,7 @@ impl E2e {
         ];
         self.open_effects()
             .into_iter()
-            .filter(|e| !THREADS.contains(&e.0.as_str()))
+            .filter(|e| !THREADS.contains(&e.0.as_str()) && !e.0.starts_with("threads."))
             .collect()
     }
 
@@ -2378,6 +2378,318 @@ fn e2e_plugin_link_status_action_single_daemon() {
         rig.daemon_pid(),
         Some(pid),
         "running the action started no second daemon"
+    );
+}
+
+// ---- hg-66u.17: configuration smokes for the threads-seat identity (spec §11, pre-D1) ------------------------
+//
+// Each smoke runs the real daemon against a private Herdr server AND a real herdr-threads daemon in the same
+// private root. Clones use harness `shell`: Herdr's agent detection needs real agent binaries and credentials,
+// which a private rig does not have, so the agent-bearing parts of each configuration (idle agents, an exited
+// agent, an auto-resumed agent, a resumable session) are not exercised and are reported as unmet in the task
+// report. What is measured is the identity path: seat assignment, preserved ids, SeatObservation rebind.
+
+/// The herdr-threads binary for the smoke: `HG_TEST_THREADS_BINARY`, else the one the `threads_real` tests build.
+fn smoke_threads_binary() -> Result<PathBuf, String> {
+    if let Some(p) = std::env::var_os("HG_TEST_THREADS_BINARY") {
+        return Ok(support::validated_binary(PathBuf::from(p)));
+    }
+    let built =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/threads-bin/debug/herdr-threads");
+    if built.is_file() {
+        Ok(built)
+    } else {
+        Err(format!(
+            "no herdr-threads binary (set HG_TEST_THREADS_BINARY or build {})",
+            built.display()
+        ))
+    }
+}
+
+/// Everything about a clone that the smokes compare across the event: its seat, bound pane and invitations.
+/// An invitation is `(thread, state, threads invitation id)`: a re-invite would change the id.
+#[derive(Debug, PartialEq, Clone)]
+struct CloneFacts {
+    id: String,
+    threads_seat: String,
+    pane: String,
+    invitations: Vec<(String, String, String)>,
+}
+
+impl E2e {
+    /// A rig whose graph daemon reaches a real herdr-threads daemon (state dir `threads-state` under the private
+    /// root, found through `HERDR_GRAPH_THREADS_STATE_DIR`). `None` (skipped) when no threads binary exists.
+    fn start_with_threads() -> Option<Self> {
+        let bin = match smoke_threads_binary() {
+            Ok(b) => b,
+            Err(reason) => {
+                support::skip(&reason);
+                return None;
+            }
+        };
+        let mut rig = Self::start_without_daemon()?;
+        let state = rig.herdr.root.join("threads-state");
+        rig.herdr
+            .guard()
+            .check(&state)
+            .expect("threads state is inside the private root");
+        rig.herdr.env.push((
+            "HERDR_GRAPH_THREADS_STATE_DIR".into(),
+            state.display().to_string(),
+        ));
+        let out = rig
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(&state)
+            .arg("--host-endpoint")
+            .arg(&rig.herdr.socket)
+            .args(["daemon", "ensure"])
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "threads daemon ensure: {}",
+            stderr(&out)
+        );
+        rig.start_daemon();
+        Some(rig)
+    }
+
+    fn clone_facts(&self, c: &Row) -> Option<CloneFacts> {
+        let s = self.show(&c.id);
+        let seat = at(&s, "threads_seat")?.as_str()?.to_owned();
+        let pane = self.pane_of(&c.id)?.id.0;
+        let mut invitations: Vec<_> = s
+            .get("invitations")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|i| {
+                (
+                    tstr(i, "thread"),
+                    tstr(i, "state"),
+                    tstr(i, "link.invitation"),
+                )
+            })
+            .collect();
+        invitations.sort();
+        Some(CloneFacts {
+            id: c.id.clone(),
+            threads_seat: seat,
+            pane,
+            invitations,
+        })
+    }
+}
+
+/// foreman (two clones) and bar (one), each seated by threads, plus the facts to compare later.
+fn seated_rig() -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
+    let rig = E2e::start_with_threads()?;
+    let (foreman, bar) = two_seats(&rig);
+    rig.plan_apply(&["clone", "add", "foreman"]);
+    rig.wait_until("foreman's second pane", WAIT, |r| {
+        r.tab_labelled("foreman")
+            .is_some_and(|t| t.1.panes.len() == 2)
+    });
+    rig.wait_settled();
+    let clones: Vec<Row> = [&foreman, &bar]
+        .iter()
+        .flat_map(|s| rig.clones_of(&s.id))
+        .collect();
+    assert_eq!(clones.len(), 3);
+    rig.wait_until("every clone to hold a threads seat", WAIT, |r| {
+        clones.iter().all(|c| r.clone_facts(c).is_some())
+    });
+    let facts = clones
+        .into_iter()
+        .map(|c| {
+            let f = rig.clone_facts(&c).unwrap();
+            (c, f)
+        })
+        .collect();
+    Some((rig, facts))
+}
+
+/// The incarnation generation a clone is bound under (0 when unbound).
+fn bound_generation(rig: &E2e, clone: &Row) -> i64 {
+    at(&rig.show(&clone.id), "runtime.bound.incarnation.generation")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or(0)
+}
+
+/// After the event (`before_generations`: each clone's generation just before it): every clone is rebound under
+/// the new incarnation and present on the same seat, pane and invitations, with nothing created or retired and
+/// no operator step (no rebind plan is ever applied here).
+fn assert_clones_kept_their_seats(
+    rig: &E2e,
+    before: &[(Row, CloneFacts)],
+    before_generations: &[i64],
+) {
+    rig.wait_until("every clone to be rebound and present", WAIT, |r| {
+        before.iter().zip(before_generations).all(|((c, f), g)| {
+            bound_generation(r, c) > *g
+                && tstr(&r.show(&c.id), "runtime.availability") == "present"
+                && r.clone_facts(c).as_ref() == Some(f)
+        })
+    });
+    rig.wait_settled();
+    for (c, f) in before {
+        assert_eq!(
+            rig.clone_facts(c).as_ref(),
+            Some(f),
+            "clone {} kept its threads seat, pane and invitations",
+            c.name
+        );
+        assert_eq!(rig.show(&c.id)["lifecycle"].as_str(), Some("active"));
+    }
+    assert_eq!(retired_seat_count(rig), 0, "nothing was retired");
+    assert_eq!(
+        tab_labels(rig),
+        ["1", "bar", "foreman"],
+        "no tab was recreated or duplicated"
+    );
+    assert_eq!(
+        pane_infos(&rig.snapshot()).len(),
+        4,
+        "no pane was recreated"
+    );
+    let ops = rig.ops_text();
+    assert!(
+        !ops.lines().any(|l| l.contains("rule=")),
+        "nothing was observed as closed:\n{ops}"
+    );
+}
+
+/// Configuration 3: headless cold restart. The server dies and comes back with preserved tab/workspace ids and
+/// new terminal ids; the rig has no client attached.
+#[test]
+fn e2e_cold_restart_headless_resumes_via_the_driver() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+}
+
+/// A real Herdr TUI client attached to the private server through a pseudo-terminal (the rig has no `script`
+/// or terminal emulator). Killed on drop; it is this fixture's own child.
+struct AttachedClient {
+    child: std::process::Child,
+    drain: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AttachedClient {
+    fn attach(rig: &E2e) -> std::io::Result<Self> {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        use std::os::unix::process::CommandExt;
+        let (mut master, mut slave) = (0, 0);
+        let ws = libc::winsize {
+            ws_row: 40,
+            ws_col: 120,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: openpty fills two fresh descriptors that are owned from here on.
+        let rc = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &ws,
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both descriptors were just created by openpty and nothing else owns them.
+        let (master, slave) =
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+        let mut cmd = rig.herdr.command(rig.herdr.herdr_path());
+        cmd.env("TERM", "xterm-256color")
+            .stdin(slave.try_clone()?)
+            .stdout(slave.try_clone()?)
+            .stderr(slave);
+        // SAFETY: setsid and ioctl are async-signal-safe; the child makes the pty its controlling terminal.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+                Ok(())
+            });
+        }
+        let child = cmd.spawn()?;
+        let drain = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut f = std::fs::File::from(master);
+            let mut buf = [0u8; 65536];
+            while f.read(&mut buf).is_ok_and(|n| n > 0) {}
+        });
+        Ok(Self {
+            child,
+            drain: Some(drain),
+        })
+    }
+
+    fn alive(&mut self) -> bool {
+        self.child.try_wait().ok().flatten().is_none()
+    }
+}
+
+impl Drop for AttachedClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(d) = self.drain.take() {
+            let _ = d.join();
+        }
+    }
+}
+
+/// Configuration 2: cold restart with a client attached. The client is a real `herdr` TUI on a pty, up before
+/// the server dies.
+#[test]
+fn e2e_cold_restart_attended_keeps_clones_on_their_seats() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let mut client = match AttachedClient::attach(&rig) {
+        Ok(c) => c,
+        Err(e) => {
+            support::skip(&format!("cannot attach a pty client: {e}"));
+            return;
+        }
+    };
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        client.alive(),
+        "the TUI client stayed attached before the restart"
+    );
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+}
+
+/// Configuration 1: live handoff. Unmet on this Herdr: the only handoff entry point is `herdr update --handoff`,
+/// which downloads the latest release over the network and installs it over the invoking `herdr` binary before
+/// handing the server off. That cannot be pointed at a private rig without replacing a real binary or running an
+/// unpinned download, and Herdr itself is not modified by this work. The graph-side reconnect across a server
+/// swap is covered by the fake-Herdr handoff tests (hg-66u.25, hg-66u.28), not by this real-Herdr smoke.
+#[test]
+fn e2e_live_handoff_keeps_clones_on_their_seats() {
+    support::skip(
+        "no private-rig-safe live handoff: `herdr update --handoff` downloads and installs a release over the herdr binary",
     );
 }
 
