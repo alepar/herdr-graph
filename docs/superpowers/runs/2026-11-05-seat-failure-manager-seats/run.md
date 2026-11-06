@@ -13,6 +13,8 @@ spec: 2026-11-05-seat-failure-manager-seats-design.md
 epic: hg-k4l
 roastDesignRound: 2
 roastCodeRound: 3
+redesignCycles-code: 1
+redesign-code-1: round 3 · triggers shared-cause, defect-type · amended - · lastGood ce72e45 · designRoast - · state started
 roast-code: 2026-11-05-seat-failure-manager-seats-roast-pr-1.md, 2026-11-05-seat-failure-manager-seats-roast-pr-2.md, 2026-11-05-seat-failure-manager-seats-roast-pr-3.md
 roast-design: 2026-11-05-seat-failure-manager-seats-roast-design-1.md, 2026-11-05-seat-failure-manager-seats-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
@@ -30,6 +32,7 @@ scopeFilter-round-2: [Should-fix] src/observe/mutations.rs:209 in-scope — Show
 scopeFilter-round-2: [Should-fix] src/observe/mutations.rs:242 in-scope — Shows incorrect behavior in a goal-named path: the node-manager closure branch loses the B6 reparent of default_manager on an Active teamspace, leaving the store diverged from the ClosureCascade action record.
 scope-filter: 2 in-scope · 0 punch-listed
 stepBackCode-round-2: local — stale teamspace write-back repeat and node-manager closure ordering; clusters stale-teamspace-writeback, node-manager-closure-ordering, committed-evidence-logs
+stepBackCode-round-3: redesign — applied: three modules re-derive clone survival from different signals (classify pane_survives, CascadeMutation nm-only closed exemption, planner seat-level moved_out) → one per-clone survival fact decided by CascadeMutation at apply time; moved_out never gates reconciliation (dissolves 5)
 graph-pass: depth 7→7 · width 3.1→3.1 · applied 0 · parked 1
 stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
