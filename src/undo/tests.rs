@@ -1692,6 +1692,44 @@ fn reparent_on_application_retire_records_rewrites() {
 }
 
 #[test]
+fn observed_cascade_of_leaf_with_broken_chain_records_no_fallback() {
+    use crate::plan::managers::reparent::{
+        REPARENT_FALLBACK_KEY, REPARENTED_KEY, testing::seat_request,
+    };
+    for cyclic in [false, true] {
+        let fx = fx();
+        alpha(&fx);
+        for n in ["nm", "leaf", "x", "y"] {
+            commit(&fx, &format!("seat create {n} --teamspace alpha"));
+        }
+        let nm = seat_named(&fx, "nm").id;
+        let leaf = seat_named(&fx, "leaf").id;
+        let (x, y) = (seat_named(&fx, "x").id, seat_named(&fx, "y").id);
+        commit_request(&fx, crate::plan::managers::testing::request(Some(&nm)));
+        if cyclic {
+            // leaf leads into a cycle it is not part of: nothing points at leaf.
+            commit_request(&fx, seat_request(&leaf, Some(&x)));
+            commit_request(&fx, seat_request(&x, Some(&y)));
+            commit_request(&fx, seat_request(&y, Some(&x)));
+        } else {
+            commit_request(&fx, seat_request(&leaf, Some(&SeatId::new())));
+        }
+        let act = cascade(&fx, CascadeRule::Tab, &[leaf.to_any()]);
+        assert_eq!(seat_by_id(&fx, &leaf).lifecycle, Lifecycle::Retired);
+        assert!(
+            !act.compensation.contains_key(REPARENT_FALLBACK_KEY),
+            "cyclic={cyclic}: {:?}",
+            act.compensation
+        );
+        assert!(
+            !act.compensation.contains_key(REPARENTED_KEY),
+            "cyclic={cyclic}: {:?}",
+            act.compensation
+        );
+    }
+}
+
+#[test]
 fn reparent_on_undo_of_hydrate() {
     let fx = fx();
     let (hydrate, _nm, lead, r) = lead_world(&fx);

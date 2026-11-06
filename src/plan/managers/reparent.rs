@@ -2,7 +2,7 @@
 //! preview (`reparent_effects`; hg-k4l.27). Retirement routes never rewrite pointers themselves.
 use super::{default_manager_effect, seat_manager_effect, set_default_manager, set_seat_manager};
 use crate::model::manager::Pointers;
-use crate::model::{AnyId, SeatId};
+use crate::model::{AnyId, SeatId, TeamspaceId};
 use crate::plan::types::PlanEffect;
 use crate::ports::store::StoreError;
 use crate::store::tree::TreeRead;
@@ -54,13 +54,82 @@ impl Rewrite {
     }
 }
 
+/// Live records pointing at one retiring seat, each sorted by id.
+struct Holders {
+    seats: Vec<SeatId>,
+    teamspaces: Vec<TeamspaceId>,
+}
+
+/// The live records whose pointer is `old`: seats not retired and not in `retiring` whose `manager` is `old`, and
+/// teamspaces not Retired whose `default_manager` is `old`. `retiring` holders are skipped (a retiring holder's
+/// pointer is archived with it).
+fn holders(
+    pointers: &Pointers,
+    tree: &dyn TreeRead,
+    old: &SeatId,
+    retiring: &BTreeSet<SeatId>,
+) -> Result<Holders, StoreError> {
+    let mut seats: Vec<SeatId> = pointers
+        .seats
+        .iter()
+        .filter(|(id, p)| !p.retired && !retiring.contains(*id) && p.manager.as_ref() == Some(old))
+        .map(|(id, _)| id.clone())
+        .collect();
+    seats.sort();
+    let mut teamspaces = Vec::new();
+    for (_, ts) in layout::list_teamspaces(tree)? {
+        if ts.lifecycle != crate::model::common::Lifecycle::Retired
+            && ts.default_manager.as_ref() == Some(old)
+        {
+            teamspaces.push(ts.id);
+        }
+    }
+    teamspaces.sort();
+    Ok(Holders { seats, teamspaces })
+}
+
+/// A retiring seat's live holders, the target they move to, and the lenient-fallback note if one was taken.
+type Target = (Holders, Option<SeatId>, Option<String>);
+
+/// The one reparent target computation, shared by `reparent` (apply) and `reparent_effects` (preview). The chain
+/// walk happens only when `old` has at least one live holder (spec §4.11): `None` means no holder, nothing to
+/// rewrite, and the chain was not walked, so a broken chain of `old` itself cannot fail or be noted.
+/// `lenient`: an integrity error from the walk falls back to `live_node_manager` (or None) and returns a note;
+/// not lenient, the error propagates (StoreError::Integrity → Fail::Data per hg-k4l.5).
+fn lazy_target(
+    pointers: &Pointers,
+    tree: &dyn TreeRead,
+    old: &SeatId,
+    retiring: &BTreeSet<SeatId>,
+    lenient: bool,
+) -> Result<Option<Target>, StoreError> {
+    let h = holders(pointers, tree, old, retiring)?;
+    if h.seats.is_empty() && h.teamspaces.is_empty() {
+        return Ok(None);
+    }
+    let (target, note) = match pointers.nearest_surviving_manager(old, retiring) {
+        Ok(t) => (t, None),
+        Err(e @ StoreError::Integrity { .. }) if lenient => {
+            let t = pointers.live_node_manager();
+            let note = format!(
+                "reparenting reports of {old}: {e}; fell back to {}",
+                t.as_ref()
+                    .map_or("no manager".to_string(), |t| format!("node manager {t}"))
+            );
+            (t, Some(note))
+        }
+        Err(e) => return Err(e),
+    };
+    Ok(Some((h, target, note)))
+}
+
 /// Apply side, from do_retire_seat before the seat is archived: rewrite every live seat whose explicit manager is
 /// `seat` and every non-retired teamspace whose default_manager is `seat` to `seat`'s nearest surviving manager.
 /// `retiring` is every seat the mutation retires (routes that retire several seats fill it; `seat` is added): those
 /// seats are skipped as targets and as holders (a retiring holder's pointer is archived with it), so every live
-/// holder gets one row whose `old` is its original pointer and final pointers match the preview.
-/// `lenient`: an integrity error computing the target falls back to `live_node_manager` (or None) and returns a note;
-/// not lenient, the error propagates (StoreError::Integrity → Fail::Data per hg-k4l.5).
+/// holder gets one row whose `old` is its original pointer and final pointers match the preview. With no live
+/// holder nothing is computed (see `lazy_target`).
+/// `lenient`: see `lazy_target`.
 pub fn reparent(
     tree: &mut Overlay<'_>,
     seat: &SeatId,
@@ -70,37 +139,11 @@ pub fn reparent(
     let pointers = Pointers::load(&*tree)?;
     let mut retiring = retiring.clone();
     retiring.insert(seat.clone());
-    let (target, note) = match pointers.nearest_surviving_manager(seat, &retiring) {
-        Ok(t) => (t, None),
-        Err(e @ StoreError::Integrity { .. }) if lenient => {
-            let t = pointers.live_node_manager();
-            let note = format!(
-                "reparenting reports of {seat}: {e}; fell back to {}",
-                t.as_ref()
-                    .map_or("no manager".to_string(), |t| format!("node manager {t}"))
-            );
-            (t, Some(note))
-        }
-        Err(e) => return Err(e),
+    let Some((h, target, note)) = lazy_target(&pointers, &*tree, seat, &retiring, lenient)? else {
+        return Ok((Vec::new(), None));
     };
-    let mut seats: Vec<SeatId> = pointers
-        .seats
-        .iter()
-        .filter(|(id, p)| !p.retired && !retiring.contains(*id) && p.manager.as_ref() == Some(seat))
-        .map(|(id, _)| id.clone())
-        .collect();
-    seats.sort();
-    let mut teamspaces = Vec::new();
-    for (_, ts) in layout::list_teamspaces(&*tree)? {
-        if ts.lifecycle != crate::model::common::Lifecycle::Retired
-            && ts.default_manager.as_ref() == Some(seat)
-        {
-            teamspaces.push(ts.id);
-        }
-    }
-    teamspaces.sort();
     let mut out = Vec::new();
-    for id in seats {
+    for id in h.seats {
         // The node manager has no manager; never point a seat at itself.
         let new = target.clone().filter(|t| *t != id);
         set_seat_manager(tree, &id, new.clone())?;
@@ -111,7 +154,7 @@ pub fn reparent(
             new,
         });
     }
-    for id in teamspaces {
+    for id in h.teamspaces {
         set_default_manager(tree, &id, target.clone())?;
         out.push(Rewrite {
             holder: id.to_any(),
@@ -126,42 +169,39 @@ pub fn reparent(
 /// Plan preview for seats retiring together: for each live seat (not itself in `retiring`) whose explicit manager is
 /// in `retiring`, and each non-retired teamspace whose default_manager is in `retiring`, one seat.manager /
 /// teamspace.default_manager effect (`seat_manager_effect` / `default_manager_effect`) from the retiring seat to its
-/// nearest surviving manager, skipping every seat in `retiring`. Holders are visited in id order. A retiring holder
-/// gets no effect: its pointer is archived with it, so preview and apply agree on final pointers of live holders.
+/// nearest surviving manager, skipping every seat in `retiring`. Seat effects come first (by holder id), then
+/// teamspace effects (by teamspace id). A retiring holder gets no effect: its pointer is archived with it, so
+/// preview and apply agree on final pointers of live holders. Targets come from `lazy_target`, so a retiring seat
+/// nothing points at is never walked.
 pub fn reparent_effects(
     tree: &dyn TreeRead,
     retiring: &[SeatId],
 ) -> Result<Vec<PlanEffect>, StoreError> {
     let retiring: BTreeSet<SeatId> = retiring.iter().cloned().collect();
     let pointers = Pointers::load(tree)?;
-    let mut seats: Vec<(&SeatId, &SeatId)> = pointers
-        .seats
-        .iter()
-        .filter(|(id, p)| !p.retired && !retiring.contains(*id))
-        .filter_map(|(id, p)| p.manager.as_ref().map(|m| (id, m)))
-        .filter(|(_, m)| retiring.contains(*m))
-        .collect();
-    seats.sort();
-    let mut out = Vec::new();
-    for (id, old) in seats {
-        let target = pointers.nearest_surviving_manager(old, &retiring)?;
-        // Mirrors `reparent`: never point a seat at itself.
-        let new = target.filter(|t| t != id);
-        out.push(seat_manager_effect(id, Some(old), new.as_ref()));
-    }
-    let mut teamspaces = Vec::new();
-    for (_, ts) in layout::list_teamspaces(tree)? {
-        if ts.lifecycle != crate::model::common::Lifecycle::Retired
-            && let Some(old) = ts.default_manager.as_ref()
-            && retiring.contains(old)
-        {
-            teamspaces.push((ts.id.clone(), old.clone()));
+    let mut seats: Vec<(SeatId, SeatId, Option<SeatId>)> = Vec::new();
+    let mut teamspaces: Vec<(TeamspaceId, SeatId, Option<SeatId>)> = Vec::new();
+    for old in &retiring {
+        let Some((h, target, _)) = lazy_target(&pointers, tree, old, &retiring, false)? else {
+            continue;
+        };
+        for id in h.seats {
+            // Mirrors `reparent`: never point a seat at itself.
+            let new = target.clone().filter(|t| *t != id);
+            seats.push((id, old.clone(), new));
+        }
+        for id in h.teamspaces {
+            teamspaces.push((id, old.clone(), target.clone()));
         }
     }
-    teamspaces.sort();
-    for (id, old) in teamspaces {
-        let target = pointers.nearest_surviving_manager(&old, &retiring)?;
-        out.push(default_manager_effect(&id, Some(&old), target.as_ref()));
+    seats.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    teamspaces.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    let mut out = Vec::new();
+    for (id, old, new) in seats {
+        out.push(seat_manager_effect(&id, Some(&old), new.as_ref()));
+    }
+    for (id, old, new) in teamspaces {
+        out.push(default_manager_effect(&id, Some(&old), new.as_ref()));
     }
     Ok(out)
 }
