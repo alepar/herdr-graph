@@ -3410,3 +3410,270 @@ async fn workspace_close_marks_node_manager_teamspace_absent() {
     settle(&fx).await;
     assert_reopened(&fx, "foreman").await;
 }
+
+// =================================================================================================
+// redesign-code-1 integration sweep (hg-k4l.67)
+// =================================================================================================
+
+/// Every ended native session in the store, as `(clone, ns, end reason)` strings.
+fn ended_sessions(fx: &Fx) -> std::collections::BTreeSet<(String, String, String)> {
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .flat_map(|(_, c)| {
+            c.sessions
+                .iter()
+                .filter(|s| s.ended.is_some())
+                .map(|s| {
+                    (
+                        format!("{:?}", c.id),
+                        format!("{:?}", s.id),
+                        format!("{:?}", s.end_reason),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The `SessionEnded` events received since the last drain, in the shape of [`ended_sessions`].
+fn drain_ended(
+    rx: &mut tokio::sync::broadcast::Receiver<super::step::SessionEnded>,
+) -> std::collections::BTreeSet<(String, String, String)> {
+    let mut out = std::collections::BTreeSet::new();
+    while let Ok(ev) = rx.try_recv() {
+        out.insert((
+            format!("{:?}", ev.clone),
+            format!("{:?}", ev.ns),
+            format!("{:?}", Some(ev.reason)),
+        ));
+    }
+    out
+}
+
+/// Spec §4.9 / §4.11 scenarios composed in one world: observe -> `CascadeMutation` -> `commit_ops` -> reconcile
+/// against `FakeHerdr`. After each scenario the store's newly ended sessions equal the emitted `SessionEnded`
+/// events, and the foreign teamspace `other` is untouched.
+#[tokio::test]
+async fn redesign_sweep_scenarios_compose() {
+    use crate::plan::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    let fx = &fx;
+    commit(fx, "teamspace create hq");
+    commit(
+        fx,
+        "seat create nm --teamspace hq --active --harness claude",
+    );
+    commit(fx, "clone add nm --name nm2");
+    commit(
+        fx,
+        "seat create sib --teamspace hq --active --harness claude",
+    );
+    commit(fx, "teamspace create other");
+    commit(
+        fx,
+        "seat create o --teamspace other --active --harness claude",
+    );
+    commit(fx, "teamspace create away");
+    commit(
+        fx,
+        "seat create p --teamspace away --active --harness claude",
+    );
+    settle(fx).await;
+    let (nm, sib) = (seat(fx, "nm").id, seat(fx, "sib").id);
+    make_node_manager(fx, &nm);
+    let hq = ts_rec(fx, "hq").id;
+    fx.w.admit(teamspace_request(&hq, Some(&sib))).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(ts_rec(fx, "hq").default_manager, Some(sib.clone()));
+
+    // Every clone gets an occupant, so each end is a native session end.
+    for s in ["nm", "sib", "o", "p"] {
+        for (n, c) in clones_of(fx, &seat(fx, s).id).iter().enumerate() {
+            fx.herdr.set_agent(
+                &pane_of(fx, c),
+                claude_agent(Some(&format!("sess-{s}-{n}"))),
+            );
+        }
+    }
+    step(fx).await;
+    for s in ["nm", "sib", "o", "p"] {
+        for c in clones_of(fx, &seat(fx, s).id) {
+            assert!(c.occupant.is_some(), "{s} clone has an occupant");
+            assert_eq!(c.sessions.len(), 1, "{s} clone captured its session");
+        }
+    }
+    let mut rx = fx.lp.subscribe_session_ended();
+    let ws_of = |name: &str| {
+        ts_rec(fx, name)
+            .runtime
+            .bound
+            .unwrap()
+            .workspace_id
+            .unwrap()
+    };
+    let (hq_ws, other_ws, away_ws) = (ws_of("hq"), ws_of("other"), ws_of("away"));
+    let o_tab = tab_of_seat(fx, "o");
+    let o_pane = pane_of(fx, &only_clone(fx, "o"));
+    let mut ended_before = ended_sessions(fx);
+    assert!(ended_before.is_empty());
+    fx.herdr.clear_calls();
+
+    // `other` is untouched: no workspace/tab-level call and no split targets it, `o` stays bound and Active.
+    let check_other = |when: &str| {
+        let all = calls(fx);
+        for c in &all {
+            let hit = match c {
+                FakeCall::RenameWorkspace(w, _)
+                | FakeCall::ReportWorkspaceMetadata(w, ..)
+                | FakeCall::CloseWorkspace(w) => *w == other_ws,
+                FakeCall::CloseTab(t) | FakeCall::RenameTab(t, _) => *t == o_tab,
+                FakeCall::CreateTab(ct) => ct.workspace == other_ws,
+                FakeCall::SplitPane(sp) => sp.target == o_pane,
+                FakeCall::ClosePane(p) => *p == o_pane,
+                _ => false,
+            };
+            assert!(!hit, "{when}: {c:?} touches `other`: {all:?}");
+        }
+        assert_eq!(seat(fx, "o").lifecycle, Lifecycle::Active, "{when}");
+        assert_eq!(ts_rec(fx, "other").lifecycle, Lifecycle::Active, "{when}");
+        assert_eq!(
+            ts_rec(fx, "other").runtime.bound.unwrap().workspace_id,
+            Some(other_ws.clone()),
+            "{when}"
+        );
+        assert_eq!(tab_of_seat(fx, "o"), o_tab, "{when}");
+    };
+    let check_ends =
+        |when: &str,
+         before: &mut std::collections::BTreeSet<(String, String, String)>,
+         rx: &mut tokio::sync::broadcast::Receiver<super::step::SessionEnded>| {
+            let now = ended_sessions(fx);
+            let new: std::collections::BTreeSet<_> = now.difference(before).cloned().collect();
+            assert!(before.is_subset(&now), "{when}: a session end was undone");
+            assert_eq!(new, drain_ended(rx), "{when}: store ends equal events");
+            *before = now;
+            new
+        };
+
+    // 1. Move: nm's second clone and p's clone into `other`'s tab.
+    let nm_clones = clones_of(fx, &nm);
+    assert_eq!(nm_clones.len(), 2);
+    let (nm_home, nm_moved) = (nm_clones[0].clone(), nm_clones[1].clone());
+    let (nm_home_pane, nm_moved_pane) = (pane_of(fx, &nm_home), pane_of(fx, &nm_moved));
+    let p_clone = only_clone(fx, "p");
+    let p_pane = pane_of(fx, &p_clone);
+    fx.herdr.user_move_pane(&nm_moved_pane, &o_tab);
+    fx.herdr.user_move_pane(&p_pane, &o_tab);
+    settle(fx).await;
+    assert!(check_ends("move", &mut ended_before, &mut rx).is_empty());
+    check_other("move");
+
+    // 2. Two-clone node manager moved, then the home workspace closes; the teamspace default rewrite survives.
+    fx.herdr.user_close_workspace(&hq_ws);
+    settle(fx).await;
+    let all = calls(fx);
+    assert_eq!(seat(fx, "nm").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(ts_rec(fx, "hq").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(seat(fx, "sib").lifecycle, Lifecycle::Retired, "{all:?}");
+    let m = clone_by_id(fx, &nm_moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        pane_of(fx, &m),
+        nm_moved_pane,
+        "the moved clone stays bound"
+    );
+    let h = clone_by_id(fx, &nm_home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active, "{all:?}");
+    let h_pane = pane_of(fx, &h);
+    assert_ne!(h_pane, nm_home_pane, "the home clone has a new pane");
+    let snap = snapshot(fx).await;
+    let fresh = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|t| t.panes.iter().any(|p| p.id == h_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_ne!(fresh.id, hq_ws, "a new workspace id");
+    assert_ne!(fresh.id, other_ws, "{all:?}");
+    let home_tab = tab_of_seat(fx, "nm");
+    assert_ne!(
+        home_tab, o_tab,
+        "the node manager's seat tab is not other's"
+    );
+    assert!(
+        fresh.tabs.iter().any(|t| t.id == home_tab),
+        "the seat tab is in the fresh workspace"
+    );
+    assert_eq!(
+        ts_rec(fx, "hq").runtime.bound.unwrap().workspace_id,
+        Some(fresh.id.clone())
+    );
+    let acts = actions(fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1, "one cascade so far");
+    let row = recorded(&acts[0])
+        .into_iter()
+        .find(|r| r.holder == hq.to_any() && r.field == "default_manager")
+        .expect("hq's default_manager is reparented");
+    assert_eq!(row.old, sib);
+    assert_eq!(row.new, Some(nm.clone()));
+    assert_eq!(
+        ts_rec(fx, "hq").default_manager,
+        row.new,
+        "the stored pointer equals the recorded rewrite"
+    );
+    let ends = check_ends("node manager workspace", &mut ended_before, &mut rx);
+    let ended_clones: std::collections::BTreeSet<_> = ends.iter().map(|e| e.0.clone()).collect();
+    let sib_clone = only_clone(fx, "sib");
+    assert_eq!(
+        ended_clones,
+        [format!("{:?}", nm_home.id), format!("{:?}", sib_clone.id)]
+            .into_iter()
+            .collect(),
+        "nm's survived clone gets no end"
+    );
+    check_other("node manager workspace");
+
+    // 3. Plain seat moved, then its home workspace closes: retired, SessionEnded for its surviving clone.
+    fx.herdr.user_close_workspace(&away_ws);
+    settle(fx).await;
+    assert_eq!(seat(fx, "p").lifecycle, Lifecycle::Retired);
+    let pc = clone_by_id(fx, &p_clone.id);
+    assert_eq!(pc.lifecycle, CloneLifecycle::Retired);
+    assert!(pc.occupant.is_none());
+    let ends = check_ends("plain seat", &mut ended_before, &mut rx);
+    assert_eq!(ends.len(), 1);
+    assert_eq!(ends.iter().next().unwrap().0, format!("{:?}", p_clone.id));
+    assert_eq!(seat(fx, "nm").lifecycle, Lifecycle::Active);
+    check_other("plain seat");
+
+    // 4. The reopened node-manager home tab closes while its other clone is still in `other`'s tab.
+    let nm_home_tab = tab_of_seat(fx, "nm");
+    let reopened_pane = pane_of(fx, &clone_by_id(fx, &nm_home.id));
+    fx.herdr.user_close_tab(&nm_home_tab);
+    settle(fx).await;
+    let s = seat(fx, "nm");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(s.runtime.availability, Availability::Present);
+    let h = clone_by_id(fx, &nm_home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    let h_pane = pane_of(fx, &h);
+    assert_ne!(h_pane, reopened_pane, "the home clone was reopened");
+    let snap = snapshot(fx).await;
+    let home_ws = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|t| t.panes.iter().any(|p| p.id == h_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_eq!(home_ws.id, fresh.id, "reopened in the hq home workspace");
+    assert_eq!(pane_of(fx, &clone_by_id(fx, &nm_moved.id)), nm_moved_pane);
+    check_ends("node manager tab", &mut ended_before, &mut rx);
+    check_other("node manager tab");
+}
