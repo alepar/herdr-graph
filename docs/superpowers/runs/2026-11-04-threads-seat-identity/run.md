@@ -142,7 +142,7 @@ codeBuckets:
   worktreesKept: 42 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
 roastCodeRound: 4
-roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md, 2026-11-05-threads-seat-identity-roast-pr-2.md, 2026-11-06-threads-seat-identity-roast-pr-3.md, 2026-11-06-threads-seat-identity-roast-pr-4.md
+roast-code: 2026-11-05-threads-seat-identity-roast-pr-1.md, 2026-11-05-threads-seat-identity-roast-pr-2.md, 2026-11-06-threads-seat-identity-roast-pr-3.md, 2026-11-06-threads-seat-identity-roast-pr-4.md, 2026-11-06-threads-seat-identity-audit-roast-pr-post-cap-audit.md
 redesignCycles-code: 1
 redesign-code-1: round 1 · triggers shared-cause, defect-type · amended 3. Participation keyed to the seat (H2-identity steps 2–3,  D3), 14. Punch-list resolutions (design roast round 2,  converged), Key abstractions, Unchanged behavior · lastGood 855a59fea7c7d2ed099655dd783a8686d339747d · designRoast r3 fixed · state applied
 stepBackCode-round-1: redesign — applied: purge always keeps a Finalize tombstone before D2 → purge deletes the record outright until the finalize want exists (D2), per spec §8 (dissolves 5)
@@ -183,3 +183,4 @@ scope-filter: 14 in-scope · 2 punch-listed
 roastCodeExit: capped
 baseAbsorbed: 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784 → eae4a3edd9e8bca0c5e1807a7c4372d64ce9f871, 0 conflicted files
 sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run MEASUREMENT INVALID (EAGAIN thread exhaustion) @ 29e7609
+friction: 14 events

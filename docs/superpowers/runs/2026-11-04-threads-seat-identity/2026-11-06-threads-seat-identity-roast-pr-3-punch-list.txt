@@ -1,2 +1,7 @@
 [Nit] src/observe/seat_observation.rs:189
 [Nit] CURRENT-DESIGN.md:65
+[Should-fix] tests/e2e_private_herdr.rs:2694
+[Nit] tests/e2e_private_herdr.rs:2412
+[Nit] tests/e2e_private_herdr.rs:2508
+[Nit] tests/e2e_private_herdr.rs:2671
+[Nit] tests/e2e_private_herdr.rs:2397
