@@ -95,7 +95,6 @@ impl Mutation for TestClone {
                     requirement: Some("req1".into()),
                     revision: Some(2),
                 }),
-                migration_reinvite: false,
             });
         }
         cx.tree.put_record(loc.record_path, &mut rec)?;
