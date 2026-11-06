@@ -1184,6 +1184,17 @@ impl OrgKind for SeatActivate {
             t.lifecycle = Lifecycle::Active;
             cx.tree.put_record(f.ts.loc.record_path.clone(), &mut t)?;
         }
+        // Reactivating a Dormant seat (and its teamspace) is treated like resurrection: the graph's
+        // deactivation close made threads retire the pane's seat, so a seated clone needs a Restore intent
+        // for succession (pre-D2) or un-retire (post-D2). A seatless clone is left untouched.
+        for (loc, c) in f.active_clones() {
+            if c.is_tombstone() || c.threads_seat.is_none() {
+                continue;
+            }
+            let mut c = c.clone();
+            crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
+            cx.tree.put_record(loc.record_path.clone(), &mut c)?;
+        }
         let mut rec = f.rec.clone();
         rec.lifecycle = Lifecycle::Active;
         rec.activation.last_op = Some(cx.op.clone());

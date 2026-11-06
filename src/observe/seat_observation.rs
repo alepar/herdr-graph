@@ -4,7 +4,8 @@
 //! never map seat states to graph changes elsewhere.
 //!
 //! A seat the read omitted (a per-seat refusal) is threads not speaking for that clone: the matcher's result
-//! stands. A refusal that outlasts `SEAT_LOST_AFTER` makes the clone Unknown (seat lost).
+//! stands. A refusal that outlasts `SEAT_LOST_AFTER` makes the clone Unknown (seat lost). Clones of a Dormant
+//! seat or teamspace are not inspected.
 //!
 //! Pre-D1 precedence: threads speaks only with Resolved, Retired or KeyConflict. Unresolved, an unreachable
 //! threads service and a clone without `threads_seat` leave the old matcher's result untouched.
@@ -52,11 +53,15 @@ impl SeatOutcome {
     }
 }
 
-/// Active clones that carry a threads seat: the ones this module speaks for.
+/// Active clones that carry a threads seat and have a desired pane: the ones this module speaks for. A clone of
+/// a Dormant seat or teamspace has no desired pane and is not inspected, so neither its refusal clock nor a
+/// Retired answer caused by the graph's own deactivation close can unbind or retire it; reactivation writes a
+/// Restore intent (`SeatActivate`), which the Retired arm honours.
 pub fn seated_clones(d: &DesiredRuntime) -> Vec<(CloneId, ThreadsSeatRef)> {
     d.clones
         .values()
         .filter(|c| c.lifecycle == CloneLifecycle::Active && !c.is_tombstone())
+        .filter(|c| d.pane(&c.id).is_some())
         .filter_map(|c| {
             c.threads_seat
                 .as_ref()

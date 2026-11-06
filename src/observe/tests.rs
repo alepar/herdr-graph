@@ -664,6 +664,60 @@ async fn deactivate_produces_no_retirement() {
     );
 }
 
+#[tokio::test]
+async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    commit(&fx, "seat deactivate foreman");
+    step(&fx).await; // the graph closes the tab
+    // Threads, honestly: the closed pane's seat is retired for good (pre-D2).
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    let reads = fx.seats.reads();
+    step(&fx).await;
+    step(&fx).await;
+
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    let dormant = clone_by_id(&fx, &c.id);
+    assert_eq!(dormant.lifecycle, CloneLifecycle::Active);
+    assert_eq!(dormant.threads_seat.as_deref(), Some("seat-1"));
+    assert_eq!(
+        (dormant.runtime.availability, dormant.runtime.bound.is_none()),
+        (Availability::Absent, true)
+    );
+    assert_eq!(fx.seats.reads(), reads, "a dormant clone is not inspected");
+
+    // Reactivation writes a Restore intent, which keeps the Retired arm from retiring the clone.
+    commit(&fx, "seat activate foreman");
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+    assert_eq!(
+        calls(&fx)
+            .iter()
+            .filter(|c| matches!(c, FakeCall::CreateTab(_)))
+            .count(),
+        1
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert!(bound_pane(&fx, &c.id).is_some());
+    assert!(matches!(
+        after.seat_intent,
+        Some(SeatIntent::Restore { ref seat, threads_done: false, .. }) if seat == "seat-1"
+    ));
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::Retired { reversible: false }),
+        "the fact still records what threads said"
+    );
+}
+
 // =================================================================================================
 // disconnects, restarts, rebind
 // =================================================================================================
