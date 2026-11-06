@@ -14,3 +14,4 @@ Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg
 - [2026-11-05] roast-code r1: assembler review input selection: provenance unavailable; captured source available (collection gap inv-4aa37d70 cluster-4); bounded direct review of captured base/head, round unavailable for acceptance.
 - [2026-11-05] report format check: docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-3.md exit 4 (none marker has finding text in Escalations — trailing ---); repair not re-dispatched: the same repair failed repair-check (iv) in round 2; original stands.
 - [2026-11-05] roast-code r2: same assembler provenance gap (inv-4aa37d70 cluster-4); bounded direct review.
+- [2026-11-06] roast-code r2: reporter failed (account usage limit); report is the engine fallback (raw seat severities, default routes); degraded round.
