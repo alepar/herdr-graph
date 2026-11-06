@@ -17,6 +17,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- review-collection · {"invocationId": "inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-e33fc801-f307-464a-8b9a-fc849dbb309d", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e33fc801-f307-464a-8b9a-fc849dbb309d.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-aae6b25f-837c-4f99-9ad9-1e5797bab329", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.md", "review": "pending", "required": [], "settled": false}
@@ -175,3 +176,4 @@ cluster dropped: observation-guard-coverage — Write a negative test for each g
 scope-filter: 14 in-scope · 2 punch-listed
 roastCodeExit: capped
 baseAbsorbed: 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784 → eae4a3edd9e8bca0c5e1807a7c4372d64ce9f871, 0 conflicted files
+sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run pending
