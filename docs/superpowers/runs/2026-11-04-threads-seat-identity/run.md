@@ -130,7 +130,7 @@ codeBuckets:
   parked: 
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: SWEEP DEFERRED (caller-owned)
+  sweep: 59aeb1c — 2915 passed, 6 failed, 0 errors, 1 skipped; failing: subprocess::crash_after_create_tab_executes_at_most_once, subprocess::crash_after_create_workspace_executes_at_most_once, subprocess::crash_after_start_agent_executes_at_most_once, subprocess::kill_and_restart_recovers_journal_before_loops (test-support), e2e_summary_lands_in_archived_seat_folder, e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane (private-herdr); command: toolbox ht-build: nice cargo test && nice cargo test --features test-support && nice cargo test --features private-herdr -- --test-threads=1 (tier 3 re-run alone after a rustc EAGAIN ICE) @ 59aeb1c
   slowness: 
   worktreesKept: 39 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
