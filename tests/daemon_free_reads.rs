@@ -2,7 +2,7 @@
 //! running they exit 5 through `cli::daemon_error`. `status` keeps its direct read.
 mod support;
 
-use herdr_graph::cli::daemon_error::{NOT_IN_HERDR, RETRY_LATER};
+use herdr_graph::cli::daemon_error::RETRY_LATER;
 use herdr_graph::config::InstancePaths;
 use herdr_graph::model::{OpId, SeatId};
 use herdr_graph::store::init::init_instance;
@@ -39,7 +39,11 @@ fn text(b: &[u8]) -> String {
 }
 
 fn assert_exit_5(f: &Fixture, args: &[&str]) {
-    let out: Output = f.cmd(args).output().unwrap();
+    assert_exit_5_cmd(f, f.cmd(args), args);
+}
+
+fn assert_exit_5_cmd(f: &Fixture, mut cmd: Command, args: &[&str]) {
+    let out: Output = cmd.output().unwrap();
     let err = text(&out.stderr);
     assert_eq!(out.status.code(), Some(5), "{args:?}: {err}");
     assert!(
@@ -84,13 +88,9 @@ fn status_still_reads_directly() {
 }
 
 #[test]
-fn read_outside_herdr_exits_2() {
+fn read_outside_herdr_exits_5() {
     let f = Fixture::new();
-    let out = f
-        .cmd(&["who", "p1"])
-        .env_remove("HERDR_SOCKET_PATH")
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
-    assert!(text(&out.stderr).contains(NOT_IN_HERDR));
+    let mut cmd = f.cmd(&["who", "p1"]);
+    cmd.env_remove("HERDR_SOCKET_PATH");
+    assert_exit_5_cmd(&f, cmd, &["who", "p1"]);
 }

@@ -1,7 +1,8 @@
 //! `daemon_error` — the one place a failed daemon call becomes stderr text and an exit code (spec §4.4).
 //!
 //! Owns the condition table over every `ClientError` and `IpcErrorCode`: exit 2 (no instance, or not inside a
-//! Herdr pane), 5 (graph daemon unavailable, retry later), 6 (graph integrity error, not transient) and 1 for
+//! Herdr pane; that line is only the
+//! Ensure-mode refusal, `ClientError::NotInHerdr`), 5 (graph daemon unavailable, retry later), 6 (graph integrity error, not transient) and 1 for
 //! the other daemon replies; it also renders a local `StoreError::Integrity` to the same exit-6 text for
 //! daemon-free readers. It never reads the store and never falls back to direct reads: commands must not match
 //! `ClientError::Unavailable` themselves. A new daemon error outcome is added here.
@@ -9,7 +10,6 @@
 //! Exempt by design: `status` (its daemon-free fallback, spec §4.13), `doctor` (the operator's diagnostic,
 //! like `status`) and `session-report` (a hook path that must never fail; on any error it spools the report
 //! for the daemon to ingest instead of reporting to an agent).
-use crate::config::Env;
 use crate::daemon::client::{
     ClientError, EXIT_DAEMON_UNAVAILABLE, EXIT_INTEGRITY, EXIT_NO_INSTANCE,
 };
@@ -65,16 +65,10 @@ fn failure_of(outcome: Outcome, code: u8, line: String) -> Failure {
     }
 }
 
-/// The spec §4.4 table. `in_herdr`: HERDR_SOCKET_PATH is set.
-pub fn classify(e: &ClientError, in_herdr: bool) -> Failure {
-    let not_in_herdr = || failure_of(Outcome::NotInHerdr, 2, NOT_IN_HERDR.to_owned());
+/// The spec §4.4 table; each `ClientError` variant maps to one row, independent of the environment.
+pub fn classify(e: &ClientError) -> Failure {
     match e {
-        ClientError::NotInHerdr => not_in_herdr(),
-        ClientError::Unavailable(_) | ClientError::Frame(_) | ClientError::NoInstance
-            if !in_herdr =>
-        {
-            not_in_herdr()
-        }
+        ClientError::NotInHerdr => failure_of(Outcome::NotInHerdr, 2, NOT_IN_HERDR.to_owned()),
         ClientError::NoInstance => failure_of(Outcome::NoInstance, EXIT_NO_INSTANCE, e.to_string()),
         ClientError::Unavailable(r) => failure_of(
             Outcome::Unavailable,
@@ -106,14 +100,9 @@ pub fn classify(e: &ClientError, in_herdr: bool) -> Failure {
     }
 }
 
-/// `classify` with this process's environment.
-pub fn failure(e: &ClientError) -> Failure {
-    classify(e, Env::from_process().herdr_socket.is_some())
-}
-
 /// Print the failure line to stderr; return its exit code.
 pub fn report(e: ClientError) -> ExitCode {
-    let f = failure(&e);
+    let f = classify(&e);
     eprintln!("{}", f.line);
     ExitCode::from(f.code)
 }
@@ -147,38 +136,39 @@ mod tests {
 
     #[test]
     fn not_in_herdr_variant_is_exit_2() {
-        for in_herdr in [true, false] {
-            let f = classify(&ClientError::NotInHerdr, in_herdr);
-            assert_eq!((f.outcome, f.code), (Outcome::NotInHerdr, 2));
-            assert_eq!(f.line, NOT_IN_HERDR);
-        }
+        let f = classify(&ClientError::NotInHerdr);
+        assert_eq!((f.outcome, f.code), (Outcome::NotInHerdr, 2));
+        assert_eq!(f.line, NOT_IN_HERDR);
     }
 
     #[test]
-    fn no_reply_outside_herdr_is_exit_2() {
-        let frame = ClientError::Frame(FrameError::TooLarge(1));
+    fn no_reply_is_exit_5_whatever_the_environment() {
         for e in [
             ClientError::Unavailable("not running".into()),
-            frame,
-            ClientError::NoInstance,
+            ClientError::Frame(FrameError::TooLarge(1)),
         ] {
-            let f = classify(&e, false);
-            assert_eq!(f.code, 2, "{e:?}");
-            assert_eq!(f.line, NOT_IN_HERDR);
-            assert!(!f.line.contains(RETRY_LATER));
+            let f = classify(&e);
+            assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5), "{e:?}");
+            assert!(
+                f.line.starts_with("herdr-graph: graph daemon unavailable:"),
+                "{}",
+                f.line
+            );
+            assert!(f.line.ends_with(RETRY_LATER), "{}", f.line);
         }
     }
 
     #[test]
     fn no_instance_keeps_its_line() {
-        let f = classify(&ClientError::NoInstance, true);
+        let f = classify(&ClientError::NoInstance);
         assert_eq!((f.outcome, f.code), (Outcome::NoInstance, 2));
+        assert_ne!(f.line, NOT_IN_HERDR);
         assert_eq!(f.line, "no instance configured — run herdr-graph init");
     }
 
     #[test]
     fn unavailable_is_exit_5_with_retry_text() {
-        let f = classify(&ClientError::Unavailable("not running".into()), true);
+        let f = classify(&ClientError::Unavailable("not running".into()));
         assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
         assert!(
             f.line
@@ -202,7 +192,7 @@ mod tests {
         let mut client = Client::connect(&sock, Duration::from_millis(200)).unwrap();
         let err = client.call("hello", serde_json::json!({})).unwrap_err();
         assert!(matches!(err, ClientError::Frame(_)), "{err:?}");
-        let f = classify(&err, true);
+        let f = classify(&err);
         assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
         held.join().unwrap();
     }
@@ -210,7 +200,7 @@ mod tests {
     #[test]
     fn malformed_frame_is_exit_5() {
         let bad = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
-        let f = classify(&ClientError::Frame(FrameError::Json(bad)), true);
+        let f = classify(&ClientError::Frame(FrameError::Json(bad)));
         assert_eq!(f.code, 5);
         assert!(f.line.ends_with(RETRY_LATER));
     }
@@ -221,7 +211,7 @@ mod tests {
             "daemon is still starting (first pass); retry shortly",
             "daemon failed to start: boom",
         ] {
-            let f = classify(&remote(IpcErrorCode::Unavailable, m), true);
+            let f = classify(&remote(IpcErrorCode::Unavailable, m));
             assert_eq!(f.code, 5);
             assert!(!f.line.contains(".."), "{}", f.line);
             assert!(f.line.contains(m.trim_end_matches('.')));
@@ -230,17 +220,14 @@ mod tests {
 
     #[test]
     fn version_mismatch_is_exit_5() {
-        let f = classify(
-            &remote(IpcErrorCode::VersionMismatch, "ipc version 9"),
-            true,
-        );
+        let f = classify(&remote(IpcErrorCode::VersionMismatch, "ipc version 9"));
         assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
     }
 
     #[test]
     fn integrity_is_exit_6_with_exact_text() {
         let m = "st_a: template_ref tpl_b not found at the committed revision";
-        let f = classify(&remote(IpcErrorCode::Integrity, m), true);
+        let f = classify(&remote(IpcErrorCode::Integrity, m));
         assert_eq!((f.outcome, f.code), (Outcome::Integrity, 6));
         assert_eq!(
             f.line,
@@ -250,7 +237,7 @@ mod tests {
 
     #[test]
     fn integrity_outside_herdr_is_still_exit_6() {
-        let f = classify(&remote(IpcErrorCode::Integrity, "x"), false);
+        let f = classify(&remote(IpcErrorCode::Integrity, "x"));
         assert_eq!(f.code, 6);
     }
 
@@ -263,7 +250,7 @@ mod tests {
             IpcErrorCode::Internal,
             IpcErrorCode::StillRunning,
         ] {
-            let f = classify(&remote(code, "msg"), true);
+            let f = classify(&remote(code, "msg"));
             assert_eq!((f.outcome, f.code), (Outcome::Other, 1));
             assert_eq!(f.line, "herdr-graph: msg");
         }
