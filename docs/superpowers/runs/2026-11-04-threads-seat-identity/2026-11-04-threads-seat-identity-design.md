@@ -625,3 +625,5 @@ Digest:
 ## Post-Implementation Notes
 
 *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
+
+- 2026-11-06 (fix loop round 2, hg-66u.80): reactivating a Dormant seat or teamspace is treated like resurrection — the activation commit writes a Restore intent for each seated clone (pre-D2 succession, post-D2 un-retire); SeatObservation does not inspect clones of a Dormant seat/teamspace, so deactivation never retires them.
