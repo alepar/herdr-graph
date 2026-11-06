@@ -4003,6 +4003,43 @@ fn reparent_on_seat_retire_records_rewrites() {
     assert_eq!(got, want);
 }
 
+/// A leaf seat (no reports) whose own chain dangles, or leads into a cycle it is not part of, retires cleanly: no
+/// holder, so no chain walk (spec §4.11), and preview and apply agree on zero rewrites.
+fn retire_leaf_with_broken_chain(cyclic: bool) {
+    use super::managers::reparent::testing::{recorded, seat_request};
+    let fx = fx();
+    alpha(&fx);
+    dormant_seats(&fx, "alpha", &["nm", "leaf", "x", "y"]);
+    set_nm(&fx, "nm");
+    let (leaf, x, y) = (seat_id(&fx, "leaf"), seat_id(&fx, "x"), seat_id(&fx, "y"));
+    if cyclic {
+        commit_request(&fx, seat_request(&leaf, Some(&x)));
+        commit_request(&fx, seat_request(&x, Some(&y)));
+        commit_request(&fx, seat_request(&y, Some(&x)));
+    } else {
+        commit_request(&fx, seat_request(&leaf, Some(&SeatId::new())));
+    }
+    let sp = plan(&fx, "seat retire leaf");
+    assert!(
+        pointer_effects(&sp).is_empty(),
+        "{:?}",
+        pointer_effects(&sp)
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(recorded(&action_of(&fx, &row)).is_empty());
+}
+
+#[test]
+fn retire_leaf_with_dangling_chain_plans_and_applies() {
+    retire_leaf_with_broken_chain(false);
+}
+
+#[test]
+fn retire_leaf_with_cyclic_chain_plans_and_applies() {
+    retire_leaf_with_broken_chain(true);
+}
+
 #[test]
 fn reparent_teamspace_default_on_retire() {
     use super::managers::reparent::testing::{recorded, teamspace_request};
