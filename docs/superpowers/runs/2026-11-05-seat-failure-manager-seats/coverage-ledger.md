@@ -42,3 +42,17 @@ C39k · graph · GRAPH-EDGE · hg-k4l.17 <- hg-k4l.15 · kept — carries a real
 C39k · graph · GRAPH-EDGE · hg-k4l.15 <- hg-k4l.5 · kept — carries a real artifact
 C39k · graph · GRAPH-EDGE · hg-k4l.5 <- hg-k4l.4 · kept — carries a real artifact
 C39k · graph · GRAPH-EDGE · hg-k4l.4 <- hg-k4l.1 · kept — carries a real artifact
+C40 · amend-code-1 · GAP · B11 reopen with moved_out set (tab path, partial closure, foreign container) · applied — hg-k4l.62 acceptance tests (a)-(c); moved_out never gates node-manager reopen
+C41 · amend-code-1 · GAP · superseded classify-side tests/docs from hg-k4l.9/.57/.58/.61 · applied — hg-k4l.62 acceptance (rewrite tests, CURRENT-DESIGN and module docs)
+C42 · amend-code-1 · UNOWNED-SEAM · LiveIndex::workspace placement · rejected — hg-k4l.62 description owns it (reviewers saw a truncated line)
+C43 · amend-code-1 · UNOWNED-SEAM · CascadeMutation applied ends -> commit_ops SessionEnded · rejected — hg-k4l.62 description owns it
+C44 · amend-code-1 · UNOWNED-SEAM · per-clone survival in two places (hg-k4l.61) · rejected — hg-k4l.61 is closed; hg-k4l.62 owns the single survival fact and replaces its code
+C45 · amend-code-1 · GAP · node manager teamspace stays Active under the new path · applied — hg-k4l.62 acceptance test
+C46 · amend-code-1 · GAP · reopened tab keeps recorded identity · applied — hg-k4l.62 acceptance test
+C47 · amend-code-1 · GAP · lazy reparent target preview/apply parity · applied — hg-k4l.63 acceptance (one function, preview + apply + observed cascade test)
+C48 · amend-code-1 · GAP · no end-to-end after the amend · applied — new leaf hg-k4l.67 (integration sweep, deps .62/.63/.64)
+C49 · amend-code-1 · GAP · hg-k4l.64 ordering · rejected — hg-k4l.54/.55/.56 are already merged and closed
+C50 · amend-code-1 · ORPHAN · hg-k4l.65 · kept — outcome named (mergeable without stray artifacts; findings r1 #7 and two final reviews)
+C51 · amend-code-1 · ORPHAN · hg-k4l.66 · kept — outcome named (migration notice for R1, R5, exit codes)
+C52 · amend-code-1 · GAP · B7 observed pointer writes · parked — still C29; amendment adds no pointer-writing route beyond do_retire_seat, but CascadeMutation's kept branch now also writes the re-read teamspace record
+C53 · amend-code-1 · precheck · flag-sweep 8 / unstated 25 · kept — flags are session demotions/coordinator splits already disposed; unstated edges were added by the coordinator at execution time and carry their reasons on the ledger's `Edge add:` lines
