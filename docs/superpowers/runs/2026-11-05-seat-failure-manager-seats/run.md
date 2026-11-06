@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-05-seat-failure-manager-seats
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: fix-loop
+phase: report
 codeMechanism: Workflow
 runTag: seat-failure-manager-seats-20261105T074235
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -35,6 +35,7 @@ scope-filter: 2 in-scope · 0 punch-listed
 stepBackCode-round-2: local — stale teamspace write-back repeat and node-manager closure ordering; clusters stale-teamspace-writeback, node-manager-closure-ordering, committed-evidence-logs
 stepBackCode-round-3: redesign — applied: three modules re-derive clone survival from different signals (classify pane_survives, CascadeMutation nm-only closed exemption, planner seat-level moved_out) → one per-clone survival fact decided by CascadeMutation at apply time; moved_out never gates reconciliation (dissolves 5)
 stepBackCode-round-4: local — round-3 redesign held; two contained regressions (tab_for_seat fallback ownership, retired_now survivor semantics); round 4 is the cap round
+friction: 23 events
 graph-pass: depth 7→7 · width 3.1→3.1 · applied 0 · parked 1
 stepBackDesign-round-1: local — three clusters (exit classification, wire compat, node-manager invariant) plus two independent nits; no decision change needed
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
@@ -178,7 +179,7 @@ codeBuckets:
   parked: hg-k4l.22
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: SWEEP DEFERRED (caller-owned)
+  sweep: 8e3d34c — 1060 passed, 0 failed, 0 errors, 1 skipped; failing: none; command: toolbox run -c ht-build env TMPDIR=/tmp/sp-sweep LIBRARY_PATH=/tmp/sp-sweep/lib cargo test --locked --offline --no-fail-fast @ 8e3d34c
   slowness: fix round 1: hot-file deferrals on src/observe/mutations.rs
   worktreesKept: none after orchestrator cleanup
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0 — unknown: session processes not run-owned
