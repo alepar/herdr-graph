@@ -20,3 +20,4 @@
 - [2026-11-05] roast-code r2: same typed provenance result; bounded direct review over product paths · rung: Workflow
 - [2026-11-06] roast-code r3 first attempt died on the claude-1 usage limit (13/16 scouts and the reporter failed; its 'clean' verdict is void); session resumed on claude-2; r3 re-run via resumeFromRunId
 - [2026-11-06] code redesign 1: amend roast beads hg-k4l.68..71 wired under hg-k4l.67 (this cycle's own post-amend integration sweep) though the code loop normally adds no sweep edges; deliberate so the sweep verifies the final state
+- [2026-11-06] disk: /var 306G free during invocation 9; removed 8 closed, merged, idle task worktrees → 337G

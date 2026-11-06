@@ -1,0 +1,252 @@
+{
+  "inspected": [
+    {
+      "path": "src/model/manager.rs",
+      "hunks": [
+        "@@ -0,0 +1,519 @@"
+      ]
+    },
+    {
+      "path": "src/cli/daemon_error.rs",
+      "hunks": [
+        "@@ -0,0 +1,298 @@"
+      ]
+    },
+    {
+      "path": "src/cli/node_manager_warning.rs",
+      "hunks": [
+        "@@ -0,0 +1,201 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/mod.rs",
+      "hunks": [
+        "@@ -0,0 +1,286 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/node_manager.rs",
+      "hunks": [
+        "@@ -0,0 +1,193 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/retire.rs",
+      "hunks": [
+        "@@ -0,0 +1,67 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/cycle_guard.rs",
+      "hunks": [
+        "@@ -0,0 +1,147 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/first_seat.rs",
+      "hunks": [
+        "@@ -0,0 +1,147 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/reparent.rs",
+      "hunks": [
+        "@@ -0,0 +1,303 @@"
+      ]
+    },
+    {
+      "path": "src/plan/managers/edit.rs",
+      "hunks": [
+        "@@ -0,0 +1,250 @@"
+      ]
+    },
+    {
+      "path": "src/observe/classify.rs",
+      "hunks": [
+        "@@ -3,6 +3,11 @@",
+        "@@ -50,7 +55,10 @@ pub struct Cascade {",
+        "@@ -80,6 +88,8 @@ pub struct Classified {",
+        "@@ -189,9 +199,25 @@ fn live_clones<'a>(",
+        "@@ -202,8 +228,16 @@ fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool)",
+        "@@ -259,11 +293,14 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+        "@@ -275,15 +312,20 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+        "@@ -294,20 +336,15 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+        "@@ -330,6 +367,7 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {"
+      ]
+    },
+    {
+      "path": "src/observe/mutations.rs",
+      "hunks": [
+        "@@ -1,7 +1,11 @@",
+        "@@ -17,13 +21,15 @@ use crate::model::{ActionId, AnyId, CloneId, IdKind, NsId, SeatId, Timestamp};",
+        "@@ -56,7 +62,47 @@ fn observed(args: serde_json::Value) -> ChangeRequest {",
+        "@@ -151,13 +197,37 @@ fn end_occupant(rec: &mut CloneRecord, reason: SessionEndReason, at: Timestamp)",
+        "@@ -165,16 +235,22 @@ impl CascadeMutation {",
+        "@@ -185,31 +261,54 @@ impl CascadeMutation {",
+        "@@ -217,7 +316,6 @@ impl CascadeMutation {",
+        "@@ -225,7 +323,7 @@ impl CascadeMutation {",
+        "@@ -234,8 +332,9 @@ impl CascadeMutation {",
+        "@@ -244,10 +343,17 @@ impl CascadeMutation {",
+        "@@ -258,7 +364,7 @@ impl CascadeMutation {",
+        "@@ -277,7 +383,10 @@ impl Mutation for CascadeMutation {",
+        "@@ -291,21 +400,54 @@ impl Mutation for CascadeMutation {"
+      ]
+    },
+    {
+      "path": "src/observe/step.rs",
+      "hunks": [
+        "@@ -5,7 +5,8 @@ use super::classify::{Classified, ClassifyCx, EndedSession, classify};",
+        "@@ -97,6 +98,9 @@ struct LoopState {",
+        "@@ -179,6 +183,23 @@ fn runtime_of<'a>(d: &'a DesiredRuntime, object: &AnyId) -> Option<&'a Runtime>",
+        "@@ -194,12 +215,14 @@ fn build_ops(",
+        "@@ -214,6 +237,7 @@ fn build_ops(",
+        "@@ -260,6 +284,7 @@ fn build_ops(",
+        "@@ -430,6 +455,27 @@ impl RuntimeLoop {",
+        "@@ -438,13 +484,13 @@ impl RuntimeLoop {",
+        "@@ -453,10 +499,15 @@ impl RuntimeLoop {",
+        "@@ -539,7 +590,7 @@ impl RuntimeLoop {",
+        "@@ -549,6 +600,12 @@ impl RuntimeLoop {",
+        "@@ -632,6 +689,7 @@ impl RuntimeLoop {"
+      ]
+    },
+    {
+      "path": "src/reconcile/planner.rs",
+      "hunks": [
+        "@@ -1,6 +1,6 @@",
+        "@@ -144,6 +144,25 @@ impl<'a> LiveIndex<'a> {",
+        "@@ -200,12 +219,14 @@ impl<'a> LiveIndex<'a> {",
+        "@@ -333,16 +354,24 @@ impl<'a> LiveIndex<'a> {",
+        "@@ -356,10 +385,11 @@ impl<'a> LiveIndex<'a> {",
+        "@@ -424,6 +454,11 @@ impl<'a> LiveIndex<'a> {",
+        "@@ -523,7 +558,9 @@ pub fn plan_effects(",
+        "@@ -607,7 +644,7 @@ pub fn plan_effects("
+      ]
+    },
+    {
+      "path": "src/reconcile/desired.rs",
+      "hunks": [
+        "@@ -95,6 +95,8 @@ pub struct DesiredRuntime {",
+        "@@ -108,6 +110,7 @@ impl DesiredRuntime {"
+      ]
+    },
+    {
+      "path": "src/cli/seat.rs",
+      "hunks": [
+        "@@ -1,13 +1,15 @@",
+        "@@ -48,8 +50,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+        "@@ -60,12 +68,28 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+        "@@ -168,6 +192,62 @@ mod tests {"
+      ]
+    },
+    {
+      "path": "src/cli/who.rs",
+      "hunks": [
+        "@@ -1,11 +1,10 @@",
+        "@@ -21,20 +20,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+        "@@ -42,12 +27,7 @@ fn run_who(target: &str) -> anyhow::Result<ExitCode> {"
+      ]
+    },
+    {
+      "path": "src/cli/show.rs",
+      "hunks": [
+        "@@ -1,5 +1,6 @@",
+        "@@ -16,6 +17,15 @@ pub enum Commands {",
+        "@@ -26,9 +36,16 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+        "@@ -45,3 +62,25 @@ fn ensure_newline(mut s: String) -> String {"
+      ]
+    },
+    {
+      "path": "src/cli/mod.rs",
+      "hunks": [
+        "@@ -5,8 +5,10 @@ use std::process::ExitCode;",
+        "@@ -83,6 +85,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {"
+      ]
+    },
+    {
+      "path": "src/bootstrap/mod.rs",
+      "hunks": [
+        "@@ -7,12 +7,14 @@",
+        "@@ -20,6 +22,7 @@ use crate::store::tree::{CommitView, TreeRead};",
+        "@@ -131,14 +134,14 @@ fn bound_paths(",
+        "@@ -208,11 +211,76 @@ fn bound_paths(",
+        "@@ -249,6 +317,10 @@ pub fn seat_reply(",
+        "@@ -260,7 +332,25 @@ pub fn seat_reply(",
+        "@@ -278,8 +368,8 @@ pub fn seat_reply(",
+        "@@ -308,6 +398,11 @@ pub fn seat_reply(",
+        "@@ -360,6 +455,27 @@ pub fn render_seat(reply: &Value) -> String {"
+      ]
+    },
+    {
+      "path": "src/bootstrap/show.rs",
+      "hunks": [
+        "@@ -2,7 +2,7 @@",
+        "@@ -153,6 +153,15 @@ pub fn show(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<String, Sh"
+      ]
+    },
+    {
+      "path": "src/bootstrap/examples.rs",
+      "hunks": [
+        "@@ -26,6 +26,18 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &["
+      ]
+    },
+    {
+      "path": "src/threads/mod.rs",
+      "hunks": [
+        "@@ -256,6 +256,41 @@ pub struct WhoReply {",
+        "@@ -263,7 +298,8 @@ impl WhoReply {",
+        "@@ -277,7 +313,7 @@ impl WhoReply {",
+        "@@ -324,11 +360,16 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {",
+        "@@ -349,7 +390,7 @@ pub fn register_commands(reg: &mut Registry, store: Arc<dyn Store>) {"
+      ]
+    },
+    {
+      "path": "src/undo/compensate.rs",
+      "hunks": [
+        "@@ -3,8 +3,8 @@",
+        "@@ -24,6 +24,7 @@ use crate::plan::core_kinds::{",
+        "@@ -320,7 +321,7 @@ fn restore_mutate(",
+        "@@ -371,6 +372,12 @@ fn restore_mutate("
+      ]
+    },
+    {
+      "path": "skills/seat/SKILL.md",
+      "hunks": [
+        "@@ -12,6 +12,13 @@ Find out who you are in the graph, then read what applies to you.",
+        "@@ -27,6 +34,14 @@ Find out who you are in the graph, then read what applies to you."
+      ]
+    },
+    {
+      "path": "templates/office/template.toml",
+      "hunks": [
+        "@@ -0,0 +1,15 @@"
+      ]
+    },
+    {
+      "path": "templates/node-manager/template.toml",
+      "hunks": [
+        "@@ -0,0 +1,8 @@"
+      ]
+    },
+    {
+      "path": "src/plan/kind.rs",
+      "hunks": [
+        "@@ -70,6 +70,7 @@ pub fn make_plan("
+      ]
+    },
+    {
+      "path": "src/plan/core_kinds.rs",
+      "hunks": [
+        "@@ -404,6 +427,9 @@ pub(crate) fn do_retire_seat(",
+        "@@ -684,10 +740,12 @@ impl OrgKind for TeamspaceRetire {",
+        "@@ -711,6 +769,7 @@ impl OrgKind for TeamspaceRetire {",
+        "@@ -734,10 +793,17 @@ impl OrgKind for TeamspaceRetire {"
+      ]
+    },
+    {
+      "path": "src/undo/preview.rs",
+      "hunks": [
+        "@@ -465,6 +503,83 @@ pub fn restore_preview("
+      ]
+    }
+  ]
+}
