@@ -1863,12 +1863,51 @@ async fn composed_daemon_status_shows_threads_discovery_error() {
 // live handoff (`herdr update --handoff`): same ids, new incarnation, no operator step (hg-66u.25)
 // ---------------------------------------------------------------------------------------------
 
+/// Waits until the step that marked the clones Present has finished, reconcile and its effects included: two
+/// more seat observations (the loop reads the seats once per step while seated clones exist, so read `r0 + 1`
+/// starts after the Present step ended and `r0 + 2` after the next one did), no unknown effects, and no threads
+/// or Herdr call for 8 polls 50 ms apart. Pending effects are not waited on: a membership effect stays pending
+/// ("still pending") until the invitee accepts, which the fake never does.
+async fn settle_after_step(d: &Daemon) {
+    let r0 = d.fakes.seat_view.reads();
+    eventually("two more observation steps", || {
+        d.fakes.seat_view.reads() >= r0 + 2
+    })
+    .await;
+    let mut last = (
+        d.fakes.threads.calls().len(),
+        d.fakes.herdr.calls().len(),
+    );
+    let mut stable = 0;
+    let mut status = Value::Null;
+    for _ in 0..200 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        status = d.call("status", json!({})).await.unwrap();
+        let r = &status["components"]["reconciler"];
+        let now = (
+            d.fakes.threads.calls().len(),
+            d.fakes.herdr.calls().len(),
+        );
+        if r["unknown_effects"] == 0 && now == last {
+            stable += 1;
+            if stable >= 8 {
+                return;
+            }
+        } else {
+            stable = 0;
+            last = now;
+        }
+    }
+    panic!("the daemon never settled after the step: {status}");
+}
+
 /// After a live handoff every seated clone is Present again on its preserved pane id, with no operator command
-/// and no new invitation (B5).
+/// and no new invitation or membership release (B5). `before` is the (invite, release_requirement) call count
+/// from before the handoff.
 async fn assert_clones_recover(
     d: &Daemon,
     seated: &[(&str, &str, herdr_graph::model::HerdrPaneId)],
-    invites_before: usize,
+    before: (usize, usize),
 ) {
     use herdr_graph::model::common::Availability;
     eventually("every seated clone Present on its preserved pane", || {
@@ -1879,10 +1918,16 @@ async fn assert_clones_recover(
         })
     })
     .await;
+    settle_after_step(d).await;
     assert_eq!(
         d.fakes.threads.call_count("invite"),
-        invites_before,
+        before.0,
         "no re-invite after the handoff"
+    );
+    assert_eq!(
+        d.fakes.threads.call_count("release_requirement"),
+        before.1,
+        "no membership release after the handoff"
     );
 }
 
@@ -1939,7 +1984,10 @@ async fn live_handoff_under_a_running_loop_reconnects_and_creates_nothing() {
     })
     .await;
     settle(&d).await;
-    let invites_before = d.fakes.threads.call_count("invite");
+    let invites_before = (
+        d.fakes.threads.call_count("invite"),
+        d.fakes.threads.call_count("release_requirement"),
+    );
 
     let journal = Journal::open(&Journal::path_in(&root)).unwrap();
     let before = journal.meta_get("incarnation:changed_at").unwrap();
