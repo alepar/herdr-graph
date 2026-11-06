@@ -923,12 +923,16 @@ fn undo_from_new_pane(rig: &E2e) -> String {
 
 /// `herdr-graph undo` run in `caller` (picks the newest action, confirms) until the undo committed. Returns the
 /// text the command printed, preview included.
+///
+/// A graph-created pane's shell carries `HERDR_GRAPH_SEAT`, an agent-harness marker: `undo` there prints the relay
+/// hint instead of the `[y/n]` prompt (spec §3.3). The helper plays the human at the terminal, so it drops the
+/// marker from the typed command; the pane itself, its bound clone and its other env are untouched.
 fn undo_from_pane(rig: &E2e, caller: &str) -> String {
     let log = rig.herdr.root.join("undo-pane.log");
     rig.pane_sh(
         caller,
         &format!(
-            "HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}",
+            "env -u HERDR_GRAPH_SEAT HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}",
             rig.instance.display(),
             log.display()
         ),
