@@ -1,7 +1,7 @@
 //! ThreadsSeatAssignment (spec §2, §8, §13, §14): the write-once `threads_seat` of a clone and every
 //! transition of its `seat_intent`. No other code writes either field; callers use the helpers below or
 //! admit `bookkeeping.threads_seat`. This module makes no threads calls.
-use crate::model::clone::{CloneRecord, InvitationState, InviteConstraint, SeatIntent};
+use crate::model::clone::{CloneRecord, SeatIntent};
 use crate::model::common::{CloneLifecycle, Runtime};
 use crate::model::{CloneId, OpId};
 use crate::ports::writer::{Writer, WriterError};
@@ -185,16 +185,6 @@ impl Mutation for ThreadsSeatMutation {
                 None => {
                     check_free(cx, &a.clone, seat)?;
                     rec.threads_seat = Some(seat.clone());
-                    // Spec §3 one-shot migration: a Required row the old occupant-keyed path released on
-                    // this very seat is re-invited once (the next write-back clears the mark).
-                    for i in &mut rec.invitations {
-                        i.migration_reinvite = i.constraint == InviteConstraint::Required
-                            && matches!(
-                                i.state,
-                                InvitationState::Released | InvitationState::Retired
-                            )
-                            && i.link.as_ref().is_some_and(|l| &l.seat == seat);
-                    }
                 }
             },
             SeatTransition::Succeed { seat, from, epoch } => {

@@ -376,7 +376,6 @@ fn clone_record_roundtrip() {
                 requirement: Some("requirement-1".into()),
                 revision: Some(2),
             }),
-            migration_reinvite: false,
         }],
         reload_required: true,
         threads_seat: None,

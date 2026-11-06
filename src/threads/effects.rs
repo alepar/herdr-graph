@@ -555,15 +555,14 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 .find(|i| i.thread == thread && i.constraint == constraint);
             let same_seat =
                 |i: &Invitation| i.link.as_ref().map(|l| &l.seat) == threads_seat.as_ref();
-            // Spec §3: a link satisfies the want on the recorded seat, Pending or Accepted; a Released or
-            // Retired row there stays settled (deliberate release, decline) unless the backfill marked it
-            // for its one migration re-invite.
+            // Spec §3, every constraint: a link satisfies the want only on the recorded seat and Pending or
+            // Accepted; a Released or Retired row there is unsatisfied, so an active clone's want re-invites it.
             let satisfied = held.is_some_and(|i| {
                 same_seat(i)
-                    && (matches!(
+                    && matches!(
                         i.state,
                         InvitationState::Pending | InvitationState::Accepted
-                    ) || !i.migration_reinvite)
+                    )
             });
             // Invitations are for an active clone; a retired one keeps what it holds and gains nothing.
             if !satisfied && g.clone_active(c) {
