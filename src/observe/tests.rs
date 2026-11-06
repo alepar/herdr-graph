@@ -2898,6 +2898,70 @@ async fn nm_two_clones_one_moved_home_workspace_closed() {
     );
 }
 
+/// Spec §4.9 required test (1), placement half: the missing node-manager clone reopens in a fresh home
+/// workspace and tab, never as a split of the survivor's pane in the foreign teamspace's tab.
+#[tokio::test]
+async fn nm_two_clones_one_moved_reopens_in_fresh_home_tab() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, stays) = (cs[0].clone(), cs[1].clone());
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    let bob_tab_panes = |snap: &HerdrSnapshot| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id == t.bob_tab)
+            .expect("bob's tab")
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let bob_tab_before = bob_tab_panes(&snapshot(fx).await);
+    assert!(bob_tab_before.contains(&pane_of(fx, &moved)));
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    let snap = snapshot(fx).await;
+    assert_eq!(bob_tab_panes(&snap), bob_tab_before, "{all:?}");
+    for c in &all {
+        if let FakeCall::SplitPane(sp) = c {
+            assert!(
+                !bob_tab_before.contains(&sp.target),
+                "split into bob's tab: {all:?}"
+            );
+        }
+    }
+    let new_pane = pane_of(fx, &clone_by_id(fx, &stays.id));
+    let home = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|tab| tab.panes.iter().any(|p| p.id == new_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_ne!(home.id, t.beta_ws, "{all:?}");
+    assert_eq!(
+        crate::reconcile::planner::token_of(&home.metadata),
+        Some(foreman.teamspace.to_any()),
+        "reopened in a workspace stamped for the node manager's teamspace"
+    );
+    assert!(
+        all.iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(ct) if ct.workspace == home.id)),
+        "a CreateTab targeted the home workspace: {all:?}"
+    );
+}
+
 #[tokio::test]
 async fn plain_seat_moved_home_workspace_closed_emits_session_ended() {
     let t = two_teamspaces("shell", "claude", 0).await;
