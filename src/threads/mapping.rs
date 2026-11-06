@@ -166,8 +166,14 @@ pub(crate) enum SeatRead {
     Refused(String),
 }
 
-/// Classify one seat's call answer. A `Rejected` answer (NotFound, a malformed id, ...) refuses that seat only;
-/// transport errors, `Unsupported` and an unexpected result shape fail the whole read.
+/// Wire codes that answer for the named seat only: `SeatInspect` returns `NotFound` for an unknown seat
+/// (store/queries.rs `seat_inspect`); no other error path of that handler is keyed on the seat. Every other
+/// code describes the service (store, auth, version, budget) and fails the whole read.
+const SEAT_SCOPED: &[ErrorCode] = &[ErrorCode::NotFound];
+
+/// Classify one seat's call answer. An answer whose code is in `SEAT_SCOPED` refuses that seat only; every
+/// other error (service-wide `Rejected` codes, transport errors, `Unsupported`) and an unexpected result shape
+/// fail the whole read.
 pub(crate) fn classify_inspect(
     answer: Result<CommandResult, herdr_threads::protocol::results::ApiError>,
 ) -> Result<SeatRead, ThreadsError> {
@@ -178,10 +184,10 @@ pub(crate) fn classify_inspect(
         Ok(_) => Err(ThreadsError::Rejected(
             "unexpected result for seat inspection".into(),
         )),
-        Err(e) => match api_error(e) {
-            ThreadsError::Rejected(message) => Ok(SeatRead::Refused(message)),
-            other => Err(other),
-        },
+        Err(e) if SEAT_SCOPED.contains(&e.code) => {
+            Ok(SeatRead::Refused(format!("{:?}: {}", e.code, e.detail)))
+        }
+        Err(e) => Err(api_error(e)),
     }
 }
 
@@ -194,9 +200,10 @@ impl ThreadsSeatMap {
 
 #[async_trait::async_trait]
 impl ThreadsSeatView for ThreadsSeatMap {
-    /// A seat whose id does not parse or that threads refuses (`Rejected`) is omitted from the map and kept in
-    /// `refusals`; the other seats are still read. Only transport errors, `Unsupported` and an unexpected
-    /// result shape fail the whole read.
+    /// A seat whose id does not parse client-side, or whose answer is seat-scoped (`SEAT_SCOPED`), is omitted
+    /// from the map and kept in `refusals`; the other seats are still read. Any other error fails the whole
+    /// read, which `observe_seats` turns into `ThreadsRead::Unavailable`: no binding change and no refusal
+    /// clock advanced. `refusals` is left as it was on that path; `track_refusals` ignores it on `Unavailable`.
     async fn inspect(
         &self,
         seats: &[ThreadsSeatRef],
@@ -367,6 +374,30 @@ mod tests {
             ))),
             Err(ThreadsError::Rejected(_))
         ));
+    }
+
+    #[test]
+    fn service_wide_rejections_fail_the_whole_read() {
+        for code in [
+            ErrorCode::InstanceMismatch,
+            ErrorCode::Unauthorized,
+            ErrorCode::CallerUnverified,
+            ErrorCode::PermitExpired,
+            ErrorCode::StoreBusy,
+            ErrorCode::StoreCorrupt,
+            ErrorCode::StoreFull,
+            ErrorCode::IncompatibleSchema,
+            ErrorCode::DaemonVersionMismatch,
+            ErrorCode::UnknownWireVersion,
+            ErrorCode::InvalidBudget,
+            ErrorCode::ReadBudgetExhausted,
+            ErrorCode::Conflict,
+        ] {
+            assert!(
+                matches!(classify_inspect(Err(api(code.clone()))), Err(ThreadsError::Rejected(m)) if m.contains("detail")),
+                "{code:?} must fail the whole read"
+            );
+        }
     }
 
     #[tokio::test]
