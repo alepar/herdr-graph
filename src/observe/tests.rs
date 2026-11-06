@@ -3078,6 +3078,31 @@ async fn one_refused_seat_leaves_the_others_bound_by_threads() {
     let _ = pb;
 }
 
+#[tokio::test]
+async fn sustained_service_wide_refusal_changes_no_binding() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set_error(Some(FakeSeatViewError::Rejected));
+    step(&fx).await;
+    fx.clock.advance(chrono::Duration::seconds(60));
+    step(&fx).await;
+    fx.clock.advance(chrono::Duration::seconds(60));
+    step(&fx).await; // past SEAT_LOST_AFTER
+    let check = |when: &str| {
+        let after = clone_by_id(&fx, &c.id);
+        assert_eq!(after.lifecycle, CloneLifecycle::Active, "{when}");
+        assert_eq!(after.runtime.availability, Availability::Present, "{when}");
+        assert_eq!(bound_pane(&fx, &c.id), Some(pane.clone()), "{when}");
+        assert_eq!(after.threads_seat.as_deref(), Some("seat-1"), "{when}");
+        assert!(fx.lp.seat_lost().lock().unwrap().is_empty(), "{when}");
+        assert!(actions(&fx, ActionKind::ClosureCascade).is_empty(), "{when}");
+    };
+    check("during the refusal");
+    fx.seats.set_error(None);
+    step(&fx).await;
+    check("after the read recovers");
+}
+
 /// A seat refused beyond the staleness window is Unknown with a seat-lost alert naming the remedy; the entry
 /// clears when the seat reads again.
 #[tokio::test]
