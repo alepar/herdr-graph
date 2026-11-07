@@ -4421,6 +4421,7 @@ async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
     let c = reserved_unbound(&fx).await;
     let key = c.id.to_string();
     let resolves = fx.map.resolve_ops().len();
+    let setup_ops = fx.threads.reserve_ops().len();
     // The key is reserved but threads has not seen the keyed check-in yet: the want waits.
     later(&fx).await;
     assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
@@ -4436,12 +4437,15 @@ async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
         Some("seat-K")
     );
     assert_eq!(fx.map.resolve_ops().len(), resolves, "no pane resolution");
-    // The seat-binding key-link want is a different operation; only the reservation retries are compared.
+    // Only the resolve want's retries are compared: the setup's reserve-key op and the key-link op are
+    // different wants with their own keys, so they are excluded by exact key.
+    let resolve_key = format!("reserve:{}:none", c.id);
     let asked: Vec<_> = fx
         .threads
         .reserve_ops()
         .into_iter()
-        .filter(|o| format!("{o:?}").contains("\"reserve:"))
+        .skip(setup_ops)
+        .filter(|o| o.0 == resolve_key)
         .collect();
     assert!(asked.len() >= 2, "{asked:?}");
     assert!(
