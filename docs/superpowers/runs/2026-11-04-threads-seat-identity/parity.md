@@ -90,5 +90,19 @@ the three findings against that code (read from the source; the live threads D1 
 Gate outcome: with the matcher removed, a Shell-harness clone (and any agent that cannot check in) loses its only location
 evidence across a cold restart and stays Unknown for good, which is worse than the matcher's token pass today. No
 herdr-threads feature closes it (threads has no identity for a pane without an agent). Per the acceptance of hg-66u.14
-the matcher is therefore NOT deleted; this is an open item for the human at hand-back (see the blocker bead filed by
-hg-66u.14): either accept that Shell clones lose restart recovery, or ask threads for a seat for agentless panes.
+the matcher was therefore NOT deleted at that point; the human settled it with S1 (next section).
+
+## S1 waiver (2026-11-07)
+
+Human decision S1 (2026-11-07, spec "Requirement baseline"), verbatim: delete the old clone matcher for every clone that
+has a threads_seat; for a clone with no threads_seat (Shell-harness clones, agents that never check in) keep exactly one
+rule: match by preserved Herdr pane id across incarnations (the hg-66u.11 tab/workspace rule; token first where present;
+absent id -> Unknown). This waives parity findings F1/F2/F3 for seatless clones in favour of the preserved-id rule.
+
+- F1/F2 for agent clones: closed by D1 (the "D1 re-run" table above); SeatObservation locates them.
+- F1/F2 for Shell-harness clones and F3 (an agent that never checks in): waived in favour of the preserved-pane-id rule
+  for seatless clones. A cold restart that keeps pane ids recovers the clone (token first, else its committed pane id);
+  a restart that does not keep them, with no token, leaves the clone Unknown, as for tabs and workspaces. Terminal id,
+  cwd and native session are no longer location evidence for any clone.
+
+No open item remains for hg-66u.14: the matcher's terminal-id, cwd, native-session and rebind-adopted passes are deleted.
