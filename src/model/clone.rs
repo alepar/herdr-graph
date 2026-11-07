@@ -51,14 +51,22 @@ pub struct CloneRecord {
     pub key_reservation: Option<KeyReservation>,
 }
 
-/// A continuity key reserved for a clone. `seat` is the seat threads reported the key bound to when the
-/// reservation was recorded (`None`: reserved, unbound).
+/// A continuity key reserved for a clone. `seat` is the reservation's recorded binding: the seat threads last
+/// answered the key is bound to (`None`: reserved, unbound). The key-link want (spec §14.12) compares it with
+/// the clone's target seat, and the restore launch is gated on it (spec §14.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeyReservation {
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat: Option<String>,
     pub at: Timestamp,
+}
+
+impl KeyReservation {
+    /// Whether the recorded binding names `seat`.
+    pub fn bound_to(&self, seat: &str) -> bool {
+        self.seat.as_deref() == Some(seat)
+    }
 }
 
 /// One successful threads read of a clone's seat, with its read time.

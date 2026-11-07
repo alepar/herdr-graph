@@ -54,6 +54,9 @@ pub const RELEASE_KEY_KIND: &str = "threads.release_key";
 /// `EffectKind::Custom` name of the seatless continuity-key reservation of an active clone (spec §5, §16.5). The
 /// key-link want (hg-66u.68) is the only want that binds a key to a seat.
 pub const RESERVE_KEY_KIND: &str = "threads.reserve_key";
+/// `EffectKind::Custom` name of the key-link want: binds a recorded reservation to the clone's target seat
+/// (spec §14.12). It is the only want that issues a seat-bearing `ReserveContinuityKey`.
+pub const KEY_LINK_KIND: &str = "threads.key_link";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -293,6 +296,11 @@ pub(crate) enum Payload {
     },
     /// Reserve the clone's continuity key (its id) with threads, bound to no seat.
     ReserveKey,
+    /// Bind the clone's reserved `key` to `seat` (the key-link want).
+    KeyLink {
+        key: String,
+        seat: String,
+    },
 }
 
 struct Want {
@@ -433,6 +441,26 @@ fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
 /// An active clone with no recorded key reservation: the reserve-key want reserves its key, seatless (§16.5).
 fn reservable(g: &Graph, c: &CloneRecord) -> bool {
     g.clone_active(c) && !c.is_tombstone() && c.key_reservation.is_none()
+}
+
+/// The key-link want's `(key, target seat)` (spec §14.12): the clone is active, its reservation is recorded and
+/// not bound to the target seat. The target is `Restore.seat` while a Restore intent is pending, else
+/// `threads_seat`. A pending Restore whose threads step is not done has a retired seat, which threads refuses a
+/// seat-bearing reserve; the succession or unretire want moves it first.
+pub(crate) fn key_link_target(g: &Graph, c: &CloneRecord) -> Option<(String, String)> {
+    if !g.clone_active(c) || c.is_tombstone() {
+        return None;
+    }
+    let reservation = c.key_reservation.as_ref()?;
+    let target = match &c.seat_intent {
+        Some(SeatIntent::Restore {
+            threads_done: false,
+            ..
+        }) => return None,
+        Some(SeatIntent::Restore { seat, .. }) => seat,
+        _ => c.threads_seat.as_ref()?,
+    };
+    (!reservation.bound_to(target)).then(|| (reservation.key.clone(), target.clone()))
 }
 
 /// What an unacknowledged Restore intent asks of threads (spec §2 succession rule, §8 interim).
@@ -580,6 +608,15 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 object.clone(),
                 c.rev,
                 Payload::ReserveKey,
+            ));
+        }
+        if let Some((key, seat)) = key_link_target(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(KEY_LINK_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::KeyLink { key, seat },
             ));
         }
         if let Some(epoch) = reattached_restore(g, c) {
@@ -1699,6 +1736,63 @@ impl ThreadsExecutor {
         }
     }
 
+    /// Bind the clone's reserved key to `seat`. The operation key is stable per (clone, seat), so every retry of
+    /// one binding replays one request. A `Conflict` or another binding records nothing and defers: the
+    /// reconciler re-checks a deferred row with backoff, which is the level-triggered retry; the key-conflict
+    /// alert is SeatObservation's `seat_fact`, not written here.
+    async fn key_link(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        key: &str,
+        seat: &str,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if key_link_target(&g, clone).as_ref() != Some(&(key.to_owned(), seat.to_owned())) {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("key_link:{}:{seat}", clone.id),
+        ));
+        match self
+            .threads
+            .reserve_continuity_key(key, Some(&ThreadsSeatRef(seat.to_owned())), &op)
+            .await
+        {
+            Ok(ReserveOutcome::Reserved { seat: Some(bound) }) if bound.0 == seat => {
+                match admit_threads_seat(
+                    cx.writer,
+                    &clone.id,
+                    &SeatTransition::RecordReservation {
+                        key: key.to_owned(),
+                        seat: Some(seat.to_owned()),
+                    },
+                ) {
+                    Ok(()) => ExecOutcome::Done,
+                    Err(err) => ExecOutcome::Transient(format!("key binding write: {err}")),
+                }
+            }
+            Ok(ReserveOutcome::Reserved { seat: other }) => ExecOutcome::Deferred(format!(
+                "continuity key {key} bound to {:?}, not {seat}",
+                other.map(|s| s.0)
+            )),
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred(format!("continuity key conflict on seat {seat}"))
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
     async fn resolve_seat(
         &self,
         cx: &ExecCx<'_>,
@@ -2088,6 +2182,7 @@ impl EffectExecutor for ThreadsExecutor {
                 FINALIZE_KIND,
                 RELEASE_KEY_KIND,
                 RESERVE_KEY_KIND,
+                KEY_LINK_KIND,
             ]
             .contains(&k.as_str()),
             _ => false,
@@ -2194,6 +2289,9 @@ impl ThreadsExecutor {
                 self.release_key_tombstone(cx, e, &key).await
             }
             (EffectKind::Custom(_), Some(Payload::ReserveKey)) => self.reserve_key(cx, e).await,
+            (EffectKind::Custom(_), Some(Payload::KeyLink { key, seat })) => {
+                self.key_link(cx, e, &key, &seat).await
+            }
             (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
                 self.succeed_seat(cx, e, &pane, &from, &epoch).await
             }
