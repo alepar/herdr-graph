@@ -1,7 +1,7 @@
 //! Built-in Herdr effect family: the planner as an `EffectSource` and the executor that performs
 //! creates, stamps, renames, closes, agent starts and session replacement (spec §4.2, §4.4, §4.5).
 use super::ReconcilerConfig;
-use super::bookkeeping::admit_binding;
+use super::bookkeeping::{admit_binding, admit_runtime};
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
@@ -131,6 +131,19 @@ impl HerdrExecutor {
 
     fn open_pane_id(&self, idx: &LiveIndex<'_>, clone: &CloneId) -> Option<HerdrPaneId> {
         idx.pane(clone).map(|lp| lp.pane.id.clone())
+    }
+
+    /// Spec §4.9 Reopening: the node manager's tab is back, so the seat is no longer moved out. Left set, the
+    /// matcher would never link the reopened tab (it skips moved-out seats), and a later rebind would mark the
+    /// seat Unknown and stop every further reopen.
+    fn reclaim_home(&self, cx: &ExecCx<'_>, d: &DesiredRuntime, tab: &super::desired::DesiredTab) {
+        if !tab.moved_out || d.node_manager.as_ref() != Some(&tab.seat) {
+            return;
+        }
+        let object = tab.seat.to_any();
+        if let Err(e) = admit_runtime(cx.writer, &object, Availability::Present, Some(false)) {
+            eprintln!("herdr-graph: reconcile: moved_out write-back for {object} failed: {e}");
+        }
     }
 
     fn write_binding(&self, cx: &ExecCx<'_>, object: &AnyId, binding: Binding) {
@@ -305,6 +318,7 @@ impl HerdrExecutor {
         };
         if let Some((w, t)) = idx.tab_for_seat(&seat) {
             adopt(&w.id, t);
+            self.reclaim_home(cx, d, tab);
             return ExecOutcome::Done;
         }
         let label = e
@@ -314,6 +328,7 @@ impl HerdrExecutor {
         // Lost-response recovery: tabs have no tokens, so the nonce label is the only handle.
         if let Some(t) = ws.ws.tabs.iter().find(|t| t.label == label) {
             adopt(&ws.ws.id, t);
+            self.reclaim_home(cx, d, tab);
             return ExecOutcome::Done;
         }
         let Some(first) = missing.first() else {
@@ -359,6 +374,7 @@ impl HerdrExecutor {
                         incarnation: inc,
                     },
                 );
+                self.reclaim_home(cx, d, tab);
                 ExecOutcome::Done
             }
             Err(err) => create_outcome(err),

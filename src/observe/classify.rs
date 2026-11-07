@@ -380,11 +380,16 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         });
     }
     let retired_now = out.retired_now();
+    // A survived clone stays listed in its cascade, but whether it stays bound is decided at apply time: its
+    // rename and move in this diff are still recorded (the mutations skip a clone retired by then).
+    let survived = out.survived();
 
     // Renames: explained by a predicted end state, by an in-flight rename (rebind only), or moot.
     let mut seen: BTreeSet<AnyId> = BTreeSet::new();
     for (object, new) in renamed {
-        if is_retired(d, &object) || retired_now.contains(&object) || !seen.insert(object.clone()) {
+        let retiring = retired_now.contains(&object)
+            && !CloneId::parse(object.as_str()).is_ok_and(|c| survived.contains(&c));
+        if is_retired(d, &object) || retiring || !seen.insert(object.clone()) {
             continue;
         }
         let container = rename_container(&object);
@@ -403,9 +408,7 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         out.renames.push((object, new));
     }
 
-    // A survived clone's move is recorded even though its cascade lists it: a node-manager clone stays bound and
-    // must learn it moved (reload_required, the operator warning); `MoveMutation` skips a clone retired by then.
-    let survived = out.survived();
+    // A node-manager clone stays bound and must learn it moved (reload_required, the operator warning).
     for (clone, to_tab) in moved {
         if retired_now.contains(&clone.to_any()) && !survived.contains(&clone) {
             continue;

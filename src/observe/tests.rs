@@ -3280,7 +3280,15 @@ async fn nm_home_tab_closed_with_clone_moved_out_reopens_home_clone() {
     fx.herdr.clear_calls();
     step(fx).await;
     let s = seat(fx, "foreman");
-    assert!(s.moved_out, "the tab path marks the seat moved out");
+    // The tab path marks the seat moved out; the reconcile pass of the same step may already have reopened the
+    // home tab, which clears it again.
+    assert!(
+        s.moved_out
+            || calls(fx)
+                .iter()
+                .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "the tab path marks the seat moved out"
+    );
     assert_eq!(s.lifecycle, Lifecycle::Active);
     assert!(
         actions(fx, ActionKind::ClosureCascade)
@@ -3323,6 +3331,63 @@ async fn nm_home_tab_closed_with_clone_moved_out_reopens_home_clone() {
     for c in &all {
         assert!(!touches_beta(c, &t), "{c:?} touches beta: {all:?}");
     }
+    assert!(
+        !seat(fx, "foreman").moved_out,
+        "the reopened home tab clears moved_out"
+    );
+}
+
+/// Required test (4) carried on: once the home tab is reopened the seat is no longer moved out, so a disconnect
+/// and rebind re-match the reopened tab, and closing it again reopens it again.
+#[tokio::test]
+async fn nm_reopened_home_tab_survives_rebind_and_reopens_again() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    fx.herdr.user_close_tab(&tab_of_seat(fx, "foreman"));
+    settle(fx).await;
+    assert!(
+        !seat(fx, "foreman").moved_out,
+        "the reopened home tab is the seat's tab"
+    );
+
+    fx.herdr.disconnect_subscribers();
+    fx.herdr.fail_next("session.snapshot", Fault::Unavailable);
+    step(fx).await;
+    settle(fx).await;
+    let s = seat(fx, "foreman");
+    assert_eq!(
+        s.runtime.availability,
+        Availability::Present,
+        "rebind re-matches the reopened tab"
+    );
+    let reopened = tab_of_seat(fx, "foreman");
+    let first_pane = pane_of(fx, &clone_by_id(fx, &home.id));
+
+    fx.herdr.user_close_tab(&reopened);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+    let all = calls(fx);
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    assert_ne!(
+        pane_of(fx, &h),
+        first_pane,
+        "the home clone is reopened again"
+    );
+    assert_eq!(
+        pane_of(fx, &clone_by_id(fx, &moved.id)),
+        pane_of(fx, &moved)
+    );
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active);
 }
 
 /// Required test (4), same-teamspace variant: the moved clone sits in another alpha seat's tab. That tab is not
