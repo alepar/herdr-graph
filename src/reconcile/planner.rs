@@ -371,13 +371,16 @@ impl<'a> LiveIndex<'a> {
                 .and_then(|c| self.desired.clones.get(&c))
                 .map(|c| &c.seat)
         };
+        // A tab another seat owns or holds a clone in is never this seat's tab.
+        let others = |t: &TabInfo| {
+            self.owned_by_other(&t.id, seat)
+                || t.panes
+                    .iter()
+                    .any(|p| clone_seat(p).is_some_and(|s| s != seat))
+        };
         for w in self.snap.workspaces.iter().filter(|w| !foreign(w)) {
             for t in &w.tabs {
-                if self.owned_by_other(&t.id, seat)
-                    || t.panes
-                        .iter()
-                        .any(|p| clone_seat(p).is_some_and(|s| s != seat))
-                {
+                if others(t) {
                     continue;
                 }
                 if t.panes.iter().any(|p| clone_seat(p) == Some(seat)) {
@@ -386,10 +389,11 @@ impl<'a> LiveIndex<'a> {
             }
         }
         // A rebound clone pane (see `pane`) places its seat's tab, unless it sits in another teamspace's
-        // workspace (a moved clone): the survivor's foreign tab is not where the missing clone reopens (§4.9).
+        // workspace or in a tab another seat claims (a moved clone): the survivor's tab is not where the missing
+        // clone reopens (§4.9).
         self.desired
             .panes_of(seat)
-            .find_map(|p| self.pane(&p.clone).filter(|lp| !foreign(lp.ws)))
+            .find_map(|p| self.pane(&p.clone).filter(|lp| !foreign(lp.ws) && !others(lp.tab)))
             .map(|lp| (lp.ws, lp.tab))
     }
 

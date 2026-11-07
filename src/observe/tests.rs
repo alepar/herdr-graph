@@ -3240,6 +3240,64 @@ async fn nm_home_tab_closed_with_clone_moved_out_reopens_home_clone() {
     }
 }
 
+/// Required test (4), same-teamspace variant: the moved clone sits in another alpha seat's tab. That tab is not
+/// the node manager's, so the home clone reopens through CreateTab rather than as a split in bench's tab.
+#[tokio::test]
+async fn nm_home_tab_closed_with_clone_in_same_teamspace_tab_reopens_home_clone() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    let bench_tab = tab_of_seat(fx, "bench");
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &bench_tab);
+    settle(fx).await;
+    let home_tab = tab_of_seat(fx, "foreman");
+    assert_ne!(home_tab, bench_tab);
+    let tab_panes = |snap: &HerdrSnapshot, id: &HerdrTabId| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id == *id)
+            .expect("live tab")
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let bench_before = tab_panes(&snapshot(fx).await, &bench_tab);
+
+    fx.herdr.user_close_tab(&home_tab);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    let s = seat(fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    let snap = snapshot(fx).await;
+    assert_eq!(tab_panes(&snap, &bench_tab), bench_before, "{all:?}");
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let h_pane = pane_of(fx, &h);
+    let h_tab = snap
+        .workspaces
+        .iter()
+        .find(|w| w.id == t.alpha_ws)
+        .expect("alpha's workspace")
+        .tabs
+        .iter()
+        .find(|tab| tab.panes.iter().any(|p| p.id == h_pane))
+        .map(|tab| tab.id.clone())
+        .expect("home clone live in alpha's workspace");
+    assert_ne!(h_tab, bench_tab);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Active);
+}
+
 /// Spec §4.9 required test (5): `moved_out` is already set when the home workspace closes. The node manager's
 /// non-survived clones reopen in a fresh workspace and tab; the moved clone and the other teamspace stay.
 #[tokio::test]
