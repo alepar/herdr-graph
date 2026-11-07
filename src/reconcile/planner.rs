@@ -393,7 +393,10 @@ impl<'a> LiveIndex<'a> {
         // clone reopens (§4.9).
         self.desired
             .panes_of(seat)
-            .find_map(|p| self.pane(&p.clone).filter(|lp| !foreign(lp.ws) && !others(lp.tab)))
+            .find_map(|p| {
+                self.pane(&p.clone)
+                    .filter(|lp| !foreign(lp.ws) && !others(lp.tab))
+            })
             .map(|lp| (lp.ws, lp.tab))
     }
 

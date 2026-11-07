@@ -99,6 +99,15 @@ impl Classified {
             .flat_map(|c| c.retire.iter().cloned())
             .collect()
     }
+
+    /// Clones some cascade lists as survived: their pane left the closed container alive. Whether they stay
+    /// bound is decided at apply time (`CascadeMutation`), so their moves are still recorded.
+    pub fn survived(&self) -> BTreeSet<CloneId> {
+        self.cascades
+            .iter()
+            .flat_map(|c| c.survived.iter().cloned())
+            .collect()
+    }
 }
 
 pub struct ClassifyCx<'a> {
@@ -394,8 +403,11 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {
         out.renames.push((object, new));
     }
 
+    // A survived clone's move is recorded even though its cascade lists it: a node-manager clone stays bound and
+    // must learn it moved (reload_required, the operator warning); `MoveMutation` skips a clone retired by then.
+    let survived = out.survived();
     for (clone, to_tab) in moved {
-        if retired_now.contains(&clone.to_any()) {
+        if retired_now.contains(&clone.to_any()) && !survived.contains(&clone) {
             continue;
         }
         let known = cx.matches.tabs.contains_key(&to_tab);

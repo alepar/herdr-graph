@@ -692,7 +692,21 @@ impl Mutation for MoveMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: MoveArgs = parse(cx)?;
         let mut parts = Vec::new();
-        if let Some(c) = &a.clone {
+        // A survived clone whose cascade retired it in the same step (any seat but the node manager) stays as the
+        // cascade left it.
+        let retired = match &a.clone {
+            Some(c) => {
+                let loc = cx
+                    .tree
+                    .locate(&c.to_any())?
+                    .ok_or_else(|| gone(&c.to_any()))?;
+                cx.tree
+                    .read_record::<CloneRecord>(&loc.record_path)?
+                    .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+            }
+            None => false,
+        };
+        if let Some(c) = a.clone.as_ref().filter(|_| !retired) {
             edit::<CloneRecord>(cx, &c.to_any(), |rec, cx| {
                 rec.reload_required = true;
                 match &a.binding {

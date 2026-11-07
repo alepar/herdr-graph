@@ -2898,6 +2898,91 @@ async fn nm_two_clones_one_moved_home_workspace_closed() {
     );
 }
 
+/// The move and the home workspace's disappearance land in one diff. The survived node-manager clone still gets
+/// its MoveFact: reload_required is set, it stays bound where it went, and the operator warning names the move.
+#[tokio::test]
+async fn nm_clone_moved_in_same_diff_as_home_workspace_closes_records_move() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let moved = cs[0].clone();
+    let before = snapshot(fx).await;
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    let moved_pane = pane_of(fx, &moved);
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    let after = snapshot(fx).await;
+
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.root).unwrap();
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    let home_tab = before
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|tab| tab.panes.iter().any(|p| p.id == moved_pane))
+        .expect("home tab")
+        .id
+        .clone();
+    let els = vec![
+        super::diff::DiffElement::Moved {
+            clone: moved.id.clone(),
+            from_tab: home_tab,
+            to_tab: t.bob_tab.clone(),
+        },
+        super::diff::DiffElement::Disappeared {
+            object: ts_rec(fx, "alpha").id.to_any(),
+            container: ContainerKind::Workspace,
+        },
+    ];
+    let out = super::classify::classify(
+        &super::classify::ClassifyCx {
+            desired: &desired,
+            journal: &fx.journal,
+            preds: &[],
+            matches: &ma,
+            baseline: Some(&mb),
+        },
+        els,
+    );
+    assert!(
+        out.moves.iter().any(|m| m.clone == moved.id),
+        "the survived clone's move is recorded: {:?}",
+        out.moves
+    );
+    let warn = super::step::node_manager_move_warning(&desired, &out).expect("warned");
+    assert!(warn.contains(foreman.id.as_str()), "{warn}");
+
+    fx.herdr.clear_calls();
+    settle(fx).await;
+    let m = clone_by_id(fx, &moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert!(m.reload_required, "the moved agent is told to reload");
+    assert_eq!(pane_of(fx, &m), moved_pane, "the moved clone stays bound");
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+}
+
+/// The same one-diff shape for a plain seat: its clone's pane survives in another teamspace's tab, but the
+/// workspace cascade retires the seat and every clone; the recorded move does not revive the retired clone.
+#[tokio::test]
+async fn plain_clone_moved_in_same_diff_as_workspace_closes_stays_retired() {
+    let t = two_teamspaces("shell", "shell", 0).await;
+    let fx = &t.fx;
+    let bench = only_clone(fx, "bench");
+    fx.herdr.user_move_pane(&pane_of(fx, &bench), &t.bob_tab);
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    settle(fx).await;
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+    let b = clone_by_id(fx, &bench.id);
+    assert_eq!(b.lifecycle, CloneLifecycle::Retired);
+    assert!(!b.reload_required);
+    assert_ne!(b.runtime.availability, Availability::Present);
+}
+
 /// Spec §4.9 required test (1), placement half: the missing node-manager clone reopens in a fresh home
 /// workspace and tab, never as a split of the survivor's pane in the foreign teamspace's tab.
 #[tokio::test]
