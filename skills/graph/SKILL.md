@@ -14,7 +14,10 @@ Organizational changes are never made directly. They go plan, user confirmation,
    Other changes: `teamspace create|rename|retire|resurrect`,
    `seat create|activate|deactivate|rename|retire|resurrect|override`,
    `clone add|retire|rebind`, `participation join|leave`, `template create|edit|copy`,
-   `application apply|retire`, `undo`.
+   `application apply|retire`, `manager set|clear <seat|teamspace> [<manager-seat>]`,
+   `node-manager set <seat>`, `undo`.
+   The node manager cannot be retired or deactivated, and its teamspace cannot be retired;
+   such plans are refused. To hand the role on, plan `node-manager set <seat>` first.
 2. Show the plan to the user verbatim: the `rendered` text, including warnings and any diff.
    Do not paraphrase it and do not shorten it.
 3. Show this plan to the user, then run
