@@ -38,7 +38,7 @@ herdr-graph tab, 2026-10-30 → 2026-11-04), relayed verbatim.
 
 ### Human scope changes
 
-- none
+- S1 · 2026-11-07 · "1 lgtm" (to: clones with no threads seat — Shell-harness clones and agents that never check in — are matched by preserved Herdr pane id, the rule tabs and workspaces use; the old matcher is deleted otherwise) · source: session, 2026-11-07 · affects: B3
 
 ## Problem description
 
@@ -628,3 +628,5 @@ Digest:
 
 - 2026-11-06 (fix loop round 2, hg-66u.80): reactivating a Dormant seat or teamspace is treated like resurrection — the activation commit writes a Restore intent for each seated clone (pre-D2 succession, post-D2 un-retire); SeatObservation does not inspect clones of a Dormant seat/teamspace, so deactivation never retires them.
 - 2026-11-06 (fix loop round 3, hg-66u.81): every Restore writer (resurrection, undo, seat reactivation) commits through one helper that clears the old pane's occupant and runtime and then writes the Restore intent (a seated clone always gets the intent; skipping it would let the Retired arm retire the clone). Decision (orchestrator): an acknowledged Restore with no resumable session for the clone's current harness is launched fresh by the resume driver (pre-D1 without a key, matching main's reactivation behaviour); this supersedes §14.7's "not launchable" rule and, for restores only, the "no fresh-agent launch exists before D1" line under Unchanged behavior. The restart trigger still needs a resumable session before D1 (hg-66u.21). restore_stuck not_launchable applies only when no agent can be launched at all, which pre-D1 is never the case for an agent clone, so the planner no longer writes it.
+
+- 2026-11-07 (hg-66u.14, human decision S1): the matcher deletion keeps one fallback: a clone with no threads seat is located by preserved Herdr pane id (same rule as tabs/workspaces, hg-66u.11); every clone with a threads seat is located only by SeatObservation.
