@@ -203,6 +203,7 @@ struct Fx {
     journal: Arc<Journal>,
     clock: Arc<ManualClock>,
     rec: Arc<Reconciler>,
+    herdr: Arc<FakeHerdr>,
     threads: Arc<FakeThreads>,
     map: Arc<FakePaneSeatMap>,
     seats: Arc<FakeThreadsSeatView>,
@@ -251,7 +252,7 @@ fn fx() -> Fx {
         store.clone(),
         journal.clone(),
         w.clone(),
-        herdr,
+        herdr.clone(),
         clock.clone(),
         Arc::new(Quiet),
         cfg,
@@ -268,6 +269,7 @@ fn fx() -> Fx {
         journal,
         clock,
         rec,
+        herdr,
         threads,
         map,
         seats,
@@ -4095,6 +4097,28 @@ async fn unbound_reserved_clone(fx: &Fx) -> CloneRecord {
     c
 }
 
+// unseated clone resolves its seat from its key reservation (hg-66u.33; spec §2 "Unseated clone after D1")
+// ---------------------------------------------------------------------------------------------
+
+fn resolve_reserved_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(
+        fx,
+        EffectKind::Custom(super::effects::RESOLVE_RESERVED_KIND.into()),
+    )
+}
+
+/// A clone holding its recorded reservation whose pane carries no verified binding, so only the key can seat it.
+async fn reserved_unbound(fx: &Fx) -> CloneRecord {
+    let c = base(fx).await;
+    steps(fx, 2).await;
+    assert!(clone_rec(fx, &c.id).key_reservation.is_some());
+    let pane = pane_of(&clone_rec(fx, &c.id));
+    set_binding(fx, &c.id, false, true, Some(&pane));
+    steps(fx, 2).await;
+    assert_eq!(clone_rec(fx, &c.id).threads_seat, None);
+    c
+}
+
 #[tokio::test]
 async fn backfilled_clone_is_bound_then_closes_reversibly() {
     let fx = fx();
@@ -4263,6 +4287,56 @@ async fn key_link_conflict_defers_without_a_storm() {
 }
 
 #[tokio::test]
+async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
+    let fx = fx();
+    let c = reserved_unbound(&fx).await;
+    let key = c.id.to_string();
+    let resolves = fx.map.resolve_ops().len();
+    // The key is reserved but threads has not seen the keyed check-in yet: the want waits.
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    let pending = resolve_reserved_rows(&fx);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, EffectStatus::Pending);
+    // The first keyed check-in binds the key to a seat: the next pass admits it, with no pane lookup.
+    fx.threads.set_key_binding(&key, "seat-K");
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-K")
+    );
+    assert_eq!(fx.map.resolve_ops().len(), resolves, "no pane resolution");
+    let ops = fx.threads.reserve_ops();
+    let asked = &ops[ops.len() - 2..];
+    assert_eq!(asked[0], asked[1], "the same operation key on every retry");
+    // Seated: the want is gone and threads is not asked again.
+    let calls = fx.threads.reserve_calls().len();
+    steps(&fx, 2).await;
+    assert_eq!(fx.threads.reserve_calls().len(), calls);
+}
+
+#[tokio::test]
+async fn unseated_reserved_clone_unreachable_threads_writes_no_seat() {
+    let fx = fx();
+    let c = reserved_unbound(&fx).await;
+    let key = c.id.to_string();
+    fx.threads.set_key_binding(&key, "seat-K");
+    fx.threads
+        .set_reserve_error(Some(FakeSeatViewError::Disconnected));
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    fx.threads.set_reserve_error(None);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).threads_seat.as_deref(),
+        Some("seat-K")
+    );
+}
+
+#[tokio::test]
 async fn key_link_with_threads_unreachable_records_no_binding() {
     for error in [FakeSeatViewError::Disconnected, FakeSeatViewError::Busy] {
         let fx = fx();
@@ -4321,4 +4395,17 @@ async fn reserve_key_want_never_carries_a_seat() {
     assert_eq!(calls[1].1.as_deref(), Some("seat-A"), "the key-link call");
     assert_ne!(ops[0], ops[1]);
     assert_eq!(reserve_rows(&fx2).len(), 1);
+}
+
+#[tokio::test]
+async fn unseated_reserved_clone_key_conflict_defers_without_a_seat() {
+    let fx = fx();
+    let c = reserved_unbound(&fx).await;
+    fx.threads.set_reserve_conflict(&c.id.to_string());
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
+    let rs = resolve_reserved_rows(&fx);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, EffectStatus::Pending);
 }

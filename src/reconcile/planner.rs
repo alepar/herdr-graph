@@ -104,6 +104,22 @@ pub fn resumed_key(clone: &CloneId) -> String {
     format!("resumed_at:{clone}")
 }
 
+/// Journal meta key of the time threads last answered the key resolution of an unseated clone: the restart
+/// trigger of an unseated clone waits for an answer taken after the restart (written by the threads executor).
+pub fn threads_answered_key(clone: &CloneId) -> String {
+    format!("threads_answered_at:{clone}")
+}
+
+fn threads_answered_at(journal: &Journal, clone: &CloneId) -> Option<Timestamp> {
+    let raw = journal
+        .meta_get(&threads_answered_key(clone))
+        .ok()
+        .flatten()?;
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|t| t.to_utc())
+}
+
 pub fn incarnation_changed_at(journal: &Journal) -> Option<Timestamp> {
     let raw = journal.meta_get("incarnation:changed_at").ok().flatten()?;
     chrono::DateTime::parse_from_rfc3339(&raw)
@@ -602,6 +618,14 @@ fn restart_covered(p: &DesiredPane) -> bool {
         })
 }
 
+/// An unseated clone that had an agent and holds a key reservation: the restart rule launches it so the keyed
+/// check-in tells threads its seat (spec §2 "Unseated clone after D1", §9). Unlike `restart_covered` it does
+/// not shut the ordinary start rule out: that rule only fires for a pane with no launch record (a fresh pane),
+/// the restart rule only for a launch lost with the previous incarnation, and an agent in the pane stops both.
+fn restart_unseated(p: &DesiredPane) -> bool {
+    p.had_agent && p.threads_seat.is_none() && p.key_reservation.is_some()
+}
+
 /// An acknowledged `Restore` whose launch mark predates `changed_at`: the restore launch ran in an earlier
 /// incarnation and the clone never reattached, so the restart trigger owns it again (spec §14.8, §16.7).
 pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bool {
@@ -998,11 +1022,16 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 );
             }
         } else if startable
-            && restart_covered(p)
             && p.key_reservation.is_some()
             && let Some(changed) = changed_at
             && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
-            && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed)
+            // A seated clone waits for a threads fact read after the restart; an unseated one has none, so it
+            // waits for an answer to its key resolution taken after the restart: with threads unreachable
+            // nothing launches.
+            && (restart_unseated(p)
+                && threads_answered_at(journal, &p.clone).is_some_and(|at| at > changed)
+                || restart_covered(p)
+                    && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed))
         {
             match &pane {
                 Some(lp) => {
