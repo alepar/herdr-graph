@@ -611,10 +611,13 @@ pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bo
     )
 }
 
-/// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent.
+/// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent. Every
+/// keyed launch waits for the clone's recorded key reservation (spec §5, §14.4); a held-back clone is retried
+/// next pass.
 fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     let any = p.clone.to_any();
     p.harness != crate::model::harness::Harness::Shell
+        && p.key_reservation.is_some()
         && !matches!(p.seat_intent, Some(SeatIntent::Restore { .. }))
         && !restart_covered(p)
         && p.occupant.is_none()
@@ -958,8 +961,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
         let any = p.clone.to_any();
         let blocked_key = resume_blocked_key(&p.clone);
         let mut blocked: Option<serde_json::Value> = None;
-        let startable =
-            p.harness != crate::model::harness::Harness::Shell && p.occupant.is_none();
+        let startable = p.harness != crate::model::harness::Harness::Shell && p.occupant.is_none();
         let eligible = startable && p.resume.is_some();
         let pane = idx.bound_pane(&p.clone);
         let key_conflict = p
@@ -970,11 +972,17 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
         if startable
             && !key_conflict
             && let Some(SeatIntent::Restore {
+                seat: restore_seat,
                 epoch,
                 threads_done: true,
                 launched: None,
                 ..
             }) = &p.seat_intent
+            // The key must be bound to the Restore's seat before the restore launch (spec §14.4, §16.1): no
+            // reservation, or one bound elsewhere, holds the launch back without spending the epoch's attempt.
+            && p.key_reservation
+                .as_ref()
+                .is_some_and(|r| r.seat.as_deref() == Some(restore_seat.as_str()))
         {
             if pane.as_ref().is_some_and(|lp| lp.pane.agent.is_none()) {
                 // One launch per epoch is enforced by the launch mark, not by the effect identity: the identity
@@ -992,6 +1000,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
             }
         } else if eligible
             && restart_covered(p)
+            && p.key_reservation.is_some()
             && let Some(changed) = changed_at
             && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
             && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed)

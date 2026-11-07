@@ -550,7 +550,11 @@ impl HerdrExecutor {
             if e.status == EffectStatus::Unknown {
                 // The earlier start went through; only its response was lost.
                 self.record_launch(p);
-                self.record_launch_env(&clone, &lp.pane.id, &agent_env(&clone, false));
+                self.record_launch_env(
+                    &clone,
+                    &lp.pane.id,
+                    &agent_env(&clone, p.key_reservation.is_some()),
+                );
                 return ExecOutcome::Done;
             }
             return ExecOutcome::NeedsRevision("agent already running on the pane".into());
@@ -602,14 +606,13 @@ impl HerdrExecutor {
             let _ = self.journal.meta_delete(&failed_key);
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
-        let env = agent_env(&clone, false);
+        let env = agent_env(&clone, p.key_reservation.is_some());
         let started = cx
             .herdr
             .start_agent(StartAgent {
                 pane: lp.pane.id.clone(),
                 kind: kind.to_owned(),
                 args,
-                // No key reservation exists before D1 (hg-66u.13 records it).
                 env: env.clone(),
             })
             .await;
@@ -706,11 +709,10 @@ impl HerdrExecutor {
         let resume = (from == p.harness && to_prof.supports_resume())
             .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
             .flatten();
-        let env = agent_env(&clone, false);
+        let env = agent_env(&clone, p.key_reservation.is_some());
         let to = to_prof.agent_kind.map(|kind| Relaunch {
             kind,
             args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
-            // No key reservation exists before D1 (hg-66u.13 records it).
             env: env.clone(),
         });
         let out = advance_replacement(
