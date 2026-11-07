@@ -315,10 +315,48 @@ fn only_clone(fx: &Fx, seat_name: &str) -> CloneRecord {
 }
 
 /// One loop step: reconcile at the current head, then let the writer commit the write-backs.
-async fn step(fx: &Fx) -> StepReport {
+async fn step_unreserved(fx: &Fx) -> StepReport {
     let r = fx.rec.step_fresh().await;
     fx.w.drain().unwrap();
     r
+}
+
+/// What the threads reserve-key and key-link wants have done by the time of a step: every live clone holds its
+/// reservation, bound to the seat of its Restore intent when it has one (a launch waits for that, spec §14.4).
+/// Tests of the launch gate itself use `step_unreserved` and record reservations by hand.
+fn reserve_pending(fx: &Fx) {
+    for (_, c) in layout::all_clones(&view(fx)).unwrap() {
+        let want = match &c.seat_intent {
+            Some(SeatIntent::Restore { seat, .. }) => Some(seat.clone()),
+            Some(_) => continue,
+            None => None,
+        };
+        let held = c.key_reservation.as_ref();
+        if held.is_some() && (want.is_none() || held.and_then(|r| r.seat.clone()) == want) {
+            continue;
+        }
+        record_reservation(fx, &c.id, want.as_deref());
+    }
+}
+
+/// `ThreadsSeatAssignment`'s reservation write-back: the key is the clone id, `seat` what it is bound to.
+fn record_reservation(fx: &Fx, clone: &CloneId, seat: Option<&str>) {
+    admit_threads_seat(
+        &*fx.w,
+        clone,
+        &SeatTransition::RecordReservation {
+            key: clone.to_string(),
+            seat: seat.map(str::to_owned),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+/// A step after the reserve-key and key-link wants ran.
+async fn step(fx: &Fx) -> StepReport {
+    reserve_pending(fx);
+    step_unreserved(fx).await
 }
 
 /// A teamspace `alpha` and an active seat `foreman` of the given harness.
@@ -481,7 +519,7 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     };
     assert_eq!(start.kind, "claude");
     assert!(start.args.is_empty());
-    assert_eq!(start.env, agent_env(&c.id, false));
+    assert_eq!(start.env, agent_env(&c.id, true));
 
     // Binding written back as a bookkeeping mutation.
     let bound = clones_of(&fx, &s.id).remove(0).runtime;
@@ -527,7 +565,10 @@ async fn start_records_the_exported_variable_names() {
         .expect("launch_env recorded with the start");
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
     assert_eq!(v["pane"], pane.0);
-    assert_eq!(v["vars"], json!(["HERDR_GRAPH_CLONE"]));
+    assert_eq!(
+        v["vars"],
+        json!(["HERDR_GRAPH_CLONE", "HERDR_THREADS_CONTINUITY_KEY"])
+    );
 }
 
 #[tokio::test]
@@ -1106,7 +1147,7 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
         })
         .collect();
     assert_eq!(starts.len(), 1);
-    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     assert_eq!(starts[0].pane, pane);
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
     // Exit keys come before the restart.
@@ -1443,7 +1484,7 @@ async fn replacement_resumes_after_occupant_cleared() {
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{starts:?}");
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
-    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     let launched: serde_json::Value = serde_json::from_str(
         &fx.journal
             .meta_get(&planner::launched_key(&c.id))
@@ -1727,7 +1768,7 @@ async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
             &fx,
             |call| matches!(call, FakeCall::StartAgent(s) if s.pane == pane
                 && s.kind == "claude"
-                && s.env == agent_env(&c.id, false))
+                && s.env == agent_env(&c.id, true))
         ),
         1
     );
@@ -2299,6 +2340,7 @@ async fn dispatched_row_is_recovered_as_unknown() {
 async fn cancelled_start_agent_is_recovered_as_unknown() {
     let fx = fx();
     activate(&fx, "claude");
+    reserve_pending(&fx);
     fx.herdr.fail_next("agent.start", Fault::Hang);
     // The daemon's first-pass timeout cancels the step the same way.
     assert!(
@@ -2549,6 +2591,7 @@ async fn needs_revision_notice_survives_threads_down() {
         ReconcilerConfig::new(fx.deps.instance.clone()),
     );
     let step2 = || async {
+        reserve_pending(&fx);
         let r = rec.step_fresh().await;
         fx.w.drain().unwrap();
         r
@@ -2640,6 +2683,7 @@ async fn seatless_attention_notice_waits_for_affected_seat_channel() {
         "agent.start",
         Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
     );
+    reserve_pending(&fx);
     rec.step_fresh().await;
     fx.w.drain().unwrap();
     assert_eq!(
@@ -2965,7 +3009,7 @@ async fn restart_resumes_each_clone_with_a_session_after_grace() {
             .find(|s| &s.pane == pane)
             .expect("one start per pane");
         assert_eq!(s.args, ["--resume", native], "{id}");
-        assert_eq!(s.env, agent_env(id, false));
+        assert_eq!(s.env, agent_env(id, true));
     }
     fx.herdr.clear_calls();
     fx.clock.advance(chrono::Duration::seconds(300));
@@ -3227,7 +3271,7 @@ async fn restore_trigger_launches_once_without_grace() {
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
     assert_eq!(starts[0].args, ["--resume", "abc"]);
-    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     assert_eq!(
         marked_normalized(&the_clone(&fx, &c.id).seat_intent),
         serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
@@ -3488,7 +3532,7 @@ async fn restore_without_resumable_session_launches_fresh() {
         "{:?}",
         starts[0].args
     );
-    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     assert_eq!(
         marked_normalized(&the_clone(&fx, &c.id).seat_intent),
         serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
@@ -3933,7 +3977,7 @@ async fn reactivate_seated(harness: &str, resumes: bool) {
             starts[0].args
         );
     }
-    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     assert!(
         matches!(
             c.seat_intent,
@@ -3995,4 +4039,247 @@ async fn seat_reactivation_succeeds_resumes_and_reinvites() {
 #[tokio::test]
 async fn seat_reactivation_after_a_harness_change_launches_fresh() {
     reactivate_seated("codex", false).await;
+}
+
+// -------------------------------------------------------------------------------------------------
+// keyed launches (hg-66u.44): launch gating on the recorded reservation and the keyed env (spec §5, §14.4)
+// -------------------------------------------------------------------------------------------------
+
+use crate::model::launch::ENV_CONTINUITY_KEY;
+
+fn has_key(env: &[(String, String)]) -> bool {
+    env.iter().any(|(k, _)| k == ENV_CONTINUITY_KEY)
+}
+
+#[tokio::test]
+async fn reserve_before_first_keyed_launch() {
+    let fx = fx();
+    activate(&fx, "claude");
+    // The pane is created, but no reservation is recorded: no agent starts, however many passes run.
+    for _ in 0..3 {
+        step_unreserved(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(only_clone(&fx, "foreman").key_reservation.is_none());
+    assert!(rows(&fx, EffectKind::StartAgent).is_empty());
+    // The reserve-key pass records the reservation; the next pass starts the agent, once.
+    reserve_pending(&fx);
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one launch");
+}
+
+#[test]
+fn the_key_env_is_emitted_only_for_a_reserved_clone() {
+    let id = CloneId::new();
+    assert!(!has_key(&agent_env(&id, false)));
+    assert_eq!(
+        agent_env(&id, true).last(),
+        Some(&(ENV_CONTINUITY_KEY.to_owned(), id.to_string()))
+    );
+}
+
+#[tokio::test]
+async fn env_builder_emits_the_key_once_reserved() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert!(start_calls(&fx).is_empty(), "nothing launches unkeyed");
+    assert!(
+        fx.journal
+            .meta_get(&planner::launch_env_key(&c.id))
+            .unwrap()
+            .is_none(),
+        "no launch env before the reservation"
+    );
+    reserve_pending(&fx);
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1);
+    assert!(has_key(&starts[0].env), "{:?}", starts[0].env);
+    assert!(
+        starts[0]
+            .env
+            .contains(&(ENV_CONTINUITY_KEY.to_owned(), c.id.to_string())),
+        "the key's value is the clone id: {:?}",
+        starts[0].env
+    );
+    let raw = fx
+        .journal
+        .meta_get(&planner::launch_env_key(&c.id))
+        .unwrap()
+        .expect("launch env recorded");
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        v["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n == ENV_CONTINUITY_KEY),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn new_clone_after_d1_launch_carries_the_key() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert!(c.key_reservation.is_some(), "reserved before its launch");
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    // Later passes by the ordinary start rule launch nothing more.
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1);
+}
+
+#[tokio::test]
+async fn pre_d1_clone_survives_headless_cold_restart_on_its_seat() {
+    let fx = fx();
+    activate(&fx, "claude");
+    // A clone launched by a pre-D1 build: a session on record, a threads seat, no reservation.
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    fx.herdr.restart(true, true);
+    step_unreserved(&fx).await;
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step_unreserved(&fx).await;
+    assert!(
+        start_calls(&fx).is_empty() && relaunch_rows(&fx) == 0,
+        "no key yet: nothing resumes {:?}",
+        calls(&fx)
+    );
+    // The backfill reserves the key linked to the clone's recorded seat.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane, "into its last pane");
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(
+        after.threads_seat.as_deref(),
+        Some("seat-1"),
+        "seat unchanged"
+    );
+    assert_eq!(
+        after.key_reservation.map(|r| (r.key, r.seat)),
+        Some((c.id.to_string(), Some("seat-1".to_owned())))
+    );
+}
+
+/// A restored clone with an acknowledged Restore of `epoch` for `seat-1`, its pane bare, whose key reservation
+/// the test sets: `None` records none, `Some(seat)` records the key bound to `seat` (`Some(None)`: unbound).
+async fn restored_unreserved(
+    fx: &Fx,
+    epoch: &OpId,
+    reservation: Option<Option<&str>>,
+) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step_unreserved(fx).await;
+    let c = only_clone(fx, "foreman");
+    if let Some(seat) = reservation {
+        record_reservation(fx, &c.id, seat);
+    }
+    end_session(fx, &c, "abc", "claude");
+    let pane = pane_of(fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    seat_state(
+        fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "intent": restore_intent("seat-1", epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    (only_clone(fx, "foreman"), pane)
+}
+
+fn restore_marked(fx: &Fx, c: &CloneId) -> bool {
+    matches!(
+        the_clone(fx, c).seat_intent,
+        Some(SeatIntent::Restore {
+            launched: Some(_),
+            ..
+        })
+    )
+}
+
+#[tokio::test]
+async fn restore_launch_waits_for_the_key_bound_to_restore_seat() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_unreserved(&fx, &epoch, None).await;
+    // No reservation at all: the reserve-key want comes first.
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Reserved but unbound: the key-link want comes next.
+    record_reservation(&fx, &c.id, None);
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Bound to a seat other than Restore.seat (the predecessor): still held back.
+    record_reservation(&fx, &c.id, Some("seat-0"));
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(
+        !restore_marked(&fx, &c.id),
+        "a held-back launch spends no attempt"
+    );
+    // Bound to Restore.seat: exactly one keyed launch.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert!(restore_marked(&fx, &c.id));
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one launch");
+}
+
+#[tokio::test]
+async fn restore_right_after_succession_plans_nothing_until_the_key_is_linked() {
+    let fx = fx();
+    let epoch = OpId::new();
+    // The succession commit: Restore acknowledged, not launched, the reservation still bound to the predecessor.
+    let (c, _) = restored_unreserved(&fx, &epoch, Some(Some("seat-0"))).await;
+    for _ in 0..2 {
+        step_unreserved(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(rows(&fx, EffectKind::StartAgent).is_empty());
+    // The key-link want records the successor binding.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one keyed launch");
+}
+
+#[tokio::test]
+async fn unretired_restore_with_its_key_already_bound_launches_at_once() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, pane) = restored_unreserved(&fx, &epoch, Some(Some("seat-1"))).await;
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
 }

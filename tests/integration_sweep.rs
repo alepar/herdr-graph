@@ -2203,6 +2203,17 @@ mod wiring {
             d.seat("boss").channel.thread_id.is_some()
         })
         .await;
+        // Launches wait for the key reservation: let both graph launches land before the agents are set by hand.
+        eventually("both agents launched", || {
+            d.fakes
+                .herdr
+                .calls()
+                .iter()
+                .filter(|c| matches!(c, FakeCall::StartAgent(_)))
+                .count()
+                >= 2
+        })
+        .await;
         let (boss_pane, worker_pane) = (d.pane("boss").unwrap(), d.pane("worker").unwrap());
         d.fakes.herdr.set_agent(
             &boss_pane,
@@ -2723,7 +2734,7 @@ mod wiring {
             assert_eq!(starts[0].args, ["--resume", "sess-1"]);
             assert_eq!(
                 starts[0].env,
-                herdr_graph::model::launch::agent_env(&d.clone_of("worker").id, false)
+                herdr_graph::model::launch::agent_env(&d.clone_of("worker").id, true)
             );
             assert_eq!(
                 herdr_churn(&d).len(),

@@ -1,5 +1,5 @@
 //! Desired runtime: what Herdr should look like for one committed revision (spec §4.4).
-use crate::model::clone::{CloneRecord, SeatFact, SeatIntent};
+use crate::model::clone::{CloneRecord, KeyReservation, SeatFact, SeatIntent};
 use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, Occupant};
 use crate::model::effective::{EffectiveSeatConfig, resolve_in};
 use crate::model::harness::{Harness, profile};
@@ -62,6 +62,8 @@ pub struct DesiredPane {
     pub threads_seat: Option<String>,
     pub seat_fact: Option<SeatFact>,
     pub seat_intent: Option<SeatIntent>,
+    /// The continuity key reserved for the clone: every agent launch waits for it (spec §5, §14.4).
+    pub key_reservation: Option<KeyReservation>,
     /// The clone has (or had) an agent: it has a native session on record.
     pub had_agent: bool,
 }
@@ -208,6 +210,7 @@ impl DesiredRuntime {
                     threads_seat: c.threads_seat.clone(),
                     seat_fact: c.seat_fact.clone(),
                     seat_intent: c.seat_intent.clone(),
+                    key_reservation: c.key_reservation.clone(),
                     had_agent: !c.sessions.is_empty(),
                 });
             }

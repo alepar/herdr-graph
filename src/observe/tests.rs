@@ -340,7 +340,27 @@ fn creates(fx: &Fx) -> usize {
         .count()
 }
 
+/// The threads reserve-key want's write-back for every live clone: launches wait for the recorded key
+/// reservation (hg-66u.44), and these tests are about observation, not the want.
+fn reserve_pending(fx: &Fx) {
+    for (_, c) in layout::all_clones(&view(fx)).unwrap() {
+        if c.key_reservation.is_none() && c.seat_intent.is_none() {
+            crate::threads::assignment::admit_threads_seat(
+                &*fx.w,
+                &c.id,
+                &crate::threads::assignment::SeatTransition::RecordReservation {
+                    key: c.id.to_string(),
+                    seat: None,
+                },
+            )
+            .unwrap();
+            fx.w.drain().unwrap();
+        }
+    }
+}
+
 async fn step(fx: &Fx) -> super::step::StepSummary {
+    reserve_pending(fx);
     fx.lp.step_once().await.expect("step")
 }
 
@@ -686,7 +706,10 @@ async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
     assert_eq!(dormant.lifecycle, CloneLifecycle::Active);
     assert_eq!(dormant.threads_seat.as_deref(), Some("seat-1"));
     assert_eq!(
-        (dormant.runtime.availability, dormant.runtime.bound.is_none()),
+        (
+            dormant.runtime.availability,
+            dormant.runtime.bound.is_none()
+        ),
         (Availability::Absent, true)
     );
     assert_eq!(fx.seats.reads(), reads, "a dormant clone is not inspected");
@@ -3158,7 +3181,10 @@ async fn sustained_service_wide_refusal_changes_no_binding() {
         assert_eq!(bound_pane(&fx, &c.id), Some(pane.clone()), "{when}");
         assert_eq!(after.threads_seat.as_deref(), Some("seat-1"), "{when}");
         assert!(fx.lp.seat_lost().lock().unwrap().is_empty(), "{when}");
-        assert!(actions(&fx, ActionKind::ClosureCascade).is_empty(), "{when}");
+        assert!(
+            actions(&fx, ActionKind::ClosureCascade).is_empty(),
+            "{when}"
+        );
     };
     check("during the refusal");
     fx.seats.set_error(None);
