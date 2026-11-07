@@ -20,3 +20,4 @@ Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg
 - [2026-11-06] build environment: per the user (relayed by the herdr-threads coordinator, mnSGFz51FTYi), herdr-graph moved from the shared ht-build toolbox to its own hg-build (fedora-toolbox:44 + gcc); leaked herdr-graph test rigs in ht-build await the user's approval to stop.
 - [2026-11-07] gated re-entry: hg-66u.44 recorded its tests in toolbox ht-build and hg-66u.21 in distrobox durak-dev despite the hg-build constraint (planner briefs predated it or implementers ignored it).
 - [2026-11-07] main drifted by a concurrent super-auto run (seat-failure-manager-seats, ~12.5k code lines); trial merge conflicted in 13 files; the run had no point that integrated main before finish.
+- [2026-11-07] session scratchpad wiped again (coordinator.js, code-args.json, settle.sh lost); re-copied coordinator.js from the skill cache and rebuilt args.

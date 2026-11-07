@@ -19,6 +19,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- review-collection · {"invocationId": "inv-8d1468f1-4551-46bd-8b96-82617c3ea922", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-8d1468f1-4551-46bd-8b96-82617c3ea922.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-cef1709c-2f16-4a29-a694-c154c775b2ea", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cef1709c-2f16-4a29-a694-c154c775b2ea.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-3f52876e-246a-4f9a-8d50-858e849ea7b2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-3f52876e-246a-4f9a-8d50-858e849ea7b2.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da.md", "review": "pending", "required": [], "settled": false}
@@ -197,3 +198,4 @@ friction: 14 events
 gates released: hg-66u.1, hg-66u.2, hg-66u.3 closed 2026-11-07 (herdr-threads v3.1.0); gated subtree re-entered; finish deferred until it lands (post-cap audit covers it)
 leaks: 2026-11-07 stopped 79 rig processes (55 herdr servers, 24 shells, HOME/cwd /tmp/hg-*) and removed 75 dirs, user-approved
 feedback: not filed (user declined 2026-11-07); draft stays at upstream-feedback-draft.md
+main merged: 2026-11-07 4595898 + a2bf5a7 (merge-main-2026-11-07.md); fix beads hg-66u.95/.96/.97 dispatched
