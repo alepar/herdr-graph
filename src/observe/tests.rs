@@ -3302,3 +3302,81 @@ async fn live_handoff_with_a_running_agent_keeps_its_occupant() {
     assert!(relaunch_rows(&fx).is_empty());
     assert!(start_calls(&fx, &pane).is_empty(), "{:?}", calls(&fx));
 }
+
+// =================================================================================================
+// G5 limbo disposition (herdr-threads v3.1.0): an unresolved seat whose pane never came back retires
+// =================================================================================================
+
+/// A resumable clone (observed session `abc`) whose pane closed while Herdr was down. Threads reads the seat
+/// Unresolved through its 10 observed minutes; after the window it reads Retired (G5), and the clone is retired
+/// undoably with no resume attempted. The graph keeps no timer of its own.
+#[tokio::test]
+async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_resume() {
+    let fx = fx();
+    let (c, pane) = restart_after_occupant(&fx, false).await;
+    fx.herdr.user_close_pane(&pane);
+    let lp2 = fx.restarted_loop();
+    fx.herdr.clear_calls();
+
+    // Inside the window threads says Unresolved: the clone waits Unknown, however long the graph watches.
+    for _ in 0..3 {
+        lp2.step_once().await.unwrap();
+        fx.clock.advance(chrono::Duration::seconds(300));
+    }
+    let waiting = clone_by_id(&fx, &c.id);
+    assert_eq!(waiting.lifecycle, CloneLifecycle::Active);
+    assert_eq!(waiting.runtime.availability, Availability::Unknown);
+    assert_eq!(fact_state(&fx, &c.id), Some(SeatFactState::Unresolved));
+
+    // After the window threads retires the seat (reversibly: the clone's key is still held).
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.lifecycle, CloneLifecycle::Retired);
+    let act = now.retired.expect("retirement").action.expect("undoable");
+    commit(&fx, &format!("undo {act}"));
+    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
+
+    // Resume never ran: not in the window, not on the retirement, not after the undo's passes.
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    assert!(start_calls(&fx, &pane).is_empty(), "{:?}", calls(&fx));
+    assert!(
+        calls(&fx)
+            .iter()
+            .all(|c| !matches!(c, FakeCall::StartAgent(_))),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+}
+
+/// Elapsed time alone never retires a clone: with threads unreachable through (far more than) the G5 window the
+/// clone stays Active, whichever error the read fails with.
+#[tokio::test]
+async fn unreachable_threads_never_retires_from_elapsed_time() {
+    for err in [FakeSeatViewError::Disconnected, FakeSeatViewError::Busy] {
+        let fx = fx();
+        let (c, pane) = seated(&fx, "seat-1").await;
+        fx.herdr.user_close_pane(&pane);
+        fx.seats.set_error(Some(err));
+        let lp2 = fx.restarted_loop();
+        fx.herdr.clear_calls();
+
+        for _ in 0..4 {
+            lp2.step_once().await.unwrap();
+            fx.clock.advance(chrono::Duration::minutes(15));
+        }
+        let now = clone_by_id(&fx, &c.id);
+        assert_eq!(now.lifecycle, CloneLifecycle::Active, "{err:?}");
+        assert_eq!(now.runtime.availability, Availability::Unknown, "{err:?}");
+        assert_eq!(now.seat_fact, None, "{err:?}: no read, no fact");
+        assert_no_closure_and_no_create(&fx);
+    }
+}

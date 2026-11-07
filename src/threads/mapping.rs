@@ -83,6 +83,8 @@ impl PaneSeatMap for ThreadsSeatMap {
             operation: OperationId::new(format!("graph-resolve-{}", uuid::Uuid::new_v4())),
             locator_hint: None,
             tmux_hint: None,
+            // The key's reserve/resolve use belongs to the D1 beads; the pin bump only keeps the struct whole.
+            continuity_key: None,
         };
         let budget = call_budget(&*self.clock, self.timeout);
         match self
@@ -113,6 +115,8 @@ impl PaneSeatMap for ThreadsSeatMap {
             operation: operation_id(op),
             locator_hint: None,
             tmux_hint: None,
+            // The key's reserve/resolve use belongs to the D1 beads; the pin bump only keeps the struct whole.
+            continuity_key: None,
         };
         let budget = call_budget(&*self.clock, self.timeout);
         match self

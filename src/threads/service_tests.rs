@@ -144,7 +144,12 @@ impl Service {
                         }))
                         .unwrap()
                     }
-                    ServiceOperation::History(_) => return Some(Err(api_error(ErrorCode::Unsupported))),
+                    ServiceOperation::History(_)
+                    | ServiceOperation::ReserveContinuityKey(_)
+                    | ServiceOperation::ReleaseContinuityKey(_)
+                    | ServiceOperation::UnretireSeat(_)
+                    | ServiceOperation::FinalizeRetirement(_)
+                    | ServiceOperation::ContinuityAlerts(_) => return Some(Err(api_error(ErrorCode::Unsupported))),
                     ServiceOperation::Receipts(q) => {
                         let acked = self.acked.lock().unwrap().clone();
                         let seats: Vec<String> =
