@@ -142,9 +142,17 @@ impl PaneSeatMap for ThreadsSeatMap {
     }
 }
 
-/// Map one v3.0.0 `SeatInspect` result to the graph's closed seat states.
+/// Map one `SeatInspect` result to the graph's closed seat states. A recorded continuity-key conflict (D1)
+/// makes the seat `KeyConflict` unless it is retired: retirement wins, a retired seat is never a conflict.
 pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
     let summary = &i.summary;
+    if summary.continuity != ContinuityStatus::Retired {
+        if let Some(conflict) = i.continuity_key.as_ref().and_then(|k| k.conflict.as_ref()) {
+            return SeatStatus::KeyConflict {
+                pane: Some(HerdrPaneId(conflict.pane.as_str().to_owned())),
+            };
+        }
+    }
     match summary.continuity {
         ContinuityStatus::Resolved => match &summary.target {
             Some(target) => SeatStatus::Resolved {
@@ -155,11 +163,10 @@ pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
         ContinuityStatus::Unresolved => SeatStatus::Unresolved,
         // A seat homed on another node is never bound here.
         ContinuityStatus::Remote => SeatStatus::Unresolved,
-        // v3.0.0 has no reversible retirement (D2), so every retirement is final.
+        // Reversible retirement (D2) is not mapped yet, so every retirement is final.
         ContinuityStatus::Retired => SeatStatus::Retired {
             kind: RetirementKind::Final,
         },
-        // `KeyConflict` is never produced before the continuity key (D1, hg-66u.13) exists.
     }
 }
 

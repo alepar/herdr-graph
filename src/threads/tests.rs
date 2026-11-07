@@ -2790,6 +2790,80 @@ fn g5_disposition_maps_from_seat_inspect() {
     );
 }
 
+/// A `SeatInspect` result whose seat holds a continuity key, with or without a recorded conflict (D1).
+fn keyed_inspection_fixture(
+    continuity: &str,
+    target: Option<&str>,
+    retired_at: Option<i64>,
+    conflict_pane: Option<&str>,
+) -> herdr_threads::protocol::results::SeatInspection {
+    let mut v = serde_json::to_value(inspection_fixture(continuity, target, retired_at)).unwrap();
+    let mut key = json!({ "key": "key-1", "owner": "graph", "bound_by": "service_reservation" });
+    if let Some(pane) = conflict_pane {
+        key["conflict"] = json!({
+            "host": "/run/host-a",
+            "pane": pane,
+            "kind": "pane_owned_by_other_seat",
+            "first_seen_at": 4_000,
+        });
+    }
+    v["continuity_key"] = key;
+    serde_json::from_value(v).unwrap()
+}
+
+#[test]
+fn seat_status_maps_a_continuity_key_conflict() {
+    use super::mapping::seat_status;
+    let pane = |p: &str| HerdrPaneId(p.into());
+    assert_eq!(
+        seat_status(&keyed_inspection_fixture(
+            "resolved",
+            Some("w1:p2"),
+            None,
+            Some("w1:p9")
+        )),
+        SeatStatus::KeyConflict {
+            pane: Some(pane("w1:p9"))
+        },
+        "the alert names the conflicting pane, not the seat's own"
+    );
+    assert_eq!(
+        seat_status(&keyed_inspection_fixture(
+            "unresolved",
+            None,
+            None,
+            Some("w1:p9")
+        )),
+        SeatStatus::KeyConflict {
+            pane: Some(pane("w1:p9"))
+        }
+    );
+    // A key without a conflict changes nothing.
+    assert_eq!(
+        seat_status(&keyed_inspection_fixture(
+            "resolved",
+            Some("w1:p2"),
+            None,
+            None
+        )),
+        SeatStatus::Resolved {
+            pane: pane("w1:p2")
+        }
+    );
+    // Retirement wins: a retired seat is never reported as a conflict.
+    assert_eq!(
+        seat_status(&keyed_inspection_fixture(
+            "retired",
+            None,
+            Some(5_000),
+            Some("w1:p9")
+        )),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final
+        }
+    );
+}
+
 #[tokio::test]
 async fn fake_seat_view_errors_are_errors() {
     use super::fake::{FakeSeatViewError, FakeThreadsSeatView};
