@@ -1505,11 +1505,19 @@ fn edit_cap_warnings(
         if seat.lifecycle == Lifecycle::Retired {
             continue;
         }
-        if !template_participation(&patched, &seat)?
-            .iter()
-            .any(|p| p.template.record_path == loc.record_path)
-        {
-            continue;
+        match template_participation(&patched, &seat) {
+            Ok(parts)
+                if parts
+                    .iter()
+                    .any(|p| p.template.record_path == loc.record_path) => {}
+            Ok(_) => continue,
+            Err(e @ StoreError::Integrity { .. }) => {
+                out.push(crate::bootstrap::instructions::unsized_warning(
+                    &seat.id, &e,
+                ));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
         }
         if let Some(w) = cap_warning(&patched, &cx.at, &seat.id)? {
             out.push(w);

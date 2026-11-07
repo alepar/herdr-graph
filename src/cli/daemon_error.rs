@@ -264,10 +264,6 @@ mod tests {
         assert!(store_failure(&StoreError::Git("x".into())).is_none());
     }
 
-    /// Files outside this task's reach that still match `Unavailable` themselves: `seat.rs` only in its tests,
-    /// and who/ops/request/undo until hg-k4l.3 routes them through `daemon_error` (drop them from this list then).
-    const AWAITING_HG_K4L_3: [&str; 4] = ["who.rs", "ops.rs", "request.rs", "undo.rs"];
-
     #[test]
     fn no_command_matches_unavailable_itself() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cli");
@@ -280,7 +276,7 @@ mod tests {
             let name = path.file_name().unwrap().to_str().unwrap().to_owned();
             let text = std::fs::read_to_string(&path).unwrap();
             scanned += 1;
-            if name == "daemon_error.rs" || AWAITING_HG_K4L_3.contains(&name.as_str()) {
+            if name == "daemon_error.rs" {
                 continue;
             }
             let may_match = ["status.rs", "seat.rs"].contains(&name.as_str());

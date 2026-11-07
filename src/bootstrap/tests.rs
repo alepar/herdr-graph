@@ -1779,11 +1779,16 @@ fn office_on_fresh_graph_assigns_node_manager() {
 
 #[test]
 fn node_manager_agents_md_names_duties() {
-    let text = examples::EXAMPLE_FILES
+    let shipped = examples::EXAMPLE_FILES
         .iter()
         .find(|(rel, _)| *rel == "templates/node-manager/AGENTS.md")
         .expect("shipped")
         .1;
+    // A seat built from the template may not hold the role: the template defers to `/seat`, which carries the
+    // duties only for the node manager.
+    assert!(shipped.contains("is_node_manager"), "{shipped}");
+    assert!(!shipped.contains("You are the node manager"), "{shipped}");
+    let text = super::NODE_MANAGER_DUTIES;
     for needle in [
         "usage limits",
         "trust prompts",
@@ -3246,7 +3251,9 @@ mod hook_instructions {
         let out = hook_text(Some((&v, &head)), &caller("p1"), None).unwrap();
         assert_eq!(out, format!("{}\n{}", hook_header(&r), r.text));
         assert_eq!(
-            instructions_text(&v, &head, &caller("p1")).as_deref(),
+            instructions_text(&v, &head, &caller("p1"))
+                .unwrap()
+                .as_deref(),
             Some(r.text.as_str())
         );
         // a bound pane gets the render even without HERDR_GRAPH=1, and Codex wraps the same text
@@ -3265,7 +3272,7 @@ mod hook_instructions {
             Some(HOOK_PROMPT)
         );
         assert_eq!(hook_text(Some((&v, &head)), &caller("nope"), None), None);
-        assert_eq!(instructions_text(&v, &head, &caller("nope")), None);
+        assert_eq!(instructions_text(&v, &head, &caller("nope")).unwrap(), None);
     }
 
     #[test]
@@ -3294,7 +3301,9 @@ mod hook_instructions {
         );
         assert!(out.len() <= HOOK_RENDER_CAP, "{}", out.len());
         // the untruncated render keeps the rule
-        let full = instructions_text(&v, &head, &caller("p1")).unwrap();
+        let full = instructions_text(&v, &head, &caller("p1"))
+            .unwrap()
+            .unwrap();
         assert!(full.contains("## global rules/big.md"));
     }
 
@@ -3537,7 +3546,7 @@ mod h1_untested {
                 Some(expect.as_str())
             );
             assert_eq!(
-                instructions_text(&v, &head, &c).as_deref(),
+                instructions_text(&v, &head, &c).unwrap().as_deref(),
                 Some(r.text.as_str())
             );
         }
@@ -3552,7 +3561,7 @@ mod h1_untested {
                 Some(crate::cli::seat::HOOK_PROMPT)
             );
             assert_eq!(hook_text(Some((&v, &head)), &c, None), None);
-            assert_eq!(instructions_text(&v, &head, &c), None);
+            assert_eq!(instructions_text(&v, &head, &c).unwrap(), None);
         }
     }
 
@@ -3778,6 +3787,30 @@ fn integrity_application_missing() {
     let app = crate::model::AppId::new();
     edit_seat(&fx, &seat, |s| s.applications = vec![app.clone()]);
     integrity_err(&fx, &["applications", app.as_str()]);
+}
+
+/// Plan-time hook sizing is advisory: a seat whose stack does not resolve is a warning, never a plan failure.
+#[test]
+fn cap_warning_reports_integrity_as_warning() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::AppId::new();
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.clone()]);
+    let head = fx.store.head().unwrap();
+    let w = crate::bootstrap::instructions::cap_warning(&view(&fx), &head, &seat.id)
+        .expect("not an error")
+        .expect("a warning");
+    assert!(w.contains("cannot be sized"), "{w}");
+    assert!(
+        w.contains(seat.id.as_str()) && w.contains(app.as_str()),
+        "{w}"
+    );
+    // `seat --instructions` reports the same seat as an integrity error (exit 6), not as "not a bound seat".
+    let e = crate::cli::seat::instructions_text(&view(&fx), &head, &caller("p1"))
+        .expect_err("integrity error");
+    let f = crate::cli::daemon_error::store_failure(&e).expect("exit-6 failure");
+    assert_eq!(f.code, crate::daemon::client::EXIT_INTEGRITY);
+    assert!(f.line.contains(app.as_str()), "{}", f.line);
 }
 
 #[test]
@@ -4170,7 +4203,7 @@ fn reports_node_manager_implicit() {
     assert_eq!(reply["is_node_manager"], json!(true));
     assert_eq!(
         reply["node_manager_duties"].as_str().unwrap(),
-        include_str!("../../templates/node-manager/AGENTS.md")
+        super::NODE_MANAGER_DUTIES
     );
     assert!(
         reply["node_manager_duties"]

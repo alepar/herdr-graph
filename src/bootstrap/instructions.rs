@@ -487,13 +487,19 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
     }
 }
 
-/// The §4.4 plan warning for one seat when its hook output on `tree` (already patched) exceeds the cap.
+/// The §4.4 plan warning for one seat when its hook output on `tree` (already patched) exceeds the cap. A seat
+/// whose stack does not resolve (an integrity error) is reported as a warning instead: sizing is advisory, and
+/// failing here would block unrelated plans, including the one that repairs the reference.
 pub fn cap_warning(
     tree: &dyn TreeRead,
     at: &CommitId,
     seat: &SeatId,
 ) -> Result<Option<String>, StoreError> {
-    let r = render_instructions(tree, at, seat)?;
+    let r = match render_instructions(tree, at, seat) {
+        Ok(r) => r,
+        Err(e @ StoreError::Integrity { .. }) => return Ok(Some(unsized_warning(seat, &e))),
+        Err(e) => return Err(e),
+    };
     let fit = fit_hook(&r, HOOK_RENDER_CAP);
     if fit.full_size <= HOOK_RENDER_CAP {
         return Ok(None);
@@ -580,4 +586,9 @@ impl TreeRead for PatchedTree<'_> {
             .map(|(name, kind)| DirEntry { name, kind })
             .collect())
     }
+}
+
+/// The plan warning for a seat whose hook output cannot be sized because a reference does not resolve.
+pub fn unsized_warning(seat: &SeatId, e: &StoreError) -> String {
+    format!("hook output for seat {seat} cannot be sized: graph integrity error: {e}")
 }

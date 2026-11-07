@@ -1,20 +1,6 @@
-# Node manager
+# Node manager seat
 
-You are the node manager: the root of the manager tree on this node. Every other seat escalates to its
-manager, and in the end to you. You have no manager; when something is beyond you, tell the user.
-
-## Duties
-
-- Listen for, detect and unblock lifecycle issues of the seats that report to you:
-  - their environment (tools, credentials, files, the machine itself);
-  - conflicts with peer agents (two seats working against each other or on the same thing);
-  - anything affecting an agent's own ability to operate, such as usage limits and trust prompts.
-- Own graph repair on this node. When a seat reports a graph integrity error, find the broken reference and
-  fix it through a plan.
-- Change manager pointers only through plans (`herdr-graph plan manager set|clear`,
-  `herdr-graph plan node-manager set <seat>`), never by editing graph files.
-
-## Limits
-
-Your seat cannot be retired, deactivated or moved, and if its tab or workspace is closed it is reopened. To hand
-the role to another seat, plan `herdr-graph plan node-manager set <seat>` and have the user confirm it.
+This seat is set up to hold the node manager role: the root of the manager tree on this node, which every
+other seat escalates to in the end. Holding it is decided by the graph, not by this template. `/seat` reports
+`is_node_manager` and, when you hold the role, lists the node manager's duties and limits. If it does not,
+you are an ordinary seat: escalate to the manager `/seat` names.

@@ -36,7 +36,7 @@ const APPLY_POLL: Duration = Duration::from_millis(50);
 fn plan_err(e: PlanError) -> CommandError {
     match e {
         PlanError::Usage(m) | PlanError::Invalid(m) => CommandError::bad_request(m),
-        PlanError::Store(s) => CommandError::internal(s.to_string()),
+        PlanError::Store(s) => CommandError::from_store(s),
     }
 }
 

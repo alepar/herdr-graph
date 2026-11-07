@@ -227,7 +227,7 @@ pub(crate) fn resolve_error(e: StoreError, head: &CommitId, suffix: Option<&str>
 }
 
 /// The node-manager duty text, shared with the shipped `node-manager` seat template's AGENTS.md.
-pub(crate) const NODE_MANAGER_DUTIES: &str = include_str!("../../templates/node-manager/AGENTS.md");
+pub(crate) const NODE_MANAGER_DUTIES: &str = include_str!("node_manager_duties.md");
 
 /// A seat named in the seat.resolve reply (manager, node manager, reports).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

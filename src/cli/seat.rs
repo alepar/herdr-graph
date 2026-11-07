@@ -115,16 +115,17 @@ pub fn hook_output(codex: bool) -> String {
     hook_output_text(codex, HOOK_PROMPT)
 }
 
-/// The caller's full instruction render, or None when the caller is not a bound seat or the render fails.
+/// The caller's full instruction render; None when the caller is not a bound seat, an error when the bound
+/// seat's stack does not render (an integrity error among them).
 pub fn instructions_text(
     tree: &dyn TreeRead,
     at: &CommitId,
     caller: &CallerInfo,
-) -> Option<String> {
+) -> Result<Option<String>, crate::ports::store::StoreError> {
     let Resolution::Bound { seat, .. } = resolve_caller(tree, caller, None) else {
-        return None;
+        return Ok(None);
     };
-    render_instructions(tree, at, &seat).ok().map(|r| r.text)
+    render_instructions(tree, at, &seat).map(|r| Some(r.text))
 }
 
 /// What the hook prints: header + render (capped) for a bound caller, today's prompt for a graph pane, nothing
@@ -156,16 +157,27 @@ fn with_head<T>(env: &Env, f: impl FnOnce(&dyn TreeRead, &CommitId) -> T) -> Opt
     Some(f(&view, &head))
 }
 
-/// `seat --instructions`: the render, untruncated; exit 1 when this pane is not a bound seat.
+/// `seat --instructions`: the render, untruncated; exit 1 when this pane is not a bound seat, exit 6 when the
+/// seat's stack does not resolve (spec §4.4).
 fn print_instructions() -> ExitCode {
     let env = Env::from_process();
     let caller = caller_info_from_env();
-    match with_head(&env, |t, at| instructions_text(t, at, &caller)).flatten() {
-        Some(text) => {
+    match with_head(&env, |t, at| instructions_text(t, at, &caller)) {
+        Some(Ok(Some(text))) => {
             print!("{text}");
             ExitCode::SUCCESS
         }
-        None => {
+        Some(Err(e)) => match crate::cli::daemon_error::store_failure(&e) {
+            Some(f) => {
+                eprintln!("{} {SEAT_INTEGRITY}", f.line);
+                ExitCode::from(f.code)
+            }
+            None => {
+                eprintln!("herdr-graph: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Some(Ok(None)) | None => {
             eprintln!("herdr-graph: not a bound graph seat");
             ExitCode::FAILURE
         }
