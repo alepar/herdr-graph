@@ -4057,15 +4057,9 @@ async fn tombstones_are_not_planned_listed_undone_resurrected_or_invited() {
 // key-link want (hg-66u.68; spec §14.12, §16.1, §16.5)
 // ---------------------------------------------------------------------------------------------
 
-/// Model threads closing `seat`'s pane: the seat reads reversibly retired when `key` is bound to it, final
-/// otherwise (hg-66u.32's fakes).
-fn close_seat_in_fake(fx: &Fx, seat: &str, key: &str) {
-    let kind = if fx.threads.key_binding(key).as_deref() == Some(seat) {
-        RetirementKind::Reversible
-    } else {
-        RetirementKind::Final
-    };
-    fx.seats.set(&seat_ref(seat), SeatStatus::Retired { kind });
+/// Model threads closing `seat`'s pane: reversible while a key is bound to the seat, final otherwise.
+fn close_seat_in_fake(fx: &Fx, seat: &str) {
+    fx.threads.close_pane(&fx.seats, &seat_ref(seat));
 }
 
 /// Commit the `seat_fact` SeatObservation derives from the fake seat view's current read of `seat`.
@@ -4143,7 +4137,7 @@ async fn backfilled_clone_is_bound_then_closes_reversibly() {
             .bound_to("seat-A")
     );
     // Close the pane: a bound key makes the retirement reversible.
-    close_seat_in_fake(&fx, "seat-A", &key);
+    close_seat_in_fake(&fx, "seat-A");
     commit_seat_read(&fx, &c.id, "seat-A").await;
     assert_eq!(
         clone_rec(&fx, &c.id).seat_fact.map(|f| f.state),
@@ -4156,7 +4150,7 @@ async fn backfilled_clone_is_bound_then_closes_reversibly() {
         .finalize_retirement(&seat_ref("seat-C"), &OpKey("x".into()))
         .await
         .unwrap();
-    close_seat_in_fake(&fx, "seat-C", "no-such-key");
+    close_seat_in_fake(&fx, "seat-C");
     assert_eq!(
         fx.seats.inspect(&[seat_ref("seat-C")]).await.unwrap()[&seat_ref("seat-C")],
         final_read()
@@ -4408,4 +4402,242 @@ async fn unseated_reserved_clone_key_conflict_defers_without_a_seat() {
     let rs = resolve_reserved_rows(&fx);
     assert_eq!(rs.len(), 1);
     assert_eq!(rs[0].status, EffectStatus::Pending);
+}
+
+// ---------------------------------------------------------------------------------------------
+// D2 restore end to end on the fakes (hg-66u.32; spec §8, §14.12)
+// ---------------------------------------------------------------------------------------------
+
+/// A seated clone on `seat-A` with accepted memberships on the seat and teamspace channels. With `keyed` its
+/// continuity key is reserved and bound to the seat; without, threads refuses the reservation.
+async fn member_clone(fx: &Fx, keyed: bool) -> (CloneRecord, ThreadRef, ThreadRef) {
+    if !keyed {
+        fx.threads
+            .set_reserve_error(Some(super::fake::FakeSeatViewError::Rejected));
+    }
+    let clone = base(fx).await;
+    occupy(fx, &clone, "seat-A").await;
+    steps(fx, 6).await;
+    let (st, ts) = (thread_of_seat(fx, "foreman"), thread_of_ts(fx));
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    fx.threads.accept(&ts, &seat_ref("seat-A"));
+    later(fx).await;
+    let bound = fx.threads.key_binding(&clone.id.to_string());
+    assert_eq!(bound.as_deref(), keyed.then_some("seat-A"));
+    (clone, st, ts)
+}
+
+/// `member_clone(keyed)` after a pane close and an undo: the seat read is committed and the Restore intent
+/// written, with no pass run since.
+async fn closed_and_undone(
+    fx: &Fx,
+    keyed: bool,
+) -> (CloneRecord, OpId, ThreadRef, ThreadRef, RetirementKind) {
+    let (clone, st, ts) = member_clone(fx, keyed).await;
+    let kind = fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    let epoch = OpId::new();
+    write_restore(fx, &clone.id, &epoch);
+    // The observation after the undo: the committed fact is the fake view's read of the closed seat.
+    commit_seat_read(fx, &clone.id, "seat-A").await;
+    (clone, epoch, st, ts, kind)
+}
+
+fn accepted(fx: &Fx, t: &ThreadRef, seat: &str) -> bool {
+    fx.threads
+        .member(t, &seat_ref(seat))
+        .is_some_and(|m| m.state == InvitationState::Accepted)
+}
+
+#[tokio::test]
+async fn close_then_undo_unretires_the_same_seat_with_memberships_and_no_reacceptance() {
+    let fx = fx();
+    let (clone, epoch, st, ts, kind) = closed_and_undone(&fx, true).await;
+    assert_eq!(
+        kind,
+        RetirementKind::Reversible,
+        "a bound key makes the close reversible"
+    );
+    let invites = fx.threads.call_count("invite");
+    steps(&fx, 5).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(
+        c.threads_seat.as_deref(),
+        Some("seat-A"),
+        "the same seat id"
+    );
+    assert!(c.threads_seat_history.is_empty(), "no succession");
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert!(succeed_rows(&fx).is_empty());
+    for t in [&st, &ts] {
+        assert!(
+            accepted(&fx, t, "seat-A"),
+            "membership kept accepted: {}",
+            t.0
+        );
+        assert!(fx.threads.member(t, &seat_ref("seat-B")).is_none());
+    }
+    assert_eq!(fx.threads.call_count("invite"), invites, "no re-invitation");
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+}
+
+#[tokio::test]
+async fn reversible_seat_is_never_succeeded() {
+    let fx = fx();
+    let (clone, _epoch, _st, _ts, kind) = closed_and_undone(&fx, true).await;
+    assert_eq!(kind, RetirementKind::Reversible);
+    // Even with threads mapping the reopened pane to some other seat, a reversibly retired seat is unretired,
+    // never succeeded.
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    assert!(succeed_rows(&fx).is_empty(), "{:?}", succeed_rows(&fx));
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert!(c.threads_seat_history.is_empty());
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+}
+
+#[tokio::test]
+async fn no_resolve_for_the_reopened_pane_while_restore_is_pending() {
+    let fx = fx();
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(&fx, true).await;
+    let setup = fx.map.resolve_ops().len();
+    let resolved = resolve_rows(&fx).len();
+    // Pending (not acknowledged), then acknowledged: the reopened pane is never resolved either way.
+    steps(&fx, 6).await;
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.map.resolve_ops().len(),
+        setup,
+        "{:?}",
+        fx.map.resolve_ops()
+    );
+    assert_eq!(
+        resolve_rows(&fx).len(),
+        resolved,
+        "the ordinary resolve want never ran for the clone"
+    );
+    assert_eq!(
+        clone_rec(&fx, &clone.id).threads_seat.as_deref(),
+        Some("seat-A"),
+        "the unretired seat id reattaches"
+    );
+}
+
+#[tokio::test]
+async fn operator_final_seat_is_succeeded_with_one_reacceptance_and_key_relink() {
+    let fx = fx();
+    let (clone, st, ts) = member_clone(&fx, true).await;
+    let key = clone.id.to_string();
+    // The close was reversible; an explicit operator retire then made it final (threads deletes the key).
+    assert_eq!(
+        fx.threads.close_pane(&fx.seats, &seat_ref("seat-A")),
+        RetirementKind::Reversible
+    );
+    fx.threads
+        .operator_final_retire(&fx.seats, &seat_ref("seat-A"));
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 8).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(c.threads_seat_history, vec!["seat-A".to_owned()]);
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-B", &epoch, true, false)
+    );
+    assert_eq!(succeed_rows(&fx).len(), 1);
+    assert_eq!(
+        fx.threads.call_count("unretire_seat"),
+        0,
+        "a final seat is not unretired"
+    );
+    let invites = fx.threads.call_count("invite");
+    for t in [&st, &ts] {
+        let b = fx.threads.member(t, &seat_ref("seat-B")).unwrap();
+        assert_eq!(
+            (b.constraint, b.state),
+            (InviteConstraint::Required, InvitationState::Pending),
+            "one fresh acceptance owed on {}",
+            t.0
+        );
+        assert_eq!(
+            fx.threads.member(t, &seat_ref("seat-A")).unwrap().state,
+            InvitationState::Released
+        );
+    }
+    // Key relink to the successor.
+    assert!(c.key_reservation.expect("record stays").bound_to("seat-B"));
+    assert_eq!(fx.threads.key_binding(&key).as_deref(), Some("seat-B"));
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("invite"), invites, "invited once");
+    assert_eq!(succeed_rows(&fx).len(), 1);
+}
+
+#[tokio::test]
+async fn keyless_pane_close_is_final_and_undo_succeeds() {
+    let fx = fx();
+    let (clone, epoch, st, ts, kind) = closed_and_undone(&fx, false).await;
+    assert_eq!(
+        kind,
+        RetirementKind::Final,
+        "no bound key: the close is final"
+    );
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-B", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    for t in [&st, &ts] {
+        assert_eq!(
+            fx.threads.member(t, &seat_ref("seat-B")).unwrap().state,
+            InvitationState::Pending,
+            "one re-acceptance on {}",
+            t.0
+        );
+    }
+}
+
+#[tokio::test]
+async fn undo_unreachable_threads_commits_no_seat_change_and_launches_nothing() {
+    let fx = fx();
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(&fx, true).await;
+    fx.threads.disconnect();
+    fx.seats
+        .set_error(Some(super::fake::FakeSeatViewError::Disconnected));
+    steps(&fx, 4).await;
+    later(&fx).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(
+        c.seat_intent,
+        restore("seat-A", &epoch, false, false),
+        "not acknowledged, so the restore launch (which needs threads_done) stays gated"
+    );
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    assert!(succeed_rows(&fx).is_empty());
+    // Threads answers again: the seat is unretired and the intent acknowledged.
+    fx.threads.reconnect();
+    fx.seats.set_error(None);
+    for _ in 0..3 {
+        later(&fx).await;
+    }
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
 }

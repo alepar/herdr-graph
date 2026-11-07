@@ -90,7 +90,7 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
             let (reason, remedy, error) = if launched.is_some() {
                 (
                     "launched_no_reattach",
-                    "start the agent in the pane manually or retire the clone",
+                    "start the agent in the pane manually (fix the pane shell if it rejects the continuity-key export) or retire the clone",
                     None,
                 )
             } else if let Some(m) = mark_failed {
