@@ -14,10 +14,11 @@ use herdr_threads::protocol::ids::{
 use herdr_threads::protocol::pagination::PageRequest;
 use herdr_threads::protocol::results::{ApiError, ErrorCode, ReceiptStatus, Recipient};
 use herdr_threads::protocol::service::{
-    EnsureManagedThread, InvitationConstraint, NotificationSeverity, ReleaseRequirement,
-    RequirementState, ReserveContinuityKey, SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite,
-    ServiceMembership, ServiceMembershipQuery, ServiceNotify, ServiceOperation,
-    ServiceReceiptsQuery, ServiceResult, ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
+    EnsureManagedThread, FinalizeRetirement, InvitationConstraint, NotificationSeverity,
+    ReleaseContinuityKey, ReleaseRequirement, RequirementState, ReserveContinuityKey,
+    SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership, ServiceMembershipQuery,
+    ServiceNotify, ServiceOperation, ServiceReceiptsQuery, ServiceResult, ServiceSend,
+    ServiceSetTopic, UnretireSeat, VoluntaryMembershipState,
 };
 use herdr_threads::protocol::time::{CallBudget, Cancellation, Clock as ThreadsClock, MonoInstant};
 use sha2::{Digest, Sha256};
@@ -566,6 +567,46 @@ impl ThreadsPort for ServiceThreads {
             operation: operation_id(op),
         });
         reserve_outcome(self.mutate(op).await)
+    }
+
+    /// One `UnretireSeat` request (`service_session_v3`).
+    async fn unretire_seat(&self, seat: &ThreadsSeatRef, op: &OpKey) -> Result<(), ThreadsError> {
+        let op = ServiceOperation::UnretireSeat(UnretireSeat {
+            seat: seat_id(seat)?,
+            operation: operation_id(op),
+        });
+        match self.mutate(op).await? {
+            ServiceResult::SeatUnretired(_) => Ok(()),
+            _ => Err(rejected("unretire seat", "unexpected result")),
+        }
+    }
+
+    /// One `FinalizeRetirement` request (`service_session_v3`); threads releases the seat's key with it.
+    async fn finalize_retirement(
+        &self,
+        seat: &ThreadsSeatRef,
+        op: &OpKey,
+    ) -> Result<(), ThreadsError> {
+        let op = ServiceOperation::FinalizeRetirement(FinalizeRetirement {
+            seat: seat_id(seat)?,
+            operation: operation_id(op),
+        });
+        match self.mutate(op).await? {
+            ServiceResult::RetirementFinalized(_) => Ok(()),
+            _ => Err(rejected("finalize retirement", "unexpected result")),
+        }
+    }
+
+    /// One `ReleaseContinuityKey` request (`service_session_v3`): threads refuses a key bound to a seat.
+    async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+        let op = ServiceOperation::ReleaseContinuityKey(ReleaseContinuityKey {
+            key: ContinuityKey::parse(key).map_err(|e| rejected("continuity key", e))?,
+            operation: operation_id(op),
+        });
+        match self.mutate(op).await? {
+            ServiceResult::ContinuityKeyReleased(_) => Ok(()),
+            _ => Err(rejected("release continuity key", "unexpected result")),
+        }
     }
 
     #[cfg(not(feature = "threads-service-ack"))]

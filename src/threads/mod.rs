@@ -29,7 +29,7 @@ use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{AnyId, CloneId, IdKind, SeatId};
 use crate::ports::store::{Store, StoreError};
-use crate::ports::threads::ThreadsPort;
+use crate::ports::threads::{ThreadsPort, ThreadsSeatView};
 use crate::reconcile::Reconciler;
 use crate::store::Record;
 use crate::store::tree::{CommitView, TreeRead};
@@ -47,6 +47,7 @@ pub fn register_with(
     reconciler: &Reconciler,
     threads: Arc<dyn ThreadsPort>,
     mapping: Arc<dyn PaneSeatMap>,
+    seat_view: Arc<dyn ThreadsSeatView>,
 ) {
     let cache = Arc::new(GraphCache::default());
     reconciler.register_source(Arc::new(ThreadsSource::new(
@@ -56,6 +57,7 @@ pub fn register_with(
     reconciler.register_executor(Arc::new(effects::ThreadsExecutor::new(
         threads,
         mapping,
+        seat_view,
         reconciler.journal().clone(),
         cache,
     )));
@@ -207,6 +209,10 @@ pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingI
     else {
         return Vec::new();
     };
+    // A purge tombstone is inert: it is never invited (§13).
+    if rec.is_tombstone() {
+        return Vec::new();
+    }
     rec.invitations
         .iter()
         .filter(|i| i.state == InvitationState::Pending)
@@ -285,7 +291,12 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {
                     .any(|i| i.link.as_ref().is_some_and(|l| l.seat == target))
             })
         })
-        .or_else(|| CloneId::parse(target).ok().and_then(|id| g.clones.get(&id)))
+        .or_else(|| {
+            CloneId::parse(target)
+                .ok()
+                .and_then(|id| g.clones.get(&id))
+                .filter(|c| !c.is_tombstone())
+        })
         .cloned();
     let seat = match &found {
         Some(c) => g.seats.get(&c.seat),

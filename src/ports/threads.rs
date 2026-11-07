@@ -87,8 +87,7 @@ pub enum ThreadsError {
     Rejected(String),
 }
 
-/// How a retired seat can come back. v3.0.0 reports every retirement as `Final`; `Reversible` waits on
-/// threads D2 (reversible retirement), so nothing produces it yet.
+/// How a retired seat can come back: `Reversible` can be un-retired (threads D2), `Final` cannot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetirementKind {
@@ -209,6 +208,25 @@ pub trait ThreadsPort: Send + Sync {
         _seat: Option<&ThreadsSeatRef>,
         _op: &OpKey,
     ) -> Result<ReserveOutcome, ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Undo the reversible retirement of `seat` (`service_session_v3`). Idempotent under `op`. Additive: the
+    /// default is `Unsupported`.
+    async fn unretire_seat(&self, _seat: &ThreadsSeatRef, _op: &OpKey) -> Result<(), ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Make the retirement of `seat` final; threads releases the seat's continuity key (`service_session_v3`).
+    /// Idempotent under `op`. Additive: the default is `Unsupported`.
+    async fn finalize_retirement(
+        &self,
+        _seat: &ThreadsSeatRef,
+        _op: &OpKey,
+    ) -> Result<(), ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Release the graph's reservation of `key`, which must be bound to no seat (`service_session_v3`).
+    /// Idempotent under `op`. Additive: the default is `Unsupported`.
+    async fn release_continuity_key(&self, _key: &str, _op: &OpKey) -> Result<(), ThreadsError> {
         Err(ThreadsError::Unsupported)
     }
 }

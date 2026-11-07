@@ -10,7 +10,7 @@ use herdr_threads::protocol::commands::{Command, ResolveSeat, SeatInspectQuery};
 use herdr_threads::protocol::ids::{HostLocator, HostTargetId, OperationId, SeatId};
 use herdr_threads::protocol::pagination::PageRequest;
 use herdr_threads::protocol::results::{
-    CommandResult, ContinuityStatus, ErrorCode, SeatInspection,
+    CommandResult, ContinuityStatus, ErrorCode, SeatInspection, SeatRetirementState,
 };
 use herdr_threads::protocol::time::Clock as ThreadsClock;
 use std::collections::BTreeMap;
@@ -163,9 +163,12 @@ pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
         ContinuityStatus::Unresolved => SeatStatus::Unresolved,
         // A seat homed on another node is never bound here.
         ContinuityStatus::Remote => SeatStatus::Unresolved,
-        // Reversible retirement (D2) is not mapped yet, so every retirement is final.
+        // `retirement_state` is present iff the retirement is reversible (D2); absent means final.
         ContinuityStatus::Retired => SeatStatus::Retired {
-            kind: RetirementKind::Final,
+            kind: match i.retirement_state {
+                Some(SeatRetirementState::Reversible) => RetirementKind::Reversible,
+                None => RetirementKind::Final,
+            },
         },
     }
 }

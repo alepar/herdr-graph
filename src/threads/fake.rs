@@ -50,6 +50,10 @@ struct State {
     reserves: Vec<(String, Option<String>)>,
     /// The operation key of each of those calls.
     reserve_ops: Vec<OpKey>,
+    unretire_error: Option<FakeSeatViewError>,
+    finalize_error: Option<FakeSeatViewError>,
+    /// (call name, subject, operation key) of every unretire/finalize/release that reached the service.
+    lifecycle: Vec<(String, String, OpKey)>,
 }
 
 /// The thread id the fake (and the real adapter) derive from an `ensure:<object>` operation key.
@@ -201,6 +205,36 @@ impl FakeThreads {
     /// Every `reserve_continuity_key` (key, seat) that reached the service, in order, failed ones included.
     pub fn reserve_calls(&self) -> Vec<(String, Option<String>)> {
         self.lock().reserves.clone()
+    }
+
+    /// While set, `unretire_seat` fails with this error.
+    pub fn set_unretire_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().unretire_error = error;
+    }
+
+    /// While set, `finalize_retirement` fails with this error.
+    pub fn set_finalize_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().finalize_error = error;
+    }
+
+    /// The subjects (seat or key) of the lifecycle calls named `name` that reached the service, in order.
+    pub fn lifecycle_calls(&self, name: &str) -> Vec<String> {
+        self.lock()
+            .lifecycle
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, subject, _)| subject.clone())
+            .collect()
+    }
+
+    /// The operation keys of the lifecycle calls named `name`, in order.
+    pub fn lifecycle_ops(&self, name: &str) -> Vec<OpKey> {
+        self.lock()
+            .lifecycle
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, _, op)| op.clone())
+            .collect()
     }
 
     pub fn call_count(&self, name: &str) -> usize {
@@ -452,6 +486,59 @@ impl ThreadsPort for FakeThreads {
         Ok(ReserveOutcome::Reserved {
             seat: binding.map(ThreadsSeatRef),
         })
+    }
+
+    async fn unretire_seat(&self, seat: &ThreadsSeatRef, op: &OpKey) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("unretire_seat".into());
+        st.lifecycle
+            .push(("unretire_seat".into(), seat.0.clone(), op.clone()));
+        match st.unretire_error {
+            Some(e) => Err(e.to_error()),
+            None => Ok(()),
+        }
+    }
+
+    async fn finalize_retirement(
+        &self,
+        seat: &ThreadsSeatRef,
+        op: &OpKey,
+    ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("finalize_retirement".into());
+        st.lifecycle
+            .push(("finalize_retirement".into(), seat.0.clone(), op.clone()));
+        if let Some(e) = st.finalize_error {
+            return Err(e.to_error());
+        }
+        // Threads releases the seat's key when its retirement becomes final.
+        st.keys.retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        Ok(())
+    }
+
+    async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("release_continuity_key".into());
+        st.lifecycle
+            .push(("release_continuity_key".into(), key.to_owned(), op.clone()));
+        match st.keys.get(key) {
+            None => Err(ThreadsError::Rejected(
+                "NotFound: continuity key is not reserved".into(),
+            )),
+            Some(Some(_)) => Err(ThreadsError::Rejected(
+                "Conflict: continuity key is bound to a seat".into(),
+            )),
+            Some(None) => {
+                st.keys.remove(key);
+                Ok(())
+            }
+        }
     }
 
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {

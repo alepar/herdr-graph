@@ -33,6 +33,9 @@ pub enum SeatTransition {
     ClearOnReattach { epoch: OpId },
     /// Threads acknowledged a Finalize/ReleaseKey: delete the tombstone record.
     TombstoneDone,
+    /// A ReleaseKey tombstone's key turned out to be bound to `seat`: the seat's finalization releases it, so
+    /// the tombstone becomes `Finalize{seat}` (§14.3).
+    TombstoneFinalize { seat: String },
     /// Threads reserved the continuity key for this clone (`seat`: the seat it reported the key bound to).
     /// Records the reservation, or updates the binding of the recorded one; the key never changes.
     RecordReservation { key: String, seat: Option<String> },
@@ -81,11 +84,12 @@ pub fn clear_restore_on_retire(rec: &mut CloneRecord) {
 }
 
 /// Called by the purge commit: the inert tombstone to keep in place of `rec`, or None to delete the record.
-/// Before D2 (hg-66u.31) a seated clone is deleted outright (every seat is final, §14.2); hg-66u.31 restores
-/// the Finalize tombstone. A seatless one keeps a ReleaseKey only when it has a key reservation (§14.3).
+/// A seated clone always keeps `Finalize{seat}`, whatever its retirement kind, and the write needs no threads
+/// read (§14.2). A seatless one keeps a ReleaseKey only when it has a key reservation (§14.3).
 pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<CloneRecord> {
     let seat_intent = match (&rec.threads_seat, reservation) {
-        (Some(_), _) | (None, None) => return None,
+        (Some(seat), _) => SeatIntent::Finalize { seat: seat.clone() },
+        (None, None) => return None,
         (None, Some(key)) => SeatIntent::ReleaseKey {
             key: key.to_owned(),
         },
@@ -311,6 +315,18 @@ impl Mutation for ThreadsSeatMutation {
                     }
                 }
             }
+            SeatTransition::TombstoneFinalize { seat } => match &rec.seat_intent {
+                Some(SeatIntent::ReleaseKey { .. }) => {
+                    rec.seat_intent = Some(SeatIntent::Finalize { seat: seat.clone() });
+                }
+                Some(SeatIntent::Finalize { seat: s }) if s == seat => {}
+                _ => {
+                    return Err(reject(
+                        "not_a_release_key_tombstone",
+                        format!("clone {} is not a ReleaseKey tombstone", a.clone),
+                    ));
+                }
+            },
             SeatTransition::TombstoneDone => {
                 if !rec.is_tombstone() {
                     return Err(reject(

@@ -3802,7 +3802,12 @@ fn with_threads(
 ) {
     let threads = Arc::new(crate::threads::fake::FakeThreads::new());
     let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
-    crate::threads::register_with(&fx.rec, threads.clone(), map.clone());
+    crate::threads::register_with(
+        &fx.rec,
+        threads.clone(),
+        map.clone(),
+        std::sync::Arc::new(crate::threads::FakeThreadsSeatView::new()),
+    );
     (threads, map)
 }
 
