@@ -1,6 +1,7 @@
 # super-auto run — 2026-11-04-threads-seat-identity
 
 resumeChange: 2026-11-07 · "1 lgtm" · hg-66u.14 keeps a preserved-pane-id fallback for seatless clones; matcher deleted otherwise (spec S1)
+resumeChange: 2026-11-07 · user answers: "Merge main in now (Recommended)" · "Fix it here (Recommended)" (e2e_summary_lands_in_archived_seat_folder) · "1 + moe to hg-build, our own dedicated toolbox. always stop leaks. make note in AGENTS.md project level to use hg-build and avoid leaks" · upstream feedback: "Don't file"
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
 phase: code
 codeMechanism: Workflow
@@ -194,3 +195,5 @@ baseAbsorbed: 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784 → eae4a3edd9e8bca0c5e18
 sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run MEASUREMENT INVALID (EAGAIN thread exhaustion) @ 29e7609 · finish re-run in hg-build: 2981 passed, 1 failed (pre-run) @ f2928b1
 friction: 14 events
 gates released: hg-66u.1, hg-66u.2, hg-66u.3 closed 2026-11-07 (herdr-threads v3.1.0); gated subtree re-entered; finish deferred until it lands (post-cap audit covers it)
+leaks: 2026-11-07 stopped 79 rig processes (55 herdr servers, 24 shells, HOME/cwd /tmp/hg-*) and removed 75 dirs, user-approved
+feedback: not filed (user declined 2026-11-07); draft stays at upstream-feedback-draft.md
