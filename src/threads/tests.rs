@@ -3433,9 +3433,9 @@ async fn reserve_conflict_records_nothing() {
 }
 
 #[tokio::test]
-async fn backfill_reserves_a_seated_clone_without_binding_a_seat() {
+async fn backfill_reserves_seatless_then_the_key_link_binds_the_seat() {
     // A clone that predates D1 has a threads_seat and no reservation. The reserve-key want reserves its key,
-    // seatless (§16.5); linking the key to the seat is the key-link want's (hg-66u.68).
+    // seatless (§16.5); the key-link want (hg-66u.68) then binds it to the seat.
     let fx = fx();
     fx.threads.set_busy(true);
     let c = base(&fx).await;
@@ -3445,12 +3445,17 @@ async fn backfill_reserves_a_seated_clone_without_binding_a_seat() {
     fx.threads.set_busy(false);
     later(&fx).await;
     later(&fx).await;
+    later(&fx).await;
     let rec = clone_rec(&fx, &c.id);
     assert_eq!(rec.threads_seat.as_deref(), Some("seat-A"));
     let reservation = rec.key_reservation.expect("backfilled");
-    assert_eq!(reservation.seat, None);
-    assert_eq!(fx.threads.reserve_calls(), vec![(c.id.to_string(), None)]);
-    assert_eq!(fx.threads.key_binding(&c.id.to_string()), None);
+    assert!(reservation.bound_to("seat-A"));
+    let key = c.id.to_string();
+    assert_eq!(
+        fx.threads.reserve_calls(),
+        vec![(key.clone(), None), (key.clone(), Some("seat-A".into()))]
+    );
+    assert_eq!(fx.threads.key_binding(&key).as_deref(), Some("seat-A"));
 }
 
 #[tokio::test]
@@ -3491,38 +3496,40 @@ async fn retired_or_tombstoned_clones_are_not_reserved() {
 }
 
 #[tokio::test]
-async fn succession_keeps_the_reservation_record_and_relinks_nothing() {
-    // §16.1: the reserve-key want is seatless and never fires for a clone that has a reservation, so the
-    // succession leaves the record as it was; the key-link want (hg-66u.68) owns the relink.
+async fn succession_relink_is_the_key_link_want() {
+    // §16.1: the succession leaves the reservation in place, still bound to the predecessor; the key-link
+    // want is the only relink. The restore launch gate that waits for this binding is Task 31's
+    // `restore_launch_waits_for_the_key_bound_to_restore_seat` (src/reconcile/tests.rs).
     let fx = fx();
     let (clone, epoch, _st, _ts) = undone_clone(&fx).await;
-    // The binding hg-66u.68 records for a linked key: the predecessor seat.
-    assert_eq!(record_reservation(&fx, &clone.id, Some("seat-A")), None);
+    let key = clone.id.to_string();
     let before = clone_rec(&fx, &clone.id).key_reservation.expect("reserved");
-    assert_eq!(before.seat.as_deref(), Some("seat-A"));
-    let calls = fx.threads.reserve_calls().len();
-    steps(&fx, 5).await;
+    assert!(before.bound_to("seat-A"), "linked to the predecessor");
+    // Threads deletes the predecessor's key when its retirement is final.
+    fx.threads
+        .finalize_retirement(&seat_ref("seat-A"), &OpKey("final".into()))
+        .await
+        .unwrap();
+    let reserve_rows_before = reserve_rows(&fx).len();
+    steps(&fx, 6).await;
     let c = clone_rec(&fx, &clone.id);
     assert_eq!(c.threads_seat.as_deref(), Some("seat-B"), "succeeded");
     assert_eq!(c.seat_intent, restore("seat-B", &epoch, true, false));
+    let reservation = c.key_reservation.expect("record stays");
+    assert!(reservation.bound_to("seat-B"), "{reservation:?}");
+    assert_eq!(reservation.key, key);
     assert_eq!(
-        c.key_reservation,
-        Some(before),
-        "the record stays; its binding still names the predecessor"
+        fx.threads.reserve_calls(),
+        vec![
+            (key.clone(), None),
+            (key.clone(), Some("seat-A".into())),
+            (key.clone(), Some("seat-B".into())),
+        ],
+        "one seat-bearing relink, no second seatless reserve"
     );
-    assert_eq!(
-        fx.threads.reserve_calls().len(),
-        calls,
-        "no reservation call follows the succession"
-    );
-    assert!(
-        fx.threads
-            .reserve_calls()
-            .iter()
-            .all(|(_, seat)| seat.is_none()),
-        "this bead binds no key to a seat: {:?}",
-        fx.threads.reserve_calls()
-    );
+    assert_eq!(reserve_rows(&fx).len(), reserve_rows_before);
+    assert_eq!(kind_rows(&fx, super::effects::KEY_LINK_KIND).len(), 2);
+    assert_eq!(fx.threads.key_binding(&key).as_deref(), Some("seat-B"));
 }
 
 #[tokio::test]
@@ -4042,4 +4049,276 @@ async fn tombstones_are_not_planned_listed_undone_resurrected_or_invited() {
     later(&fx).await;
     assert!(is_gone(&fx, &c.id));
     assert_eq!(fx.threads.call_count("invite"), invites, "never invited");
+}
+
+// ---------------------------------------------------------------------------------------------
+// key-link want (hg-66u.68; spec §14.12, §16.1, §16.5)
+// ---------------------------------------------------------------------------------------------
+
+/// Model threads closing `seat`'s pane: the seat reads reversibly retired when `key` is bound to it, final
+/// otherwise (hg-66u.32's fakes).
+fn close_seat_in_fake(fx: &Fx, seat: &str, key: &str) {
+    let kind = if fx.threads.key_binding(key).as_deref() == Some(seat) {
+        RetirementKind::Reversible
+    } else {
+        RetirementKind::Final
+    };
+    fx.seats.set(&seat_ref(seat), SeatStatus::Retired { kind });
+}
+
+/// Commit the `seat_fact` SeatObservation derives from the fake seat view's current read of `seat`.
+async fn commit_seat_read(fx: &Fx, clone: &CloneId, seat: &str) {
+    let read = fx.seats.inspect(&[seat_ref(seat)]).await.unwrap();
+    let state = match &read[&seat_ref(seat)] {
+        SeatStatus::Retired { kind } => {
+            json!({ "state": "retired", "reversible": *kind == RetirementKind::Reversible })
+        }
+        SeatStatus::KeyConflict { pane } => json!({ "state": "key_conflict", "pane": pane }),
+        other => panic!("unexpected read {other:?}"),
+    };
+    seat_fact(fx, clone, seat, state);
+}
+
+fn key_link_target_of(fx: &Fx, rec: &CloneRecord) -> Option<(String, String)> {
+    let head = fx.store.head().unwrap();
+    let g = effects::GraphCache::default()
+        .get(&fx.store.at(&head), &head)
+        .unwrap();
+    effects::key_link_target(&g, rec)
+}
+
+/// An active clone on `seat-A` whose reservation is recorded unbound (as the seatless reserve leaves it).
+async fn unbound_reserved_clone(fx: &Fx) -> CloneRecord {
+    let c = base(fx).await;
+    assert_eq!(record_reservation(fx, &c.id, None), None);
+    seat_the_clone(fx, &c, "seat-A");
+    c
+}
+
+#[tokio::test]
+async fn backfilled_clone_is_bound_then_closes_reversibly() {
+    let fx = fx();
+    let c = base(&fx).await;
+    seat_the_clone(&fx, &c, "seat-A");
+    let control = second(&fx).await;
+    seat_the_clone(&fx, &control, "seat-C");
+    // The control never gets a key linked: threads has no key for its seat.
+    steps(&fx, 5).await;
+    let key = c.id.to_string();
+    let seat_calls: Vec<_> = fx
+        .threads
+        .reserve_calls()
+        .into_iter()
+        .filter(|(k, s)| k == &key && s.is_some())
+        .collect();
+    assert_eq!(seat_calls, vec![(key.clone(), Some("seat-A".into()))]);
+    assert!(
+        clone_rec(&fx, &c.id)
+            .key_reservation
+            .unwrap()
+            .bound_to("seat-A")
+    );
+    // Close the pane: a bound key makes the retirement reversible.
+    close_seat_in_fake(&fx, "seat-A", &key);
+    commit_seat_read(&fx, &c.id, "seat-A").await;
+    assert_eq!(
+        clone_rec(&fx, &c.id).seat_fact.map(|f| f.state),
+        Some(crate::model::clone::SeatFactState::Retired { reversible: true })
+    );
+    retire_clone_observed(&fx, &c.id);
+    assert_eq!(clone_rec(&fx, &c.id).lifecycle, CloneLifecycle::Retired);
+    // A keyless seat closes final.
+    fx.threads
+        .finalize_retirement(&seat_ref("seat-C"), &OpKey("x".into()))
+        .await
+        .unwrap();
+    close_seat_in_fake(&fx, "seat-C", "no-such-key");
+    assert_eq!(
+        fx.seats.inspect(&[seat_ref("seat-C")]).await.unwrap()[&seat_ref("seat-C")],
+        final_read()
+    );
+}
+
+#[tokio::test]
+async fn export_rejected_clone_gets_its_key_bound_to_its_seat() {
+    // A post-D1 clone: reserved at creation, its agent checked in without the key (the shell rejected the
+    // export), so threads seats it by pane and nothing links the key.
+    let fx = fx();
+    let c = base(&fx).await;
+    steps(&fx, 3).await;
+    let key = c.id.to_string();
+    let r = clone_rec(&fx, &c.id).key_reservation.expect("reserved");
+    assert_eq!(r.seat, None);
+    assert_eq!(fx.threads.reserve_calls(), vec![(key.clone(), None)]);
+    seat_the_clone(&fx, &c, "seat-A");
+    steps(&fx, 3).await;
+    assert!(
+        clone_rec(&fx, &c.id)
+            .key_reservation
+            .unwrap()
+            .bound_to("seat-A")
+    );
+    assert_eq!(
+        fx.threads.reserve_calls(),
+        vec![(key.clone(), None), (key.clone(), Some("seat-A".into()))]
+    );
+    assert_eq!(fx.threads.key_binding(&key).as_deref(), Some("seat-A"));
+}
+
+#[tokio::test]
+async fn key_link_targets_restore_seat_during_a_pending_restore() {
+    let fx = fx();
+    let c = unbound_reserved_clone(&fx).await;
+    let key = c.id.to_string();
+    let rec = clone_rec(&fx, &c.id);
+    assert_eq!(
+        key_link_target_of(&fx, &rec),
+        Some((key.clone(), "seat-A".into())),
+        "no intent: threads_seat"
+    );
+    let pending = |seat: &str, threads_done: bool| {
+        let mut r = rec.clone();
+        r.seat_intent = Some(SeatIntent::Restore {
+            seat: seat.into(),
+            epoch: OpId::new(),
+            threads_done,
+            launched: None,
+            last_refusal: None,
+        });
+        r
+    };
+    assert_eq!(
+        key_link_target_of(&fx, &pending("seat-R", true)),
+        Some((key.clone(), "seat-R".into())),
+        "Restore.seat, not the old threads_seat"
+    );
+    assert_eq!(
+        key_link_target_of(&fx, &pending("seat-R", false)),
+        None,
+        "its seat is still retired"
+    );
+    let mut bound = pending("seat-R", true);
+    bound.key_reservation.as_mut().unwrap().seat = Some("seat-R".into());
+    assert_eq!(key_link_target_of(&fx, &bound), None, "already bound");
+    let mut none = rec.clone();
+    none.key_reservation = None;
+    assert_eq!(key_link_target_of(&fx, &none), None, "no reservation");
+}
+
+#[tokio::test]
+async fn key_link_conflict_defers_without_a_storm() {
+    let fx = fx();
+    let c = unbound_reserved_clone(&fx).await;
+    let key = c.id.to_string();
+    // The key is bound to another seat: threads answers Conflict and reads the seat as KeyConflict.
+    fx.threads.set_key_binding(&key, "seat-X");
+    fx.seats
+        .set(&seat_ref("seat-A"), SeatStatus::KeyConflict { pane: None });
+    commit_seat_read(&fx, &c.id, "seat-A").await;
+    // The reconciler defers the row with an exponential backoff: the loop sleeps until the row's wake time
+    // (`next_wake`), each re-check further out than the last, and a deferral spends no attempt.
+    let mut waits = Vec::new();
+    for _ in 0..4 {
+        steps(&fx, 1).await;
+        let row = kind_rows(&fx, super::effects::KEY_LINK_KIND).remove(0);
+        let wake = row.sched.wake_at.expect("deferred with a wake time");
+        waits.push((wake - Clock::now(&*fx.clock)).num_seconds());
+    }
+    assert_eq!(waits, vec![2, 4, 8, 16], "backoff, not a retry per wake");
+    let calls = fx.threads.reserve_calls().len();
+    let rec = clone_rec(&fx, &c.id);
+    assert_eq!(rec.key_reservation.as_ref().unwrap().seat, None);
+    assert_eq!(
+        rec.seat_fact.map(|f| f.state),
+        Some(crate::model::clone::SeatFactState::KeyConflict { pane: None }),
+        "the key-conflict alert"
+    );
+    let r = kind_rows(&fx, super::effects::KEY_LINK_KIND);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert_eq!(r[0].status, EffectStatus::Pending);
+    assert_eq!(r[0].attempts, 0, "a deferral spends no attempt");
+    let id = r[0].id.clone();
+    // Level-triggered: still asked after the backoff, still one row.
+    later(&fx).await;
+    later(&fx).await;
+    assert!(fx.threads.reserve_calls().len() > calls);
+    assert_eq!(kind_rows(&fx, super::effects::KEY_LINK_KIND)[0].id, id);
+    // Threads frees the key: the next re-check binds it.
+    fx.threads
+        .finalize_retirement(&seat_ref("seat-X"), &OpKey("free".into()))
+        .await
+        .unwrap();
+    later(&fx).await;
+    later(&fx).await;
+    assert!(
+        clone_rec(&fx, &c.id)
+            .key_reservation
+            .unwrap()
+            .bound_to("seat-A")
+    );
+    assert_eq!(
+        kind_rows(&fx, super::effects::KEY_LINK_KIND)[0].status,
+        EffectStatus::Done
+    );
+}
+
+#[tokio::test]
+async fn key_link_with_threads_unreachable_records_no_binding() {
+    for error in [FakeSeatViewError::Disconnected, FakeSeatViewError::Busy] {
+        let fx = fx();
+        let c = unbound_reserved_clone(&fx).await;
+        fx.threads.set_reserve_error(Some(error));
+        steps(&fx, 2).await;
+        later(&fx).await;
+        later(&fx).await;
+        assert!(
+            !fx.threads.reserve_calls().is_empty(),
+            "{error:?}: threads was asked"
+        );
+        assert_eq!(
+            clone_rec(&fx, &c.id).key_reservation.unwrap().seat,
+            None,
+            "{error:?}"
+        );
+        fx.threads.set_reserve_error(None);
+        later(&fx).await;
+        later(&fx).await;
+        assert!(
+            clone_rec(&fx, &c.id)
+                .key_reservation
+                .unwrap()
+                .bound_to("seat-A"),
+            "{error:?}: binds once reachable"
+        );
+        // Every retry of the one binding reuses one operation id (the first op is the seatless reserve's).
+        let ops = fx.threads.reserve_ops();
+        assert!(ops.len() >= 3, "{error:?}: {ops:?}");
+        assert!(ops[1..].iter().all(|o| o == &ops[1]), "{error:?}: {ops:?}");
+    }
+}
+
+#[tokio::test]
+async fn reserve_key_want_never_carries_a_seat() {
+    // Without a seat: every call is seatless.
+    let fx1 = fx();
+    let c1 = base(&fx1).await;
+    steps(&fx1, 4).await;
+    assert_eq!(fx1.threads.reserve_calls(), vec![(c1.id.to_string(), None)]);
+    // With a seat the reserve-key want still fires once, seatless; only the key-link want, a different
+    // operation, carries the seat.
+    let fx2 = fx();
+    fx2.threads.set_busy(true);
+    let c2 = base(&fx2).await;
+    seat_the_clone(&fx2, &c2, "seat-A");
+    fx2.threads.set_busy(false);
+    steps(&fx2, 3).await;
+    later(&fx2).await;
+    later(&fx2).await;
+    let calls = fx2.threads.reserve_calls();
+    let ops = fx2.threads.reserve_ops();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls[0].1, None, "the reserve-key call");
+    assert_eq!(calls[1].1.as_deref(), Some("seat-A"), "the key-link call");
+    assert_ne!(ops[0], ops[1]);
+    assert_eq!(reserve_rows(&fx2).len(), 1);
 }
