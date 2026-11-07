@@ -1,0 +1,19 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/friction.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/friction.md
+new file mode 100644
+index 0000000..466b6a1
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/friction.md
+@@ -0,0 +1,13 @@
++# friction log — 2026-11-05-seat-failure-manager-seats
++- [2026-11-05] roast-design r1 · rung: Workflow · super-roast engine via assemble-args --script
++- [2026-11-05] .superpowers/ was not git-ignored in this repo; added to .gitignore on the run branch before phase 3
++- [2026-11-05] testPaths declared for inline Rust tests (src/**/*.rs, tests/**); mergeCheck covers default and --all-features
++- [2026-11-05] phase 3 friction log (pending file while coordinator runs)
++- [2026-11-05] phase 3 invocation 1: run worktree created by plain `git worktree add` lacked the third_party/herdr-threads submodule; mergeCheck failed twice on hg-k4l.1 → blocker beads hg-9su/hg-9bp; orchestrator ran `git submodule update --init` and closed both; relaunch with fresh invocationId
++- [2026-11-05] Finish process sweep reported unknown inspection for session processes (sshd-session, systemd --user, sd-pam) not owned by the run; task worktree hg-k4l.1 kept (clean, branch task-hg-k4l.1 @71c8f2a)
++- [2026-11-05] disk: /var free fell 659G → 414G during phase 3 invocation 2 (reflinked target/ dirs diverge per task worktree on rebuild); watched, above the 150G threshold
++- [2026-11-05] merged task worktrees were not removed after merge (each kept a ~50G target/); orchestrator deleted target/ in worktrees whose branch is an ancestor of the integration tip and clean (no code touched) → /var free 414G → 494G. Side effect: a just-created task worktree (branch at tip, no commits yet) matches the same test and loses its seeded target/, costing a rebuild
++- [2026-11-05] pipeline defect: stop-run-processes exits 4 when it cannot inspect unrelated session processes (sshd-session, systemd --user, sd-pam); remove-task-worktree then keeps every task worktree and branch, and the stale branches collide with later stack cuts (hg-k4l.17, hg-k4l.24 workspace setup failed) → invocation 2 stalled
++- [2026-11-05] pipeline defect: git worktree remove refuses worktrees containing (even deinitialised) submodules, so task cleanup can never remove a task worktree in a repo with submodules; orchestrator removed 20 verified-clean, fully merged task worktrees (--force after verifying no process, no dirt, 0 unmerged commits) and closed blockers hg-8gz, hg-3w6, hg-idv
++- [2026-11-05] invocation 2 final review: tasks tested in isolation with scoped filters missed composition defects; filed fix beads hg-k4l.45 (fixtures vs first-seat node manager) and hg-k4l.46 (graph.toml writer inventory)
++- [2026-11-05] invocation 3 stalled with hg-k4l.24 still in pendingRetry although ready (all deps closed); 4 merged task worktrees again retained (same two cleanup defects) and removed by orchestrator after verification; relaunched as invocation 4

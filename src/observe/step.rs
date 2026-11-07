@@ -7,8 +7,8 @@ use super::matcher::{
     Matches, PaneLoc, current_native_id, find_tab, find_ws, match_snapshot, pane_locs,
 };
 use super::mutations::{
-    availability_request, cascade_request, move_request, occupancy_request, rename_request,
-    seat_fact_request,
+    applied_ends, availability_request, cascade_request, cascade_request_with,
+    move_request_following, occupancy_request, rename_request, seat_fact_request,
 };
 use super::seat_observation::{self, ThreadsRead};
 use crate::config::InstancePaths;
@@ -103,6 +103,9 @@ struct LoopState {
 struct PlannedOp {
     request: ChangeRequest,
     ends: Vec<EndedSession>,
+    /// A cascade: it decides at apply time which listed clones end, so `ends` is a plan and only the ends the
+    /// committed tree shows are emitted.
+    verify_ends: bool,
 }
 
 pub struct RuntimeLoop {
@@ -197,6 +200,23 @@ fn runtime_of<'a>(d: &'a DesiredRuntime, object: &AnyId) -> Option<&'a Runtime> 
         .map(|r| &r.runtime)
 }
 
+/// The operator warning for a node manager that was moved outside a plan (one per step): a recorded move of
+/// one of its clones, or the seat flagged moved out. The placement is not reverted.
+pub(super) fn node_manager_move_warning(d: &DesiredRuntime, c: &Classified) -> Option<String> {
+    let n = d.node_manager.as_ref()?;
+    let moved = c
+        .moves
+        .iter()
+        .any(|m| d.clones.get(&m.clone).is_some_and(|rec| &rec.seat == n))
+        || c.moved_out.contains(n);
+    moved.then(|| {
+        let name = d.seats.get(n).map_or("?", |s| s.name.as_str());
+        format!(
+            "herdr-graph: observe: node manager {name} ({n}) was moved outside a plan; its placement is not reverted"
+        )
+    })
+}
+
 /// Turn a classification into the requests of one step, in commit order: cascades, renames, occupancy,
 /// moves, explained closures, unknowns (rebind only), and finally binding write-backs for matched objects.
 fn build_ops(
@@ -212,12 +232,14 @@ fn build_ops(
     let plain = |request: ChangeRequest| PlannedOp {
         request,
         ends: vec![],
+        verify_ends: false,
     };
 
     for cas in &c.cascades {
         ops.push(PlannedOp {
-            request: cascade_request(cas.rule, &cas.retire, now),
+            request: cascade_request_with(cas.rule, &cas.retire, &cas.survived, now),
             ends: cas.ends.clone(),
+            verify_ends: true,
         });
     }
     for (object, new) in &c.renames {
@@ -232,10 +254,32 @@ fn build_ops(
                 now,
             ),
             ends: oc.end.iter().cloned().collect(),
+            verify_ends: false,
         });
     }
 
     let locs = pane_locs(snap);
+    // The one tab a moved-out seat's surviving panes now share, when no other seat owns it or has a clone in it.
+    let follow_of = |seat: &SeatId| -> Option<Binding> {
+        let mut tabs = d
+            .clones
+            .values()
+            .filter(|c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
+            .filter_map(|c| m.clone_pane.get(&c.id).and_then(|p| locs.get(p)));
+        let first = tabs.next()?;
+        if tabs.any(|l| l.tab.id != first.tab.id) {
+            return None;
+        }
+        let claimed = m.tabs.get(&first.tab.id).is_some_and(|s| s != seat)
+            || first.tab.panes.iter().any(|p| {
+                m.clone_pane
+                    .iter()
+                    .find(|(_, pid)| **pid == p.id)
+                    .and_then(|(c, _)| d.clones.get(c))
+                    .is_some_and(|c| &c.seat != seat)
+            });
+        (!claimed).then(|| seat_binding(first.ws, first.tab, &snap.incarnation))
+    };
     let mut attached: BTreeSet<SeatId> = BTreeSet::new();
     let mut moved: BTreeSet<CloneId> = BTreeSet::new();
     for mv in &c.moves {
@@ -256,14 +300,21 @@ fn build_ops(
         if let Some(s) = &seat {
             attached.insert(s.clone());
         }
-        ops.push(plain(move_request(
+        let follow = seat.as_ref().and_then(follow_of);
+        ops.push(plain(move_request_following(
             Some(&mv.clone),
             binding.as_ref(),
             seat.as_ref(),
+            follow.as_ref(),
         )));
     }
     for seat in c.moved_out.iter().filter(|s| !attached.contains(*s)) {
-        ops.push(plain(move_request(None, None, Some(seat))));
+        ops.push(plain(move_request_following(
+            None,
+            None,
+            Some(seat),
+            follow_of(seat).as_ref(),
+        )));
     }
 
     for object in &c.gone {
@@ -278,6 +329,7 @@ fn build_ops(
             ops.push(PlannedOp {
                 request: occupancy_request(&e.clone, Some(e.reason), None, now),
                 ends: vec![e.clone()],
+                verify_ends: false,
             });
         }
     }
@@ -464,6 +516,27 @@ impl RuntimeLoop {
         }
     }
 
+    /// The planned ends of a committed cascade that the new head shows as ended. A failed head read emits
+    /// nothing: under-emitting is safe, the next diff re-derives the request.
+    fn applied_ends_of(&self, planned: Vec<EndedSession>) -> Vec<EndedSession> {
+        if planned.is_empty() {
+            return planned;
+        }
+        let read = self.store.head().and_then(|at| {
+            applied_ends(
+                &CommitView {
+                    store: &*self.store,
+                    at,
+                },
+                &planned,
+            )
+        });
+        read.unwrap_or_else(|e| {
+            eprintln!("herdr-graph: observe: cannot verify cascade session ends: {e}");
+            Vec::new()
+        })
+    }
+
     /// Admit `ops` in order and wait for each to reach a terminal state. Emits `SessionEnded` for every
     /// committed op that ended sessions. Returns whether all committed.
     async fn commit_ops(
@@ -472,13 +545,13 @@ impl RuntimeLoop {
         limit: Duration,
         summary: &mut StepSummary,
     ) -> bool {
-        let mut admitted: Vec<(OpId, Vec<EndedSession>)> = Vec::new();
+        let mut admitted: Vec<(OpId, Vec<EndedSession>, bool)> = Vec::new();
         let mut all_ok = true;
         for op in ops {
             match self.writer.admit(op.request) {
                 Ok(id) => {
                     summary.observed.push(id.clone());
-                    admitted.push((id, op.ends));
+                    admitted.push((id, op.ends, op.verify_ends));
                 }
                 Err(e) => {
                     eprintln!("herdr-graph: observe: cannot admit observed mutation: {e}");
@@ -487,10 +560,15 @@ impl RuntimeLoop {
                 }
             }
         }
-        for (id, ends) in admitted {
+        for (id, ends, verify) in admitted {
             match self.wait_terminal(&id, limit).await {
                 Some(OpState::Committed) => {
                     summary.committed += 1;
+                    let ends = if verify {
+                        self.applied_ends_of(ends)
+                    } else {
+                        ends
+                    };
                     for e in ends {
                         // No subscribers is fine.
                         let _ = self.session_ended.send(SessionEnded {
@@ -635,6 +713,7 @@ impl RuntimeLoop {
             ops.push(PlannedOp {
                 request: cascade_request(CascadeRule::Pane, &retire, now),
                 ends: vec![],
+                verify_ends: false,
             });
         }
         let changed_at = incarnation_changed_at(&self.journal);
@@ -646,6 +725,7 @@ impl RuntimeLoop {
                 ops.push(PlannedOp {
                     request: availability_request(&clone.to_any(), Availability::Unknown),
                     ends: vec![],
+                    verify_ends: false,
                 });
             }
         }
@@ -657,6 +737,7 @@ impl RuntimeLoop {
                 ops.push(PlannedOp {
                     request: seat_fact_request(&clone, &fact),
                     ends: vec![],
+                    verify_ends: false,
                 });
             }
         }
@@ -740,7 +821,7 @@ impl RuntimeLoop {
             }
         }
         let preds = predictions(&self.journal);
-        let classified = classify(
+        let mut classified = classify(
             &ClassifyCx {
                 desired: &desired,
                 journal: &self.journal,
@@ -750,6 +831,12 @@ impl RuntimeLoop {
             },
             elements,
         );
+        classified
+            .warnings
+            .extend(node_manager_move_warning(&desired, &classified));
+        for w in &classified.warnings {
+            eprintln!("{w}");
+        }
         let mut ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
         self.append_seat_ops(&mut ops, &desired, seat_out, now);
 
@@ -834,6 +921,7 @@ impl RuntimeLoop {
                 ops.push(PlannedOp {
                     request: availability_request(&object, Availability::Unknown),
                     ends: vec![],
+                    verify_ends: false,
                 });
             }
         };

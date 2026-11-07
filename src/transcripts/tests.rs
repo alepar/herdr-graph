@@ -235,6 +235,7 @@ fn fx_with(
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let dir = tmp.path().join("claude");
     std::fs::create_dir_all(&dir).unwrap();
     let mut kinds = KindRegistry::default();

@@ -1,0 +1,40 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-12.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-12.md
+new file mode 100644
+index 0000000..15133a2
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-12.md
+@@ -0,0 +1,34 @@
++# Final review: cluster 12 (store), epic hg-k4l
++
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD efc21b6, clean, before and during review. Review source bound in the ledger via `bind-review-source` (exit 0).
++
++Inputs: slices/000069.diff (src/store/init.rs), slices/000070.diff (src/store/instruction_source.rs), slices/000071.diff (src/store/tests.rs); digest.md for context; spec docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md at head.
++
++## What the cluster changes
++
++- `init_instance` writes `GraphRecord { node_manager_seat: None, .. }`. With the field's `#[serde(default, skip_serializing_if = "Option::is_none")]` (src/model/graph.rs at head), a fresh `graph.toml` is byte-identical in shape to pre-epic instances; no `schema_version` bump, satisfying the global constraint.
++- `impl Clone for StoreError` gains the `Integrity { holder, field, target, reason }` arm, a field-for-field clone. The match has no wildcard, so the compiler enforces exhaustiveness over every variant, and the clone is lossless (unlike the pre-existing lossy `Io` arm, which is unchanged). `PartialEq` compares `Display`, which for `Integrity` renders all four fields, so equality stays meaningful.
++- Test fixtures `teamspace()` and `seat()` in src/store/tests.rs add `default_manager: None` and `manager: None`; purely mechanical for the new record fields.
++
++## Spec and baseline trace
++
++- Spec §4.8 explicitly rejects init creating the node-manager seat ("init runs before any daemon or Herdr layout exists; seat creation belongs to plans"). Leaving `node_manager_seat` unset at init is therefore the specified behavior; B10 (first seat becomes node manager, as amended by S1) is delivered through the plan kinds' first-seat helper, which lies outside this cluster and is the plan cluster's and seam reviewer's to trace.
++- B7 (pointer changes only via plans): this cluster writes no manager pointer other than the initial unset value at instance creation, which precedes any plan and carries no pointer; consistent.
++- B4 (named non-transient integrity error): the `Integrity` variant itself is defined in src/ports/store.rs (other cluster); this cluster only makes it cloneable, which keeps it usable wherever `StoreError` is cloned (e.g. instruction-source error paths). The IPC mapping and exit-6 rendering are other clusters' scope.
++- Serde default/skip behavior for `node_manager_seat`, `manager` and `default_manager` is covered by `manager_fields_default_and_skip` and `manager_fields_round_trip` in src/model/tests.rs (model cluster), so the init output shape is tested indirectly.
++
++## Findings
++
++- none
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- The new `Integrity` arm of `impl Clone for StoreError` (src/store/instruction_source.rs) has no direct test asserting the clone preserves all four fields; low risk given the exhaustive match and trivial field clones.
++
++## Deferred OK
++- none

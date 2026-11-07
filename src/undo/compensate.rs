@@ -2,8 +2,8 @@
 //! own action (`kind = undo`, `undoes = <act_>`); the original action's `undone_by` records the op.
 use super::candidates::{is_undoable, read_action};
 use super::preview::{
-    Inverse, closes_caller, compute_restore, instructions_inverse, read_application, read_clone,
-    restore_preview, template_inverse,
+    Inverse, closes_caller, compute_restore, instructions_inverse, pointer_restores,
+    read_application, read_clone, restore_preview, template_inverse,
 };
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, ActionRecord};
@@ -21,6 +21,7 @@ use crate::plan::core_kinds::{
 };
 use crate::plan::grammar::positional;
 use crate::plan::kind::{OrgKind, PlanBody, PlanCx, PlanError};
+use crate::plan::managers::apply_pointer_effects;
 use crate::plan::types::{Plan, Reserved};
 use crate::store::layout;
 use crate::store::slug::unique_slug;
@@ -310,7 +311,7 @@ fn restore_mutate(
     plan: &Plan,
 ) -> Result<(), MutationError> {
     let mut reserved = plan.reserved.clone();
-    let r = compute_restore(&cx.tree, orig, &mut reserved).map_err(mm)?;
+    let r = compute_restore(&cx.tree, orig, &mut reserved, Some(&plan.effects)).map_err(mm)?;
     let mut acc = Acc::default();
 
     for (ts_id, active) in &r.teamspaces {
@@ -355,6 +356,14 @@ fn restore_mutate(
             )?;
         }
     }
+
+    crate::plan::managers::first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
+
+    // After the seats are back, so a pointer restored to a resurrected seat is valid.
+    let restored: std::collections::BTreeSet<crate::model::SeatId> =
+        r.seats.iter().map(|(s, _)| s.clone()).collect();
+    let (pointer_effects, _) = pointer_restores(&cx.tree, orig, &restored).map_err(mm)?;
+    apply_pointer_effects(&mut cx.tree, &pointer_effects)?;
 
     for c in &r.clones {
         let Some(rec) = read_clone(&cx.tree, c).map_err(mm)? else {

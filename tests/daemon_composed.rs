@@ -309,7 +309,7 @@ async fn writer_resume_not_halted() {
     d.stop().await;
 }
 
-const ORG_KINDS: [&str; 22] = [
+const ORG_KINDS: [&str; 23] = [
     "teamspace_create",
     "teamspace_rename",
     "teamspace_retire",
@@ -321,6 +321,7 @@ const ORG_KINDS: [&str; 22] = [
     "seat_retire",
     "seat_resurrect",
     "seat_override",
+    "node_manager_set",
     "clone_add",
     "clone_retire",
     "participation_join",
@@ -1083,6 +1084,7 @@ async fn pane_token(d: &Daemon, pane: &herdr_graph::model::HerdrPaneId) -> Optio
 async fn undo_from_pane_leaves_the_callers_pane_alone_and_reopens_the_clones_own_pane() {
     use herdr_graph::model::common::{Availability, CloneLifecycle};
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
     let victim = clones_of_seat(&d, "foreman")
@@ -1154,6 +1156,7 @@ async fn undo_from_pane_leaves_the_callers_pane_alone_and_reopens_the_clones_own
 async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     use herdr_graph::model::common::{Availability, CloneLifecycle};
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     two_clone_seat(&d).await;
     let pane_of_clone = |c: &herdr_graph::model::clone::CloneRecord| {
@@ -1230,6 +1233,7 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
 async fn undo_tab_close_from_pane_reopens_the_seats_own_tab() {
     use herdr_graph::model::common::Lifecycle;
     let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
     d.committed(&["teamspace", "create", "t", "--active"]).await;
     d.committed(&[
@@ -2071,5 +2075,298 @@ async fn live_handoff_under_a_running_loop_reconnects_and_creates_nothing() {
     for seat in ["sh", "cl"] {
         assert_ne!(seat_lifecycle(&d, seat), Lifecycle::Retired);
     }
+    d.stop().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// redesign-code-1 integration sweep (hg-k4l.67): the composed daemon wires CascadeMutation, the runtime loop
+// and the reconciler together
+// ---------------------------------------------------------------------------------------------
+
+/// Clones holding an ended native session, each with its end reason.
+fn ended_clones(
+    d: &Daemon,
+) -> std::collections::BTreeMap<String, herdr_graph::model::native_session::SessionEndReason> {
+    d.with_view(|v| {
+        layout::all_clones(v)
+            .unwrap()
+            .into_iter()
+            .flat_map(|(_, c)| {
+                c.sessions
+                    .iter()
+                    .filter(|s| s.ended.is_some())
+                    .map(|s| (c.id.to_string(), s.end_reason.expect("end reason")))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    })
+}
+
+fn team_default_manager(d: &Daemon, name: &str) -> Option<herdr_graph::model::SeatId> {
+    d.with_view(|v| {
+        layout::list_teamspaces(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, t)| t)
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("no teamspace {name}"))
+            .default_manager
+    })
+}
+
+fn team_workspace(d: &Daemon, name: &str) -> Option<herdr_graph::model::HerdrWorkspaceId> {
+    d.with_view(|v| {
+        layout::list_teamspaces(v)
+            .unwrap()
+            .into_iter()
+            .map(|(_, t)| t)
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("no teamspace {name}"))
+            .runtime
+            .bound
+            .and_then(|b| b.workspace_id)
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn redesign_sweep_composed() {
+    use herdr_graph::model::common::{CloneLifecycle, Lifecycle};
+    use herdr_graph::model::native_session::SessionEndReason;
+    let (_dir, root) = new_instance();
+    // Deliberately no `node_manager_opt_out`: the first seat becomes the node manager.
+    let d = Daemon::start(&root).await;
+    d.committed(&["teamspace", "create", "hq", "--active"])
+        .await;
+    d.committed(&[
+        "seat",
+        "create",
+        "nm",
+        "--teamspace",
+        "hq",
+        "--active",
+        "--harness",
+        "claude",
+    ])
+    .await;
+    eventually("nm's pane", || bound_pane(&d, "nm").is_some()).await;
+    let nm = graph_seat(&d, "nm").id;
+    assert_eq!(
+        d.with_view(|v| layout::read_graph(v).unwrap().node_manager_seat),
+        Some(nm.clone()),
+        "the first seat is the node manager"
+    );
+    d.committed(&["clone", "add", "nm"]).await;
+    for (ts, seat) in [("hq", "sib"), ("other", "o"), ("away", "p")] {
+        if ts != "hq" {
+            d.committed(&["teamspace", "create", ts, "--active"]).await;
+        }
+        d.committed(&[
+            "seat",
+            "create",
+            seat,
+            "--teamspace",
+            ts,
+            "--active",
+            "--harness",
+            "claude",
+        ])
+        .await;
+    }
+    d.committed(&["manager", "set", "hq", "sib"]).await;
+    eventually("every clone has a pane", || {
+        ["nm", "sib", "o", "p"].iter().all(|s| {
+            let cs = clones_of_seat(&d, s);
+            cs.len() == if *s == "nm" { 2 } else { 1 }
+                && cs.iter().all(|c| {
+                    c.runtime
+                        .bound
+                        .as_ref()
+                        .is_some_and(|b| b.pane_id.is_some())
+                })
+        })
+    })
+    .await;
+    settle(&d).await;
+    let sib = graph_seat(&d, "sib").id;
+    assert_eq!(team_default_manager(&d, "hq"), Some(sib.clone()));
+
+    // Every clone gets an occupant, so each end is a native session end.
+    for s in ["nm", "sib", "o", "p"] {
+        for (n, c) in clones_of_seat(&d, s).iter().enumerate() {
+            let pane = c.runtime.bound.as_ref().unwrap().pane_id.clone().unwrap();
+            d.fakes
+                .herdr
+                .set_agent(&pane, claude(AgentSession::Id(format!("sess-{s}-{n}"))));
+        }
+    }
+    eventually("sessions captured", || {
+        ["nm", "sib", "o", "p"]
+            .iter()
+            .all(|s| clones_of_seat(&d, s).iter().all(|c| c.sessions.len() == 1))
+    })
+    .await;
+    assert!(ended_clones(&d).is_empty());
+
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let (hq_ws, other_ws, away_ws) = (
+        team_workspace(&d, "hq").unwrap(),
+        team_workspace(&d, "other").unwrap(),
+        team_workspace(&d, "away").unwrap(),
+    );
+    let o_pane = bound_pane(&d, "o").unwrap();
+    let o_tab = tab_of_pane(&snap, &o_pane);
+    let nm_clones = clones_of_seat(&d, "nm");
+    let (nm_home, nm_moved) = (nm_clones[0].clone(), nm_clones[1].clone());
+    let pane_of = |c: &herdr_graph::model::clone::CloneRecord| {
+        d.with_view(|v| {
+            layout::all_clones(v)
+                .unwrap()
+                .into_iter()
+                .map(|(_, x)| x)
+                .find(|x| x.id == c.id)
+                .and_then(|x| x.runtime.bound)
+                .and_then(|b| b.pane_id)
+        })
+    };
+    let (nm_home_pane, nm_moved_pane) = (pane_of(&nm_home).unwrap(), pane_of(&nm_moved).unwrap());
+    let p_clone = clone_of(&d, "p");
+    let p_pane = pane_of(&p_clone).unwrap();
+    d.fakes.herdr.clear_calls();
+
+    let other_untouched = |when: &str| {
+        let all = d.fakes.herdr.calls();
+        for c in &all {
+            let hit = match c {
+                FakeCall::RenameWorkspace(w, _)
+                | FakeCall::ReportWorkspaceMetadata(w, ..)
+                | FakeCall::CloseWorkspace(w) => *w == other_ws,
+                FakeCall::CloseTab(t) | FakeCall::RenameTab(t, _) => *t == o_tab,
+                FakeCall::CreateTab(ct) => ct.workspace == other_ws,
+                FakeCall::SplitPane(sp) => sp.target == o_pane,
+                FakeCall::ClosePane(p) => *p == o_pane,
+                _ => false,
+            };
+            assert!(!hit, "{when}: {c:?} touches `other`: {all:?}");
+        }
+        assert_eq!(seat_lifecycle(&d, "o"), Lifecycle::Active, "{when}");
+        assert_eq!(
+            team_workspace(&d, "other"),
+            Some(other_ws.clone()),
+            "{when}"
+        );
+        assert_eq!(bound_pane(&d, "o"), Some(o_pane.clone()), "{when}");
+    };
+
+    // 1. Move.
+    d.fakes.herdr.user_move_pane(&nm_moved_pane, &o_tab);
+    d.fakes.herdr.user_move_pane(&p_pane, &o_tab);
+    // A committed move sets reload_required on the clone; the binding alone is unchanged, so it proves nothing.
+    let reloaded = |c: &herdr_graph::model::clone::CloneRecord| {
+        d.with_view(|v| {
+            layout::all_clones(v)
+                .unwrap()
+                .into_iter()
+                .any(|(_, x)| x.id == c.id && x.reload_required)
+        })
+    };
+    assert!(!reloaded(&nm_moved) && !reloaded(&p_clone));
+    eventually("the moves are observed", || {
+        reloaded(&nm_moved) && reloaded(&p_clone)
+    })
+    .await;
+    assert_eq!(pane_of(&nm_moved), Some(nm_moved_pane.clone()));
+    settle(&d).await;
+    assert!(ended_clones(&d).is_empty());
+    other_untouched("move");
+
+    // 2. Two-clone node manager moved, then its home workspace closes; the default_manager rewrite survives.
+    d.fakes.herdr.user_close_workspace(&hq_ws);
+    eventually("nm's home clone is reopened", || {
+        pane_of(&nm_home).is_some_and(|p| p != nm_home_pane)
+    })
+    .await;
+    settle(&d).await;
+    let all = d.fakes.herdr.calls();
+    assert_eq!(seat_lifecycle(&d, "nm"), Lifecycle::Active, "{all:?}");
+    assert_eq!(seat_lifecycle(&d, "sib"), Lifecycle::Retired, "{all:?}");
+    assert_eq!(
+        pane_of(&nm_moved),
+        Some(nm_moved_pane.clone()),
+        "the moved clone stays bound"
+    );
+    let fresh_ws = team_workspace(&d, "hq").expect("hq has a workspace");
+    assert_ne!(fresh_ws, hq_ws, "a new home workspace");
+    assert_ne!(fresh_ws, other_ws);
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let nm_home_tab = tab_of_pane(&snap, &pane_of(&nm_home).unwrap());
+    assert_ne!(nm_home_tab, o_tab);
+    assert!(
+        snap.workspaces
+            .iter()
+            .find(|w| w.id == fresh_ws)
+            .is_some_and(|w| w.tabs.iter().any(|t| t.id == nm_home_tab)),
+        "the home clone lives in a tab of the fresh workspace"
+    );
+    assert_eq!(
+        team_default_manager(&d, "hq"),
+        Some(nm.clone()),
+        "hq's default_manager was rewritten from sib to the node manager"
+    );
+    let ended = ended_clones(&d);
+    assert_eq!(
+        ended.keys().cloned().collect::<Vec<_>>(),
+        {
+            let mut want = vec![nm_home.id.to_string(), clone_of(&d, "sib").id.to_string()];
+            want.sort();
+            want
+        },
+        "nm's moved clone is not ended"
+    );
+    assert!(ended.values().all(|r| *r == SessionEndReason::PaneClosed));
+    other_untouched("node manager workspace");
+
+    // 3. Plain seat moved, then its home workspace closes.
+    d.fakes.herdr.user_close_workspace(&away_ws);
+    eventually("p is retired", || {
+        seat_lifecycle(&d, "p") == Lifecycle::Retired
+    })
+    .await;
+    settle(&d).await;
+    let pc = clone_of(&d, "p");
+    assert_eq!(pc.lifecycle, CloneLifecycle::Retired);
+    assert_eq!(
+        ended_clones(&d).get(&p_clone.id.to_string()),
+        Some(&SessionEndReason::PaneClosed),
+        "the retired seat's surviving clone has its session ended"
+    );
+    assert_eq!(ended_clones(&d).len(), 3);
+    assert_eq!(seat_lifecycle(&d, "nm"), Lifecycle::Active);
+    other_untouched("plain seat");
+
+    // 4. The reopened home tab closes while the other clone is still in `other`'s tab.
+    let before = pane_of(&nm_home).unwrap();
+    d.fakes.herdr.user_close_tab(&nm_home_tab);
+    eventually("nm's home clone is reopened again", || {
+        pane_of(&nm_home).is_some_and(|p| p != before)
+    })
+    .await;
+    settle(&d).await;
+    assert_eq!(seat_lifecycle(&d, "nm"), Lifecycle::Active);
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    let ws_of_pane = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs.iter().any(|t| {
+                t.panes
+                    .iter()
+                    .any(|p| Some(&p.id) == pane_of(&nm_home).as_ref())
+            })
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_eq!(ws_of_pane.id, fresh_ws, "reopened in the hq home workspace");
+    assert_eq!(pane_of(&nm_moved), Some(nm_moved_pane));
+    assert_eq!(ended_clones(&d).len(), 3, "no further session ends");
+    other_untouched("node manager tab");
     d.stop().await;
 }

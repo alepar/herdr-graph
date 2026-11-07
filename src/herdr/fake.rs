@@ -435,6 +435,71 @@ impl FakeHerdr {
         });
     }
 
+    /// `herdr pane move <p> --new-tab [--workspace <ws>]` (or `--new-workspace` when `ws` is None): the pane
+    /// lands alone in a fresh tab labelled `label`; its old tab closes (and the workspace by policy) when left
+    /// empty. Returns the new tab.
+    pub fn user_move_pane_new_tab(
+        &self,
+        p: &HerdrPaneId,
+        ws: Option<&HerdrWorkspaceId>,
+        label: &str,
+    ) -> HerdrTabId {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = out.clone();
+        self.scripted(move |st, ev| {
+            let Some(from) = st.tab_of_pane(p) else {
+                return;
+            };
+            let from_tab = st.find_tab(&from).expect("source tab");
+            let i = from_tab
+                .panes
+                .iter()
+                .position(|q| &q.id == p)
+                .expect("pane in source tab");
+            let pane = from_tab.panes.remove(i);
+            let emptied = from_tab.panes.is_empty();
+            let tab_id = st.tab_id();
+            let tab = TabInfo {
+                id: tab_id.clone(),
+                label: label.to_owned(),
+                panes: vec![pane],
+            };
+            let ws_id = match ws {
+                Some(w) => {
+                    st.find_ws(w).expect("target workspace").tabs.push(tab);
+                    w.clone()
+                }
+                None => {
+                    let w = st.ws_id();
+                    st.workspaces.push(WorkspaceInfo {
+                        id: w.clone(),
+                        label: label.to_owned(),
+                        metadata: BTreeMap::new(),
+                        tabs: vec![tab],
+                    });
+                    ev.push((
+                        "workspace_created",
+                        json!({ "workspace_id": w, "label": label }),
+                    ));
+                    w
+                }
+            };
+            ev.push((
+                "tab_created",
+                json!({ "tab_id": tab_id, "workspace_id": ws_id, "label": label }),
+            ));
+            ev.push((
+                "pane_moved",
+                json!({ "pane_id": p, "from_tab_id": from, "tab_id": tab_id }),
+            ));
+            if emptied {
+                st.remove_tab(&from, ev);
+            }
+            *slot.lock().unwrap() = Some(tab_id);
+        });
+        out.lock().unwrap().clone().expect("pane moved")
+    }
+
     /// An agent appears in (`Some`) or leaves (`None`) a pane.
     pub fn set_agent(&self, p: &HerdrPaneId, agent: Option<AgentInfo>) {
         self.scripted(|st, ev| {

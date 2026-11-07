@@ -1,0 +1,41 @@
+diff --git a/src/ipc.rs b/src/ipc.rs
+index ff112b6..edeff17 100644
+--- a/src/ipc.rs
++++ b/src/ipc.rs
+@@ -41,6 +41,9 @@ pub enum IpcErrorCode {
+     Internal,
+     /// The operation was admitted and is still running; the message names it.
+     StillRunning,
++    /// A graph reference does not resolve at the committed revision: not transient, retrying will not help
++    /// (spec §4.1). Added without an IPC_VERSION bump; an older CLI reports a frame error on it.
++    Integrity,
+ }
+ 
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+@@ -245,4 +248,26 @@ mod tests {
+         assert_eq!(v["status"], "error");
+         assert_eq!(v["code"], "rejected");
+     }
++
++    #[test]
++    fn integrity_code_serde() {
++        let r = IpcResult::Error {
++            code: IpcErrorCode::Integrity,
++            message: "st_a: template_ref tp_b not found at the committed revision".into(),
++        };
++        let v = serde_json::to_value(&r).unwrap();
++        assert_eq!(v["status"], "error");
++        assert_eq!(v["code"], "integrity");
++        let back: IpcResult = serde_json::from_value(v).unwrap();
++        assert_eq!(back, r);
++        // Closed enum (spec §4.1): an unknown code is a decode error, not a silent fallback.
++        let unknown =
++            serde_json::json!({"status": "error", "code": "from_the_future", "message": "x"});
++        assert!(serde_json::from_value::<IpcResult>(unknown).is_err());
++    }
++
++    #[test]
++    fn ipc_version_is_unchanged() {
++        assert_eq!(IPC_VERSION, 1);
++    }
+ }

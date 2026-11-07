@@ -1,0 +1,14 @@
+r1 [Should-fix] src/undo/preview.rs:545
+r1 [Should-fix] src/plan/managers/cycle_guard.rs:119
+r1 [Nit] src/plan/managers/reparent.rs:70
+r1 [Nit] src/plan/core_kinds.rs:796
+r1 [Nit] src/observe/classify.rs:283
+r1 [Nit] CHANGELOG.md:3
+r1 [Should-fix] evidence/hg-k4l.22/full-suite-head.log:1
+r1 [Must-fix] final-review inv-f2700d23 #1 undo of a multi-seat retirement restores the wrong manager (src/plan/managers/reparent.rs, src/undo)
+r1 [Must-fix] final-review inv-f2700d23 #2 node manager not reopened after an observed move then close (src/observe/classify.rs:326)
+r1 [Must-fix] final-review inv-f2700d23 #3 remove committed evidence/hg-k4l.22 and evidence/hg-k4l.45 logs
+r2 [Should-fix] src/observe/mutations.rs:209
+r2 [Should-fix] src/observe/mutations.rs:242
+r2 [Must-fix] final-review inv-37061003 #1 CascadeMutation::retire_teamspace keep branch writes the pre-loop ts.rec clone back (src/observe/mutations.rs)
+r2 [Must-fix] final-review inv-37061003 #2 remove committed evidence/hg-k4l.45 and evidence/hg-k4l.22 logs

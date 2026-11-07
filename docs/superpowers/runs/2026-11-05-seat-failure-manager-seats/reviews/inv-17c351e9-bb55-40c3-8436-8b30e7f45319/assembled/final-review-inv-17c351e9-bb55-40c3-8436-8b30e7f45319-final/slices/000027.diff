@@ -1,0 +1,20 @@
+diff --git a/src/cli/instructions.rs b/src/cli/instructions.rs
+index 2e1114f..44597ce 100644
+--- a/src/cli/instructions.rs
++++ b/src/cli/instructions.rs
+@@ -128,6 +128,7 @@ mod tests {
+             retired: None,
+             runtime: Default::default(),
+             project_repo: None,
++            default_manager: None,
+             channel: Default::default(),
+         };
+         let seat = SeatRecord {
+@@ -141,6 +142,7 @@ mod tests {
+             retired: None,
+             system_duty: None,
+             template_ref: None,
++            manager: None,
+             applications: vec![],
+             overrides: Default::default(),
+             participation: Default::default(),

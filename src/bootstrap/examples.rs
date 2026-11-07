@@ -27,6 +27,18 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &[
         include_str!("../../templates/engineer/AGENTS.md"),
     ),
     (
+        "templates/node-manager/template.toml",
+        include_str!("../../templates/node-manager/template.toml"),
+    ),
+    (
+        "templates/node-manager/AGENTS.md",
+        include_str!("../../templates/node-manager/AGENTS.md"),
+    ),
+    (
+        "templates/office/template.toml",
+        include_str!("../../templates/office/template.toml"),
+    ),
+    (
         "templates/reviewer/template.toml",
         include_str!("../../templates/reviewer/template.toml"),
     ),

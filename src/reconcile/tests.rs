@@ -63,6 +63,24 @@ impl Mutation for TestSetModel {
     }
 }
 
+/// Test-only: point `graph.toml node_manager_seat` at a seat.
+struct TestNodeManager;
+impl Mutation for TestNodeManager {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let seat: SeatId = cx.request.args["seat"].as_str().unwrap().parse().unwrap();
+        let mut g = layout::read_graph(&cx.tree)?;
+        g.node_manager_seat = Some(seat);
+        cx.tree.put_file(
+            layout::graph_toml(),
+            toml::to_string(&g).unwrap().into_bytes(),
+        );
+        Ok(Applied {
+            summary: "set node manager".into(),
+            action: None,
+        })
+    }
+}
+
 struct TestSetOccupant;
 impl Mutation for TestSetOccupant {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
@@ -198,6 +216,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::templates::register_kinds(&mut kinds);
@@ -214,6 +233,7 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     reg.register("bookkeeping.test_end_occupant", Arc::new(TestEndOccupant));
     reg.register("bookkeeping.test_set_thread", Arc::new(TestSetThread));
     reg.register("bookkeeping.test_seat_state", Arc::new(TestSeatState));
+    reg.register("bookkeeping.test_node_manager", Arc::new(TestNodeManager));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -1126,6 +1146,66 @@ async fn unknown_only_clone_creates_nothing_at_all() {
     let report = step(&fx).await;
     assert!(calls(&fx).is_empty(), "{:?}", calls(&fx));
     assert!(report.planned.is_empty(), "{report:?}");
+}
+
+#[tokio::test]
+async fn node_manager_with_absent_runtime_gets_tab_and_panes() {
+    use crate::reconcile::planner::plan_effects;
+    let fx = fx();
+    activate(&fx, "shell");
+    let s = seat(&fx, "foreman");
+    let c = only_clone(&fx, "foreman");
+    let ts = layout::list_teamspaces(&view(&fx)).unwrap().remove(0).1;
+    // Settled and node manager; then the observer has recorded the workspace as closed.
+    step(&fx).await;
+    admit_bookkeeping(&fx, json!({"sub": "test_node_manager", "seat": s.id}));
+    fx.herdr
+        .user_close_workspace(&fx.herdr.snapshot().await.unwrap().workspaces[0].id);
+    for o in [ts.id.to_any(), s.id.to_any(), c.id.to_any()] {
+        admit_binding(&*fx.w, &o, &Binding::default(), Availability::Absent).unwrap();
+    }
+    fx.w.drain().unwrap();
+    let plan = |fx: &Fx, snap| {
+        let d = crate::reconcile::desired::DesiredRuntime::load(
+            &view(fx),
+            std::path::Path::new("/inst"),
+        )
+        .unwrap();
+        assert_eq!(d.node_manager, Some(s.id.clone()));
+        plan_effects(&d, snap, &fx.journal, t0())
+            .into_iter()
+            .map(|p| p.record.kind)
+            .collect::<Vec<_>>()
+    };
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let kinds = plan(&fx, &snap);
+    let pos = |k: EffectKind| kinds.iter().position(|x| *x == k);
+    let (ws, tab, pane) = (
+        pos(EffectKind::CreateWorkspace),
+        pos(EffectKind::CreateTab),
+        pos(EffectKind::SplitPane).or(pos(EffectKind::StampToken)),
+    );
+    assert!(ws.is_some() && tab.is_some() && pane.is_some(), "{kinds:?}");
+    assert!(ws < tab, "workspace first: {kinds:?}");
+
+    // With the workspace still open and only the tab gone, no workspace is created.
+    step(&fx).await;
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let tab_id = snap.workspaces[0]
+        .tabs
+        .iter()
+        .find(|t| t.label.starts_with("foreman"))
+        .unwrap()
+        .id
+        .clone();
+    fx.herdr.user_close_tab(&tab_id);
+    for o in [s.id.to_any(), c.id.to_any()] {
+        admit_binding(&*fx.w, &o, &Binding::default(), Availability::Absent).unwrap();
+    }
+    fx.w.drain().unwrap();
+    let kinds = plan(&fx, &fx.herdr.snapshot().await.unwrap());
+    assert!(kinds.contains(&EffectKind::CreateTab), "{kinds:?}");
+    assert!(!kinds.contains(&EffectKind::CreateWorkspace), "{kinds:?}");
 }
 
 #[tokio::test]

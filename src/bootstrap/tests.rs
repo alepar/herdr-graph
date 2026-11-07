@@ -1,8 +1,10 @@
 use super::resolve::{Resolution, proposal_words, resolve_caller};
 use super::setup_claude::{self, HookChange};
 use super::*;
-use crate::daemon::registry::CallerInfo;
+use crate::daemon::registry::{CallerInfo, CommandError};
+use crate::ipc::IpcErrorCode;
 use crate::journal::{Journal, OpRow};
+use crate::model::CommitId;
 use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{Invitation, InvitationState, InviteConstraint, ThreadsLink};
@@ -22,7 +24,7 @@ use crate::plan::store::PlanStore;
 use crate::plan::types::StoredPlan;
 use crate::ports::clock::ManualClock;
 use crate::ports::herdr::{AgentInfo, AgentSession, AgentStatus, PaneInfo};
-use crate::ports::store::Store;
+use crate::ports::store::{Store, StoreError};
 use crate::store::GitStore;
 use crate::store::init::init_instance;
 use crate::templates::kinds::register_kinds as register_template_kinds;
@@ -122,6 +124,34 @@ impl Mutation for TestPut {
     }
 }
 
+/// Test-only manager pointers (`bookkeeping.test_manager`): `seat` + `manager` set `SeatRecord.manager`;
+/// `node_manager` (an id or null) sets graph.toml's `node_manager_seat`.
+struct TestManager;
+impl Mutation for TestManager {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let a = &cx.request.args;
+        if let Some(seat) = a["seat"].as_str() {
+            let seat: SeatId = seat.parse().unwrap();
+            let loc = layout::locate(&cx.tree, &seat.to_any())?.unwrap();
+            let mut rec: SeatRecord = read_toml(&cx.tree, &loc.record_path)?.unwrap();
+            rec.manager = a["manager"].as_str().map(|m| m.parse().unwrap());
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+        }
+        if a.get("node_manager").is_some() {
+            let mut graph = layout::read_graph(&cx.tree)?;
+            graph.node_manager_seat = a["node_manager"].as_str().map(|m| m.parse().unwrap());
+            cx.tree.put_file(
+                layout::graph_toml(),
+                crate::store::record::to_toml_bytes(&graph)?,
+            );
+        }
+        Ok(Applied {
+            summary: "test manager".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     root: std::path::PathBuf,
@@ -131,7 +161,7 @@ struct Fx {
 }
 
 fn fx() -> Fx {
-    fx_with(|_| {})
+    fx_with(|root| crate::plan::managers::testing::opt_out(root))
 }
 
 /// A fixture over a freshly initialised instance; `prepare` runs before the writer and store open it.
@@ -151,6 +181,7 @@ fn fx_with(prepare: impl FnOnce(&Path)) -> Fx {
     kinds.register_mutations(&mut reg, plans.clone());
     reg.register("bookkeeping.test_clone", Arc::new(TestClone));
     reg.register("bookkeeping.test_put", Arc::new(TestPut));
+    reg.register("bookkeeping.test_manager", Arc::new(TestManager));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -1677,6 +1708,83 @@ fn hook_prompt_only_when_graph_env_or_bound_pane() {
 // examples
 // ---------------------------------------------------------------------------------------------
 
+fn shipped_template(fx: &Fx, name: &str) -> crate::model::template::TemplateRecord {
+    layout::list_templates(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("template {name} not installed"))
+}
+
+#[test]
+fn examples_include_node_manager_and_office() {
+    use crate::model::template::TemplateKind;
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    let nm = shipped_template(&fx, "node-manager");
+    assert_eq!(nm.kind, TemplateKind::Seat);
+    let office = shipped_template(&fx, "office");
+    assert_eq!(office.kind, TemplateKind::Team);
+    assert_eq!(office.members.len(), 1);
+    let main = &office.members[0];
+    assert_eq!(main.name, "main");
+    assert_eq!(main.startup, Startup::Active);
+    assert_eq!(main.seat_template.as_ref(), Some(&nm.id));
+    assert!(
+        layout::locate(&view(&fx), &nm.id.to_any())
+            .unwrap()
+            .is_some(),
+        "the node-manager id resolves"
+    );
+}
+
+#[test]
+fn office_on_fresh_graph_assigns_node_manager() {
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    assert!(
+        layout::read_graph(&view(&fx))
+            .unwrap()
+            .node_manager_seat
+            .is_none()
+    );
+    commit(&fx, "teamspace create hq");
+    commit(&fx, "application apply office --teamspace hq --name office");
+    let main = seat_rec(&fx, "main");
+    assert_eq!(
+        layout::read_graph(&view(&fx)).unwrap().node_manager_seat,
+        Some(main.id.clone())
+    );
+    assert_eq!(main.lifecycle, Lifecycle::Active);
+    assert_eq!(clone_of(&fx, &main.id).seat, main.id);
+}
+
+#[test]
+fn node_manager_agents_md_names_duties() {
+    let shipped = examples::EXAMPLE_FILES
+        .iter()
+        .find(|(rel, _)| *rel == "templates/node-manager/AGENTS.md")
+        .expect("shipped")
+        .1;
+    // A seat built from the template may not hold the role: the template defers to `/seat`, which carries the
+    // duties only for the node manager.
+    assert!(shipped.contains("is_node_manager"), "{shipped}");
+    assert!(!shipped.contains("You are the node manager"), "{shipped}");
+    let text = super::NODE_MANAGER_DUTIES;
+    for needle in [
+        "usage limits",
+        "trust prompts",
+        "conflicts with peer agents",
+        "graph repair",
+        "only through plans",
+    ] {
+        assert!(text.contains(needle), "AGENTS.md lacks {needle:?}");
+    }
+}
+
 #[test]
 fn init_with_examples_templates_hydrate() {
     let fx = fx_with(|root| {
@@ -1694,6 +1802,8 @@ fn init_with_examples_templates_hydrate() {
             "designer",
             "engineer",
             "feature-team",
+            "node-manager",
+            "office",
             "project-team",
             "researcher",
             "reviewer",
@@ -1791,17 +1901,27 @@ fn shipped_templates_are_self_consistent() {
         examples::install_examples(root).unwrap();
     });
     let mut ids = std::collections::BTreeSet::new();
-    for (loc, t) in layout::list_templates(&view(&fx)).unwrap() {
+    let templates = layout::list_templates(&view(&fx)).unwrap();
+    for (loc, t) in &templates {
         assert!(ids.insert(t.id.to_string()), "duplicate id {}", t.id);
         assert_eq!(t.rev, 1);
         for m in &t.members {
             assert!(ids.insert(m.id.to_string()), "duplicate id {}", m.id);
             let md = layout::member_agents_md(&loc.folder, &crate::store::slug::slugify(&m.name));
-            assert!(
+            // A member's instructions are its own file, or (office) those of the seat template it uses.
+            let seat_md = m.seat_template.as_ref().and_then(|id| {
+                templates.iter().find(|(_, s)| &s.id == id).map(|(l, _)| {
+                    RepoPath::new(&format!("{}/AGENTS.md", l.folder.as_str())).unwrap()
+                })
+            });
+            let has = |path: &RepoPath| {
                 fx.store
-                    .read_file(&fx.store.head().unwrap(), &md)
+                    .read_file(&fx.store.head().unwrap(), path)
                     .unwrap()
-                    .is_some(),
+                    .is_some()
+            };
+            assert!(
+                has(&md) || seat_md.as_ref().is_some_and(has),
                 "{} has instructions",
                 m.name
             );
@@ -1811,7 +1931,7 @@ fn shipped_templates_are_self_consistent() {
             format!("templates/{}", crate::store::slug::slugify(&t.name))
         );
     }
-    assert_eq!(ids.len(), 7 + 6);
+    assert_eq!(ids.len(), 9 + 7);
     // A second install would overwrite the instance's own files, so it is refused.
     let err = examples::install_examples(&fx.root).unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
@@ -1878,6 +1998,8 @@ fn show_list_path_read_committed_state() {
             "designer",
             "engineer",
             "feature-team",
+            "node-manager",
+            "office",
             "project-team",
             "researcher",
             "reviewer",
@@ -1935,6 +2057,65 @@ fn show_list_path_read_committed_state() {
     );
     assert!(show::show(&v, &fx.root, "st_01ARZ3NDEKTSV4RRFFQ69G5FAV").is_err());
     assert!(show::path(&v, &fx.root, "no-such-thing").is_err());
+}
+
+fn set_manager_args(fx: &Fx, args: serde_json::Value) {
+    use crate::ports::writer::Writer;
+    let mut args = args;
+    args["sub"] = json!("test_manager");
+    fx.w.admit(ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args,
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    })
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+#[test]
+fn show_seat_appends_manager_line() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha --active");
+    commit(&fx, "seat create boss --teamspace alpha --active");
+    commit(&fx, "seat create low --teamspace alpha --active");
+    let (boss, low) = (seat_rec(&fx, "boss"), seat_rec(&fx, "low"));
+    // Clear the first-seat assignment: no node manager at all.
+    set_manager_args(&fx, json!({ "node_manager": null }));
+    let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
+    assert!(
+        text.contains("name = \"low\"") && text.ends_with("\nmanager: none assigned"),
+        "{text}"
+    );
+    set_manager_args(&fx, json!({ "node_manager": boss.id }));
+    let text = show::show(&view(&fx), &fx.root, low.id.as_str()).unwrap();
+    assert!(
+        text.ends_with(&format!("\nmanager: boss ({})", boss.id)),
+        "{text}"
+    );
+    // Only seats carry the line.
+    let ts = show::show(&view(&fx), &fx.root, "alpha").unwrap();
+    assert!(!ts.contains("manager:"), "{ts}");
+}
+
+#[test]
+fn show_cycle_is_store_integrity() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha --active");
+    commit(&fx, "seat create a --teamspace alpha --active");
+    commit(&fx, "seat create b --teamspace alpha --active");
+    let (a, b) = (seat_rec(&fx, "a"), seat_rec(&fx, "b"));
+    // Neither seat may be the node manager: the chain walk stops at the live node manager.
+    set_manager_args(&fx, json!({ "node_manager": null }));
+    set_manager_args(&fx, json!({ "seat": a.id, "manager": b.id }));
+    set_manager_args(&fx, json!({ "seat": b.id, "manager": a.id }));
+    let e = show::show(&view(&fx), &fx.root, a.id.as_str()).unwrap_err();
+    assert!(
+        matches!(e, show::ShowError::Store(StoreError::Integrity { .. })),
+        "{e:?}"
+    );
 }
 
 #[test]
@@ -3055,7 +3236,9 @@ mod hook_instructions {
         let out = hook_text(Some((&v, &head)), &caller("p1"), None).unwrap();
         assert_eq!(out, format!("{}\n{}", hook_header(&r), r.text));
         assert_eq!(
-            instructions_text(&v, &head, &caller("p1")).as_deref(),
+            instructions_text(&v, &head, &caller("p1"))
+                .unwrap()
+                .as_deref(),
             Some(r.text.as_str())
         );
         // a bound pane gets the render even without HERDR_GRAPH=1, and Codex wraps the same text
@@ -3074,7 +3257,7 @@ mod hook_instructions {
             Some(HOOK_PROMPT)
         );
         assert_eq!(hook_text(Some((&v, &head)), &caller("nope"), None), None);
-        assert_eq!(instructions_text(&v, &head, &caller("nope")), None);
+        assert_eq!(instructions_text(&v, &head, &caller("nope")).unwrap(), None);
     }
 
     #[test]
@@ -3103,7 +3286,9 @@ mod hook_instructions {
         );
         assert!(out.len() <= HOOK_RENDER_CAP, "{}", out.len());
         // the untruncated render keeps the rule
-        let full = instructions_text(&v, &head, &caller("p1")).unwrap();
+        let full = instructions_text(&v, &head, &caller("p1"))
+            .unwrap()
+            .unwrap();
         assert!(full.contains("## global rules/big.md"));
     }
 
@@ -3349,7 +3534,7 @@ mod h1_untested {
                 Some(expect.as_str())
             );
             assert_eq!(
-                instructions_text(&v, &head, &c).as_deref(),
+                instructions_text(&v, &head, &c).unwrap().as_deref(),
                 Some(r.text.as_str())
             );
         }
@@ -3364,7 +3549,7 @@ mod h1_untested {
                 Some(crate::cli::seat::HOOK_PROMPT)
             );
             assert_eq!(hook_text(Some((&v, &head)), &c, None), None);
-            assert_eq!(instructions_text(&v, &head, &c), None);
+            assert_eq!(instructions_text(&v, &head, &c).unwrap(), None);
         }
     }
 
@@ -3427,4 +3612,630 @@ mod h1_untested {
         assert_eq!(r.text.matches("MEMBER-TEXT").count(), 0);
         assert!(r.text.contains("NEW-TEXT"));
     }
+}
+
+// ---- seat.resolve integrity errors (hg-k4l.12) ----
+
+/// Like `put`, but at a repo path directly (for `templates/...` and `applications/...`).
+fn put_path(fx: &Fx, path: &str, bytes: &[u8]) -> OpRow {
+    use crate::ports::writer::Writer;
+    let op =
+        fx.w.admit(ChangeRequest {
+            kind: RequestKind::Bookkeeping,
+            args: json!({ "sub": "test_put", "path": path, "bytes_b64": b64_encode(bytes) }),
+            relied_on: vec![],
+            requester: Requester::default(),
+            supersedes: None,
+            confirmed: None,
+        })
+        .unwrap();
+    fx.w.drain().unwrap();
+    fx.w.journal().get(&op).unwrap().unwrap()
+}
+
+fn member_rec(
+    name: &str,
+    seat_template: Option<crate::model::TemplateId>,
+) -> crate::model::template::TemplateMember {
+    crate::model::template::TemplateMember {
+        id: crate::model::MemberId::new(),
+        name: name.into(),
+        seat_template,
+        responsibility: None,
+        system_duty: None,
+        startup: Startup::Active,
+        defaults: Default::default(),
+    }
+}
+
+fn tpl_rec(
+    name: &str,
+    kind: crate::model::template::TemplateKind,
+    members: Vec<crate::model::template::TemplateMember>,
+) -> crate::model::template::TemplateRecord {
+    crate::model::template::TemplateRecord {
+        schema: 1,
+        id: crate::model::TemplateId::new(),
+        rev: 1,
+        name: name.into(),
+        kind,
+        name_history: vec![],
+        defaults: Default::default(),
+        members,
+        relationships: vec![],
+        copied_from: None,
+    }
+}
+
+fn put_tpl(fx: &Fx, t: &crate::model::template::TemplateRecord) {
+    let bytes = crate::store::record::to_toml_bytes(t).unwrap();
+    let path = format!("templates/{}/template.toml", t.name);
+    assert_eq!(put_path(fx, &path, &bytes).state, OpState::Committed);
+}
+
+/// Rewrite the committed seat record through `f`.
+fn edit_seat(fx: &Fx, seat: &SeatRecord, f: impl FnOnce(&mut SeatRecord)) {
+    let mut rec = seat_rec(fx, &seat.name);
+    f(&mut rec);
+    let bytes = crate::store::record::to_toml_bytes(&rec).unwrap();
+    assert_eq!(
+        put(fx, seat.id.as_str(), "seat.toml", &bytes).state,
+        OpState::Committed
+    );
+}
+
+fn tpl_ref(
+    t: &crate::model::template::TemplateRecord,
+    m: &crate::model::template::TemplateMember,
+) -> crate::model::seat::TemplateRef {
+    crate::model::seat::TemplateRef {
+        template: t.id.clone(),
+        member: m.id.clone(),
+    }
+}
+
+/// The `seat.resolve` error for a seat bound on pane `p1`; asserts it is an integrity error naming each of `parts`.
+fn integrity_err(fx: &Fx, parts: &[&str]) -> CommandError {
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Integrity, "{}", err.message);
+    for p in parts {
+        assert!(err.message.contains(p), "{p} not in {}", err.message);
+    }
+    assert!(err.message.contains("(HEAD "), "{}", err.message);
+    err
+}
+
+#[test]
+fn integrity_template_ref_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let ghost = tpl_rec("ghost", crate::model::template::TemplateKind::Team, vec![]);
+    let m = member_rec("m", None);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&ghost, &m)));
+    integrity_err(&fx, &["template_ref", ghost.id.as_str()]);
+}
+
+#[test]
+fn integrity_shared_template_missing() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let missing_shared = crate::model::TemplateId::new();
+    let m = member_rec("m", Some(missing_shared.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(&fx, &["seat_template", missing_shared.as_str()]);
+}
+
+#[test]
+fn integrity_shared_template_wrong_kind() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let other = tpl_rec("other", Team, vec![]);
+    put_tpl(&fx, &other);
+    let m = member_rec("m", Some(other.id.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(
+        &fx,
+        &["seat_template", other.id.as_str(), "is not a seat template"],
+    );
+}
+
+#[test]
+fn integrity_shared_template_with_team_structure() {
+    use crate::model::template::TemplateKind::{Seat, Team};
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let shared = tpl_rec("shared", Seat, vec![member_rec("inner", None)]);
+    put_tpl(&fx, &shared);
+    let m = member_rec("m", Some(shared.id.clone()));
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    integrity_err(&fx, &["contains team structure"]);
+}
+
+#[test]
+fn integrity_teamspace_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let ghost = TeamspaceId::new();
+    edit_seat(&fx, &seat, |s| s.teamspace = ghost.clone());
+    integrity_err(&fx, &["teamspace", ghost.as_str()]);
+}
+
+#[test]
+fn integrity_application_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::AppId::new();
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.clone()]);
+    integrity_err(&fx, &["applications", app.as_str()]);
+}
+
+/// Plan-time hook sizing is advisory: a seat whose stack does not resolve is a warning, never a plan failure.
+#[test]
+fn cap_warning_reports_integrity_as_warning() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::AppId::new();
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.clone()]);
+    let head = fx.store.head().unwrap();
+    let w = crate::bootstrap::instructions::cap_warning(&view(&fx), &head, &seat.id)
+        .expect("not an error")
+        .expect("a warning");
+    assert!(w.contains("cannot be sized"), "{w}");
+    assert!(
+        w.contains(seat.id.as_str()) && w.contains(app.as_str()),
+        "{w}"
+    );
+    // `seat --instructions` reports the same seat as an integrity error (exit 6), not as "not a bound seat".
+    let e = crate::cli::seat::instructions_text(&view(&fx), &head, &caller("p1"))
+        .expect_err("integrity error");
+    let f = crate::cli::daemon_error::store_failure(&e).expect("exit-6 failure");
+    assert_eq!(f.code, crate::daemon::client::EXIT_INTEGRITY);
+    assert!(f.line.contains(app.as_str()), "{}", f.line);
+}
+
+#[test]
+fn integrity_application_template_missing() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let app = crate::model::application::ApplicationRecord {
+        schema: 1,
+        id: crate::model::AppId::new(),
+        rev: 1,
+        name: "app".into(),
+        template: crate::model::TemplateId::new(),
+        teamspace: seat.teamspace.clone(),
+        lifecycle: Default::default(),
+        retired: None,
+        member_map: BTreeMap::new(),
+        additions: vec![],
+        exclusions: vec![],
+        reused: vec![],
+        contributions: Default::default(),
+        created_by: crate::model::application::CreatedBy {
+            op: crate::model::OpId::new(),
+            action: crate::model::ActionId::new(),
+        },
+    };
+    let bytes = crate::store::record::to_toml_bytes(&app).unwrap();
+    assert_eq!(
+        put_path(&fx, &format!("applications/{}.toml", app.id), &bytes).state,
+        OpState::Committed
+    );
+    edit_seat(&fx, &seat, |s| s.applications = vec![app.id.clone()]);
+    integrity_err(&fx, &["template", app.template.as_str()]);
+}
+
+#[test]
+fn plain_read_failure_stays_internal() {
+    use crate::model::template::TemplateKind::Team;
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    let m = member_rec("m", None);
+    let team = tpl_rec("t1", Team, vec![m.clone()]);
+    put_tpl(&fx, &team);
+    edit_seat(&fx, &seat, |s| s.template_ref = Some(tpl_ref(&team, &m)));
+    assert_eq!(
+        put_path(&fx, "templates/t1/template.toml", b"not toml [").state,
+        OpState::Committed
+    );
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Internal, "{}", err.message);
+}
+
+#[test]
+fn integrity_reply_has_no_partial_paths() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    assert!(seat_reply(&fx.deps, &caller("p1"), None).is_ok());
+    edit_seat(&fx, &seat, |s| s.teamspace = TeamspaceId::new());
+    // The error path returns no Value at all, so no `paths` object can escape.
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    assert_eq!(err.code, IpcErrorCode::Integrity);
+    assert!(!err.message.contains("seat_folder"), "{}", err.message);
+}
+
+#[test]
+fn resolve_error_appends_suffix_after_semicolon() {
+    let head = CommitId("0123456789abcdef0123".into());
+    let e = resolve_error(
+        crate::ports::store::unresolved("st_a", "teamspace", "ts_b"),
+        &head,
+        Some("tell the node manager"),
+    );
+    assert_eq!(e.code, IpcErrorCode::Integrity);
+    assert_eq!(
+        e.message,
+        "st_a: teamspace ts_b not found at the committed revision (HEAD 0123456789ab); tell the node manager"
+    );
+    let plain = resolve_error(StoreError::Git("boom".into()), &head, Some("x"));
+    assert_eq!(plain.code, IpcErrorCode::Internal);
+}
+
+// ---- seat.resolve manager fields and the node-manager suffix (hg-k4l.11) ----
+
+/// Rewrite the committed graph.toml with `node_manager_seat` set (or cleared).
+fn set_graph_node_manager(fx: &Fx, seat: Option<&SeatId>) {
+    let mut g = layout::read_graph(&view(fx)).unwrap();
+    g.node_manager_seat = seat.cloned();
+    let bytes = crate::store::record::to_toml_bytes(&g).unwrap();
+    assert_eq!(put_path(fx, "graph.toml", &bytes).state, OpState::Committed);
+}
+
+fn set_manager(fx: &Fx, seat: &SeatRecord, manager: &SeatRecord) {
+    edit_seat(fx, seat, |s| s.manager = Some(manager.id.clone()));
+}
+
+/// `one` (bound to p1), `boss` and `nm` in alpha, with `one` broken by a missing teamspace.
+fn managed_fixture() -> (Fx, SeatRecord, SeatRecord, SeatRecord) {
+    let fx = fx();
+    let (one, _) = bound_seat(&fx, "p1");
+    commit(&fx, "seat create boss --teamspace alpha --active");
+    commit(&fx, "seat create nm --teamspace alpha --active");
+    let (boss, nm) = (seat_rec(&fx, "boss"), seat_rec(&fx, "nm"));
+    (fx, one, boss, nm)
+}
+
+fn break_seat(fx: &Fx, seat: &SeatRecord) -> TeamspaceId {
+    let ghost = TeamspaceId::new();
+    edit_seat(fx, seat, |s| s.teamspace = ghost.clone());
+    ghost
+}
+
+#[test]
+fn reply_has_manager_and_node_manager() {
+    let (fx, one, boss, nm) = managed_fixture();
+    set_manager(&fx, &one, &boss);
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["seat"], json!(boss.id));
+    assert_eq!(reply["manager"]["name"], "boss");
+    assert_eq!(reply["manager"]["threads_seat"], Value::Null);
+    assert_eq!(reply["node_manager"]["seat"], json!(nm.id));
+    assert_eq!(reply["node_manager"]["name"], "nm");
+
+    let clone = clone_of(&fx, &boss.id);
+    patch_clone(&fx, &clone.id, json!({ "invite": true }));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["threads_seat"], "ts-seat");
+    assert_eq!(reply["node_manager"]["threads_seat"], Value::Null);
+    let typed: SeatRef = serde_json::from_value(reply["manager"].clone()).unwrap();
+    assert_eq!(typed.threads_seat.as_deref(), Some("ts-seat"));
+    // `threads_seat` is #[serde(default)]: an old reply without it still parses.
+    let old: SeatRef = serde_json::from_value(json!({ "seat": boss.id, "name": "boss" })).unwrap();
+    assert_eq!(old.threads_seat, None);
+}
+
+#[test]
+fn manager_falls_back_to_node_manager_and_node_manager_has_none() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"]["seat"], json!(nm.id));
+    assert_eq!(reply["node_manager"]["seat"], json!(nm.id));
+}
+
+#[test]
+fn reply_fields_null_when_unassigned() {
+    let (fx, _one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+}
+
+#[test]
+fn unbound_caller_gets_null_fields_even_with_a_node_manager() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["manager"], Value::Null);
+    assert_eq!(reply["node_manager"], Value::Null);
+}
+
+#[test]
+fn integrity_suffix_names_node_manager() {
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message.ends_with(&format!(
+            "; report it to the node manager seat nm ({})",
+            nm.id
+        )),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_unassigned() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_node_manager_missing() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&SeatId::new()));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_user_form_when_node_manager_retired() {
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    edit_seat(&fx, &nm, |s| {
+        s.lifecycle = crate::model::common::Lifecycle::Retired;
+    });
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn integrity_suffix_when_caller_is_node_manager() {
+    let (fx, one, _boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&one.id));
+    break_seat(&fx, &one);
+    let err = integrity_err(&fx, &[]);
+    assert!(
+        err.message
+            .ends_with("; you are the node manager seat; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn manager_cycle_is_integrity() {
+    let (fx, one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    set_manager(&fx, &one, &boss);
+    set_manager(&fx, &boss, &one);
+    let err = integrity_err(&fx, &["manager cycle"]);
+    assert!(
+        err.message
+            .ends_with("; no node manager is assigned; report it to the user"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn full_exit_6_text_end_to_end() {
+    use crate::cli::seat::{SEAT_INTEGRITY, seat_failure};
+    use crate::daemon::client::ClientError;
+    let (fx, one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let ghost = break_seat(&fx, &one);
+    let head = fx.store.head().unwrap();
+    let err = seat_reply(&fx.deps, &caller("p1"), None).unwrap_err();
+    let message = format!(
+        "{}: teamspace {ghost} not found at the committed revision (HEAD {}); report it to the node manager seat nm ({})",
+        one.id,
+        crate::bootstrap::instructions::short_rev(&head.0),
+        nm.id
+    );
+    assert_eq!(err.message, message);
+    let remote = ClientError::Remote {
+        code: err.code,
+        message: err.message.clone(),
+    };
+    assert_eq!(
+        seat_failure(&remote),
+        (
+            6,
+            format!(
+                "herdr-graph: graph integrity error: {message}. This is not transient; retrying will not help. {SEAT_INTEGRITY}"
+            )
+        )
+    );
+}
+
+#[test]
+fn render_seat_prints_manager_lines() {
+    let seat = SeatId::new();
+    let nm = SeatId::new();
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "manager": { "seat": seat, "name": "boss", "threads_seat": null },
+        "node_manager": { "seat": nm, "name": "nm", "threads_seat": "ts" },
+    }));
+    assert!(out.contains(&format!("manager: boss ({seat})\n")), "{out}");
+    assert!(out.contains(&format!("node manager: nm ({nm})\n")), "{out}");
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "manager": null,
+        "node_manager": null,
+    }));
+    assert!(out.contains("manager: none assigned\n"), "{out}");
+    assert!(out.contains("node manager: none assigned\n"), "{out}");
+}
+
+#[test]
+fn old_reply_without_fields_renders() {
+    let out = render_seat(&json!({ "resolution": { "status": "bound" } }));
+    assert!(out.contains("\nmanager: none assigned\n"), "{out}");
+    assert!(out.contains("\nnode manager: none assigned\n"), "{out}");
+}
+
+// ---- seat.resolve reports and node-manager duties (hg-k4l.19) ----
+
+/// Bind `seat`'s only clone to `pane`.
+fn bind_pane(fx: &Fx, seat: &SeatRecord, pane: &str) {
+    let clone = clone_of(fx, &seat.id);
+    patch_clone(
+        fx,
+        &clone.id,
+        json!({ "pane": pane, "availability": "present" }),
+    );
+}
+
+fn report_names(reply: &Value) -> Vec<String> {
+    reply["reports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn reports_explicit_pointer() {
+    let (fx, one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    bind_pane(&fx, &boss, "p2");
+    set_manager(&fx, &one, &boss);
+    let reply = seat_reply(&fx.deps, &caller("p2"), None).unwrap();
+    assert_eq!(report_names(&reply), vec!["one"]);
+    assert_eq!(reply["reports"][0]["seat"], json!(one.id));
+    assert_eq!(reply["reports"][0]["threads_seat"], Value::Null);
+    assert_eq!(reply["is_node_manager"], json!(false));
+    assert_eq!(reply["node_manager_duties"], Value::Null);
+    // Typed readers parse a reply entry; an old reply without `reports` still parses via #[serde(default)].
+    let typed: SeatRef = serde_json::from_value(reply["reports"][0].clone()).unwrap();
+    assert_eq!(typed.seat, one.id);
+}
+
+#[test]
+fn reports_teamspace_default() {
+    let (fx, _one, boss, _nm) = managed_fixture();
+    set_graph_node_manager(&fx, None);
+    bind_pane(&fx, &boss, "p2");
+    commit(&fx, "teamspace create beta --active");
+    commit(&fx, "seat create member --teamspace beta --active");
+    let beta = teamspace(&fx, "beta");
+    let mut rec = layout::list_teamspaces(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| t.id == beta)
+        .unwrap();
+    rec.default_manager = Some(boss.id.clone());
+    let bytes = crate::store::record::to_toml_bytes(&rec).unwrap();
+    assert_eq!(
+        put(&fx, beta.as_str(), "teamspace.toml", &bytes).state,
+        OpState::Committed
+    );
+    let reply = seat_reply(&fx.deps, &caller("p2"), None).unwrap();
+    assert_eq!(report_names(&reply), vec!["member"]);
+}
+
+#[test]
+fn reports_node_manager_implicit() {
+    let (fx, one, boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&one.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    let mut names = report_names(&reply);
+    names.sort();
+    assert_eq!(names, vec!["boss", "nm"]);
+    assert!(
+        reply["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| { r["seat"] == json!(boss.id) || r["seat"] == json!(nm.id) })
+    );
+    assert_eq!(reply["is_node_manager"], json!(true));
+    assert_eq!(
+        reply["node_manager_duties"].as_str().unwrap(),
+        super::NODE_MANAGER_DUTIES
+    );
+    assert!(
+        reply["node_manager_duties"]
+            .as_str()
+            .unwrap()
+            .contains("Listen for, detect and unblock")
+    );
+}
+
+#[test]
+fn reports_empty_for_leaf() {
+    let (fx, _one, _boss, nm) = managed_fixture();
+    set_graph_node_manager(&fx, Some(&nm.id));
+    let reply = seat_reply(&fx.deps, &caller("p1"), None).unwrap();
+    assert_eq!(reply["reports"], json!([]));
+    assert_eq!(reply["is_node_manager"], json!(false));
+    assert_eq!(reply["node_manager_duties"], Value::Null);
+    let reply = seat_reply(&fx.deps, &caller("p-unknown"), None).unwrap();
+    assert_eq!(reply["reports"], json!([]));
+    assert_eq!(reply["is_node_manager"], json!(false));
+}
+
+#[test]
+fn render_seat_lists_reports_and_duties() {
+    let r = SeatId::new();
+    let out = render_seat(&json!({
+        "resolution": { "status": "bound" },
+        "reports": [{ "seat": r, "name": "worker", "threads_seat": null }],
+        "is_node_manager": true,
+        "node_manager_duties": "# Node manager\nDo things.\n",
+    }));
+    assert!(
+        out.contains(&format!("reports:\n  worker ({r})\n")),
+        "{out}"
+    );
+    assert!(
+        out.contains("you are the node manager seat; duties:\n  # Node manager\n  Do things.\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn reply_without_reports_renders() {
+    let out = render_seat(&json!({ "resolution": { "status": "bound" } }));
+    assert!(!out.contains("reports:"), "{out}");
+    assert!(!out.contains("duties"), "{out}");
 }

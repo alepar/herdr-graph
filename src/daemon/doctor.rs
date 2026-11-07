@@ -658,6 +658,7 @@ mod tests {
                 observed_at: None,
             },
             project_repo: None,
+            default_manager: None,
             channel: Default::default(),
         }
     }

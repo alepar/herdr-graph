@@ -4,12 +4,17 @@
 use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
 use crate::model::b64::{b64_decode, b64_encode};
+use crate::model::change::ReliedOn;
 use crate::model::clone::CloneRecord;
 use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, Retirement};
+use crate::model::manager::Pointers;
 use crate::model::seat::SeatRecord;
 use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateId};
 use crate::plan::core_kinds::{open_clone_effects, read_seat, read_ts, rev_of};
 use crate::plan::kind::{PlanBody, PlanCx, PlanError};
+use crate::plan::managers::first_seat;
+use crate::plan::managers::reparent::{REPARENTED_KEY, Rewrite};
+use crate::plan::managers::{default_manager_effect, seat_manager_effect};
 use crate::plan::types::{PlanEffect, Reserved};
 use crate::store::instruction_source::{
     self as source, InstructionError, InstructionFile, InstructionTarget, ScopeKind,
@@ -87,6 +92,9 @@ pub struct Restore {
     pub new_clones: Vec<(SeatId, CloneId)>,
     pub warnings: Vec<String>,
     pub repair: Option<String>,
+    /// The first-seat assignment (spec §4.8) when the graph has no live seat and no node manager: the first
+    /// restored seat comes back Active and becomes the node manager. Decided at plan time only.
+    pub assignment: Option<(PlanEffect, ReliedOn)>,
 }
 
 impl Restore {
@@ -125,10 +133,13 @@ impl Restore {
     }
 }
 
+/// `listed` is the confirmed plan's effects at apply time: the first-seat decision is read from them (never
+/// re-decided); at plan time it is `None` and `first_seat::assignment` decides.
 pub fn compute_restore(
     tree: &dyn TreeRead,
     act: &ActionRecord,
     reserved: &mut Reserved,
+    listed: Option<&[PlanEffect]>,
 ) -> Result<Restore, PlanError> {
     let mut r = Restore::default();
     let mut standalone: Vec<CloneId> = Vec::new();
@@ -249,6 +260,25 @@ pub fn compute_restore(
             });
         }
     }
+    // The first restored seat becomes the node manager, so it and its teamspace come back Active (C3).
+    if let Some((first, active)) = r.seats.first().cloned() {
+        let forced = match listed {
+            Some(effects) => first_seat::forces_active(effects, &first),
+            None => {
+                r.assignment = first_seat::assignment(tree, Some(&first))?;
+                r.assignment.is_some()
+            }
+        };
+        if forced {
+            if !active {
+                r.seats[0].1 = true;
+            }
+            let ts = read_seat(tree, &first)?.ts.rec.id;
+            if let Some(t) = r.teamspaces.iter_mut().find(|(t, _)| t == &ts) {
+                t.1 = true;
+            }
+        }
+    }
     // An active seat that gets no clone back still needs one.
     for (seat, active) in r.seats.clone() {
         if !active {
@@ -308,7 +338,9 @@ pub fn restore_preview(
     reserved: &mut Reserved,
 ) -> Result<PlanBody, PlanError> {
     let tree = cx.tree;
-    let r = compute_restore(tree, act, reserved)?;
+    let r = compute_restore(tree, act, reserved, None)?;
+    let restored: BTreeSet<SeatId> = r.seats.iter().map(|(s, _)| s.clone()).collect();
+    let (pointer_effects, pointer_warnings) = pointer_restores(tree, act, &restored)?;
     let mut effects = Vec::new();
     let mut relied_on = Vec::new();
     let mut warnings = r.warnings.clone();
@@ -418,6 +450,12 @@ pub fn restore_preview(
         ));
     }
 
+    effects.extend(pointer_effects);
+    warnings.extend(pointer_warnings);
+    if let Some((effect, graph)) = &r.assignment {
+        effects.push(effect.clone());
+        relied_on.push(graph.clone());
+    }
     if let Some(pane) = caller_pane
         && let Some(w) = closes_caller(tree, pane, &effects)?
     {
@@ -430,6 +468,95 @@ pub fn restore_preview(
         repair_required: repair,
         summary: format!("undo {}", act.id),
     })
+}
+
+/// The pointer restores an undo of `act` performs: for each `reparented` row whose holder still exists and still
+/// holds the reparent value (`new`), and whose `old` seat is live or comes back with this undo (`restored`), an
+/// effect back to `old`; for each other row, a warning listing it.
+pub(crate) fn pointer_restores(
+    tree: &dyn TreeRead,
+    act: &ActionRecord,
+    restored: &BTreeSet<SeatId>,
+) -> Result<(Vec<PlanEffect>, Vec<String>), PlanError> {
+    let Some(rows) = act
+        .compensation
+        .get(REPARENTED_KEY)
+        .and_then(|v| v.as_array())
+    else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let pointers = Pointers::load(tree)?;
+    let (mut effects, mut warnings) = (Vec::new(), Vec::new());
+    // One entry per (holder, field), in first-seen order: `old` from its first row, `new` from its last, so
+    // chained rows (a -> b, then b -> c) judge and restore as a -> c.
+    let mut collapsed: Vec<Rewrite> = Vec::new();
+    for row in rows {
+        let Some(rw) = Rewrite::from_toml(row) else {
+            warnings.push(format!(
+                "unreadable manager pointer rewrite {row}; left unchanged"
+            ));
+            continue;
+        };
+        match collapsed
+            .iter_mut()
+            .find(|c| c.holder == rw.holder && c.field == rw.field)
+        {
+            Some(c) => c.new = rw.new,
+            None => collapsed.push(rw),
+        }
+    }
+    for rw in collapsed {
+        // `Some(current)` when the holder exists; the pointer it holds is `current`.
+        let current: Option<Option<SeatId>> = match (rw.field.as_str(), &rw.holder) {
+            ("manager", id) => SeatId::try_from(id.clone())
+                .ok()
+                .and_then(|s| pointers.seats.get(&s).map(|p| p.manager.clone())),
+            ("default_manager", id) => TeamspaceId::try_from(id.clone())
+                .ok()
+                .and_then(|t| pointers.default_managers.get(&t).cloned()),
+            _ => None,
+        };
+        let Some(current) = current else {
+            warnings.push(format!(
+                "manager pointer of {} no longer exists; left unchanged",
+                rw.holder
+            ));
+            continue;
+        };
+        if current != rw.new {
+            warnings.push(format!(
+                "manager pointer of {} changed since the retirement (now {}); left unchanged",
+                rw.holder,
+                current.map_or("none".to_string(), |c| c.to_string())
+            ));
+            continue;
+        }
+        // Restoring a pointer to a seat that stays retired would leave the holder reporting through an archived
+        // seat (or close a cycle the guard refuses, failing the whole undo).
+        let old_live = pointers.seats.get(&rw.old).is_some_and(|p| !p.retired);
+        if !old_live && !restored.contains(&rw.old) {
+            warnings.push(format!(
+                "manager pointer of {} not restored to {}: that seat is not brought back by this undo; left unchanged",
+                rw.holder, rw.old
+            ));
+            continue;
+        }
+        let effect = if rw.field == "manager" {
+            seat_manager_effect(
+                &SeatId::try_from(rw.holder.clone()).map_err(|e| invalid(e.to_string()))?,
+                rw.new.as_ref(),
+                Some(&rw.old),
+            )
+        } else {
+            default_manager_effect(
+                &TeamspaceId::try_from(rw.holder.clone()).map_err(|e| invalid(e.to_string()))?,
+                rw.new.as_ref(),
+                Some(&rw.old),
+            )
+        };
+        effects.push(effect);
+    }
+    Ok((effects, warnings))
 }
 
 /// Pane effects for the clones `own` of one restored active seat: each reopens in the seat's own tab.

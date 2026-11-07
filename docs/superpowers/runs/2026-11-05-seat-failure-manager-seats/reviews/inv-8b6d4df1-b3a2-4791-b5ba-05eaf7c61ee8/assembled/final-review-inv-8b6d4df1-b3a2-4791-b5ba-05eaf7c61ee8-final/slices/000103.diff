@@ -1,0 +1,12 @@
+diff --git a/src/transcripts/tests.rs b/src/transcripts/tests.rs
+index 6170e04..18a8b14 100644
+--- a/src/transcripts/tests.rs
++++ b/src/transcripts/tests.rs
+@@ -235,6 +235,7 @@ fn fx_with(
+     let tmp = tempfile::tempdir().unwrap();
+     let root = tmp.path().join("inst");
+     init_instance(&root).unwrap();
++    crate::plan::managers::testing::opt_out(&root);
+     let dir = tmp.path().join("claude");
+     std::fs::create_dir_all(&dir).unwrap();
+     let mut kinds = KindRegistry::default();

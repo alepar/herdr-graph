@@ -1,0 +1,20 @@
+diff --git a/src/store/tests.rs b/src/store/tests.rs
+index 1f8e23c..11bf3c4 100644
+--- a/src/store/tests.rs
++++ b/src/store/tests.rs
+@@ -28,6 +28,7 @@ fn teamspace(name: &str) -> TeamspaceRecord {
+         retired: None,
+         runtime: Default::default(),
+         project_repo: None,
++        default_manager: None,
+         channel: Default::default(),
+     }
+ }
+@@ -44,6 +45,7 @@ fn seat(name: &str, ts: &TeamspaceId) -> SeatRecord {
+         retired: None,
+         system_duty: None,
+         template_ref: None,
++        manager: None,
+         applications: vec![],
+         overrides: Default::default(),
+         participation: Default::default(),

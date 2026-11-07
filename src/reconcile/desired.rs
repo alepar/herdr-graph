@@ -104,6 +104,8 @@ pub struct DesiredRuntime {
     pub workspaces: Vec<DesiredWorkspace>,
     pub tabs: Vec<DesiredTab>,
     pub panes: Vec<DesiredPane>,
+    /// The live node manager seat (`model::manager::live_node_manager`): exempt from closure retirement.
+    pub node_manager: Option<SeatId>,
 }
 
 fn latest_ended(sessions: &[NativeSession], harness: Harness) -> Option<&NativeSession> {
@@ -117,6 +119,7 @@ impl DesiredRuntime {
     pub fn load(tree: &dyn TreeRead, instance: &Path) -> Result<Self, StoreError> {
         let mut d = DesiredRuntime {
             instance: instance.to_path_buf(),
+            node_manager: crate::model::manager::live_node_manager(tree)?,
             ..Default::default()
         };
         for (_, t) in layout::list_teamspaces(tree)? {

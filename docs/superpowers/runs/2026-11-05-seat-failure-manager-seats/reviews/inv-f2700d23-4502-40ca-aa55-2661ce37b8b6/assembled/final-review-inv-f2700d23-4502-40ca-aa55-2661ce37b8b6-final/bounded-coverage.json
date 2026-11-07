@@ -1,0 +1,304 @@
+{
+ "inspected": [
+  {
+   "path": "src/cli/daemon_error.rs",
+   "hunks": [
+    "@@ -0,0 +1,311 @@"
+   ]
+  },
+  {
+   "path": "src/model/manager.rs",
+   "hunks": [
+    "@@ -0,0 +1,519 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/mod.rs",
+   "hunks": [
+    "@@ -0,0 +1,286 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/retire.rs",
+   "hunks": [
+    "@@ -0,0 +1,67 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/node_manager.rs",
+   "hunks": [
+    "@@ -0,0 +1,193 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/first_seat.rs",
+   "hunks": [
+    "@@ -0,0 +1,147 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/reparent.rs",
+   "hunks": [
+    "@@ -0,0 +1,260 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/cycle_guard.rs",
+   "hunks": [
+    "@@ -0,0 +1,139 @@"
+   ]
+  },
+  {
+   "path": "src/plan/core_kinds.rs",
+   "hunks": [
+    "@@ -2,6 +2,10 @@",
+    "@@ -47,6 +51,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {",
+    "@@ -263,6 +268,7 @@ fn new_seat_record(",
+    "@@ -311,6 +317,12 @@ pub(crate) struct Acc {",
+    "@@ -344,6 +356,14 @@ pub(crate) fn write_action(",
+    "@@ -404,6 +424,9 @@ pub(crate) fn do_retire_seat(",
+    "@@ -541,6 +564,35 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -638,6 +690,7 @@ impl OrgKind for TeamspaceCreate {",
+    "@@ -684,10 +737,12 @@ impl OrgKind for TeamspaceRetire {",
+    "@@ -711,6 +766,7 @@ impl OrgKind for TeamspaceRetire {",
+    "@@ -801,22 +857,30 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -826,12 +890,51 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -871,8 +974,27 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -966,20 +1088,22 @@ impl OrgKind for SeatCreate {",
+    "@@ -1002,9 +1126,14 @@ impl OrgKind for SeatCreate {",
+    "@@ -1026,8 +1155,9 @@ impl OrgKind for SeatCreate {",
+    "@@ -1046,6 +1176,7 @@ impl OrgKind for SeatCreate {",
+    "@@ -1092,7 +1223,7 @@ fn activation_effects(",
+    "@@ -1394,6 +1525,7 @@ impl OrgKind for SeatRetire {",
+    "@@ -1482,6 +1614,8 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1490,7 +1624,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1507,7 +1641,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1544,9 +1678,14 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1573,8 +1712,9 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1596,6 +1736,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1769,6 +1910,7 @@ impl OrgKind for CloneRetire {"
+   ]
+  },
+  {
+   "path": "src/plan/kind.rs",
+   "hunks": [
+    "@@ -70,6 +70,7 @@ pub fn make_plan("
+   ]
+  },
+  {
+   "path": "src/plan/kinds_extra.rs",
+   "hunks": [
+    "@@ -1036,6 +1036,7 @@ pub(crate) mod testkit {"
+   ]
+  },
+  {
+   "path": "src/plan/mod.rs",
+   "hunks": [
+    "@@ -12,6 +12,7 @@ pub mod hash;"
+   ]
+  },
+  {
+   "path": "src/observe/classify.rs",
+   "hunks": [
+    "@@ -80,6 +80,8 @@ pub struct Classified {",
+    "@@ -189,6 +191,19 @@ fn live_clones<'a>(",
+    "@@ -261,20 +276,25 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -307,6 +327,10 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -324,6 +348,12 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -333,6 +363,7 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -360,6 +391,7 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -368,6 +400,14 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {"
+   ]
+  },
+  {
+   "path": "src/observe/mutations.rs",
+   "hunks": [
+    "@@ -158,6 +158,7 @@ struct CascadeArgs {",
+    "@@ -165,8 +166,13 @@ impl CascadeMutation {",
+    "@@ -194,6 +200,7 @@ impl CascadeMutation {",
+    "@@ -201,8 +208,13 @@ impl CascadeMutation {",
+    "@@ -234,6 +246,7 @@ impl CascadeMutation {",
+    "@@ -242,6 +255,9 @@ impl CascadeMutation {",
+    "@@ -277,7 +293,10 @@ impl Mutation for CascadeMutation {",
+    "@@ -291,18 +310,21 @@ impl Mutation for CascadeMutation {"
+   ]
+  },
+  {
+   "path": "src/observe/step.rs",
+   "hunks": [
+    "@@ -549,6 +549,9 @@ impl RuntimeLoop {"
+   ]
+  },
+  {
+   "path": "src/reconcile/desired.rs",
+   "hunks": [
+    "@@ -95,6 +95,8 @@ pub struct DesiredRuntime {",
+    "@@ -108,6 +110,7 @@ impl DesiredRuntime {"
+   ]
+  },
+  {
+   "path": "src/cli/mod.rs",
+   "hunks": [
+    "@@ -5,8 +5,10 @@ use std::process::ExitCode;",
+    "@@ -83,6 +85,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/node_manager_warning.rs",
+   "hunks": [
+    "@@ -0,0 +1,201 @@"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -7,12 +7,14 @@",
+    "@@ -20,6 +22,7 @@ use crate::store::tree::{CommitView, TreeRead};",
+    "@@ -131,14 +134,14 @@ fn bound_paths(",
+    "@@ -208,11 +211,76 @@ fn bound_paths(",
+    "@@ -249,6 +317,10 @@ pub fn seat_reply(",
+    "@@ -260,7 +332,25 @@ pub fn seat_reply(",
+    "@@ -278,8 +368,8 @@ pub fn seat_reply(",
+    "@@ -308,6 +398,11 @@ pub fn seat_reply(",
+    "@@ -360,6 +455,27 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/instructions.rs",
+   "hunks": [
+    "@@ -1,11 +1,10 @@",
+    "@@ -81,8 +80,13 @@ impl Walk {",
+    "@@ -100,31 +104,27 @@ pub fn template_participation(",
+    "@@ -270,8 +270,9 @@ pub fn revision_line(name: &str, seat: &SeatId, short_rev: &str) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/show.rs",
+   "hunks": [
+    "@@ -2,7 +2,7 @@",
+    "@@ -153,6 +153,15 @@ pub fn show(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<String, Sh"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -12,6 +12,13 @@ Find out who you are in the graph, then read what applies to you.",
+    "@@ -27,6 +34,14 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "src/cli/seat.rs",
+   "hunks": [
+    "@@ -1,13 +1,15 @@",
+    "@@ -48,8 +50,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -60,12 +68,28 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -168,6 +192,62 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "templates/node-manager/AGENTS.md",
+   "hunks": [
+    "@@ -0,0 +1,20 @@"
+   ]
+  },
+  {
+   "path": "templates/node-manager/template.toml",
+   "hunks": [
+    "@@ -0,0 +1,8 @@"
+   ]
+  },
+  {
+   "path": "templates/office/template.toml",
+   "hunks": [
+    "@@ -0,0 +1,15 @@"
+   ]
+  },
+  {
+   "path": "CURRENT-DESIGN.md",
+   "hunks": [
+    "@@ -21,6 +21,7 @@ Consolidated contract for the authorized implementation. Detailed decisions and",
+    "@@ -79,6 +80,16 @@ New transcript indexes use `transcripts/<team-name>-<team-id>/<seat-name>-<seat-"
+   ]
+  },
+  {
+   "path": "src/bootstrap/examples.rs",
+   "hunks": [
+    "@@ -26,6 +26,18 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &["
+   ]
+  },
+  {
+   "path": "src/threads/mod.rs",
+   "hunks": [
+    "@@ -256,6 +256,41 @@ pub struct WhoReply {",
+    "@@ -263,7 +298,8 @@ impl WhoReply {",
+    "@@ -277,7 +313,7 @@ impl WhoReply {",
+    "@@ -324,11 +360,16 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {",
+    "@@ -349,7 +390,7 @@ pub fn register_commands(reg: &mut Registry, store: Arc<dyn Store>) {"
+   ]
+  },
+  {
+   "path": "src/cli/who.rs",
+   "hunks": [
+    "@@ -1,11 +1,10 @@",
+    "@@ -21,20 +20,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -42,12 +27,7 @@ fn run_who(target: &str) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -3,8 +3,8 @@",
+    "@@ -24,6 +24,7 @@ use crate::plan::core_kinds::{",
+    "@@ -320,7 +321,7 @@ fn restore_mutate(",
+    "@@ -371,6 +372,12 @@ fn restore_mutate("
+   ]
+  },
+  {
+   "path": "src/undo/preview.rs",
+   "hunks": [
+    "@@ -5,12 +5,17 @@ use super::adopt::{Adoption, adoption};",
+    "@@ -88,6 +93,9 @@ pub struct Restore {",
+    "@@ -126,10 +134,13 @@ impl Restore {",
+    "@@ -241,6 +252,25 @@ pub fn compute_restore(",
+    "@@ -304,7 +334,8 @@ pub fn restore_preview(",
+    "@@ -425,6 +456,13 @@ pub fn restore_preview(",
+    "@@ -465,6 +503,71 @@ pub fn restore_preview("
+   ]
+  },
+  {
+   "path": "src/ipc.rs",
+   "hunks": [
+    "@@ -41,6 +41,9 @@ pub enum IpcErrorCode {",
+    "@@ -245,4 +248,26 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/daemon/registry.rs",
+   "hunks": [
+    "@@ -57,6 +57,20 @@ impl CommandError {",
+    "@@ -176,6 +190,7 @@ impl Registry {",
+    "@@ -199,4 +214,42 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "tests/e2e_private_herdr.rs",
+   "hunks": [
+    "@@ -123,6 +123,8 @@ impl E2e {",
+    "@@ -347,7 +349,13 @@ impl E2e {",
+    "@@ -1657,7 +1665,13 @@ fn e2e_rebind_restamps_token_after_herdr_restart() {"
+   ]
+  },
+  {
+   "path": ".gitignore",
+   "hunks": [
+    "@@ -23,3 +23,6 @@"
+   ]
+  },
+  {
+   "path": "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md",
+   "hunks": [
+    "@@ -0,0 +1,364 @@"
+   ]
+  }
+ ]
+}

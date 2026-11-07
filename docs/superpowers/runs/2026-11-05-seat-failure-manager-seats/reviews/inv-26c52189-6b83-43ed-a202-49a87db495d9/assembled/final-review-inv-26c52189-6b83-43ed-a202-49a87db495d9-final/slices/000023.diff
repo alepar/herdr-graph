@@ -1,0 +1,202 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv3.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv3.md
+new file mode 100644
+index 0000000..14b4e8a
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv3.md
+@@ -0,0 +1,196 @@
++# Run profile — hg-k4l
++
++```
++Profile: hg-k4l · 1 invocation · 2026-11-05T10:48Z → 2026-11-05T11:20Z · wall 32m (task graph 19m, after the last landing 13m) · agents 50 (timed 50) · beads dispatched 4, landed 4, planned 29
++Profile: graph scope — observed invocation/residual graph; historical topology is unknown
++Profile: shape — 29 beads · 11 edges · depth 4 · width 7.3 · beads per level 24/3/1/1 · widest fan-out hg-k4l.24 (3 direct, 4 transitive dependents)
++Profile: bound — graph lower bound 18m along hg-k4l.17 → hg-k4l.20 (unlimited slots and merge lanes) · model of the run 18m (cap 6, one merge lane) vs actual 19m (94%) → graph-bound: the 2-bead dependency chain set the pace — reshaping it is the lever
++Profile: critical path — 19m = implement 5m · review 53s · fix 3m · merge 2m · seam 28s · planning 5m · ready 37s · audit 20s · startup 1m · dispatch 23s
++Profile: diagnosis — planning 5m (28% of first dispatch to last landing)
++Profile: critical chain — close-epics ready 12s → plan planning 5m → edge-add audit 20s → bd-ready-topup ready 25s → hg-k4l.17 implement+review+fix+merge+seam 10m → merge lane ×1 51s
++Profile: bottleneck — hg-k4l.17 — 10m on the critical path (55%) · implement 5m · review 53s · fix 3m · merge 1m · seam 28s · dispatch 5s · implement on the path 5m: test 1m · build 53s · git 1s · read 8s · shell 14s · model 2m (longest: "cat >> src/undo/tests.rs <<'EOF'" 1m, "python3 - <<'EOF'" 33s) · dependents 2 direct, 2 transitive
++Profile: waits — ready→start, summed per bead (beads wait at the same time, so not wall time): 56s over 1 of 4 landed beads — ready-query 56s (1)
++Profile: early unblock — 1 landed beads had in-run blockers · stacked on an implementation 1 · bounced on a stack conflict then waited for the merge 0 (0s) · waited for a merge without one 0
++Profile: tests — implementers and fixers, summed: 4m running tests and 1m polling background runs, 27% of their 20m · 0 Bash call(s) ran into the 10-minute tool limit
++Profile: slow tests — cargo test --lib undo::tests::undo_ 1m (1 run, longest 1m)
++Profile: merge lane — busy 5m of 9m (55%) · seam reviews and fixes 28s (9% of busy) · 5 merge dispatches, first try not merged for 1 of 4 · queue wait 10s total, peak 1 waiting · stack-parent wait 2m
++Profile: conflicts — src/undo/tests.rs (stack conflicts 0, seam overlaps 1, declared by 8)
++Profile: runtime — peak 5 agents at once of 16 runtime slots · full 0% of the run · slot cap 6
++Profile: concurrency scope — all-agent concurrency peak 5 · task-slot concurrency peak 3, cap 6 (ordinary chains retain a slot through merge)
++Profile: what-if estimate — faster hg-k4l.17 → 17m (−1m, 6%) — its implement time halved; first dispatch to last landing, planning retained
++Profile: context — agents 51 (measured 51) · peak≥80% 0 · compacted 0 agents, 0 compactions · coordinator 582K/1000K (58%), 0 compactions · max coordinator 58%
++Profile: context agent — coordinator peak 582K/1000K (58%) · first 157K · compactions 0
++Profile: unmeasured — Claude context windows from the model table: claude-opus-5-5 1000K, claude-sonnet-5-5 1000K
++```
++
++## Per bead
++
++Offsets are from the run's first dispatch. `wait` starts at evidenced creation/mapping/dependency availability, bounded by invocation start; unknown readiness means unknown wait. Creation, mapping and dependency timestamps stay distinct in JSON. `stack` waits for parents to merge; `queue` waits for the single merge lane; `lane` is its lane turn (merge plus seam work).
++
++| bead | deps | dependents | attempts | wait (cause) | implement | of it: tools | review | fix | stack | queue | lane (seam) | landed | critical |
++|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
++| hg-k4l.45 | 0 | 1 | IMPLEMENTED | - | 6m | test 2s · poll 1m · git 5s · read 6s · shell 2m | 41s | - | - | 1s | 1m | +14m |  |
++| hg-k4l.46 | 0 | 0 | IMPLEMENTED | - | 3m | test 1m · read 2s · edit 3s · shell 14s | 22s | - | - | 1s | 1m | +11m |  |
++| hg-k4l.17 | 0 | 2 | IMPLEMENTED | 56s (ready-query) | 5m | test 1m · build 53s · git 1s · read 8s · shell 14s | 53s | 3m | - | 1s | 2m (28s) | +18m | 10m |
++| hg-k4l.20 | 1 | 1 | IMPLEMENTED | - | 4m | git 2s · bd 2s · read 4s · shell 2m | 22s | - | 2m | 7s | 51s | +19m | 58s |
++
++## Critical path, step by step
++
++| at | step | kind | via | duration |
++|---|---|---|---|---|
++| +0s | run start | startup |  | 1m |
++| +1m | close-epics | ready |  | 12s |
++| +1m | previous → plan | dispatch |  | 1s |
++| +1m | plan | planning | previous | 5m |
++| +7m | previous → edge-add:1 | dispatch |  | 1s |
++| +7m | edge-add:1 | audit | previous | 20s |
++| +7m | previous → bd-ready-topup | dispatch |  | 10s |
++| +7m | bd-ready-topup | ready | previous | 25s |
++| +8m | ready-query → impl:hg-k4l.17 | dispatch |  | 1s |
++| +8m | impl:hg-k4l.17 | implement | ready-query | 5m |
++| +12m | chain → review:hg-k4l.17 | dispatch |  | 1s |
++| +12m | review:hg-k4l.17 | review | chain | 53s |
++| +13m | chain → fix:hg-k4l.17 | dispatch |  | 1s |
++| +13m | fix:hg-k4l.17 | fix | chain | 3m |
++| +16m | chain → merge:hg-k4l.17 | dispatch |  | 1s |
++| +16m | merge:hg-k4l.17 | merge | chain | 19s |
++| +17m | chain → seam-review:hg-k4l.17 | dispatch |  | 1s |
++| +17m | seam-review:hg-k4l.17 | seam | chain | 28s |
++| +17m | chain → merge:hg-k4l.17:seam-cleared | dispatch |  | 1s |
++| +17m | merge:hg-k4l.17:seam-cleared | merge | chain | 1m |
++| +18m | stack-parent → merge:hg-k4l.20 | dispatch |  | 7s |
++| +18m | merge:hg-k4l.20 | merge | stack-parent | 51s |
++
++## Longest tool calls in the bottleneck's implement (hg-k4l.17)
++
++| tool | category | what | duration |
++|---|---|---|---|
++| Bash | test | cat >> src/undo/tests.rs <<'EOF' | 1m |
++| Bash | build | python3 - <<'EOF' | 33s |
++| Bash | build | cargo clippy --all-targets 2> | 13s |
++| Bash | build | W=/var/home/alepar/AleCode/herdr-graph/.worktrees/super-aut… | 6s |
++| Bash | shell | mkdir -p /tmp/sp-2d1990ff/hg-k4l.17 | 6s |
++| Bash | shell | W=$PWD/.worktrees/super-auto-seat-failure-manager-seats--ta… | 3s |
++| Bash | shell | env | 2s |
++| Bash | read | sed -n 150,260p src/plan/managers/reparent.rs | 2s |
++| Bash | build | cargo clippy --all-targets 2> | 1s |
++| Bash | read | ls /usr/bin | 1s |
++
++## Conflict files
++
++Files named in stack-conflict findings and in merges' seam overlaps, with how many planned beads declared them.
++
++| file | stack conflicts | seam overlaps | declared by |
++|---|---|---|---|
++| src/undo/tests.rs | 0 | 1 | 8 |
++
++## Schedule model
++
++Landed beads replayed with their measured implement, review+fix and lane times; creation, mapping and invocation bounds retained, with dispatch as the conservative release when readiness is unknown. In-model dependencies release at their modeled implementation/merge times; known releases outside the model stay fixed. Window: first dispatch to last landing; planning retained. Model of the run: 18m against 19m measured. Estimates, not measurements.
++
++| scenario | makespan | saving |
++|---|---|---|
++| as run (cap 6, one merge lane) | 18m | - |
++| unlimited slots | 18m | 0s |
++| unlimited merge lanes | 18m | 0s |
++| graph lower bound (both) | 18m | 0s |
++| faster hg-k4l.17 | 17m | 1m |
++
++## Timeline
++
++each bead's final attempt; critical-path steps are marked crit.
++
++```mermaid
++gantt
++  dateFormat x
++  axisFormat %H:%M
++  section hg-k4l.45
++  impl :1793876108896, 1793876448928
++  review :1793876449674, 1793876490929
++  review-bead :1793876451134, 1793876462017
++  merge :1793876491738, 1793876562072
++  close-check :1793876562851, 1793876573970
++  section hg-k4l.46
++  impl :1793876113896, 1793876272477
++  review :1793876273308, 1793876294906
++  merge :1793876295665, 1793876368325
++  close-check :1793876369053, 1793876376874
++  section hg-k4l.17
++  impl :crit, 1793876164561, 1793876444358
++  review-bead :1793876445174, 1793876459995
++  review :crit, 1793876445174, 1793876498204
++  fix :crit, 1793876498945, 1793876678004
++  merge :crit, 1793876678753, 1793876698224
++  seam-review :crit, 1793876698981, 1793876726926
++  merge seam-cleared :crit, 1793876727789, 1793876789176
++  close-check :1793876789938, 1793876795611
++  section hg-k4l.20
++  impl :1793876445175, 1793876662374
++  review :1793876663125, 1793876685351
++  review-bead :1793876663126, 1793876676186
++  merge :crit, 1793876796362, 1793876847141
++  close-check :1793876847947, 1793876856029
++```
++
++## Context
++
++- Profile: context — agents 51 (measured 51) · peak≥80% 0 · compacted 0 agents, 0 compactions · coordinator 582K/1000K (58%), 0 compactions · max coordinator 58%
++- Profile: context agent — coordinator peak 582K/1000K (58%) · first 157K · compactions 0
++
++| agent | role | model | tasks | requests | first | peak | window | source | peak% | compactions |
++| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
++| coordinator | coordinator | claude-opus-5-5 | 10 | 159 | 157K | 582K | 1000K | table | 58% | 0 |
++| final-review | agent | claude-opus-5-5 | 1 | 43 | 34K | 239K | 1000K | table | 24% | 0 |
++| plan | agent | claude-opus-5-5 | 1 | 32 | 31K | 141K | 1000K | table | 14% | 0 |
++| impl:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 23 | 36K | 110K | 1000K | table | 11% | 0 |
++| impl:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 30 | 36K | 94K | 1000K | table | 9% | 0 |
++| impl:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 15 | 37K | 80K | 1000K | table | 8% | 0 |
++| assemble:final | agent | claude-sonnet-5-5 | 1 | 12 | 31K | 66K | 1000K | table | 7% | 0 |
++| fix:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 17 | 34K | 67K | 1000K | table | 7% | 0 |
++| impl:hg-k4l.46 | agent | claude-sonnet-5-5 | 1 | 15 | 36K | 70K | 1000K | table | 7% | 0 |
++| plan-rest | agent | claude-opus-5-5 | 1 | 10 | 31K | 67K | 1000K | table | 7% | 0 |
++| review:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 7 | 32K | 62K | 1000K | table | 6% | 0 |
++| edge-audit:1 | agent | claude-opus-5-5 | 1 | 4 | 30K | 47K | 1000K | table | 5% | 0 |
++| edge-audit:2 | agent | claude-opus-5-5 | 1 | 3 | 30K | 49K | 1000K | table | 5% | 0 |
++| merge:hg-k4l.17:seam-cleared | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
++| merge:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 10 | 34K | 47K | 1000K | table | 5% | 0 |
++| merge:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 46K | 1000K | table | 5% | 0 |
++| merge:hg-k4l.46 | agent | claude-sonnet-5-5 | 1 | 9 | 34K | 47K | 1000K | table | 5% | 0 |
++| review:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 53K | 1000K | table | 5% | 0 |
++| review:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 6 | 32K | 52K | 1000K | table | 5% | 0 |
++| review:hg-k4l.46 | agent | claude-sonnet-5-5 | 1 | 4 | 32K | 45K | 1000K | table | 5% | 0 |
++| merge:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 4 | 34K | 38K | 1000K | table | 4% | 0 |
++| read-ledger | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 41K | 1000K | table | 4% | 0 |
++| read-ledger:finish | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 43K | 1000K | table | 4% | 0 |
++| seam-review:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 4 | 31K | 40K | 1000K | table | 4% | 0 |
++| worktree-sweep | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 39K | 1000K | table | 4% | 0 |
++| bd-ready | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| bd-ready | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| bd-ready-topup | agent | claude-sonnet-5-5 | 1 | 3 | 30K | 32K | 1000K | table | 3% | 0 |
++| close-check:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| close-check:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| close-check:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| close-check:hg-k4l.46 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| close-epics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| close-epics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| edge-add:1 | agent | claude-sonnet-5-5 | 1 | 4 | 29K | 34K | 1000K | table | 3% | 0 |
++| ledger-append:detector | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:detector | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:edge-add:1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:edge-audit:1 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:edge-audit:2 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:launch | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
++| ledger-append:metrics | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:recovery:deferred:hg-k4l:sweep:seat-failure-manager-seats-20261105T074235 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger-append:surface:1 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
++| ledger:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 2 | 30K | 33K | 1000K | table | 3% | 0 |
++| ledger:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| ledger:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 32K | 1000K | table | 3% | 0 |
++| reconcile-buckets | agent | claude-sonnet-5-5 | 1 | 3 | 29K | 32K | 1000K | table | 3% | 0 |
++| review-bead:hg-k4l.17 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| review-bead:hg-k4l.20 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++| review-bead:hg-k4l.45 | agent | claude-sonnet-5-5 | 1 | 2 | 29K | 31K | 1000K | table | 3% | 0 |
++
++## Unmeasured
++
++- Claude context windows from the model table: claude-opus-5-5 1000K, claude-sonnet-5-5 1000K

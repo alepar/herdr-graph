@@ -1,0 +1,4 @@
+review: not ready
+[Must-fix] final-review inv-f2700d23 #1 undo of a multi-seat retirement restores the wrong manager (src/plan/managers/reparent.rs, src/undo)
+[Must-fix] final-review inv-f2700d23 #2 node manager not reopened after an observed move then close (src/observe/classify.rs:326)
+[Must-fix] final-review inv-f2700d23 #3 remove committed evidence/hg-k4l.22 and evidence/hg-k4l.45 logs

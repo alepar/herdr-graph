@@ -8,7 +8,7 @@
 //!
 //! Nothing here touches a live Herdr, live threads or the memory observer.
 
-#[cfg(any(feature = "private-herdr", feature = "test-support"))]
+// Always compiled: `wiring` (default tier) uses `support::node_manager_opt_out`.
 mod support;
 
 // =============================================================================================
@@ -220,7 +220,13 @@ mod golden {
         }
 
         fn show(&self, id: &str) -> toml::Value {
+            // A seat's `show` appends a `manager: ...` line (spec §4.12) after the record's TOML.
             let text = self.cli_ok(&["show", id]);
+            let text: String = text
+                .lines()
+                .filter(|l| !l.starts_with("manager: "))
+                .map(|l| format!("{l}\n"))
+                .collect();
             toml::Value::Table(
                 text.parse::<toml::Table>()
                     .unwrap_or_else(|e| panic!("show {id} is not toml ({e}): {text}")),
@@ -375,6 +381,18 @@ mod golden {
 
         // Teamspace and both applications.
         rig.plan_apply(&["teamspace", "create", "demo", "--active"]);
+        // The first seat created on the node becomes the node manager, which closure never retires: give the
+        // rig a dedicated first seat so the seats below are ordinary.
+        rig.plan_apply(&[
+            "seat",
+            "create",
+            "nm",
+            "--teamspace",
+            "demo",
+            "--active",
+            "--harness",
+            "shell",
+        ]);
         rig.plan_apply(&[
             "application",
             "apply",
@@ -1217,6 +1235,7 @@ mod wiring {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sweep_summary_into_retired_seat_and_instruction_plan_flow() {
         let (dir, root) = new_instance();
+        super::support::node_manager_opt_out(&root);
         let d = Daemon::start(&root).await;
         d.committed(&["teamspace", "create", "alpha", "--active"])
             .await;
@@ -1510,6 +1529,8 @@ mod wiring {
             K::SeatRetire,
             K::SeatResurrect,
             K::SeatOverride,
+            K::ManagerEdit,
+            K::NodeManagerSet,
             K::CloneAdd,
             K::CloneRetire,
             K::ClonePurge,
@@ -1539,7 +1560,9 @@ mod wiring {
                 | K::SeatRename
                 | K::SeatRetire
                 | K::SeatResurrect
-                | K::SeatOverride => {}
+                | K::SeatOverride
+                | K::ManagerEdit
+                | K::NodeManagerSet => {}
                 K::CloneAdd
                 | K::CloneRetire
                 | K::ClonePurge
@@ -1791,6 +1814,7 @@ mod wiring {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sweep_harness_profiles_used_for_start_and_resume() {
         let (_dir, root) = new_instance();
+        super::support::node_manager_opt_out(&root);
         let d = Daemon::start(&root).await;
         d.committed(&["teamspace", "create", "t", "--active"]).await;
         d.committed(&[
@@ -1901,6 +1925,7 @@ mod wiring {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn sweep_action_and_effect_envelopes_round_trip() {
         let (_dir, root) = new_instance();
+        super::support::node_manager_opt_out(&root);
         let d = Daemon::start(&root).await;
         d.committed(&["teamspace", "create", "t", "--active"]).await;
         d.committed(&[

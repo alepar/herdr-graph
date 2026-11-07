@@ -7,12 +7,14 @@
 use crate::daemon::registry::{CallerInfo, CommandCtx, CommandError, Registry};
 use crate::journal::Journal;
 use crate::model::clone::CloneRecord;
+use crate::model::common::CloneLifecycle;
+use crate::model::manager::Pointers;
 use crate::model::seat::SeatRecord;
-use crate::model::{CloneId, PlanId, SeatId};
+use crate::model::{CloneId, CommitId, PlanId, SeatId};
 use crate::plan::commands::{PlanDeps, create_plan};
 use crate::plan::ops::pending_for;
 use crate::ports::herdr::{HerdrApi, PaneInfo};
-use crate::ports::store::{RepoPath, Store, StoreError};
+use crate::ports::store::{RepoPath, Store, StoreError, unresolved};
 use crate::store::instruction_source::{FolderKind, PathClass, classify};
 use crate::store::layout;
 use crate::store::record::read_toml;
@@ -20,6 +22,7 @@ use crate::store::tree::{CommitView, TreeRead};
 use crate::threads::pending_invitations;
 use crate::writer::worktree::{read_dirty, view_rev};
 use resolve::{Proposal, Resolution, proposal_words, resolve_caller};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -131,14 +134,14 @@ fn bound_paths(
     seat_id: &SeatId,
     clone_id: &CloneId,
 ) -> Result<BoundPaths, StoreError> {
-    let seat_loc = layout::locate(tree, &seat_id.to_any())?.ok_or_else(|| missing(seat_id))?;
-    let seat: SeatRecord =
-        read_toml(tree, &seat_loc.record_path)?.ok_or_else(|| missing(seat_id))?;
-    let clone_loc = layout::locate(tree, &clone_id.to_any())?.ok_or_else(|| missing(clone_id))?;
-    let clone: CloneRecord =
-        read_toml(tree, &clone_loc.record_path)?.ok_or_else(|| missing(clone_id))?;
-    let ts_loc =
-        layout::locate(tree, &seat.teamspace.to_any())?.ok_or_else(|| missing(&seat.teamspace))?;
+    let no_seat = || unresolved(clone_id, "seat", seat_id);
+    let no_clone = || unresolved(seat_id, "clone", clone_id);
+    let seat_loc = layout::locate(tree, &seat_id.to_any())?.ok_or_else(no_seat)?;
+    let seat: SeatRecord = read_toml(tree, &seat_loc.record_path)?.ok_or_else(no_seat)?;
+    let clone_loc = layout::locate(tree, &clone_id.to_any())?.ok_or_else(no_clone)?;
+    let clone: CloneRecord = read_toml(tree, &clone_loc.record_path)?.ok_or_else(no_clone)?;
+    let ts_loc = layout::locate(tree, &seat.teamspace.to_any())?
+        .ok_or_else(|| unresolved(seat_id, "teamspace", &seat.teamspace))?;
 
     let mut templates = Vec::new();
     let mut add = |path: String| {
@@ -208,11 +211,76 @@ fn bound_paths(
     })
 }
 
-fn missing(id: impl std::fmt::Display) -> StoreError {
-    StoreError::Corrupt {
-        path: id.to_string(),
-        reason: "object not found at the committed revision".into(),
+/// The `seat.resolve` error for a store failure: an integrity error becomes `CommandError::integrity` naming holder,
+/// field, target and HEAD (no partial reply), with `suffix` (the node-manager sentence) appended after "; ";
+/// every other StoreError stays internal through the shared classifier.
+pub(crate) fn resolve_error(e: StoreError, head: &CommitId, suffix: Option<&str>) -> CommandError {
+    if !matches!(e, StoreError::Integrity { .. }) {
+        return CommandError::from_store(e);
     }
+    let mut m = format!("{e} (HEAD {})", instructions::short_rev(&head.0));
+    if let Some(s) = suffix {
+        m.push_str("; ");
+        m.push_str(s);
+    }
+    CommandError::integrity(m)
+}
+
+/// The node-manager duty text, shared with the shipped `node-manager` seat template's AGENTS.md.
+pub(crate) const NODE_MANAGER_DUTIES: &str = include_str!("node_manager_duties.md");
+
+/// A seat named in the seat.resolve reply (manager, node manager, reports).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatRef {
+    pub seat: SeatId,
+    pub name: String,
+    /// The herdr-threads seat of the seat's first Active clone, from the committed binding index
+    /// (`invitations[].link.seat`, the index `who` searches); None when unresolvable.
+    #[serde(default)]
+    pub threads_seat: Option<String>,
+}
+
+/// The [`SeatRef`] for `seat`. Integrity when `seat` is not in the pointer set.
+pub(crate) fn seat_ref(
+    tree: &dyn TreeRead,
+    p: &Pointers,
+    seat: &SeatId,
+) -> Result<SeatRef, StoreError> {
+    let name = p
+        .name(seat)
+        .ok_or_else(|| unresolved(seat, "seat", seat))?
+        .to_owned();
+    let threads_seat = layout::all_clones(tree)?
+        .into_iter()
+        .map(|(_, c)| c)
+        .filter(|c| &c.seat == seat && c.lifecycle == CloneLifecycle::Active)
+        .find_map(|c| {
+            c.invitations
+                .iter()
+                .find_map(|i| i.link.as_ref().map(|l| l.seat.clone()))
+        });
+    Ok(SeatRef {
+        seat: seat.clone(),
+        name,
+        threads_seat,
+    })
+}
+
+/// The integrity suffix (spec §4.3), read from graph.toml independently of the broken object; any read failure
+/// gives the user form.
+pub(crate) fn node_manager_suffix(tree: &dyn TreeRead, caller_seat: Option<&SeatId>) -> String {
+    const USER: &str = "no node manager is assigned; report it to the user";
+    let Ok(p) = Pointers::load(tree) else {
+        return USER.to_owned();
+    };
+    let Some(nm) = p.live_node_manager() else {
+        return USER.to_owned();
+    };
+    if caller_seat == Some(&nm) {
+        return "you are the node manager seat; report it to the user".to_owned();
+    }
+    let name = p.name(&nm).unwrap_or_default();
+    format!("report it to the node manager seat {name} ({nm})")
 }
 
 /// `seat.resolve`: resolution, proposals (stored, never applied), paths, pending ops and invitations.
@@ -249,6 +317,10 @@ pub fn seat_reply(
         }
     }
 
+    let mut manager = Value::Null;
+    let mut node_manager = Value::Null;
+    let mut reports: Vec<SeatRef> = Vec::new();
+    let mut is_node_manager = false;
     let global_rules =
         markdown_in(&view, root, &RepoPath::new("rules").map_err(internal)?).map_err(internal)?;
     let (paths, pending_ops, invitations, reload_required, beads_query, beads_labels, instructions) =
@@ -260,7 +332,25 @@ pub fn seat_reply(
                 native_session,
                 ..
             } => {
-                let bp = bound_paths(&view, root, seat, clone).map_err(internal)?;
+                // The node-manager suffix is computed only when an integrity error needs it.
+                let fail = |e: StoreError| {
+                    let suffix = matches!(e, StoreError::Integrity { .. })
+                        .then(|| node_manager_suffix(&view, Some(seat)));
+                    resolve_error(e, &head, suffix.as_deref())
+                };
+                let bp = bound_paths(&view, root, seat, clone).map_err(fail)?;
+                let p = Pointers::load(&view).map_err(fail)?;
+                let chain = p.manager_chain(seat).map_err(fail)?;
+                if let Some(m) = chain.first() {
+                    manager = json!(seat_ref(&view, &p, m).map_err(fail)?);
+                }
+                if let Some(n) = p.live_node_manager() {
+                    node_manager = json!(seat_ref(&view, &p, &n).map_err(fail)?);
+                    is_node_manager = &n == seat;
+                }
+                for r in p.reports(seat) {
+                    reports.push(seat_ref(&view, &p, &r).map_err(fail)?);
+                }
                 let ops = pending_for(&d.journal, Some(seat), None).map_err(internal)?;
                 let mut labels = json!({
                     "ts": format!("hg-ts:{teamspace}"),
@@ -278,8 +368,8 @@ pub fn seat_reply(
                     json!(format!("bd list --label hg-seat:{seat}")),
                     labels,
                     {
-                        let r = instructions::render_instructions(&view, &head, seat)
-                            .map_err(internal)?;
+                        let r =
+                            instructions::render_instructions(&view, &head, seat).map_err(fail)?;
                         json!({
                             "rev": r.rev,
                             "parts": r.parts.iter()
@@ -308,6 +398,11 @@ pub fn seat_reply(
         "view_rev": view_rev(root),
         "worktree_dirty": dirty,
         "instance": root.display().to_string(),
+        "manager": manager,
+        "node_manager": node_manager,
+        "reports": reports,
+        "is_node_manager": is_node_manager,
+        "node_manager_duties": is_node_manager.then_some(NODE_MANAGER_DUTIES),
         "instructions": instructions,
         "paths": paths,
         "pending_ops": pending_ops,
@@ -359,6 +454,27 @@ pub fn render_seat(reply: &Value) -> String {
             "{other}: this pane is not identified as a graph clone\n"
         )),
         None => out.push_str("unknown resolution\n"),
+    }
+    for (label, v) in [
+        ("manager", &reply["manager"]),
+        ("node manager", &reply["node_manager"]),
+    ] {
+        match v["name"].as_str() {
+            Some(name) => out.push_str(&format!("{label}: {name} ({})\n", text(&v["seat"]))),
+            None => out.push_str(&format!("{label}: none assigned\n")),
+        }
+    }
+    if let Some(reports) = reply["reports"].as_array().filter(|r| !r.is_empty()) {
+        out.push_str("reports:\n");
+        for r in reports {
+            out.push_str(&format!("  {} ({})\n", text(&r["name"]), text(&r["seat"])));
+        }
+    }
+    if let Some(duties) = reply["node_manager_duties"].as_str() {
+        out.push_str("you are the node manager seat; duties:\n");
+        for line in duties.lines() {
+            out.push_str(&format!("  {line}\n"));
+        }
     }
     if let Some(cands) = r["candidates"].as_array().filter(|c| !c.is_empty()) {
         out.push_str("candidates:\n");

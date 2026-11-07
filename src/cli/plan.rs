@@ -5,7 +5,8 @@
 //! with an agent harness marker in its environment counts as one) runs `plan --json`, shows the plan to the
 //! user and runs `apply <pl> --confirm <hash> --confirmed-by user-relay`; the harness asks the user to
 //! approve that command (spec §3).
-use crate::daemon::client::{CallMode, ClientError, EXIT_STILL_RUNNING, call_daemon};
+use crate::cli::daemon_error;
+use crate::daemon::client::{CallMode, EXIT_STILL_RUNNING, call_daemon};
 use clap::Subcommand;
 use serde_json::{Value, json};
 
@@ -96,14 +97,12 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     }
 }
 
-fn remote(e: ClientError) -> anyhow::Error {
-    anyhow::anyhow!("{e}")
-}
-
 /// The whole plan → confirm flow, reused by other command groups.
 pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
-    let reply =
-        call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure).map_err(remote)?;
+    let reply = match call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure) {
+        Ok(v) => v,
+        Err(e) => return Ok(daemon_error::report(e)),
+    };
     let tty = prompt_terminal(std::io::stdin().is_terminal(), |k| std::env::var_os(k));
     match decide(tty, json) {
         Decision::Json => {
@@ -135,12 +134,14 @@ pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
                 println!("not applied");
                 return Ok(ExitCode::SUCCESS);
             }
-            let result = call_daemon(
+            let result = match call_daemon(
                 "plan.apply",
                 json!({ "plan": reply["plan_id"], "confirm": reply["hash"], "mode": "tty" }),
                 CallMode::Ensure,
-            )
-            .map_err(remote)?;
+            ) {
+                Ok(v) => v,
+                Err(e) => return Ok(daemon_error::report(e)),
+            };
             report_apply(&result)
         }
     }
@@ -156,12 +157,14 @@ fn apply(
             "confirmation required; there is no bypass (apply <pl> --confirm <hash> --confirmed-by user-relay)"
         );
     };
-    let result = call_daemon(
+    let result = match call_daemon(
         "plan.apply",
         json!({ "plan": plan, "confirm": confirm, "mode": "relay" }),
         CallMode::Ensure,
-    )
-    .map_err(remote)?;
+    ) {
+        Ok(v) => v,
+        Err(e) => return Ok(daemon_error::report(e)),
+    };
     report_apply(&result)
 }
 

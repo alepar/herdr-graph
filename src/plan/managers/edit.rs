@@ -1,0 +1,250 @@
+//! `ManagerEdit` kind (hg-k4l.13): sets or clears a seat's `manager` or a teamspace's `default_manager`.
+//! `plan manager set <seat|teamspace> <manager-seat>` / `plan manager clear <seat|teamspace>`.
+use super::{apply_pointer_effects, default_manager_effect, graph_relied_on, seat_manager_effect};
+use crate::daemon::registry::CallerInfo;
+use crate::model::change::RequestKind;
+use crate::model::common::Lifecycle;
+use crate::model::manager::{PointerEdit, Pointers, would_create_cycle};
+use crate::model::{SeatId, TeamspaceId};
+use crate::plan::core_kinds::{mm, parse_args, read_seat, read_ts, rev_of};
+use crate::plan::grammar::{self, Scope, positionals};
+use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
+use crate::plan::types::{Plan, PlanEffect, Reserved};
+use crate::store::layout;
+use crate::store::tree::TreeRead;
+use crate::writer::{Applied, MutationCx, MutationError};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::sync::Arc;
+
+const USAGE: &str = "manager set <seat|teamspace> <manager-seat> | manager clear <seat|teamspace>";
+
+pub(super) fn register(reg: &mut KindRegistry) {
+    reg.register(Arc::new(ManagerEdit));
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EditArgs {
+    /// `set` or `clear`.
+    action: String,
+    subject: String,
+    #[serde(default)]
+    manager: Option<String>,
+}
+
+enum Subject {
+    Seat(SeatId),
+    Teamspace(TeamspaceId),
+}
+
+/// A `st_` / `ts_` id as is; a name as a live seat, else a live teamspace; both is a usage error.
+fn resolve_subject(tree: &dyn TreeRead, s: &str) -> Result<Subject, PlanError> {
+    if let Ok(id) = SeatId::parse(s) {
+        return Ok(Subject::Seat(id));
+    }
+    if let Ok(id) = TeamspaceId::parse(s) {
+        return Ok(Subject::Teamspace(id));
+    }
+    let seat = grammar::resolve_seat(tree, s, Scope::Live);
+    let ts = grammar::resolve_teamspace(tree, s, Scope::Live);
+    match (seat, ts) {
+        (Ok(_), Ok(_)) => Err(PlanError::Usage(format!(
+            "{s} names both a seat and a teamspace; use the id"
+        ))),
+        (Ok(id), Err(_)) => Ok(Subject::Seat(id)),
+        (Err(_), Ok(id)) => Ok(Subject::Teamspace(id)),
+        (Err(e @ PlanError::Store(_)), _) | (_, Err(e @ PlanError::Store(_))) => Err(e),
+        (Err(a), Err(b)) => Err([a, b]
+            .into_iter()
+            .find(|e| e.to_string().contains("ambiguous"))
+            .unwrap_or_else(|| PlanError::Invalid(format!("no seat or teamspace named {s:?}")))),
+    }
+}
+
+/// The checked edit: what it writes and what the plan relies on.
+struct Checked {
+    effect: PlanEffect,
+    relied_on: Vec<crate::model::change::ReliedOn>,
+    summary: String,
+}
+
+fn validate(tree: &dyn TreeRead, a: &EditArgs) -> Result<Checked, PlanError> {
+    let set = match a.action.as_str() {
+        "set" => true,
+        "clear" => false,
+        _ => return Err(PlanError::Usage(USAGE.into())),
+    };
+    let subject = resolve_subject(tree, &a.subject)?;
+    // (subject name, subject rev, current pointer, seats whose chains the edit can change)
+    let (name, rev, from, members, object) = match &subject {
+        Subject::Seat(id) => {
+            let f = read_seat(tree, id)?;
+            if f.rec.lifecycle == Lifecycle::Retired {
+                return Err(PlanError::Invalid(format!(
+                    "seat {} is retired; use `seat resurrect`",
+                    f.rec.name
+                )));
+            }
+            (
+                f.rec.name.clone(),
+                f.rec.rev,
+                f.rec.manager.clone(),
+                vec![id.clone()],
+                id.to_any(),
+            )
+        }
+        Subject::Teamspace(id) => {
+            let t = read_ts(tree, id)?.rec;
+            if t.lifecycle == Lifecycle::Retired {
+                return Err(PlanError::Invalid(format!(
+                    "teamspace {} is retired; use `teamspace resurrect`",
+                    t.name
+                )));
+            }
+            let members = layout::all_seats(tree)?
+                .into_iter()
+                .filter(|(_, s)| s.teamspace == *id && s.lifecycle != Lifecycle::Retired)
+                .map(|(_, s)| s.id)
+                .collect();
+            (
+                t.name.clone(),
+                t.rev,
+                t.default_manager.clone(),
+                members,
+                id.to_any(),
+            )
+        }
+    };
+    let mut relied_on = vec![rev_of(object, rev)];
+    let mut manager_name = None;
+    let to = if set {
+        let m_ref = a
+            .manager
+            .as_deref()
+            .ok_or_else(|| PlanError::Usage(USAGE.into()))?;
+        let m_id = grammar::resolve_seat(tree, m_ref, Scope::Live)?;
+        let m = read_seat(tree, &m_id)?.rec;
+        if m.lifecycle == Lifecycle::Retired {
+            return Err(PlanError::Invalid(format!(
+                "manager seat {} is retired; pick a live seat",
+                m.name
+            )));
+        }
+        relied_on.push(rev_of(m.id.clone(), m.rev));
+        manager_name = Some(m.name);
+        Some(m.id)
+    } else {
+        None
+    };
+    if let Subject::Seat(id) = &subject
+        && crate::model::manager::live_node_manager(tree)?.as_ref() == Some(id)
+    {
+        return Err(PlanError::Invalid(format!(
+            "node manager {name} has no manager (it is the root)"
+        )));
+    }
+    if to == from {
+        return Err(PlanError::Invalid(format!(
+            "{name} already has that manager; nothing to change"
+        )));
+    }
+    let (edit, effect) = match &subject {
+        Subject::Seat(id) => (
+            PointerEdit::SeatManager {
+                seat: id.clone(),
+                manager: to.clone(),
+            },
+            seat_manager_effect(id, from.as_ref(), to.as_ref()),
+        ),
+        Subject::Teamspace(id) => (
+            PointerEdit::DefaultManager {
+                teamspace: id.clone(),
+                manager: to.clone(),
+            },
+            default_manager_effect(id, from.as_ref(), to.as_ref()),
+        ),
+    };
+    // A cycle through a retired member passes through the new default manager itself.
+    let mut subjects = members;
+    if matches!(subject, Subject::Teamspace(_)) {
+        subjects.extend(to.clone());
+    }
+    if let Some(cycle) = would_create_cycle(tree, &[edit], &subjects)? {
+        let p = Pointers::load(tree)?;
+        let names: Vec<String> = cycle
+            .iter()
+            .map(|id| p.name(id).map_or_else(|| id.to_string(), str::to_owned))
+            .collect();
+        return Err(PlanError::Invalid(format!(
+            "this change would make a manager cycle: {}",
+            names.join(" -> ")
+        )));
+    }
+    relied_on.push(graph_relied_on(tree)?);
+    let summary = match manager_name {
+        Some(m) => format!("set manager of {name} to {m}"),
+        None => format!("clear manager of {name}"),
+    };
+    Ok(Checked {
+        effect,
+        relied_on,
+        summary,
+    })
+}
+
+struct ManagerEdit;
+impl OrgKind for ManagerEdit {
+    fn kind(&self) -> RequestKind {
+        RequestKind::ManagerEdit
+    }
+    /// Registered like `undo`: the noun alone, so `resolve` passes `set|clear` and its words to `parse`.
+    fn verbs(&self) -> &'static [(&'static str, &'static str)] {
+        &[("manager", "")]
+    }
+    fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
+        let pos = positionals(words);
+        let usage = || PlanError::Usage(USAGE.into());
+        let args = match pos.as_slice() {
+            [a, s, m] if a == "set" => EditArgs {
+                action: "set".into(),
+                subject: s.clone(),
+                manager: Some(m.clone()),
+            },
+            [a, s] if a == "clear" => EditArgs {
+                action: "clear".into(),
+                subject: s.clone(),
+                manager: None,
+            },
+            _ => return Err(usage()),
+        };
+        Ok(json!({ "action": args.action, "subject": args.subject, "manager": args.manager }))
+    }
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
+        let c = validate(cx.tree, &parse_args(args)?)?;
+        Ok(PlanBody {
+            effects: vec![c.effect],
+            relied_on: c.relied_on,
+            warnings: vec![],
+            repair_required: None,
+            summary: c.summary,
+        })
+    }
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        plan: &Plan,
+    ) -> Result<Applied, MutationError> {
+        let c = validate(&cx.tree, &parse_args(args).map_err(mm)?).map_err(mm)?;
+        apply_pointer_effects(&mut cx.tree, &plan.effects)?;
+        Ok(Applied {
+            summary: c.summary,
+            action: None,
+        })
+    }
+}

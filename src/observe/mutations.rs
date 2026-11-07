@@ -1,7 +1,11 @@
 //! Observed mutation kinds (spec §4.3, §2.2): facts the observer saw. They carry no `relied_on`
 //! preconditions; if one is rejected the next diff re-derives it. Keys: `observed.cascade`,
 //! `observed.rename`, `observed.occupancy`, `observed.move`, `observed.availability`.
-use super::classify::CascadeRule;
+//!
+//! `CascadeMutation` is the only node-manager decision point (spec §4.9): classification reports closed
+//! containers and per-clone survival, and this mutation decides at apply time, against the live node manager,
+//! which of the listed clones end and whether their seat is kept or retired.
+use super::classify::{CascadeRule, EndedSession};
 use super::sessions::SessionCapture;
 use crate::model::action::ActionKind;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
@@ -17,13 +21,15 @@ use crate::model::{ActionId, AnyId, CloneId, IdKind, NsId, SeatId, Timestamp};
 use crate::plan::core_kinds::{
     Acc, absent, basename, do_retire_seat, mm, read_seat, read_ts, seat_slug_for, write_action,
 };
-use crate::ports::store::RepoPath;
+use crate::ports::store::{RepoPath, StoreError};
+use crate::store::record::read_toml;
 use crate::store::slug::unique_slug;
-use crate::store::{Record, layout};
+use crate::store::{Record, TreeRead, layout};
 use crate::writer::{Applied, Mutation, MutationCx, MutationError, MutationRegistry, Reject};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 pub const CASCADE_KEY: &str = "observed.cascade";
@@ -59,7 +65,47 @@ fn observed(args: serde_json::Value) -> ChangeRequest {
 }
 
 pub fn cascade_request(rule: CascadeRule, retire: &[AnyId], at: Timestamp) -> ChangeRequest {
-    observed(json!({ "sub": "cascade", "rule": rule.as_str(), "retire": retire, "at": at }))
+    cascade_request_with(rule, retire, &[], at)
+}
+
+/// A cascade request carrying the listed clones whose pane survived the closure (`survived` is a subset of
+/// the clones in `retire`).
+pub fn cascade_request_with(
+    rule: CascadeRule,
+    retire: &[AnyId],
+    survived: &[CloneId],
+    at: Timestamp,
+) -> ChangeRequest {
+    observed(
+        json!({ "sub": "cascade", "rule": rule.as_str(), "retire": retire, "survived": survived, "at": at }),
+    )
+}
+
+/// The planned session ends that the committed `tree` shows as ended: the cascade decides at apply time which
+/// listed clones end, so the session-ended hook fires only for these.
+pub fn applied_ends(
+    tree: &dyn TreeRead,
+    planned: &[EndedSession],
+) -> Result<Vec<EndedSession>, StoreError> {
+    let mut out = Vec::new();
+    for e in planned {
+        // `locate` also finds the archived clones of seats this very cascade retired.
+        let Some(loc) = layout::locate(tree, &e.clone.to_any())? else {
+            continue;
+        };
+        let Some(rec) = read_toml::<CloneRecord>(tree, &loc.record_path)? else {
+            continue;
+        };
+        if rec
+            .sessions
+            .iter()
+            .find(|s| s.id == e.ns)
+            .is_some_and(|s| s.ended.is_some())
+        {
+            out.push(e.clone());
+        }
+    }
+    Ok(out)
 }
 
 pub fn rename_request(
@@ -92,9 +138,21 @@ pub fn move_request(
     binding: Option<&Binding>,
     seat_moved_out: Option<&SeatId>,
 ) -> ChangeRequest {
-    observed(
-        json!({ "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out }),
-    )
+    move_request_following(clone, binding, seat_moved_out, None)
+}
+
+/// `move_request` with the tab the moved-out seat's surviving panes now share (`seat_follow`), when no other
+/// seat claims it: the node manager adopts it as its tab at apply time (spec §4.9), every other seat is moved out.
+pub fn move_request_following(
+    clone: Option<&CloneId>,
+    binding: Option<&Binding>,
+    seat_moved_out: Option<&SeatId>,
+    seat_follow: Option<&Binding>,
+) -> ChangeRequest {
+    observed(json!({
+        "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out,
+        "seat_follow": seat_follow,
+    }))
 }
 
 /// `bookkeeping.seat_fact`: SeatObservation's committed read of a clone's threads seat.
@@ -166,13 +224,37 @@ fn end_occupant(rec: &mut CloneRecord, reason: SessionEndReason, at: Timestamp) 
 struct CascadeArgs {
     rule: String,
     retire: Vec<AnyId>,
+    /// Listed clones whose pane left the closed container alive.
+    #[serde(default)]
+    survived: Vec<CloneId>,
     #[serde(default)]
     at: Option<Timestamp>,
 }
 
 struct CascadeMutation;
 
+/// The live node manager's last live pane closed after an observed move: it no longer lives elsewhere, so it is
+/// no longer moved out and the planner reopens it in its own tab (spec §4.9, B11). The move itself was not reverted.
+/// Only the panes the classification listed and did not report as survived were absented before this runs, so a
+/// pane that survived elsewhere still counts as bound and keeps the seat moved out.
+fn node_manager_closed(cx: &mut MutationCx<'_>, seat: &SeatId) -> Result<(), MutationError> {
+    let f = read_seat(&cx.tree, seat).map_err(mm)?;
+    let still_bound = f
+        .clones
+        .iter()
+        .any(|(_, c)| c.lifecycle != CloneLifecycle::Retired && c.runtime.bound.is_some());
+    if !f.rec.moved_out || still_bound {
+        return Ok(());
+    }
+    let mut rec = f.rec.clone();
+    rec.moved_out = false;
+    rec.runtime = absent();
+    cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
+    Ok(())
+}
+
 impl CascadeMutation {
+    #[allow(clippy::too_many_arguments)]
     fn retire_seat(
         cx: &mut MutationCx<'_>,
         seat: &SeatId,
@@ -180,16 +262,22 @@ impl CascadeMutation {
         mech: RetireMechanism,
         at: Timestamp,
         exclusions: bool,
+        nm: Option<&SeatId>,
+        survived: &BTreeSet<CloneId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
+    ) -> Result<bool, MutationError> {
         let f = read_seat(&cx.tree, seat).map_err(mm)?;
         if f.rec.lifecycle == Lifecycle::Retired {
             acc.already.push(seat.to_any());
-            return Ok(());
+            return Ok(false);
         }
-        // The panes are gone: occupancy ends and the runtime is absent, before the shared retire path runs.
+        // The panes are gone: occupancy ends and the runtime is absent, before the shared retire path runs. For
+        // the node manager only the clones whose pane did not survive: a survivor stays bound. Every other seat
+        // ends and retires all its clones.
         for (loc, c) in &f.clones {
-            if c.lifecycle == CloneLifecycle::Retired {
+            if c.lifecycle == CloneLifecycle::Retired
+                || (nm == Some(seat) && survived.contains(&c.id))
+            {
                 continue;
             }
             let mut c = c.clone();
@@ -200,31 +288,54 @@ impl CascadeMutation {
         let mut rec = f.rec.clone();
         rec.runtime = absent();
         cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-        do_retire_seat(cx, seat, act, mech, acc, exclusions)
+        // The node manager is never retired by an observed closure: the live answer at apply time decides, so a
+        // closure is recorded for it (runtime absent, sessions ended; the planner reopens it) and nothing more.
+        if nm == Some(seat) {
+            node_manager_closed(cx, seat)?;
+            return Ok(true);
+        }
+        do_retire_seat(cx, seat, act, mech, acc, exclusions)?;
+        Ok(false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn retire_teamspace(
         cx: &mut MutationCx<'_>,
         id: &crate::model::TeamspaceId,
         act: &ActionId,
         mech: RetireMechanism,
         at: Timestamp,
+        nm: Option<&SeatId>,
+        survived: &BTreeSet<CloneId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
+    ) -> Result<usize, MutationError> {
         let ts = read_ts(&cx.tree, id).map_err(mm)?;
         if ts.rec.lifecycle == Lifecycle::Retired {
             acc.already.push(id.to_any());
-            return Ok(());
+            return Ok(0);
         }
-        for (_, seat) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
-            Self::retire_seat(cx, &seat.id, act, mech, at, false, acc)?;
+        let seats = layout::list_seats(&cx.tree, &ts.loc.folder)?;
+        let mut kept = 0;
+        for (_, seat) in &seats {
+            kept += usize::from(Self::retire_seat(
+                cx, &seat.id, act, mech, at, false, nm, survived, acc,
+            )?);
+        }
+        // Re-read: retiring the seats may have reparented this teamspace's own default_manager; both the kept
+        // (node manager's) teamspace and a retired one are written from this read.
+        let mut rec = read_ts(&cx.tree, id).map_err(mm)?.rec;
+        rec.runtime = absent();
+        // The node manager's teamspace stays Active with its runtime absent (it reopens); its other seats are
+        // retired seat by seat.
+        if nm.is_some_and(|n| seats.iter().any(|(_, s)| &s.id == n)) {
+            cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
+            return Ok(kept + 1);
         }
         let before = if ts.rec.lifecycle == Lifecycle::Active {
             "active"
         } else {
             "dormant"
         };
-        let mut rec = ts.rec.clone();
         rec.lifecycle = Lifecycle::Retired;
         rec.retired = Some(Retirement {
             op: cx.op.clone(),
@@ -232,7 +343,6 @@ impl CascadeMutation {
             at,
             mechanism: mech,
         });
-        rec.runtime = absent();
         cx.tree.put_record(ts.loc.record_path.clone(), &mut rec)?;
         acc.retired.insert(0, id.to_any());
         acc.changed(id.to_any(), before, "retired");
@@ -240,7 +350,7 @@ impl CascadeMutation {
             &ts.loc.folder,
             &layout::archived_teamspace_dir(basename(&ts.loc.folder), id),
         )?;
-        Ok(())
+        Ok(kept)
     }
 
     fn retire_clone(
@@ -249,8 +359,9 @@ impl CascadeMutation {
         act: &ActionId,
         mech: RetireMechanism,
         at: Timestamp,
+        nm: Option<&SeatId>,
         acc: &mut Acc,
-    ) -> Result<(), MutationError> {
+    ) -> Result<bool, MutationError> {
         let any = id.to_any();
         let loc = cx.tree.locate(&any)?.ok_or_else(|| gone(&any))?;
         let mut rec: CloneRecord = cx
@@ -259,10 +370,17 @@ impl CascadeMutation {
             .ok_or_else(|| gone(&any))?;
         if rec.lifecycle == CloneLifecycle::Retired {
             acc.already.push(any);
-            return Ok(());
+            return Ok(false);
         }
         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
         rec.runtime = absent();
+        // A node manager's clone is kept: the closure is recorded, nothing is retired.
+        if nm == Some(&rec.seat) {
+            let seat = rec.seat.clone();
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+            node_manager_closed(cx, &seat)?;
+            return Ok(true);
+        }
         rec.lifecycle = CloneLifecycle::Retired;
         crate::threads::assignment::clear_restore_on_retire(&mut rec);
         rec.retired = Some(Retirement {
@@ -274,7 +392,7 @@ impl CascadeMutation {
         cx.tree.put_record(loc.record_path, &mut rec)?;
         acc.retired.push(any.clone());
         acc.changed(any, "active", "retired");
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -293,7 +411,10 @@ impl Mutation for CascadeMutation {
             }
         };
         let act = ActionId::new();
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            lenient_reparent: true,
+            ..Acc::default()
+        };
         let mut teamspaces = Vec::new();
         let mut seats = Vec::new();
         let mut clones = Vec::new();
@@ -307,21 +428,54 @@ impl Mutation for CascadeMutation {
                 other => return Err(MutationError::Bug(format!("cannot retire a {other:?}"))),
             }
         }
-        let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
+        // Listed clones whose pane survived the closure: the node manager keeps them bound, no other seat does.
+        let survived: BTreeSet<CloneId> = a.survived.iter().cloned().collect();
+        // Classification may predate a `node-manager set`: the live answer at apply time wins.
+        let nm = crate::model::manager::live_node_manager(&cx.tree)?;
+        let nm = nm.as_ref();
+        // Every seat this cascade can retire: reparent skips them all (spec §4.11).
         for ts in &teamspaces {
-            Self::retire_teamspace(cx, ts, &act, mech, at, &mut acc)?;
+            let ts = read_ts(&cx.tree, ts).map_err(mm)?;
+            for (_, s) in layout::list_seats(&cx.tree, &ts.loc.folder)? {
+                if s.lifecycle != Lifecycle::Retired {
+                    acc.retiring.insert(s.id);
+                }
+            }
+        }
+        acc.retiring.extend(seats.iter().cloned());
+        if let Some(nm) = nm {
+            acc.retiring.remove(nm);
+        }
+        let handled = |acc: &Acc, id: &AnyId| acc.retired.contains(id);
+        let mut kept = 0;
+        for ts in &teamspaces {
+            kept += Self::retire_teamspace(cx, ts, &act, mech, at, nm, &survived, &mut acc)?;
         }
         for seat in &seats {
             if !handled(&acc, &seat.to_any()) {
-                Self::retire_seat(cx, seat, &act, mech, at, exclusions, &mut acc)?;
+                kept += usize::from(Self::retire_seat(
+                    cx, seat, &act, mech, at, exclusions, nm, &survived, &mut acc,
+                )?);
             }
         }
         for clone in &clones {
-            if !handled(&acc, &clone.to_any()) {
-                Self::retire_clone(cx, clone, &act, mech, at, &mut acc)?;
+            // A survived clone is only listed for its seat's sake: the seat decides (above), and the pane rule
+            // below must not end the pane that is still alive.
+            if !survived.contains(clone) && !handled(&acc, &clone.to_any()) {
+                kept += usize::from(Self::retire_clone(cx, clone, &act, mech, at, nm, &mut acc)?);
             }
         }
         let (n, already) = (acc.retired.len(), acc.already.len());
+        if n == 0 && kept > 0 {
+            // Only the node manager was affected: no retirement happened, so there is no action to record.
+            return Ok(Applied {
+                summary: format!(
+                    "observed {} closure of the node manager: kept, runtime absent",
+                    a.rule
+                ),
+                action: None,
+            });
+        }
         let mut comp = toml::Table::new();
         comp.insert("rule".into(), toml::Value::String(a.rule.clone()));
         write_action(cx, &act, ActionKind::ClosureCascade, acc, comp)?;
@@ -558,6 +712,8 @@ struct MoveArgs {
     binding: Option<Binding>,
     #[serde(default)]
     seat_moved_out: Option<SeatId>,
+    #[serde(default)]
+    seat_follow: Option<Binding>,
 }
 
 struct MoveMutation;
@@ -566,7 +722,21 @@ impl Mutation for MoveMutation {
     fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
         let a: MoveArgs = parse(cx)?;
         let mut parts = Vec::new();
-        if let Some(c) = &a.clone {
+        // A survived clone whose cascade retired it in the same step (any seat but the node manager) stays as the
+        // cascade left it.
+        let retired = match &a.clone {
+            Some(c) => {
+                let loc = cx
+                    .tree
+                    .locate(&c.to_any())?
+                    .ok_or_else(|| gone(&c.to_any()))?;
+                cx.tree
+                    .read_record::<CloneRecord>(&loc.record_path)?
+                    .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+            }
+            None => false,
+        };
+        if let Some(c) = a.clone.as_ref().filter(|_| !retired) {
             edit::<CloneRecord>(cx, &c.to_any(), |rec, cx| {
                 rec.reload_required = true;
                 match &a.binding {
@@ -585,14 +755,36 @@ impl Mutation for MoveMutation {
             parts.push(format!("clone {c} moved"));
         }
         if let Some(s) = &a.seat_moved_out {
+            // Spec §4.9 B11: the node manager follows an observed move. When its surviving panes share one tab no
+            // other seat claims, that tab becomes its tab; it is not moved out, so nothing reopens at the old home.
+            // The live answer decides, as for closures.
+            let follow = a.seat_follow.as_ref().filter(|_| {
+                crate::model::manager::live_node_manager(&cx.tree)
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    == Some(s)
+            });
             edit::<SeatRecord>(cx, &s.to_any(), |rec, cx| {
-                rec.moved_out = true;
-                rec.runtime.availability = Availability::Absent;
-                rec.runtime.bound = None;
+                match follow {
+                    Some(b) => {
+                        rec.moved_out = false;
+                        rec.runtime.availability = Availability::Present;
+                        rec.runtime.bound = Some(b.clone());
+                    }
+                    None => {
+                        rec.moved_out = true;
+                        rec.runtime.availability = Availability::Absent;
+                        rec.runtime.bound = None;
+                    }
+                }
                 rec.runtime.observed_at = Some(cx.now);
                 Ok(())
             })?;
-            parts.push(format!("seat {s} moved out"));
+            parts.push(match follow {
+                Some(_) => format!("seat {s} follows its moved pane"),
+                None => format!("seat {s} moved out"),
+            });
         }
         Ok(Applied {
             summary: parts.join(", "),

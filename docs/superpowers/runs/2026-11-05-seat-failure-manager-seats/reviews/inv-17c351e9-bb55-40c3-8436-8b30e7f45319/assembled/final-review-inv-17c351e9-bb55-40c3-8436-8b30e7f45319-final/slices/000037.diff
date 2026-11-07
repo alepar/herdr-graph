@@ -1,0 +1,55 @@
+diff --git a/src/cli/who.rs b/src/cli/who.rs
+index 8b2e519..cc33fcb 100644
+--- a/src/cli/who.rs
++++ b/src/cli/who.rs
+@@ -1,11 +1,10 @@
+ //! `who` — owned by hg-zmi.11.
+ //!
+ //! Resolves a Herdr pane id (or a threads seat, clone or seat id) to the graph identity it carries. A read:
+-//! it asks the daemon and, when none is running, answers from the committed graph on disk.
+-use crate::config::{Env, plugin_config_dir_via_herdr};
+-use crate::daemon::client::{CallMode, ClientError, EXIT_NO_INSTANCE, call_daemon};
+-use crate::ports::store::Store;
+-use crate::threads::{WhoReply, who};
++//! it asks the daemon; with none running it exits 5 through `cli::daemon_error`.
++use crate::cli::daemon_error;
++use crate::daemon::client::{CallMode, call_daemon};
++use crate::threads::WhoReply;
+ use clap::Subcommand;
+ use std::process::ExitCode;
+ 
+@@ -21,20 +20,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+     }
+ }
+ 
+-/// Daemon down: read the binding index straight from the committed graph.
+-fn direct(target: &str) -> anyhow::Result<WhoReply> {
+-    let env = Env::from_process();
+-    let (root, _) = crate::config::locate_instance(&env, &plugin_config_dir_via_herdr)
+-        .ok_or(ClientError::NoInstance)?;
+-    let store = crate::store::GitStore::open(&root)?;
+-    let head = store.head()?;
+-    let view = crate::store::tree::CommitView {
+-        store: &store,
+-        at: head,
+-    };
+-    Ok(who(&view, target)?)
+-}
+-
+ fn run_who(target: &str) -> anyhow::Result<ExitCode> {
+     let reply: WhoReply = match call_daemon(
+         "who",
+@@ -42,12 +27,7 @@ fn run_who(target: &str) -> anyhow::Result<ExitCode> {
+         CallMode::NoEnsure,
+     ) {
+         Ok(v) => serde_json::from_value(v)?,
+-        Err(ClientError::NoInstance) => {
+-            eprintln!("{}", ClientError::NoInstance);
+-            return Ok(ExitCode::from(EXIT_NO_INSTANCE));
+-        }
+-        Err(ClientError::Unavailable(_)) => direct(target)?,
+-        Err(e) => return Err(e.into()),
++        Err(e) => return Ok(daemon_error::report(e)),
+     };
+     println!("{}", reply.render());
+     Ok(ExitCode::SUCCESS)

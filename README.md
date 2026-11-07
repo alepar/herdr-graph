@@ -45,6 +45,16 @@ herdr-graph apply <pl> --confirm <hash> --confirmed-by user-relay
 
 An agent proposes a plan and relays the hash to the user; the user confirms. There is no bypass, and a non-TTY invocation never applies.
 
+## Manager seats
+
+```sh
+herdr-graph plan manager set <seat|teamspace> <manager-seat>
+herdr-graph plan manager clear <seat|teamspace>
+herdr-graph plan node-manager set <seat>
+```
+
+Every seat has a manager it escalates lifecycle issues to: its own `manager`, else its teamspace's default, else the node manager. The node manager is the first seat created on a graph; it is always kept open, the role moves only with `plan node-manager set`, and when its pane is moved in Herdr into a tab no other seat uses, the seat follows it there (with a warning). While no node manager is assigned, every graph command prints a warning on stderr pointing at `plan node-manager set`.
+
 ## Reusable templates and state paths
 
 Team templates reference reusable seat definitions through member `seat_template` IDs and `responsibility`. `kind = "team"` is the legacy default; `kind = "seat"` supplies reusable instructions/runtime defaults. Independent applications create independent seats; explicit mappings reuse an existing seat. Runtime precedence is seat override → team member → seat template → team template → graph defaults → built-ins. `/seat` exposes live instruction references, application specialization, seat context and scoped rules.
@@ -77,8 +87,10 @@ herdr-graph undo
 | ---- | ------- |
 | 0 | success |
 | 1 | error, rejection or failure |
-| 2 | no instance configured (also usage errors of `request complete`) |
+| 2 | no instance configured, or not inside a Herdr pane (also usage errors of `request complete`) |
 | 3 | still running: the change was admitted and finishes in the background (`herdr-graph op <id>`) |
+| 5 | graph daemon unavailable (not running, still starting, no reply); retry later |
+| 6 | graph integrity error; not transient, report it to the node manager |
 
 The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 s), so a slow writer yields exit code 3 and the op id instead of a transport timeout.
 
@@ -145,6 +157,16 @@ The Cargo command requires its locked registry dependencies to be cached. A sour
 | 3 private Herdr server | `cargo test --features private-herdr -- --test-threads=1` |
 | 4 real agents | `HG_REAL_AGENTS=1 cargo test --features private-herdr --test config_smoke --test real_agent_smoke -- --test-threads=1 --nocapture` |
 | 5 real threads | `HG_REAL_THREADS=1 cargo test --features private-herdr --test threads_real -- --test-threads=1 --nocapture` |
+
+To build and test on a host without a C toolchain (Fedora Atomic), use this project's toolbox, `hg-build`. The Rust toolchain comes from `~/.rustup` on the host:
+
+```sh
+toolbox create -c hg-build --distro fedora --release 44
+podman exec -u root hg-build dnf install -y gcc make pkgconf-pkg-config zlib-ng-compat-devel git
+toolbox run -c hg-build cargo test
+```
+
+Tier 5 against the installed threads daemon instead of the pinned build: add `HG_TEST_THREADS_BINARY=~/.local/share/herdr-threads/bin/herdr-threads`.
 
 All tiers use private servers and isolated state. The release-build packaging test is ignored by default: `cargo test --test packaging -- --ignored build_script_places_binary`.
 

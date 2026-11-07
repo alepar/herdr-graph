@@ -1,0 +1,22 @@
+diff --git a/src/cli/status.rs b/src/cli/status.rs
+index 2026628..d062c5e 100644
+--- a/src/cli/status.rs
++++ b/src/cli/status.rs
+@@ -1,4 +1,5 @@
+ //! `status`, `doctor` — owned by hg-zmi.4.
++use crate::cli::daemon_error;
+ use crate::config::{Env, InstancePaths, plugin_config_dir_via_herdr};
+ use crate::daemon::client::{CallMode, ClientError, EXIT_NO_INSTANCE, call_daemon};
+ use crate::ports::store::Store;
+@@ -40,10 +41,7 @@ fn writer_resume() -> anyhow::Result<ExitCode> {
+             println!("{}", resume_message(&v));
+             Ok(ExitCode::SUCCESS)
+         }
+-        Err(e) => {
+-            eprintln!("writer resume failed: {e}");
+-            Ok(ExitCode::from(1))
+-        }
++        Err(e) => Ok(daemon_error::report(e)),
+     }
+ }
+ 

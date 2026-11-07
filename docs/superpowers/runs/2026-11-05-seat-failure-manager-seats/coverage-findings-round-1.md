@@ -1,0 +1,19 @@
+GAP · B11 · node manager placement cannot be changed by any plan
+GAP · R18 · undo of retirement restores reparented pointers
+GAP · B7 · observed cascades rewrite pointers without a plan
+GAP · B10 · every seat-creating/resurrecting path assigns the first node manager
+GAP · B10-reading · "seated" vs "created"
+GAP · B2 · generic exit-5 retry guidance; all daemon-requiring commands routed
+UNOWNED-SEAM · manager-pointer effect kinds · effect constructors shared by .6/.7/.13/.15
+UNOWNED-SEAM · integrity message format · .12/.11/.2 compose one string
+UNOWNED-SEAM · who reply path · .3 vs .16 ordering
+UNOWNED-SEAM · node-manager set spelling · .6/.8/.10 messages
+GAP · hg-k4l.10 · read path unstated; dangling pointer warning
+GAP · R2 · outside Herdr reported as daemon unavailable
+GAP · documentation · CURRENT-DESIGN and README
+GAP · R20 · managers learn reports and duty
+GAP · R15 · text output of seat shows managers
+GAP · R9 · undo-driven retirement reparents
+GAP · R3 · dangling node_manager_seat in suffix
+GAP · R11 · workspace closure reopen
+GAP · show · integrity exit code in daemon-free show

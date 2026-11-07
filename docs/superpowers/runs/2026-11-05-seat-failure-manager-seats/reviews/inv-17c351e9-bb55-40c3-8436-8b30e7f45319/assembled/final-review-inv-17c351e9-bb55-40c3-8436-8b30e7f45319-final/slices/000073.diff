@@ -1,0 +1,12 @@
+diff --git a/src/templates/structure.rs b/src/templates/structure.rs
+index bb497d7..5195a5f 100644
+--- a/src/templates/structure.rs
++++ b/src/templates/structure.rs
+@@ -92,6 +92,7 @@ pub fn member_seat_record(
+             template: tpl.clone(),
+             member: member.id.clone(),
+         }),
++        manager: None,
+         applications: vec![app.clone()],
+         overrides: Default::default(),
+         participation: Default::default(),

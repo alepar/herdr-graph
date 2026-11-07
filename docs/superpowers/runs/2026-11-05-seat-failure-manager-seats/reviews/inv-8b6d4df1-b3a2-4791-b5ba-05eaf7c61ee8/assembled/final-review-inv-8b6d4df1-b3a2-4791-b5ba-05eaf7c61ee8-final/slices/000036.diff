@@ -1,0 +1,58 @@
+diff --git a/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-7.md b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-7.md
+new file mode 100644
+index 0000000..cb55a4a
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/reviews/inv-17c351e9-bb55-40c3-8436-8b30e7f45319/final-review-inv-17c351e9-bb55-40c3-8436-8b30e7f45319.cluster-7.md
+@@ -0,0 +1,52 @@
++# Final review, cluster 7 (model), epic hg-k4l
++
++Source: base 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784, head efc21b65eb225578d3a623b29f23b3688849ea8b (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD efc21b65, working tree clean, before and during the review; nothing in the caller checkout was modified. Review source binding (`bind-review-source`) exited 0.
++
++Files: src/model/change.rs, effective.rs, graph.rs, manager.rs (new), mod.rs, seat.rs, teamspace.rs, tests.rs (slices 000042 to 000049). Read at head with `git show`. No tests were run; evidence for test results is the task reports in the digest (build requires the ht-build toolbox with a libz shim).
++
++## Spec conformance
++
++- §4.6 data model: `SeatRecord.manager`, `TeamspaceRecord.default_manager` and `GraphRecord.node_manager_seat` are `Option<SeatId>` with `#[serde(default, skip_serializing_if = "Option::is_none")]`; no schema bump. `manager_fields_default_and_skip` and the round-trip tests prove absent-field parsing and omission on write (Global Constraints satisfied).
++- §4.6 precedence: `Pointers::effective_manager` implements live node manager -> None; explicit `manager`; teamspace `default_manager` when not the seat itself; else `live_node_manager()`. An explicit manager or default naming a seat absent from the tree is `Integrity` via `unresolved`; a missing or retired `node_manager_seat` is unassigned (None), not an error, as specified.
++- Retired transparency: `ancestors` walks through retired seats and `manager_chain` filters them out, so a stale pointer to a retired seat never yields integrity. `Pointers::load` uses `layout::all_seats`, which iterates both live and `archive/teamspaces` and both `seats` and `archive/seats`, so archived seats are "existing" and transparent rather than integrity. Verified in src/store/layout.rs at head.
++- Cycle detection: visited set in `ancestors`; error is `Integrity` with a reason naming the walk. `cycle_from` returns the loop slice (including a pre-existing loop downstream of a subject) for the would-create-cycle check.
++- `nearest_surviving_manager` (§4.11): first live ancestor not in the retiring set; with the node manager unretirable this terminates at the node manager when assigned.
++- §4.2 / B4: `referenced_seat_template` now raises `Integrity` (holder = member id, field `seat_template`) for missing, wrong-kind and team-structure templates, replacing the `Corrupt` arms. Plan-time callers (template create/copy dependencies) still surface `PlanError::Store` as `internal` through src/plan/commands.rs:39, so a user-supplied bad reference in a plan is not mislabelled as a committed-graph integrity failure; bootstrap tests 3642-3673 cover all three variants at the seat.resolve seam.
++- §4.7 registry: `RequestKind::ManagerEdit` and `NodeManagerSet` added.
++
++## Requirement baseline trace (cluster share)
++
++- B5 (optional manager pointer, reference to a seat): delivered here as the record fields and resolver; the CLI and plan producers (`manager set|clear`) are the plan/cli clusters' and the seam reviewer's to trace.
++- B8 (node manager has no parent): `effective_manager` returns None for the live node manager even when its record carries an explicit manager or its teamspace has a default (test `node_manager_has_no_manager`). The "cannot be retired" half lives in plan::managers::retire and observe; seam reviewer.
++- B9 (who/show display the chain): `manager_chain` supplies the data; rendering in threads/bootstrap/cli is the seam reviewer's.
++- B6 (reparent to retired seat's parent): `nearest_surviving_manager` supplies the target; the rewrite in `do_retire_seat` is the plan/observe clusters'.
++- B4: model-side mapping delivered as above.
++- Key abstraction "callers never read the pointer fields to decide who someone's manager is": a grep at head finds direct field reads only in plan::managers (record rewrites, which the spec assigns there) and first_seat's literal "node_manager_seat is unset" qualification test; none re-derive the precedence rule.
++
++## Findings
++
++- none
++
++## Concerns
++
++- src/model/manager.rs `ancestors`: the cycle error uses the walk's starting seat as `holder` and always `field = "manager"`, even when the loop is entered further up or closes through a teamspace default; the message's walk text is correct, so this only affects the structured holder/field.
++- src/model/manager.rs `nearest_surviving_manager`: computes the full ancestor list before searching, so an unresolvable pointer or cycle above the nearest live survivor turns a resolvable reparent target into an integrity error (observed cascades then fall back to the node manager instead of the true nearest survivor). Only reachable after out-of-band edits.
++- src/model/manager.rs `cycle_from`: `while let Ok(Some(n))` ends a walk silently on an integrity error (already recorded as a deferred minor for hg-k4l.4); safe only because ManagerEdit validates targets and other callers report missing pointers via `manager_chain`.
++- A seat whose `teamspace` id has no teamspace record is resolved as if the teamspace had no default (silently falls to the node manager) rather than as integrity; only reachable through out-of-band corruption since seats are enumerated from teamspace folders.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- src/model/manager.rs: no unit test for `cycle_from` returning a loop that does not contain the subject (split_off at a non-zero index), nor for `effective_manager` on an unknown seat id (holder/field `seat`).
++- src/model/manager.rs: `PointerEdit::Live`, `DefaultManager` and `NodeManager` applications are exercised only through plan::managers::cycle_guard tests, not in the model unit tests.
++- src/model/manager.rs: `Pointers::load` is unit-tested only on an empty instance; loading real records with pointers (archived seats and archived teamspaces included) is covered only indirectly by plan and bootstrap tests.
++- src/model/manager.rs: no test for a retired seat used as a teamspace `default_manager` (transparency through the default edge) or for `nearest_surviving_manager` when every ancestor is retiring or none is assigned (returns None).
++
++## Deferred OK
++- Cycle integrity error reports the starting seat as holder and `manager` as field regardless of which edge closes the loop; message text is correct.
++- `nearest_surviving_manager` errors on corruption above the nearest live survivor instead of returning that survivor; out-of-band only, observed path falls back to the node manager.
++- Seat with a dangling teamspace id silently skips the default rather than raising integrity; out-of-band only.

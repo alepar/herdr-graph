@@ -1,0 +1,33 @@
+diff --git a/README.md b/README.md
+index bdb95b8..41e29dc 100644
+--- a/README.md
++++ b/README.md
+@@ -45,6 +45,16 @@ herdr-graph apply <pl> --confirm <hash> --confirmed-by user-relay
+ 
+ An agent proposes a plan and relays the hash to the user; the user confirms. There is no bypass, and a non-TTY invocation never applies.
+ 
++## Manager seats
++
++```sh
++herdr-graph plan manager set <seat|teamspace> <manager-seat>
++herdr-graph plan manager clear <seat|teamspace>
++herdr-graph plan node-manager set <seat>
++```
++
++Every seat has a manager it escalates lifecycle issues to: its own `manager`, else its teamspace's default, else the node manager. The node manager is the first seat created on a graph; it is always kept open and is moved only with `plan node-manager set`. While no node manager is assigned, every graph command prints a warning on stderr pointing at `plan node-manager set`.
++
+ ## Reusable templates and state paths
+ 
+ Team templates reference reusable seat definitions through member `seat_template` IDs and `responsibility`. `kind = "team"` is the legacy default; `kind = "seat"` supplies reusable instructions/runtime defaults. Independent applications create independent seats; explicit mappings reuse an existing seat. Runtime precedence is seat override → team member → seat template → team template → graph defaults → built-ins. `/seat` exposes live instruction references, application specialization, seat context and scoped rules.
+@@ -77,8 +87,10 @@ herdr-graph undo
+ | ---- | ------- |
+ | 0 | success |
+ | 1 | error, rejection or failure |
+-| 2 | no instance configured (also usage errors of `request complete`) |
++| 2 | no instance configured, or not inside a Herdr pane (also usage errors of `request complete`) |
+ | 3 | still running: the change was admitted and finishes in the background (`herdr-graph op <id>`) |
++| 5 | graph daemon unavailable (not running, still starting, no reply); retry later |
++| 6 | graph integrity error; not transient, report it to the node manager |
+ 
+ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27 s), so a slow writer yields exit code 3 and the op id instead of a transport timeout.
+ 

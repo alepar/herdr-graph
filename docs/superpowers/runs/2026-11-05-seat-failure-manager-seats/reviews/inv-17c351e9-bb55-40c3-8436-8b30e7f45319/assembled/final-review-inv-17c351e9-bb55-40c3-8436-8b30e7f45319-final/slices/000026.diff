@@ -1,0 +1,317 @@
+diff --git a/src/cli/daemon_error.rs b/src/cli/daemon_error.rs
+new file mode 100644
+index 0000000..d82152d
+--- /dev/null
++++ b/src/cli/daemon_error.rs
+@@ -0,0 +1,311 @@
++//! `daemon_error` — the one place a failed daemon call becomes stderr text and an exit code (spec §4.4).
++//!
++//! Owns the condition table over every `ClientError` and `IpcErrorCode`: exit 2 (no instance, or not inside a
++//! Herdr pane), 5 (graph daemon unavailable, retry later), 6 (graph integrity error, not transient) and 1 for
++//! the other daemon replies; it also renders a local `StoreError::Integrity` to the same exit-6 text for
++//! daemon-free readers. It never reads the store and never falls back to direct reads: commands must not match
++//! `ClientError::Unavailable` themselves. A new daemon error outcome is added here.
++//!
++//! Exempt by design: `status` (its daemon-free fallback, spec §4.13), `doctor` (the operator's diagnostic,
++//! like `status`) and `session-report` (a hook path that must never fail; on any error it spools the report
++//! for the daemon to ingest instead of reporting to an agent).
++use crate::config::Env;
++use crate::daemon::client::{
++    ClientError, EXIT_DAEMON_UNAVAILABLE, EXIT_INTEGRITY, EXIT_NO_INSTANCE,
++};
++use crate::ipc::IpcErrorCode;
++use crate::ports::store::StoreError;
++use std::process::ExitCode;
++
++pub const NOT_IN_HERDR: &str =
++    "herdr-graph: not inside a Herdr pane; this session has no graph seat";
++pub const RETRY_LATER: &str =
++    "Retry in a bit; if it persists, get the graph daemon fixed (ask your manager or coordinator).";
++pub const NOT_TRANSIENT: &str = "This is not transient; retrying will not help.";
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Outcome {
++    NotInHerdr,
++    NoInstance,
++    Unavailable,
++    Integrity,
++    Other,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct Failure {
++    pub outcome: Outcome,
++    pub code: u8,
++    pub line: String,
++}
++
++fn strip_dot(s: &str) -> &str {
++    s.strip_suffix('.').unwrap_or(s)
++}
++
++pub fn unavailable_line(reason: &str) -> String {
++    format!(
++        "herdr-graph: graph daemon unavailable: {}. {RETRY_LATER}",
++        strip_dot(reason)
++    )
++}
++
++pub fn integrity_line(message: &str) -> String {
++    format!(
++        "herdr-graph: graph integrity error: {}. {NOT_TRANSIENT}",
++        strip_dot(message)
++    )
++}
++
++fn failure_of(outcome: Outcome, code: u8, line: String) -> Failure {
++    Failure {
++        outcome,
++        code,
++        line,
++    }
++}
++
++/// The spec §4.4 table. `in_herdr`: HERDR_SOCKET_PATH is set.
++pub fn classify(e: &ClientError, in_herdr: bool) -> Failure {
++    let not_in_herdr = || failure_of(Outcome::NotInHerdr, 2, NOT_IN_HERDR.to_owned());
++    match e {
++        ClientError::NotInHerdr => not_in_herdr(),
++        ClientError::Unavailable(_) | ClientError::Frame(_) | ClientError::NoInstance
++            if !in_herdr =>
++        {
++            not_in_herdr()
++        }
++        ClientError::NoInstance => failure_of(Outcome::NoInstance, EXIT_NO_INSTANCE, e.to_string()),
++        ClientError::Unavailable(r) => failure_of(
++            Outcome::Unavailable,
++            EXIT_DAEMON_UNAVAILABLE,
++            unavailable_line(r),
++        ),
++        ClientError::Frame(f) => failure_of(
++            Outcome::Unavailable,
++            EXIT_DAEMON_UNAVAILABLE,
++            unavailable_line(&f.to_string()),
++        ),
++        ClientError::Remote { code, message } => match code {
++            IpcErrorCode::Unavailable | IpcErrorCode::VersionMismatch => failure_of(
++                Outcome::Unavailable,
++                EXIT_DAEMON_UNAVAILABLE,
++                unavailable_line(message),
++            ),
++            IpcErrorCode::Integrity => {
++                failure_of(Outcome::Integrity, EXIT_INTEGRITY, integrity_line(message))
++            }
++            IpcErrorCode::BadRequest
++            | IpcErrorCode::UnknownCommand
++            | IpcErrorCode::Rejected
++            | IpcErrorCode::Internal
++            | IpcErrorCode::StillRunning => {
++                failure_of(Outcome::Other, 1, format!("herdr-graph: {message}"))
++            }
++        },
++    }
++}
++
++/// `classify` with this process's environment.
++pub fn failure(e: &ClientError) -> Failure {
++    classify(e, Env::from_process().herdr_socket.is_some())
++}
++
++/// Print the failure line to stderr; return its exit code.
++pub fn report(e: ClientError) -> ExitCode {
++    let f = failure(&e);
++    eprintln!("{}", f.line);
++    ExitCode::from(f.code)
++}
++
++/// A local `StoreError::Integrity` (daemon-free readers such as `show`) as the exit-6 failure; None otherwise.
++pub fn store_failure(e: &StoreError) -> Option<Failure> {
++    matches!(e, StoreError::Integrity { .. }).then(|| {
++        failure_of(
++            Outcome::Integrity,
++            EXIT_INTEGRITY,
++            integrity_line(&e.to_string()),
++        )
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::daemon::client::Client;
++    use crate::ipc::FrameError;
++    use crate::ports::store::{StoreError, unresolved};
++    use std::os::unix::net::UnixListener;
++    use std::time::Duration;
++
++    fn remote(code: IpcErrorCode, m: &str) -> ClientError {
++        ClientError::Remote {
++            code,
++            message: m.into(),
++        }
++    }
++
++    #[test]
++    fn not_in_herdr_variant_is_exit_2() {
++        for in_herdr in [true, false] {
++            let f = classify(&ClientError::NotInHerdr, in_herdr);
++            assert_eq!((f.outcome, f.code), (Outcome::NotInHerdr, 2));
++            assert_eq!(f.line, NOT_IN_HERDR);
++        }
++    }
++
++    #[test]
++    fn no_reply_outside_herdr_is_exit_2() {
++        let frame = ClientError::Frame(FrameError::TooLarge(1));
++        for e in [
++            ClientError::Unavailable("not running".into()),
++            frame,
++            ClientError::NoInstance,
++        ] {
++            let f = classify(&e, false);
++            assert_eq!(f.code, 2, "{e:?}");
++            assert_eq!(f.line, NOT_IN_HERDR);
++            assert!(!f.line.contains(RETRY_LATER));
++        }
++    }
++
++    #[test]
++    fn no_instance_keeps_its_line() {
++        let f = classify(&ClientError::NoInstance, true);
++        assert_eq!((f.outcome, f.code), (Outcome::NoInstance, 2));
++        assert_eq!(f.line, "no instance configured — run herdr-graph init");
++    }
++
++    #[test]
++    fn unavailable_is_exit_5_with_retry_text() {
++        let f = classify(&ClientError::Unavailable("not running".into()), true);
++        assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
++        assert!(
++            f.line
++                .starts_with("herdr-graph: graph daemon unavailable: not running"),
++            "{}",
++            f.line
++        );
++        assert!(f.line.ends_with(RETRY_LATER));
++    }
++
++    #[test]
++    fn hung_daemon_read_timeout_is_exit_5() {
++        let dir = tempfile::tempdir().unwrap();
++        let sock = dir.path().join("s.sock");
++        let listener = UnixListener::bind(&sock).unwrap();
++        let held = std::thread::spawn(move || {
++            let (stream, _) = listener.accept().unwrap();
++            std::thread::sleep(Duration::from_millis(1500));
++            drop(stream);
++        });
++        let mut client = Client::connect(&sock, Duration::from_millis(200)).unwrap();
++        let err = client.call("hello", serde_json::json!({})).unwrap_err();
++        assert!(matches!(err, ClientError::Frame(_)), "{err:?}");
++        let f = classify(&err, true);
++        assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
++        held.join().unwrap();
++    }
++
++    #[test]
++    fn malformed_frame_is_exit_5() {
++        let bad = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
++        let f = classify(&ClientError::Frame(FrameError::Json(bad)), true);
++        assert_eq!(f.code, 5);
++        assert!(f.line.ends_with(RETRY_LATER));
++    }
++
++    #[test]
++    fn still_starting_and_failed_to_start_are_exit_5() {
++        for m in [
++            "daemon is still starting (first pass); retry shortly",
++            "daemon failed to start: boom",
++        ] {
++            let f = classify(&remote(IpcErrorCode::Unavailable, m), true);
++            assert_eq!(f.code, 5);
++            assert!(!f.line.contains(".."), "{}", f.line);
++            assert!(f.line.contains(m.trim_end_matches('.')));
++        }
++    }
++
++    #[test]
++    fn version_mismatch_is_exit_5() {
++        let f = classify(
++            &remote(IpcErrorCode::VersionMismatch, "ipc version 9"),
++            true,
++        );
++        assert_eq!((f.outcome, f.code), (Outcome::Unavailable, 5));
++    }
++
++    #[test]
++    fn integrity_is_exit_6_with_exact_text() {
++        let m = "st_a: template_ref tpl_b not found at the committed revision";
++        let f = classify(&remote(IpcErrorCode::Integrity, m), true);
++        assert_eq!((f.outcome, f.code), (Outcome::Integrity, 6));
++        assert_eq!(
++            f.line,
++            "herdr-graph: graph integrity error: st_a: template_ref tpl_b not found at the committed revision. This is not transient; retrying will not help."
++        );
++    }
++
++    #[test]
++    fn integrity_outside_herdr_is_still_exit_6() {
++        let f = classify(&remote(IpcErrorCode::Integrity, "x"), false);
++        assert_eq!(f.code, 6);
++    }
++
++    #[test]
++    fn other_remote_codes_are_exit_1() {
++        for code in [
++            IpcErrorCode::BadRequest,
++            IpcErrorCode::UnknownCommand,
++            IpcErrorCode::Rejected,
++            IpcErrorCode::Internal,
++            IpcErrorCode::StillRunning,
++        ] {
++            let f = classify(&remote(code, "msg"), true);
++            assert_eq!((f.outcome, f.code), (Outcome::Other, 1));
++            assert_eq!(f.line, "herdr-graph: msg");
++        }
++    }
++
++    #[test]
++    fn store_failure_maps_only_integrity() {
++        let f = store_failure(&unresolved("st_a", "teamspace", "ts_b")).unwrap();
++        assert_eq!((f.outcome, f.code), (Outcome::Integrity, 6));
++        assert!(f.line.contains("st_a: teamspace ts_b"));
++        assert!(store_failure(&StoreError::Git("x".into())).is_none());
++    }
++
++    /// Files outside this task's reach that still match `Unavailable` themselves: `seat.rs` only in its tests,
++    /// and who/ops/request/undo until hg-k4l.3 routes them through `daemon_error` (drop them from this list then).
++    const AWAITING_HG_K4L_3: [&str; 4] = ["who.rs", "ops.rs", "request.rs", "undo.rs"];
++
++    #[test]
++    fn no_command_matches_unavailable_itself() {
++        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/cli");
++        let mut scanned = 0;
++        for entry in std::fs::read_dir(dir).unwrap() {
++            let path = entry.unwrap().path();
++            if path.extension().is_none_or(|x| x != "rs") {
++                continue;
++            }
++            let name = path.file_name().unwrap().to_str().unwrap().to_owned();
++            let text = std::fs::read_to_string(&path).unwrap();
++            scanned += 1;
++            if name == "daemon_error.rs" || AWAITING_HG_K4L_3.contains(&name.as_str()) {
++                continue;
++            }
++            let may_match = ["status.rs", "seat.rs"].contains(&name.as_str());
++            assert!(
++                may_match || !text.contains("ClientError::Unavailable"),
++                "{name} matches ClientError::Unavailable itself; route it through daemon_error"
++            );
++            assert!(
++                !text.contains(".map_err(remote)") && !text.contains("fn remote("),
++                "{name} has its own ClientError rendering; route it through daemon_error"
++            );
++        }
++        assert!(scanned > 5, "scanned only {scanned} files under {dir}");
++    }
++}

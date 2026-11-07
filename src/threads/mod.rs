@@ -240,6 +240,41 @@ pub struct WhoReply {
     pub clone: Option<NamedId>,
     /// Native session record id of the clone's occupant.
     pub native_session: Option<String>,
+    /// Live managers of the seat, nearest first, ending at the root (spec §4.12). Defaulted so a new CLI parses an
+    /// old daemon's reply.
+    #[serde(default)]
+    pub manager_chain: Vec<NamedId>,
+}
+
+/// `manager: a (st_a) -> b (st_b)` or `manager: none assigned`.
+pub fn manager_line(chain: &[NamedId]) -> String {
+    if chain.is_empty() {
+        return "manager: none assigned".into();
+    }
+    let hops: Vec<String> = chain
+        .iter()
+        .map(|n| format!("{} ({})", n.name, n.id))
+        .collect();
+    format!("manager: {}", hops.join(" -> "))
+}
+
+/// The live managers of `seat`, nearest first, as named ids. Integrity on a cycle or an unresolvable pointer.
+pub fn named_manager_chain(tree: &dyn TreeRead, seat: &SeatId) -> Result<Vec<NamedId>, StoreError> {
+    let pointers = crate::model::manager::Pointers::load(tree)?;
+    pointers
+        .manager_chain(seat)?
+        .into_iter()
+        .map(|id| {
+            let name = pointers
+                .name(&id)
+                .ok_or_else(|| crate::ports::store::unresolved(seat, "manager", &id))?
+                .to_owned();
+            Ok(NamedId {
+                id: id.to_string(),
+                name,
+            })
+        })
+        .collect()
 }
 
 impl WhoReply {
@@ -247,7 +282,8 @@ impl WhoReply {
         self.seat.is_some() || self.clone.is_some()
     }
 
-    /// `teamspace/seat/clone/ns`, stopping where the identity does; `unbound` when nothing matched.
+    /// `teamspace/seat/clone/ns`, stopping where the identity does, then the manager line; `unbound` when nothing
+    /// matched.
     pub fn render(&self) -> String {
         if !self.is_bound() {
             return "unbound".into();
@@ -261,7 +297,7 @@ impl WhoReply {
         .into_iter()
         .flatten()
         .collect();
-        parts.join("/")
+        format!("{}\n{}", parts.join("/"), manager_line(&self.manager_chain))
     }
 }
 
@@ -313,11 +349,16 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {
         .as_ref()
         .and_then(|c| c.occupant.as_ref())
         .map(|o| o.native_session.to_string());
+    let manager_chain = match seat {
+        Some(s) => named_manager_chain(tree, &s.id)?,
+        None => Vec::new(),
+    };
     Ok(WhoReply {
         teamspace,
         seat: seat.map(|s| named(s.id.to_string(), &s.name)),
         clone: found.as_ref().map(|c| named(c.id.to_string(), &c.name)),
         native_session,
+        manager_chain,
     })
 }
 
@@ -338,7 +379,7 @@ pub fn register_commands(reg: &mut Registry, store: Arc<dyn Store>) {
                 store: &*store,
                 at: head,
             };
-            let reply = who(&view, &target).map_err(|e| CommandError::internal(e.to_string()))?;
+            let reply = who(&view, &target).map_err(CommandError::from_store)?;
             Ok(serde_json::json!(reply))
         }
     });

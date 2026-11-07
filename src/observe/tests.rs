@@ -1,5 +1,6 @@
 //! Observer tests: FakeHerdr + real writer, journal, git store, plan engine and reconciler, driven through
 //! `RuntimeLoop::step_once`. The "user" is `FakeHerdr::user_*`.
+use super::mutations::{availability_request, cascade_request, cascade_request_with};
 use super::step::{LoopTuning, StepMode};
 use super::*;
 use crate::config::InstancePaths;
@@ -91,6 +92,27 @@ impl crate::writer::Mutation for TestRestore {
     }
 }
 
+/// Test-only: point `graph.toml node_manager_seat` at a seat (the real `node-manager set` is another task's).
+struct TestNodeManager;
+impl crate::writer::Mutation for TestNodeManager {
+    fn apply(
+        &self,
+        cx: &mut crate::writer::MutationCx<'_>,
+    ) -> Result<crate::writer::Applied, crate::writer::MutationError> {
+        let seat: SeatId = cx.request.args["seat"].as_str().unwrap().parse().unwrap();
+        let mut g = layout::read_graph(&cx.tree)?;
+        g.node_manager_seat = Some(seat);
+        cx.tree.put_file(
+            layout::graph_toml(),
+            toml::to_string(&g).unwrap().into_bytes(),
+        );
+        Ok(crate::writer::Applied {
+            summary: "set node manager".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     root: PathBuf,
@@ -141,6 +163,7 @@ fn fx() -> Fx {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("inst");
     init_instance(&root).unwrap();
+    crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::plan::kinds_extra::register_kinds(&mut kinds);
@@ -154,6 +177,14 @@ fn fx() -> Fx {
     register_mutations(&mut reg);
     crate::threads::register_mutations(&mut reg);
     reg.register("bookkeeping.test_restore", Arc::new(TestRestore));
+    reg.register(
+        "bookkeeping.test_node_manager_obs",
+        Arc::new(TestNodeManager),
+    );
+    reg.register(
+        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
+        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
+    );
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
     let clock = Arc::new(ManualClock::new(t0()));
@@ -426,6 +457,19 @@ fn activate(fx: &Fx, harness: &str) {
     );
 }
 
+fn make_node_manager(fx: &Fx, seat: &SeatId) {
+    fx.w.admit(crate::model::change::ChangeRequest {
+        kind: crate::model::change::RequestKind::Bookkeeping,
+        args: serde_json::json!({"sub": "test_node_manager_obs", "seat": seat}),
+        relied_on: vec![],
+        requester: Default::default(),
+        supersedes: None,
+        confirmed: None,
+    })
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
 fn claude_agent(session: Option<&str>) -> Option<AgentInfo> {
     Some(AgentInfo {
         kind: "claude".into(),
@@ -570,6 +614,593 @@ async fn workspace_close_retires_dormant_seats_too() {
         "the dormant seat goes with the workspace"
     );
     assert_eq!(seat_by_id(&fx, &foreman.id).1.lifecycle, Lifecycle::Retired);
+}
+
+/// The seat has a live tab and its clone a live pane in the fake Herdr.
+async fn assert_reopened(fx: &Fx, seat_name: &str) {
+    let s = seat(fx, seat_name);
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(s.runtime.availability, Availability::Present, "{seat_name}");
+    let c = only_clone(fx, seat_name);
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    let pane = pane_of(fx, &c);
+    let snap = snapshot(fx).await;
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.id == pane),
+        "the clone's pane exists in Herdr again"
+    );
+}
+
+#[tokio::test]
+async fn node_manager_tab_close_is_not_retired_and_reopens() {
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let old_pane = pane_of(&fx, &only_clone(&fx, "foreman"));
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "foreman"));
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+    settle(&fx).await;
+    assert!(creates(&fx) > 0, "{:?}", calls(&fx));
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_reopened(&fx, "foreman").await;
+    assert_ne!(pane_of(&fx, &only_clone(&fx, "foreman")), old_pane);
+}
+
+#[tokio::test]
+async fn node_manager_pane_close_is_not_retired() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let victim = clones_of(&fx, &foreman.id).remove(0);
+    fx.herdr.user_close_pane(&pane_of(&fx, &victim));
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(
+        clone_by_id(&fx, &victim.id).lifecycle,
+        CloneLifecycle::Active
+    );
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+    settle(&fx).await;
+    assert!(creates(&fx) > 0, "the pane is recreated: {:?}", calls(&fx));
+    assert!(
+        clones_of(&fx, &foreman.id)
+            .iter()
+            .all(|c| c.lifecycle == CloneLifecycle::Active && c.runtime.bound.is_some())
+    );
+}
+
+#[tokio::test]
+async fn node_manager_tab_close_still_cascades_other_seats() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
+    step(&fx).await;
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Retired);
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+}
+
+#[tokio::test]
+async fn workspace_close_keeps_node_manager_teamspace_active() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
+    make_node_manager(&fx, &foreman.id);
+    let bench_clone = only_clone(&fx, "bench");
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    let retired: std::collections::BTreeSet<AnyId> = acts[0].retired.iter().cloned().collect();
+    assert_eq!(
+        retired,
+        [bench.id.to_any(), bench_clone.id.to_any()]
+            .into_iter()
+            .collect(),
+        "only the other seat and its clone"
+    );
+    let ts = ts_rec(&fx, "alpha");
+    assert_eq!(ts.lifecycle, Lifecycle::Active);
+    assert!(ts.retired.is_none());
+    assert_eq!(seat_by_id(&fx, &bench.id).1.lifecycle, Lifecycle::Retired);
+    assert_eq!(seat_by_id(&fx, &foreman.id).1.lifecycle, Lifecycle::Active);
+
+    settle(&fx).await;
+    let log = calls(&fx);
+    let first_ws = log
+        .iter()
+        .position(|c| matches!(c, FakeCall::CreateWorkspace(_)))
+        .expect("workspace recreated");
+    let first_tab = log
+        .iter()
+        .position(|c| matches!(c, FakeCall::CreateTab(_)))
+        .expect("tab recreated");
+    assert!(first_ws < first_tab, "{log:?}");
+    assert_reopened(&fx, "foreman").await;
+    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active);
+}
+
+#[tokio::test]
+async fn node_manager_move_is_tolerated_and_warned() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let fc = only_clone(&fx, "foreman");
+    let oc = only_clone(&fx, "other");
+    let before = snapshot(&fx).await;
+    let other_tab = tab_of_seat(&fx, "other");
+    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &other_tab);
+    let after = snapshot(&fx).await;
+
+    // Classify by hand: classification reports the move; the observer step turns it into the warning.
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.root).unwrap();
+    assert_eq!(desired.node_manager, Some(foreman.id.clone()));
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    let moved = |c: &CloneRecord| super::diff::DiffElement::Moved {
+        clone: c.id.clone(),
+        from_tab: HerdrTabId("unused".into()),
+        to_tab: other_tab.clone(),
+    };
+    let run = |els| {
+        super::classify::classify(
+            &super::classify::ClassifyCx {
+                desired: &desired,
+                journal: &fx.journal,
+                preds: &[],
+                matches: &ma,
+                baseline: Some(&mb),
+            },
+            els,
+        )
+    };
+    let out = run(vec![moved(&fc)]);
+    assert!(
+        out.warnings.is_empty(),
+        "classify decides nothing about the node manager"
+    );
+    assert_eq!(out.moves.len(), 1, "the move is recorded as before");
+    let warn = super::step::node_manager_move_warning(&desired, &out).expect("warned");
+    assert!(warn.contains("foreman"), "{warn}");
+    assert!(warn.contains(foreman.id.as_str()));
+    let other_move = run(vec![moved(&oc)]);
+    assert!(super::step::node_manager_move_warning(&desired, &other_move).is_none());
+
+    // End to end: the move is recorded, not reverted, and not retired.
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert!(seat(&fx, "foreman").moved_out);
+    assert!(clone_by_id(&fx, &fc.id).reload_required);
+    settle(&fx).await;
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+}
+
+/// Foreman (node manager) and `other` active in alpha, settled.
+async fn nm_and_other() -> (Fx, SeatRecord) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    (fx, foreman)
+}
+
+/// Spec §4.9 B11: the node manager's only pane moved out of a plan into a fresh tab (`pane move --new-tab`, or
+/// `--new-workspace` when `new_workspace`). The seat follows: the new tab becomes its tab, nothing reopens at the
+/// old home, the seat keeps its name (the tab is relabelled to it), and the clone is told to reload.
+async fn nm_follows_move_to_fresh_tab(new_workspace: bool) {
+    let (fx, foreman) = nm_and_other().await;
+    let fc = only_clone(&fx, "foreman");
+    let pane = pane_of(&fx, &fc);
+    let home_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let target = (!new_workspace).then_some(&home_ws);
+    fx.herdr.clear_calls();
+    let new_tab = fx.herdr.user_move_pane_new_tab(&pane, target, "7");
+    settle(&fx).await;
+
+    let all = calls(&fx);
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out, "the seat follows its pane: {all:?}");
+    assert_eq!(s.name, foreman.name, "a move is not a rename: {all:?}");
+    assert_eq!(tab_of_seat(&fx, "foreman"), new_tab, "{all:?}");
+    assert_eq!(s.runtime.availability, Availability::Present);
+    assert_eq!(creates(&fx), 0, "nothing reopens at the old home: {all:?}");
+    let c = clone_by_id(&fx, &fc.id);
+    assert_eq!(pane_of(&fx, &c), pane, "the clone stays bound to its pane");
+    assert!(c.reload_required);
+    let snap = snapshot(&fx).await;
+    let live = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|t| t.id == new_tab)
+        .expect("the followed tab is live");
+    assert_eq!(
+        live.label, foreman.name,
+        "the followed tab carries the seat's name"
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(seat(&fx, "other").lifecycle, Lifecycle::Active);
+
+    // Closing the followed tab is an ordinary node-manager closure: it reopens.
+    fx.herdr.user_close_tab(&new_tab);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+    assert_reopened(&fx, "foreman").await;
+}
+
+#[tokio::test]
+async fn nm_follows_pane_moved_to_new_tab() {
+    nm_follows_move_to_fresh_tab(false).await;
+}
+
+#[tokio::test]
+async fn nm_follows_pane_moved_to_new_workspace() {
+    nm_follows_move_to_fresh_tab(true).await;
+}
+
+/// A plain seat moved the same way keeps the moved-out rule: B11 adoption is for the node manager only.
+#[tokio::test]
+async fn plain_seat_pane_moved_to_new_tab_is_moved_out() {
+    let (fx, _) = nm_and_other().await;
+    let oc = only_clone(&fx, "other");
+    let home_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    fx.herdr
+        .user_move_pane_new_tab(&pane_of(&fx, &oc), Some(&home_ws), "7");
+    settle(&fx).await;
+    let s = seat(&fx, "other");
+    assert!(s.moved_out);
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+}
+
+/// Foreman (node manager) and `other` active in alpha, settled; foreman's only pane is moved into `other`'s tab.
+/// Returns the fixture, foreman's clone and `other`'s tab.
+async fn node_manager_moved_into_other() -> (Fx, CloneRecord, HerdrTabId) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let fc = only_clone(&fx, "foreman");
+    let other_tab = tab_of_seat(&fx, "other");
+    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &other_tab);
+    step(&fx).await;
+    assert!(seat(&fx, "foreman").moved_out);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+    assert_eq!(
+        creates(&fx),
+        0,
+        "the move stays tolerated: {:?}",
+        calls(&fx)
+    );
+    (fx, fc, other_tab)
+}
+
+#[tokio::test]
+async fn node_manager_closed_after_move_is_reopened() {
+    let (fx, fc, _) = node_manager_moved_into_other().await;
+    fx.herdr.user_close_pane(&pane_of(&fx, &fc));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(
+        !s.moved_out,
+        "the closed node manager no longer lives elsewhere"
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    settle(&fx).await;
+    assert!(creates(&fx) > 0, "{:?}", calls(&fx));
+    assert!(
+        calls(&fx)
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_reopened(&fx, "foreman").await;
+}
+
+#[tokio::test]
+async fn node_manager_moved_into_closed_tab_is_reopened() {
+    let (fx, _, other_tab) = node_manager_moved_into_other().await;
+    fx.herdr.user_close_tab(&other_tab);
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(seat(&fx, "other").lifecycle, Lifecycle::Retired);
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out);
+    settle(&fx).await;
+    assert!(
+        calls(&fx)
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{:?}",
+        calls(&fx)
+    );
+    assert_reopened(&fx, "foreman").await;
+}
+
+#[tokio::test]
+async fn node_manager_moved_to_other_workspace_survives_home_workspace_close() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(&fx, "teamspace create beta");
+    commit(
+        &fx,
+        "seat create bob --teamspace beta --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let alpha_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let beta_ws = ts_rec(&fx, "beta")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    assert_ne!(alpha_ws, beta_ws);
+    let fc = only_clone(&fx, "foreman");
+    let bob_clone = only_clone(&fx, "bob");
+    let (bob_tab, bob_pane) = (tab_of_seat(&fx, "bob"), pane_of(&fx, &bob_clone));
+    fx.herdr.user_move_pane(&pane_of(&fx, &fc), &bob_tab);
+    settle(&fx).await;
+    assert!(seat(&fx, "foreman").moved_out);
+    let moved_pane = pane_of(&fx, &fc);
+
+    fx.herdr.user_close_workspace(&alpha_ws);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+
+    let all = calls(&fx);
+    assert_eq!(seat(&fx, "bob").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(ts_rec(&fx, "beta").lifecycle, Lifecycle::Active, "{all:?}");
+    let bob_after = clone_by_id(&fx, &bob_clone.id);
+    assert_eq!(bob_after.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(&fx, &bob_after), bob_pane, "{all:?}");
+    for c in &all {
+        let touches_beta = match c {
+            FakeCall::RenameWorkspace(w, _)
+            | FakeCall::ReportWorkspaceMetadata(w, ..)
+            | FakeCall::CloseWorkspace(w) => *w == beta_ws,
+            FakeCall::CloseTab(t) => *t == bob_tab,
+            FakeCall::CreateTab(ct) => ct.workspace == beta_ws,
+            _ => false,
+        };
+        assert!(!touches_beta, "{c:?} touches beta: {all:?}");
+    }
+    let foreman = seat(&fx, "foreman");
+    assert_eq!(foreman.lifecycle, Lifecycle::Active, "{all:?}");
+    assert!(foreman.moved_out, "{all:?}");
+    let fc_after = clone_by_id(&fx, &fc.id);
+    assert_eq!(fc_after.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(&fx, &fc_after), moved_pane, "{all:?}");
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Retired, "{all:?}");
+    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active, "{all:?}");
+}
+
+#[tokio::test]
+async fn cascade_rechecks_node_manager_at_apply() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
+    let (fc, bc) = (only_clone(&fx, "foreman"), only_clone(&fx, "bench"));
+    let ts = ts_rec(&fx, "alpha");
+    // Classified while foreman was an ordinary seat ...
+    let tab_req = cascade_request(
+        super::classify::CascadeRule::Tab,
+        &[foreman.id.to_any(), fc.id.to_any()],
+        fx.clock.now(),
+    );
+    let ws_req = cascade_request(
+        super::classify::CascadeRule::Workspace,
+        &[
+            ts.id.to_any(),
+            foreman.id.to_any(),
+            fc.id.to_any(),
+            bench.id.to_any(),
+            bc.id.to_any(),
+        ],
+        fx.clock.now(),
+    );
+    // ... then `node-manager set` lands before the cascade applies.
+    make_node_manager(&fx, &foreman.id);
+    fx.w.admit(tab_req).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Active);
+    for a in actions(&fx, ActionKind::ClosureCascade) {
+        assert!(!a.retired.contains(&foreman.id.to_any()), "{:?}", a.retired);
+        assert!(!a.retired.contains(&fc.id.to_any()), "{:?}", a.retired);
+    }
+
+    fx.w.admit(ws_req).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Active);
+    assert_eq!(ts_rec(&fx, "alpha").lifecycle, Lifecycle::Active);
+    assert_eq!(seat_by_id(&fx, &bench.id).1.lifecycle, Lifecycle::Retired);
+    assert_eq!(clone_by_id(&fx, &bc.id).lifecycle, CloneLifecycle::Retired);
+}
+
+/// Classify a tab closure of `seat_name` by hand at the current head, as the observer does before its awaited
+/// snapshot returns; the result is applied later by `apply_classified`.
+async fn classify_tab_closure(fx: &Fx, seat_name: &str) -> super::classify::Classified {
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.root).unwrap();
+    let tab = tab_of_seat(fx, seat_name);
+    let before = snapshot(fx).await;
+    fx.herdr.user_close_tab(&tab);
+    let after = snapshot(fx).await;
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    super::classify::classify(
+        &super::classify::ClassifyCx {
+            desired: &desired,
+            journal: &fx.journal,
+            preds: &[],
+            matches: &ma,
+            baseline: Some(&mb),
+        },
+        vec![super::diff::DiffElement::Disappeared {
+            object: seat(fx, seat_name).id.to_any(),
+            container: ContainerKind::Tab,
+        }],
+    )
+}
+
+fn apply_classified(fx: &Fx, out: &super::classify::Classified) {
+    for cas in &out.cascades {
+        fx.w.admit(cascade_request_with(
+            cas.rule,
+            &cas.retire,
+            &cas.survived,
+            fx.clock.now(),
+        ))
+        .unwrap();
+    }
+    for obj in &out.gone {
+        fx.w.admit(availability_request(obj, Availability::Absent))
+            .unwrap();
+    }
+    fx.w.drain().unwrap();
+}
+
+#[tokio::test]
+async fn node_manager_closure_after_concurrent_move_retires_old_seat() {
+    // Direction 1: foreman is node manager at classification; `node-manager set bench` lands before apply.
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let (foreman, bench) = (seat(&fx, "foreman"), seat(&fx, "bench"));
+    let fc = only_clone(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let out = classify_tab_closure(&fx, "foreman").await;
+    make_node_manager(&fx, &bench.id);
+    apply_classified(&fx, &out);
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Retired);
+    assert_eq!(clone_by_id(&fx, &fc.id).lifecycle, CloneLifecycle::Retired);
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert!(acts[0].retired.contains(&foreman.id.to_any()));
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Active);
+}
+
+#[tokio::test]
+async fn node_manager_closure_classified_before_set_is_recorded_absent() {
+    // Direction 2: foreman is ordinary at classification, then becomes node manager before apply.
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    let fc = only_clone(&fx, "foreman");
+    let out = classify_tab_closure(&fx, "foreman").await;
+    make_node_manager(&fx, &foreman.id);
+    apply_classified(&fx, &out);
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(s.runtime.availability, Availability::Absent);
+    assert!(s.runtime.bound.is_none());
+    let c = clone_by_id(&fx, &fc.id);
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    assert_eq!(c.runtime.availability, Availability::Absent);
+    assert!(c.occupant.is_none(), "the session ended with the pane");
+    settle(&fx).await;
+    assert_reopened(&fx, "foreman").await;
 }
 
 #[tokio::test]
@@ -3386,4 +4017,1336 @@ async fn unreachable_threads_never_retires_from_elapsed_time() {
         assert_eq!(now.seat_fact, None, "{err:?}: no read, no fact");
         assert_no_closure_and_no_create(&fx);
     }
+}
+
+// =================================================================================================
+// reparenting on observed closure (hg-k4l.26)
+// =================================================================================================
+
+/// foreman (node manager), bench (active, its own tab) and a dormant `report`; `report.manager` = bench and
+/// `bench.manager` = the node manager, or a seat id that does not exist when `dangling`.
+async fn manager_world(fx: &Fx, dangling: bool) {
+    use crate::plan::managers::reparent::testing::seat_request;
+    activate(fx, "shell");
+    commit(
+        fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(fx, "seat create report --teamspace alpha");
+    settle(fx).await;
+    let foreman = seat(fx, "foreman").id;
+    make_node_manager(fx, &foreman);
+    let bench_manager = if dangling { SeatId::new() } else { foreman };
+    for req in [
+        seat_request(&seat(fx, "bench").id, Some(&bench_manager)),
+        seat_request(&seat(fx, "report").id, Some(&seat(fx, "bench").id)),
+    ] {
+        fx.w.admit(req).unwrap();
+        fx.w.drain().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn reparent_on_observed_cascade() {
+    use crate::plan::managers::reparent::{Rewrite, testing::recorded};
+    let fx = fx();
+    manager_world(&fx, false).await;
+    let foreman = seat(&fx, "foreman").id;
+    let bench = seat(&fx, "bench").id;
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
+    step(&fx).await;
+
+    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: seat(&fx, "report").id.to_any(),
+            field: "manager".into(),
+            old: bench,
+            new: Some(foreman),
+        }]
+    );
+    assert!(
+        !acts[0]
+            .compensation
+            .contains_key(crate::plan::managers::reparent::REPARENT_FALLBACK_KEY),
+        "no fallback when the target resolves"
+    );
+}
+
+#[tokio::test]
+async fn reparent_two_hop_on_observed_workspace_close() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, seat_request},
+    };
+    let fx = fx();
+    activate(&fx, "shell");
+    for n in ["a", "b"] {
+        commit(
+            &fx,
+            &format!("seat create {n} --teamspace alpha --active --harness shell"),
+        );
+    }
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create nm --teamspace beta");
+    commit(&fx, "seat create x --teamspace beta");
+    settle(&fx).await;
+    let (nm, x) = (seat(&fx, "nm").id, seat(&fx, "x").id);
+    let (a, b) = (seat(&fx, "a").id, seat(&fx, "b").id);
+    make_node_manager(&fx, &nm);
+    for req in [
+        seat_request(&b, Some(&nm)),
+        seat_request(&a, Some(&b)),
+        seat_request(&x, Some(&a)),
+    ] {
+        fx.w.admit(req).unwrap();
+        fx.w.drain().unwrap();
+    }
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    step(&fx).await;
+
+    assert_eq!(seat(&fx, "a").lifecycle, Lifecycle::Retired);
+    assert_eq!(seat(&fx, "b").lifecycle, Lifecycle::Retired);
+    assert_eq!(seat(&fx, "x").manager, Some(nm.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: x.to_any(),
+            field: "manager".into(),
+            old: a,
+            new: Some(nm),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn reparent_fallback_on_integrity() {
+    use crate::plan::managers::reparent::{REPARENT_FALLBACK_KEY, Rewrite, testing::recorded};
+    let fx = fx();
+    manager_world(&fx, true).await;
+    let (foreman, bench) = (seat(&fx, "foreman").id, seat(&fx, "bench").id);
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "bench"));
+    step(&fx).await;
+
+    assert_eq!(
+        seat_by_id(&fx, &bench).1.lifecycle,
+        Lifecycle::Retired,
+        "the cascade still retires the seat"
+    );
+    assert_eq!(seat(&fx, "report").manager, Some(foreman.clone()));
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: seat(&fx, "report").id.to_any(),
+            field: "manager".into(),
+            old: bench,
+            new: Some(foreman),
+        }]
+    );
+    let notes = acts[0].compensation[REPARENT_FALLBACK_KEY]
+        .as_array()
+        .expect("fallback notes recorded");
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].as_str().unwrap().contains("node manager"),
+        "{notes:?}"
+    );
+}
+
+#[tokio::test]
+async fn observed_workspace_close_keeps_own_default_rewrite() {
+    use crate::plan::managers::reparent::{
+        Rewrite,
+        testing::{recorded, teamspace_request},
+    };
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    commit(&fx, "teamspace create beta");
+    commit(&fx, "seat create nm --teamspace beta");
+    settle(&fx).await;
+    let (nm, bench) = (seat(&fx, "nm").id, seat(&fx, "bench").id);
+    make_node_manager(&fx, &nm);
+    let alpha = ts_rec(&fx, "alpha").id;
+    fx.w.admit(teamspace_request(&alpha, Some(&bench))).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(ts_rec(&fx, "alpha").default_manager, Some(bench.clone()));
+
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    step(&fx).await;
+
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    assert_eq!(
+        recorded(&acts[0]),
+        vec![Rewrite {
+            holder: alpha.to_any(),
+            field: "default_manager".into(),
+            old: bench,
+            new: Some(nm.clone()),
+        }]
+    );
+    let stored = ts_rec(&fx, "alpha");
+    assert_eq!(stored.lifecycle, Lifecycle::Retired);
+    assert_eq!(
+        stored.default_manager,
+        Some(nm),
+        "the archived record keeps the reparented default"
+    );
+}
+
+#[tokio::test]
+async fn node_manager_workspace_close_keeps_own_default_rewrite() {
+    use crate::plan::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let (foreman, bench) = (seat(&fx, "foreman").id, seat(&fx, "bench").id);
+    make_node_manager(&fx, &foreman);
+    let alpha = ts_rec(&fx, "alpha").id;
+    fx.w.admit(teamspace_request(&alpha, Some(&bench))).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(ts_rec(&fx, "alpha").default_manager, Some(bench.clone()));
+
+    let ws = workspace_id(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    step(&fx).await;
+
+    let acts = actions(&fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1);
+    let row = recorded(&acts[0])
+        .into_iter()
+        .find(|r| r.holder == alpha.to_any() && r.field == "default_manager")
+        .expect("the teamspace's default_manager is reparented");
+    assert_eq!(row.old, bench);
+    let stored = ts_rec(&fx, "alpha");
+    assert_eq!(
+        stored.lifecycle,
+        Lifecycle::Active,
+        "the node manager's teamspace stays Active"
+    );
+    assert_eq!(
+        stored.default_manager, row.new,
+        "the stored pointer equals the recorded rewrite"
+    );
+    assert!(stored.default_manager.is_some());
+}
+
+// =================================================================================================
+// per-clone survival decides the node manager's closure (spec §4.9, CascadeMutation)
+// =================================================================================================
+
+struct Two {
+    fx: Fx,
+    alpha_ws: HerdrWorkspaceId,
+    beta_ws: HerdrWorkspaceId,
+    bob_tab: HerdrTabId,
+}
+
+/// alpha: foreman (harness `fh`, node manager, `extra` further clones) and bench (harness `bh`); beta: bob.
+/// Settled.
+async fn two_teamspaces(fh: &str, bh: &str, extra: usize) -> Two {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        &format!("seat create foreman --teamspace alpha --active --harness {fh}"),
+    );
+    for i in 0..extra {
+        commit(&fx, &format!("clone add foreman --name extra{i}"));
+    }
+    commit(
+        &fx,
+        &format!("seat create bench --teamspace alpha --active --harness {bh}"),
+    );
+    commit(&fx, "teamspace create beta");
+    commit(
+        &fx,
+        "seat create bob --teamspace beta --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let ws_of = |name: &str| {
+        ts_rec(&fx, name)
+            .runtime
+            .bound
+            .unwrap()
+            .workspace_id
+            .unwrap()
+    };
+    let (alpha_ws, beta_ws) = (ws_of("alpha"), ws_of("beta"));
+    assert_ne!(alpha_ws, beta_ws);
+    let bob_tab = tab_of_seat(&fx, "bob");
+    Two {
+        fx,
+        alpha_ws,
+        beta_ws,
+        bob_tab,
+    }
+}
+
+fn touches_beta(c: &FakeCall, t: &Two) -> bool {
+    match c {
+        FakeCall::RenameWorkspace(w, _)
+        | FakeCall::ReportWorkspaceMetadata(w, ..)
+        | FakeCall::CloseWorkspace(w) => *w == t.beta_ws,
+        FakeCall::CloseTab(tab) => *tab == t.bob_tab,
+        FakeCall::CreateTab(ct) => ct.workspace == t.beta_ws,
+        _ => false,
+    }
+}
+
+#[tokio::test]
+async fn nm_two_clones_one_moved_home_workspace_closed() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let (mut moved, mut stays) = {
+        let mut cs = clones_of(fx, &foreman.id);
+        assert_eq!(cs.len(), 2);
+        let b = cs.remove(1);
+        (cs.remove(0), b)
+    };
+    let bob_clone = only_clone(fx, "bob");
+    let bob_pane = pane_of(fx, &bob_clone);
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    assert!(
+        !seat(fx, "foreman").moved_out,
+        "a clone is still home, so the seat is not moved out"
+    );
+    moved = clone_by_id(fx, &moved.id);
+    let moved_pane = pane_of(fx, &moved);
+    stays = clone_by_id(fx, &stays.id);
+    let stays_pane = pane_of(fx, &stays);
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    assert_eq!(seat(fx, "bob").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(ts_rec(fx, "beta").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(fx, &clone_by_id(fx, &bob_clone.id)), bob_pane);
+    for c in &all {
+        assert!(!touches_beta(c, &t), "{c:?} touches beta: {all:?}");
+    }
+    let m = clone_by_id(fx, &moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(fx, &m), moved_pane, "the moved clone stays bound");
+    let s = clone_by_id(fx, &stays.id);
+    assert_eq!(s.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_ne!(pane_of(fx, &s), stays_pane, "the home clone has a new pane");
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active);
+    assert_eq!(ts_rec(fx, "alpha").lifecycle, Lifecycle::Active);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+    assert!(
+        all.iter()
+            .any(|c| matches!(c, FakeCall::CreateWorkspace(_))),
+        "alpha gets a fresh home workspace: {all:?}"
+    );
+}
+
+/// The move and the home workspace's disappearance land in one diff. The survived node-manager clone still gets
+/// its MoveFact: reload_required is set, it stays bound where it went, and the operator warning names the move.
+#[tokio::test]
+async fn nm_clone_moved_in_same_diff_as_home_workspace_closes_records_move() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let moved = cs[0].clone();
+    let before = snapshot(fx).await;
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    let moved_pane = pane_of(fx, &moved);
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    let after = snapshot(fx).await;
+
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.root).unwrap();
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    let home_tab = before
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|tab| tab.panes.iter().any(|p| p.id == moved_pane))
+        .expect("home tab")
+        .id
+        .clone();
+    let els = vec![
+        super::diff::DiffElement::Moved {
+            clone: moved.id.clone(),
+            from_tab: home_tab,
+            to_tab: t.bob_tab.clone(),
+        },
+        super::diff::DiffElement::Disappeared {
+            object: ts_rec(fx, "alpha").id.to_any(),
+            container: ContainerKind::Workspace,
+        },
+    ];
+    let out = super::classify::classify(
+        &super::classify::ClassifyCx {
+            desired: &desired,
+            journal: &fx.journal,
+            preds: &[],
+            matches: &ma,
+            baseline: Some(&mb),
+        },
+        els,
+    );
+    assert!(
+        out.moves.iter().any(|m| m.clone == moved.id),
+        "the survived clone's move is recorded: {:?}",
+        out.moves
+    );
+    let warn = super::step::node_manager_move_warning(&desired, &out).expect("warned");
+    assert!(warn.contains(foreman.id.as_str()), "{warn}");
+
+    fx.herdr.clear_calls();
+    settle(fx).await;
+    let m = clone_by_id(fx, &moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert!(m.reload_required, "the moved agent is told to reload");
+    assert_eq!(pane_of(fx, &m), moved_pane, "the moved clone stays bound");
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+}
+
+/// The same one-diff shape for a plain seat: its clone's pane survives in another teamspace's tab, but the
+/// workspace cascade retires the seat and every clone; the recorded move does not revive the retired clone.
+#[tokio::test]
+async fn plain_clone_moved_in_same_diff_as_workspace_closes_stays_retired() {
+    let t = two_teamspaces("shell", "shell", 0).await;
+    let fx = &t.fx;
+    let bench = only_clone(fx, "bench");
+    fx.herdr.user_move_pane(&pane_of(fx, &bench), &t.bob_tab);
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    settle(fx).await;
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+    let b = clone_by_id(fx, &bench.id);
+    assert_eq!(b.lifecycle, CloneLifecycle::Retired);
+    assert!(!b.reload_required);
+    assert_ne!(b.runtime.availability, Availability::Present);
+}
+
+/// Spec §4.9 required test (1), placement half: the missing node-manager clone reopens in a fresh home
+/// workspace and tab, never as a split of the survivor's pane in the foreign teamspace's tab.
+#[tokio::test]
+async fn nm_two_clones_one_moved_reopens_in_fresh_home_tab() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, stays) = (cs[0].clone(), cs[1].clone());
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    let bob_tab_panes = |snap: &HerdrSnapshot| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id == t.bob_tab)
+            .expect("bob's tab")
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let bob_tab_before = bob_tab_panes(&snapshot(fx).await);
+    assert!(bob_tab_before.contains(&pane_of(fx, &moved)));
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    let snap = snapshot(fx).await;
+    assert_eq!(bob_tab_panes(&snap), bob_tab_before, "{all:?}");
+    for c in &all {
+        if let FakeCall::SplitPane(sp) = c {
+            assert!(
+                !bob_tab_before.contains(&sp.target),
+                "split into bob's tab: {all:?}"
+            );
+        }
+    }
+    let new_pane = pane_of(fx, &clone_by_id(fx, &stays.id));
+    let home = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|tab| tab.panes.iter().any(|p| p.id == new_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_ne!(home.id, t.beta_ws, "{all:?}");
+    assert_eq!(
+        crate::reconcile::planner::token_of(&home.metadata),
+        Some(foreman.teamspace.to_any()),
+        "reopened in a workspace stamped for the node manager's teamspace"
+    );
+    assert!(
+        all.iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(ct) if ct.workspace == home.id)),
+        "a CreateTab targeted the home workspace: {all:?}"
+    );
+}
+
+#[tokio::test]
+async fn plain_seat_moved_home_workspace_closed_emits_session_ended() {
+    let t = two_teamspaces("shell", "claude", 0).await;
+    let fx = &t.fx;
+    let bench_clone = only_clone(fx, "bench");
+    let bench_pane = pane_of(fx, &bench_clone);
+    fx.herdr
+        .set_agent(&bench_pane, claude_agent(Some("sess-b")));
+    step(fx).await;
+    assert!(clone_by_id(fx, &bench_clone.id).occupant.is_some());
+    fx.herdr.user_move_pane(&bench_pane, &t.bob_tab);
+    settle(fx).await;
+    assert!(seat(fx, "bench").moved_out);
+    let mut rx = fx.lp.subscribe_session_ended();
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    step(fx).await;
+
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+    let c = clone_by_id(fx, &bench_clone.id);
+    assert_eq!(c.lifecycle, CloneLifecycle::Retired);
+    assert!(c.occupant.is_none());
+    let ev = rx.try_recv().expect("the retired clone's session ended");
+    assert_eq!(ev.clone, bench_clone.id);
+    assert_eq!(ev.reason, SessionEndReason::PaneClosed);
+    assert!(rx.try_recv().is_err(), "exactly one");
+}
+
+#[tokio::test]
+async fn nm_survived_clone_gets_no_session_ended() {
+    let t = two_teamspaces("claude", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    let (moved, closed) = (cs[0].clone(), cs[1].clone());
+    fx.herdr
+        .set_agent(&pane_of(fx, &moved), claude_agent(Some("sess-m")));
+    fx.herdr
+        .set_agent(&pane_of(fx, &closed), claude_agent(Some("sess-c")));
+    step(fx).await;
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    assert!(clone_by_id(fx, &moved.id).occupant.is_some());
+    let mut rx = fx.lp.subscribe_session_ended();
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    step(fx).await;
+
+    let ev = rx.try_recv().expect("the closed clone's session ended");
+    assert_eq!(ev.clone, closed.id);
+    assert!(rx.try_recv().is_err(), "the survived clone's did not end");
+    let m = clone_by_id(fx, &moved.id);
+    assert!(m.occupant.is_some(), "still running elsewhere");
+    assert!(m.runtime.bound.is_some());
+    assert!(clone_by_id(fx, &closed.id).occupant.is_none());
+}
+
+/// A foreign tab closes under a single-clone node manager that was moved into it: it reopens in its own
+/// teamspace and the foreign teamspace's other seats are untouched.
+async fn nm_single_clone_in_foreign_tab(close_whole_workspace: bool) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(&fx, "teamspace create beta");
+    commit(
+        &fx,
+        "seat create bob --teamspace beta --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create bob2 --teamspace beta --active --harness shell",
+    );
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let (bob_tab, bob2_tab) = (tab_of_seat(&fx, "bob"), tab_of_seat(&fx, "bob2"));
+    let beta_ws = ts_rec(&fx, "beta")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let bob2_pane = pane_of(&fx, &only_clone(&fx, "bob2"));
+    fx.herdr
+        .user_move_pane(&pane_of(&fx, &only_clone(&fx, "foreman")), &bob_tab);
+    settle(&fx).await;
+    assert!(seat(&fx, "foreman").moved_out);
+
+    if close_whole_workspace {
+        fx.herdr.user_close_workspace(&beta_ws);
+    } else {
+        fx.herdr.user_close_tab(&bob_tab);
+    }
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out);
+    assert_reopened(&fx, "foreman").await;
+    let pane = pane_of(&fx, &only_clone(&fx, "foreman"));
+    let snap = snapshot(&fx).await;
+    let home = snap
+        .workspaces
+        .iter()
+        .find(|w| w.tabs.iter().any(|t| t.panes.iter().any(|p| p.id == pane)))
+        .expect("the pane lives somewhere");
+    assert_eq!(
+        crate::reconcile::planner::token_of(&home.metadata),
+        Some(foreman.teamspace.to_any()),
+        "reopened in its own teamspace's workspace"
+    );
+    if !close_whole_workspace {
+        assert_eq!(seat(&fx, "bob2").lifecycle, Lifecycle::Active);
+        assert_eq!(ts_rec(&fx, "beta").lifecycle, Lifecycle::Active);
+        assert_eq!(pane_of(&fx, &only_clone(&fx, "bob2")), bob2_pane);
+        assert_eq!(tab_of_seat(&fx, "bob2"), bob2_tab);
+        for c in calls(&fx) {
+            assert!(
+                !matches!(&c, FakeCall::CloseTab(t) if *t == bob2_tab),
+                "{c:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn nm_single_clone_moved_to_foreign_tab_then_foreign_tab_closed() {
+    nm_single_clone_in_foreign_tab(false).await;
+}
+
+#[tokio::test]
+async fn nm_single_clone_moved_to_foreign_tab_then_foreign_workspace_closed() {
+    nm_single_clone_in_foreign_tab(true).await;
+}
+
+#[tokio::test]
+async fn nm_moved_out_preset_no_survivor_home_workspace_closed() {
+    let t = two_teamspaces("shell", "shell", 0).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    fx.w.admit(super::mutations::move_request(
+        None,
+        None,
+        Some(&foreman.id),
+    ))
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert!(seat(fx, "foreman").moved_out);
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let s = seat(fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out, "no clone lives elsewhere");
+    assert_reopened(fx, "foreman").await;
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired);
+}
+
+#[tokio::test]
+async fn nm_reopen_keeps_recorded_tab_identity() {
+    let fx = fx();
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    let clone = only_clone(&fx, "foreman");
+    fx.herdr.user_close_tab(&tab_of_seat(&fx, "foreman"));
+    settle(&fx).await;
+
+    assert_reopened(&fx, "foreman").await;
+    let after = seat(&fx, "foreman");
+    assert_eq!(after.teamspace, foreman.teamspace, "no placement change");
+    assert_eq!(after.name, foreman.name);
+    let tab = tab_of_seat(&fx, "foreman");
+    let snap = snapshot(&fx).await;
+    let live = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|t| t.id == tab)
+        .expect("tab is live");
+    assert_eq!(live.label, foreman.name, "the recorded tab name");
+    let pane = live
+        .panes
+        .iter()
+        .find(|p| crate::reconcile::planner::token_of(&p.metadata) == Some(clone.id.to_any()));
+    assert!(pane.is_some(), "the pane carries the clone's graph token");
+    for a in actions(&fx, ActionKind::ClosureCascade) {
+        assert!(!a.retired.contains(&foreman.id.to_any()));
+    }
+    assert!(actions(&fx, ActionKind::Retire).is_empty());
+}
+
+/// Spec §4.9 required test (4): the home tab closes while one clone lives in another teamspace's tab. The tab
+/// path sets `moved_out` without a cascade; the planner still reopens the home clone in the home tab.
+#[tokio::test]
+async fn nm_home_tab_closed_with_clone_moved_out_reopens_home_clone() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    let bob_pane = pane_of(fx, &only_clone(fx, "bob"));
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    assert!(!seat(fx, "foreman").moved_out);
+    let moved_pane = pane_of(fx, &clone_by_id(fx, &moved.id));
+    let home_tab = tab_of_seat(fx, "foreman");
+    assert_ne!(home_tab, t.bob_tab);
+    let bob_tab_panes = |snap: &HerdrSnapshot| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id == t.bob_tab)
+            .expect("bob's tab")
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let bob_tab_before = bob_tab_panes(&snapshot(fx).await);
+
+    fx.herdr.user_close_tab(&home_tab);
+    fx.herdr.clear_calls();
+    step(fx).await;
+    let s = seat(fx, "foreman");
+    // The tab path marks the seat moved out; the reconcile pass of the same step may already have reopened the
+    // home tab, which clears it again.
+    assert!(
+        s.moved_out
+            || calls(fx)
+                .iter()
+                .any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "the tab path marks the seat moved out"
+    );
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(
+        actions(fx, ActionKind::ClosureCascade)
+            .iter()
+            .all(|a| !a.retired.contains(&foreman.id.to_any())),
+        "no cascade retires the node manager"
+    );
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    assert!(h.occupant.is_none());
+    settle(fx).await;
+
+    let all = calls(fx);
+    let snap = snapshot(fx).await;
+    let h_pane = pane_of(fx, &clone_by_id(fx, &home.id));
+    let alpha = snap
+        .workspaces
+        .iter()
+        .find(|w| w.id == t.alpha_ws)
+        .expect("alpha's workspace");
+    assert!(
+        alpha
+            .tabs
+            .iter()
+            .any(|tab| tab.panes.iter().any(|p| p.id == h_pane)),
+        "the home clone is live in a tab of alpha's workspace: {all:?}"
+    );
+    assert_eq!(bob_tab_panes(&snap), bob_tab_before, "{all:?}");
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let m = clone_by_id(fx, &moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert_eq!(pane_of(fx, &m), moved_pane, "the moved clone stays bound");
+    assert_eq!(
+        pane_of(fx, &clone_by_id(fx, &only_clone(fx, "bob").id)),
+        bob_pane
+    );
+    for c in &all {
+        assert!(!touches_beta(c, &t), "{c:?} touches beta: {all:?}");
+    }
+    assert!(
+        !seat(fx, "foreman").moved_out,
+        "the reopened home tab clears moved_out"
+    );
+}
+
+/// Required test (4) carried on: once the home tab is reopened the seat is no longer moved out, so a disconnect
+/// and rebind re-match the reopened tab, and closing it again reopens it again.
+#[tokio::test]
+async fn nm_reopened_home_tab_survives_rebind_and_reopens_again() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    fx.herdr.user_close_tab(&tab_of_seat(fx, "foreman"));
+    settle(fx).await;
+    assert!(
+        !seat(fx, "foreman").moved_out,
+        "the reopened home tab is the seat's tab"
+    );
+
+    fx.herdr.disconnect_subscribers();
+    fx.herdr.fail_next("session.snapshot", Fault::Unavailable);
+    step(fx).await;
+    settle(fx).await;
+    let s = seat(fx, "foreman");
+    assert_eq!(
+        s.runtime.availability,
+        Availability::Present,
+        "rebind re-matches the reopened tab"
+    );
+    let reopened = tab_of_seat(fx, "foreman");
+    let first_pane = pane_of(fx, &clone_by_id(fx, &home.id));
+
+    fx.herdr.user_close_tab(&reopened);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+    let all = calls(fx);
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    assert_ne!(
+        pane_of(fx, &h),
+        first_pane,
+        "the home clone is reopened again"
+    );
+    assert_eq!(
+        pane_of(fx, &clone_by_id(fx, &moved.id)),
+        pane_of(fx, &moved)
+    );
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active);
+}
+
+/// Required test (4), same-teamspace variant: the moved clone sits in another alpha seat's tab. That tab is not
+/// the node manager's, so the home clone reopens through CreateTab rather than as a split in bench's tab.
+#[tokio::test]
+async fn nm_home_tab_closed_with_clone_in_same_teamspace_tab_reopens_home_clone() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    let bench_tab = tab_of_seat(fx, "bench");
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &bench_tab);
+    settle(fx).await;
+    let home_tab = tab_of_seat(fx, "foreman");
+    assert_ne!(home_tab, bench_tab);
+    let tab_panes = |snap: &HerdrSnapshot, id: &HerdrTabId| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .find(|tab| tab.id == *id)
+            .expect("live tab")
+            .panes
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let bench_before = tab_panes(&snapshot(fx).await, &bench_tab);
+
+    fx.herdr.user_close_tab(&home_tab);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    let s = seat(fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    let snap = snapshot(fx).await;
+    assert_eq!(tab_panes(&snap, &bench_tab), bench_before, "{all:?}");
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let h_pane = pane_of(fx, &h);
+    let h_tab = snap
+        .workspaces
+        .iter()
+        .find(|w| w.id == t.alpha_ws)
+        .expect("alpha's workspace")
+        .tabs
+        .iter()
+        .find(|tab| tab.panes.iter().any(|p| p.id == h_pane))
+        .map(|tab| tab.id.clone())
+        .expect("home clone live in alpha's workspace");
+    assert_ne!(h_tab, bench_tab);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Active);
+}
+
+/// Spec §4.9 required test (5): `moved_out` is already set when the home workspace closes. The node manager's
+/// non-survived clones reopen in a fresh workspace and tab; the moved clone and the other teamspace stay.
+#[tokio::test]
+async fn nm_moved_out_preset_home_workspace_closed_reopens_non_survived() {
+    let t = two_teamspaces("shell", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    assert_eq!(cs.len(), 2);
+    let (moved, home) = (cs[0].clone(), cs[1].clone());
+    let bob_pane = pane_of(fx, &only_clone(fx, "bob"));
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+    let moved_pane = pane_of(fx, &clone_by_id(fx, &moved.id));
+    let home_pane = pane_of(fx, &clone_by_id(fx, &home.id));
+    fx.w.admit(super::mutations::move_request(
+        None,
+        None,
+        Some(&foreman.id),
+    ))
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert!(seat(fx, "foreman").moved_out, "moved_out is pre-set");
+
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    fx.herdr.clear_calls();
+    settle(fx).await;
+
+    let all = calls(fx);
+    assert_eq!(seat(fx, "bench").lifecycle, Lifecycle::Retired, "{all:?}");
+    assert_eq!(seat(fx, "foreman").lifecycle, Lifecycle::Active, "{all:?}");
+    let m = clone_by_id(fx, &moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active, "{all:?}");
+    assert_eq!(pane_of(fx, &m), moved_pane, "the moved clone stays bound");
+    let h = clone_by_id(fx, &home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active, "{all:?}");
+    let h_pane = pane_of(fx, &h);
+    assert_ne!(h_pane, home_pane, "the home clone has a new pane");
+    let snap = snapshot(fx).await;
+    let fresh = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|tab| tab.panes.iter().any(|p| p.id == h_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_ne!(fresh.id, t.alpha_ws);
+    assert_ne!(fresh.id, t.beta_ws, "{all:?}");
+    let pos = |f: &dyn Fn(&FakeCall) -> bool| all.iter().position(f);
+    let ws_at = pos(&|c| matches!(c, FakeCall::CreateWorkspace(_))).expect("CreateWorkspace");
+    let tab_at = pos(&|c| matches!(c, FakeCall::CreateTab(ct) if ct.workspace == fresh.id))
+        .expect("CreateTab in the fresh workspace");
+    assert!(ws_at < tab_at, "{all:?}");
+    assert_eq!(
+        pane_of(fx, &clone_by_id(fx, &only_clone(fx, "bob").id)),
+        bob_pane
+    );
+    assert_eq!(seat(fx, "bob").lifecycle, Lifecycle::Active);
+    for c in &all {
+        assert!(!touches_beta(c, &t), "{c:?} touches beta: {all:?}");
+    }
+}
+
+/// Classification only reports facts: the same closure classifies identically with and without a node manager,
+/// and a clone whose pane left the closed workspace alive is listed in `retire` and `ends` and named in `survived`.
+#[tokio::test]
+async fn classify_reports_survival_without_node_manager_input() {
+    let t = two_teamspaces("claude", "shell", 1).await;
+    let fx = &t.fx;
+    let foreman = seat(fx, "foreman");
+    let cs = clones_of(fx, &foreman.id);
+    let (moved, closed) = (cs[0].clone(), cs[1].clone());
+    fx.herdr
+        .set_agent(&pane_of(fx, &moved), claude_agent(Some("sess-m")));
+    fx.herdr
+        .set_agent(&pane_of(fx, &closed), claude_agent(Some("sess-c")));
+    step(fx).await;
+    fx.herdr.user_move_pane(&pane_of(fx, &moved), &t.bob_tab);
+    settle(fx).await;
+
+    let with_nm = crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.root).unwrap();
+    assert_eq!(with_nm.node_manager, Some(foreman.id.clone()));
+    let mut without_nm = with_nm.clone();
+    without_nm.node_manager = None;
+    let before = snapshot(fx).await;
+    fx.herdr.user_close_workspace(&t.alpha_ws);
+    let after = snapshot(fx).await;
+    let run = |d: &crate::reconcile::desired::DesiredRuntime| {
+        let (mb, ma) = (
+            super::matcher::match_snapshot(&before, d),
+            super::matcher::match_snapshot(&after, d),
+        );
+        super::classify::classify(
+            &super::classify::ClassifyCx {
+                desired: d,
+                journal: &fx.journal,
+                preds: &[],
+                matches: &ma,
+                baseline: Some(&mb),
+            },
+            vec![super::diff::DiffElement::Disappeared {
+                object: ts_rec(fx, "alpha").id.to_any(),
+                container: ContainerKind::Workspace,
+            }],
+        )
+    };
+    let (a, b) = (run(&with_nm), run(&without_nm));
+    assert_eq!(a.cascades, b.cascades);
+    assert_eq!(a.warnings, b.warnings);
+    assert_eq!(a.cascades.len(), 1);
+    let cas = &a.cascades[0];
+    assert_eq!(cas.survived, vec![moved.id.clone()]);
+    assert!(cas.retire.contains(&moved.id.to_any()));
+    assert!(cas.retire.contains(&closed.id.to_any()));
+    let ended: Vec<_> = cas.ends.iter().map(|e| e.clone.clone()).collect();
+    assert!(
+        ended.contains(&moved.id) && ended.contains(&closed.id),
+        "{ended:?}"
+    );
+}
+
+/// The observation alone (before the reconciler reopens anything): the home workspace holding the node manager
+/// and a sibling closes. The sibling is retired; the node manager's teamspace stays Active, runtime absent.
+#[tokio::test]
+async fn workspace_close_marks_node_manager_teamspace_absent() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(
+        &fx,
+        "seat create bench --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    make_node_manager(&fx, &seat(&fx, "foreman").id);
+    let desired = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.root).unwrap();
+    let ws = workspace_id(&fx).await;
+    let before = snapshot(&fx).await;
+    fx.herdr.user_close_workspace(&ws);
+    let after = snapshot(&fx).await;
+    let (mb, ma) = (
+        super::matcher::match_snapshot(&before, &desired),
+        super::matcher::match_snapshot(&after, &desired),
+    );
+    let out = super::classify::classify(
+        &super::classify::ClassifyCx {
+            desired: &desired,
+            journal: &fx.journal,
+            preds: &[],
+            matches: &ma,
+            baseline: Some(&mb),
+        },
+        vec![super::diff::DiffElement::Disappeared {
+            object: ts_rec(&fx, "alpha").id.to_any(),
+            container: ContainerKind::Workspace,
+        }],
+    );
+    apply_classified(&fx, &out);
+
+    let ts = ts_rec(&fx, "alpha");
+    assert_eq!(ts.lifecycle, Lifecycle::Active);
+    assert_eq!(ts.runtime.availability, Availability::Absent);
+    assert!(ts.runtime.bound.is_none());
+    assert_eq!(seat(&fx, "bench").lifecycle, Lifecycle::Retired);
+    let f = seat(&fx, "foreman");
+    assert_eq!(f.lifecycle, Lifecycle::Active);
+    assert_eq!(f.runtime.availability, Availability::Absent);
+    settle(&fx).await;
+    assert_reopened(&fx, "foreman").await;
+}
+
+// =================================================================================================
+// redesign-code-1 integration sweep (hg-k4l.67)
+// =================================================================================================
+
+/// Every ended native session in the store, as `(clone, ns, end reason)` strings.
+fn ended_sessions(fx: &Fx) -> std::collections::BTreeSet<(String, String, String)> {
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .flat_map(|(_, c)| {
+            c.sessions
+                .iter()
+                .filter(|s| s.ended.is_some())
+                .map(|s| {
+                    (
+                        format!("{:?}", c.id),
+                        format!("{:?}", s.id),
+                        format!("{:?}", s.end_reason),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The `SessionEnded` events received since the last drain, in the shape of [`ended_sessions`].
+fn drain_ended(
+    rx: &mut tokio::sync::broadcast::Receiver<super::step::SessionEnded>,
+) -> std::collections::BTreeSet<(String, String, String)> {
+    let mut out = std::collections::BTreeSet::new();
+    while let Ok(ev) = rx.try_recv() {
+        out.insert((
+            format!("{:?}", ev.clone),
+            format!("{:?}", ev.ns),
+            format!("{:?}", Some(ev.reason)),
+        ));
+    }
+    out
+}
+
+/// Spec §4.9 / §4.11 scenarios composed in one world: observe -> `CascadeMutation` -> `commit_ops` -> reconcile
+/// against `FakeHerdr`. After each scenario the store's newly ended sessions equal the emitted `SessionEnded`
+/// events, and the foreign teamspace `other` is untouched.
+#[tokio::test]
+async fn redesign_sweep_scenarios_compose() {
+    use crate::plan::managers::reparent::testing::{recorded, teamspace_request};
+    let fx = fx();
+    let fx = &fx;
+    commit(fx, "teamspace create hq");
+    commit(
+        fx,
+        "seat create nm --teamspace hq --active --harness claude",
+    );
+    commit(fx, "clone add nm --name nm2");
+    commit(
+        fx,
+        "seat create sib --teamspace hq --active --harness claude",
+    );
+    commit(fx, "teamspace create other");
+    commit(
+        fx,
+        "seat create o --teamspace other --active --harness claude",
+    );
+    commit(fx, "teamspace create away");
+    commit(
+        fx,
+        "seat create p --teamspace away --active --harness claude",
+    );
+    settle(fx).await;
+    let (nm, sib) = (seat(fx, "nm").id, seat(fx, "sib").id);
+    make_node_manager(fx, &nm);
+    let hq = ts_rec(fx, "hq").id;
+    fx.w.admit(teamspace_request(&hq, Some(&sib))).unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(ts_rec(fx, "hq").default_manager, Some(sib.clone()));
+
+    // Every clone gets an occupant, so each end is a native session end.
+    for s in ["nm", "sib", "o", "p"] {
+        for (n, c) in clones_of(fx, &seat(fx, s).id).iter().enumerate() {
+            fx.herdr.set_agent(
+                &pane_of(fx, c),
+                claude_agent(Some(&format!("sess-{s}-{n}"))),
+            );
+        }
+    }
+    step(fx).await;
+    for s in ["nm", "sib", "o", "p"] {
+        for c in clones_of(fx, &seat(fx, s).id) {
+            assert!(c.occupant.is_some(), "{s} clone has an occupant");
+            assert_eq!(c.sessions.len(), 1, "{s} clone captured its session");
+        }
+    }
+    let mut rx = fx.lp.subscribe_session_ended();
+    let ws_of = |name: &str| {
+        ts_rec(fx, name)
+            .runtime
+            .bound
+            .unwrap()
+            .workspace_id
+            .unwrap()
+    };
+    let (hq_ws, other_ws, away_ws) = (ws_of("hq"), ws_of("other"), ws_of("away"));
+    let o_tab = tab_of_seat(fx, "o");
+    let o_pane = pane_of(fx, &only_clone(fx, "o"));
+    let mut ended_before = ended_sessions(fx);
+    assert!(ended_before.is_empty());
+    fx.herdr.clear_calls();
+
+    // `other` is untouched: no workspace/tab-level call and no split targets it, `o` stays bound and Active.
+    let check_other = |when: &str| {
+        let all = calls(fx);
+        for c in &all {
+            let hit = match c {
+                FakeCall::RenameWorkspace(w, _)
+                | FakeCall::ReportWorkspaceMetadata(w, ..)
+                | FakeCall::CloseWorkspace(w) => *w == other_ws,
+                FakeCall::CloseTab(t) | FakeCall::RenameTab(t, _) => *t == o_tab,
+                FakeCall::CreateTab(ct) => ct.workspace == other_ws,
+                FakeCall::SplitPane(sp) => sp.target == o_pane,
+                FakeCall::ClosePane(p) => *p == o_pane,
+                _ => false,
+            };
+            assert!(!hit, "{when}: {c:?} touches `other`: {all:?}");
+        }
+        assert_eq!(seat(fx, "o").lifecycle, Lifecycle::Active, "{when}");
+        assert_eq!(ts_rec(fx, "other").lifecycle, Lifecycle::Active, "{when}");
+        assert_eq!(
+            ts_rec(fx, "other").runtime.bound.unwrap().workspace_id,
+            Some(other_ws.clone()),
+            "{when}"
+        );
+        assert_eq!(tab_of_seat(fx, "o"), o_tab, "{when}");
+    };
+    let check_ends =
+        |when: &str,
+         before: &mut std::collections::BTreeSet<(String, String, String)>,
+         rx: &mut tokio::sync::broadcast::Receiver<super::step::SessionEnded>| {
+            let now = ended_sessions(fx);
+            let new: std::collections::BTreeSet<_> = now.difference(before).cloned().collect();
+            assert!(before.is_subset(&now), "{when}: a session end was undone");
+            assert_eq!(new, drain_ended(rx), "{when}: store ends equal events");
+            *before = now;
+            new
+        };
+
+    // 1. Move: nm's second clone and p's clone into `other`'s tab.
+    let nm_clones = clones_of(fx, &nm);
+    assert_eq!(nm_clones.len(), 2);
+    let (nm_home, nm_moved) = (nm_clones[0].clone(), nm_clones[1].clone());
+    let (nm_home_pane, nm_moved_pane) = (pane_of(fx, &nm_home), pane_of(fx, &nm_moved));
+    let p_clone = only_clone(fx, "p");
+    let p_pane = pane_of(fx, &p_clone);
+    fx.herdr.user_move_pane(&nm_moved_pane, &o_tab);
+    fx.herdr.user_move_pane(&p_pane, &o_tab);
+    settle(fx).await;
+    assert!(check_ends("move", &mut ended_before, &mut rx).is_empty());
+    check_other("move");
+
+    // 2. Two-clone node manager moved, then the home workspace closes; the teamspace default rewrite survives.
+    fx.herdr.user_close_workspace(&hq_ws);
+    settle(fx).await;
+    let all = calls(fx);
+    assert_eq!(seat(fx, "nm").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(ts_rec(fx, "hq").lifecycle, Lifecycle::Active, "{all:?}");
+    assert_eq!(seat(fx, "sib").lifecycle, Lifecycle::Retired, "{all:?}");
+    let m = clone_by_id(fx, &nm_moved.id);
+    assert_eq!(m.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        pane_of(fx, &m),
+        nm_moved_pane,
+        "the moved clone stays bound"
+    );
+    let h = clone_by_id(fx, &nm_home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active, "{all:?}");
+    let h_pane = pane_of(fx, &h);
+    assert_ne!(h_pane, nm_home_pane, "the home clone has a new pane");
+    let snap = snapshot(fx).await;
+    let fresh = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|t| t.panes.iter().any(|p| p.id == h_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_ne!(fresh.id, hq_ws, "a new workspace id");
+    assert_ne!(fresh.id, other_ws, "{all:?}");
+    let home_tab = tab_of_seat(fx, "nm");
+    assert_ne!(
+        home_tab, o_tab,
+        "the node manager's seat tab is not other's"
+    );
+    assert!(
+        fresh.tabs.iter().any(|t| t.id == home_tab),
+        "the seat tab is in the fresh workspace"
+    );
+    assert_eq!(
+        ts_rec(fx, "hq").runtime.bound.unwrap().workspace_id,
+        Some(fresh.id.clone())
+    );
+    let acts = actions(fx, ActionKind::ClosureCascade);
+    assert_eq!(acts.len(), 1, "one cascade so far");
+    let row = recorded(&acts[0])
+        .into_iter()
+        .find(|r| r.holder == hq.to_any() && r.field == "default_manager")
+        .expect("hq's default_manager is reparented");
+    assert_eq!(row.old, sib);
+    assert_eq!(row.new, Some(nm.clone()));
+    assert_eq!(
+        ts_rec(fx, "hq").default_manager,
+        row.new,
+        "the stored pointer equals the recorded rewrite"
+    );
+    let ends = check_ends("node manager workspace", &mut ended_before, &mut rx);
+    let ended_clones: std::collections::BTreeSet<_> = ends.iter().map(|e| e.0.clone()).collect();
+    let sib_clone = only_clone(fx, "sib");
+    assert_eq!(
+        ended_clones,
+        [format!("{:?}", nm_home.id), format!("{:?}", sib_clone.id)]
+            .into_iter()
+            .collect(),
+        "nm's survived clone gets no end"
+    );
+    check_other("node manager workspace");
+
+    // 3. Plain seat moved, then its home workspace closes: retired, SessionEnded for its surviving clone.
+    fx.herdr.user_close_workspace(&away_ws);
+    settle(fx).await;
+    assert_eq!(seat(fx, "p").lifecycle, Lifecycle::Retired);
+    let pc = clone_by_id(fx, &p_clone.id);
+    assert_eq!(pc.lifecycle, CloneLifecycle::Retired);
+    assert!(pc.occupant.is_none());
+    let ends = check_ends("plain seat", &mut ended_before, &mut rx);
+    assert_eq!(ends.len(), 1);
+    assert_eq!(ends.iter().next().unwrap().0, format!("{:?}", p_clone.id));
+    assert_eq!(seat(fx, "nm").lifecycle, Lifecycle::Active);
+    check_other("plain seat");
+
+    // 4. The reopened node-manager home tab closes while its other clone is still in `other`'s tab.
+    let nm_home_tab = tab_of_seat(fx, "nm");
+    let reopened_pane = pane_of(fx, &clone_by_id(fx, &nm_home.id));
+    fx.herdr.user_close_tab(&nm_home_tab);
+    settle(fx).await;
+    let s = seat(fx, "nm");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert_eq!(s.runtime.availability, Availability::Present);
+    let h = clone_by_id(fx, &nm_home.id);
+    assert_eq!(h.lifecycle, CloneLifecycle::Active);
+    let h_pane = pane_of(fx, &h);
+    assert_ne!(h_pane, reopened_pane, "the home clone was reopened");
+    let snap = snapshot(fx).await;
+    let home_ws = snap
+        .workspaces
+        .iter()
+        .find(|w| {
+            w.tabs
+                .iter()
+                .any(|t| t.panes.iter().any(|p| p.id == h_pane))
+        })
+        .expect("the reopened clone lives somewhere");
+    assert_eq!(home_ws.id, fresh.id, "reopened in the hq home workspace");
+    assert_eq!(pane_of(fx, &clone_by_id(fx, &nm_moved.id)), nm_moved_pane);
+    check_ends("node manager tab", &mut ended_before, &mut rx);
+    check_other("node manager tab");
 }

@@ -1,0 +1,249 @@
+diff --git a/src/undo/tests.rs b/src/undo/tests.rs
+index 038288d..cf56d07 100644
+--- a/src/undo/tests.rs
++++ b/src/undo/tests.rs
+@@ -115,6 +115,7 @@ fn fx() -> Fx {
+     let docs = tmp.path().join("docs");
+     std::fs::create_dir_all(&docs).unwrap();
+     init_instance(&root).unwrap();
++    crate::plan::managers::testing::opt_out(&root);
+     let mut kinds = KindRegistry::default();
+     register_core_kinds(&mut kinds);
+     register_template_kinds(&mut kinds);
+@@ -123,6 +124,14 @@ fn fx() -> Fx {
+     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
+     let mut reg = MutationRegistry::default();
+     reg.register("bookkeeping.patch", Arc::new(Patch));
++    reg.register(
++        crate::plan::managers::reparent::testing::SET_POINTER_KEY,
++        Arc::new(crate::plan::managers::reparent::testing::SetPointer),
++    );
++    reg.register(
++        crate::plan::managers::testing::SET_NODE_MANAGER_KEY,
++        Arc::new(crate::plan::managers::testing::SetNodeManager),
++    );
+     kinds.register_mutations(&mut reg, plans.clone());
+     crate::observe::register_mutations(&mut reg);
+     crate::reconcile::register_mutations(&mut reg);
+@@ -1515,3 +1524,221 @@ fn reconnect_prevents_preboundary_retirement_undo_reactivating_old_references()
+     let err = plan_err(&fx, &format!("undo {}", retired.action.unwrap()));
+     assert!(err.contains("previous threads namespace"), "{err}");
+ }
++
++/// Make `seat` the node manager explicitly (independent of first-seat assignment).
++fn make_node_manager(fx: &Fx, seat: &SeatId) {
++    use crate::ports::writer::Writer;
++    let op =
++        fx.w.admit(crate::plan::managers::testing::request(Some(seat)))
++            .unwrap();
++    fx.w.drain().unwrap();
++    assert_eq!(
++        fx.w.journal().get(&op).unwrap().unwrap().state,
++        OpState::Committed
++    );
++}
++
++// ---------------------------------------------------------------------------------------------
++// reparenting on retirement (hg-k4l.26): ApplicationRetire and undo-driven routes
++// ---------------------------------------------------------------------------------------------
++
++fn commit_request(fx: &Fx, req: ChangeRequest) {
++    let op = fx.w.admit(req).unwrap();
++    fx.w.drain().unwrap();
++    let row = fx.w.journal().get(&op).unwrap().unwrap();
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++}
++
++/// nm (node manager) <- mid <- lead (created by application `one` from template `lead-tpl`); `r`, outside the
++/// application, reports to lead. Returns (hydrate row, ids of nm, lead, r).
++fn lead_world(fx: &Fx) -> (OpRow, SeatId, SeatId, SeatId) {
++    use crate::plan::managers::reparent::testing::seat_request;
++    alpha(fx);
++    for n in ["nm", "mid", "r"] {
++        commit(fx, &format!("seat create {n} --teamspace alpha"));
++    }
++    let lead_member = MemberId::new();
++    create_template(fx, "lead-tpl", &[m(&lead_member, "lead", "deferred")]);
++    let hydrate = apply_app(fx, "lead-tpl", "one");
++    let nm = seat_named(fx, "nm").id;
++    let mid = seat_named(fx, "mid").id;
++    let lead = seat_named(fx, "lead").id;
++    let r = seat_named(fx, "r").id;
++    commit_request(fx, crate::plan::managers::testing::request(Some(&nm)));
++    commit_request(fx, seat_request(&mid, Some(&nm)));
++    commit_request(fx, seat_request(&lead, Some(&mid)));
++    commit_request(fx, seat_request(&r, Some(&lead)));
++    (hydrate, nm, lead, r)
++}
++
++fn assert_rewrote_r(fx: &Fx, act: &ActionRecord, r: &SeatId, lead: &SeatId, mid: &SeatId) {
++    use crate::plan::managers::reparent::{Rewrite, testing::recorded};
++    assert_eq!(seat_by_id(fx, r).manager, Some(mid.clone()));
++    assert_eq!(
++        recorded(act),
++        vec![Rewrite {
++            holder: r.to_any(),
++            field: "manager".into(),
++            old: lead.clone(),
++            new: Some(mid.clone()),
++        }]
++    );
++}
++
++#[test]
++fn guard_undo_of_creating_hydrate() {
++    let fx = fx();
++    alpha(&fx);
++    let e = MemberId::new();
++    create_template(&fx, "team", &[m(&e, "main", "active")]);
++    let row = apply_app(&fx, "team", "crew");
++    let main = seat_named(&fx, "main");
++    make_node_manager(&fx, &main.id);
++
++    let act = action_of(&fx, &row);
++    assert_eq!(act.kind, ActionKind::Hydrate);
++    let msg = plan_err(&fx, &format!("undo {}", act.id));
++    assert!(msg.contains("node manager main"), "{msg}");
++    assert!(msg.contains("cannot be retired"), "{msg}");
++    assert!(
++        msg.contains(crate::plan::managers::NODE_MANAGER_SET_USAGE),
++        "{msg}"
++    );
++    assert_eq!(seat_by_id(&fx, &main.id).lifecycle, Lifecycle::Active);
++}
++
++/// `SeatCreate` writes no action record, so "undo of the node manager's first SeatCreate" cannot exist; the
++/// creating action undo can target is the hydrate (`guard_undo_of_creating_hydrate`).
++#[test]
++fn seat_create_has_no_undoable_action() {
++    let fx = fx();
++    alpha(&fx);
++    let row = commit(&fx, "seat create foreman --teamspace alpha --active");
++    assert_eq!(row.action, None);
++    assert!(list_candidates(&view(&fx), 20).unwrap().is_empty());
++}
++
++#[test]
++fn reparent_on_application_retire_records_rewrites() {
++    let fx = fx();
++    let (_hydrate, _nm, lead, r) = lead_world(&fx);
++    let mid = seat_named(&fx, "mid").id;
++    let row = commit(&fx, "application retire one");
++    assert_eq!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Retired);
++    let act = action_of(&fx, &row);
++    assert_eq!(act.kind, ActionKind::ApplicationRetire);
++    assert_rewrote_r(&fx, &act, &r, &lead, &mid);
++}
++
++#[test]
++fn reparent_on_undo_of_hydrate() {
++    let fx = fx();
++    let (hydrate, _nm, lead, r) = lead_world(&fx);
++    let mid = seat_named(&fx, "mid").id;
++    let h = action_of(&fx, &hydrate);
++    assert_eq!(h.kind, ActionKind::Hydrate);
++    let row = apply_plan(&fx, &plan(&fx, &format!("undo {}", h.id)));
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_eq!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Retired);
++    let act = action_of(&fx, &row);
++    assert_eq!(act.kind, ActionKind::Undo);
++    assert_rewrote_r(&fx, &act, &r, &lead, &mid);
++}
++
++// ---------------------------------------------------------------------------------------------
++// undo restores the manager pointers a retirement reparented (hg-k4l.17)
++// ---------------------------------------------------------------------------------------------
++
++/// nm (node manager) <- boss <- r; returns (nm, boss, r).
++fn boss_world(fx: &Fx) -> (SeatId, SeatId, SeatId) {
++    use crate::plan::managers::reparent::testing::seat_request;
++    alpha(fx);
++    for n in ["nm", "boss", "r"] {
++        commit(fx, &format!("seat create {n} --teamspace alpha"));
++    }
++    let nm = seat_named(fx, "nm").id;
++    let boss = seat_named(fx, "boss").id;
++    let r = seat_named(fx, "r").id;
++    commit_request(fx, crate::plan::managers::testing::request(Some(&nm)));
++    commit_request(fx, seat_request(&boss, Some(&nm)));
++    commit_request(fx, seat_request(&r, Some(&boss)));
++    (nm, boss, r)
++}
++
++#[test]
++fn undo_retire_restores_reparented_pointers() {
++    let fx = fx();
++    let (nm, boss, r) = boss_world(&fx);
++    let ts = ts_named(&fx, "alpha").id;
++    commit_request(
++        &fx,
++        crate::plan::managers::reparent::testing::teamspace_request(&ts, Some(&boss)),
++    );
++    let retire = commit(&fx, "seat retire boss");
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(nm.clone()));
++    assert_eq!(ts_named(&fx, "alpha").default_manager, Some(nm.clone()));
++
++    let act = action_of(&fx, &retire);
++    let sp = plan(&fx, &format!("undo {}", act.id));
++    let restores: Vec<_> = sp
++        .plan
++        .effects
++        .iter()
++        .filter(|e| e.kind == "seat.manager" || e.kind == "teamspace.default_manager")
++        .collect();
++    assert_eq!(restores.len(), 2, "{restores:?}");
++    let seat_fx = restores.iter().find(|e| e.kind == "seat.manager").unwrap();
++    assert_eq!(seat_fx.object, r.to_any());
++    assert_eq!(seat_fx.detail["from"], json!(nm));
++    assert_eq!(seat_fx.detail["to"], json!(boss));
++    assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
++
++    let row = apply_plan(&fx, &sp);
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_eq!(seat_by_id(&fx, &boss).lifecycle, Lifecycle::Dormant);
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(boss.clone()));
++    assert_eq!(ts_named(&fx, "alpha").default_manager, Some(boss));
++}
++
++#[test]
++fn undo_application_retire_restores_pointers() {
++    let fx = fx();
++    let (_hydrate, _nm, lead, r) = lead_world(&fx);
++    let row = commit(&fx, "application retire one");
++    let mid = seat_named(&fx, "mid").id;
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(mid));
++    let act = action_of(&fx, &row);
++    assert_eq!(act.kind, ActionKind::ApplicationRetire);
++
++    let undo = apply_plan(&fx, &plan(&fx, &format!("undo {}", act.id)));
++    assert_eq!(undo.state, OpState::Committed, "{:?}", undo.rejection);
++    assert_ne!(seat_by_id(&fx, &lead).lifecycle, Lifecycle::Retired);
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(lead));
++}
++
++#[test]
++fn undo_leaves_changed_pointer_and_lists_it() {
++    use crate::plan::managers::reparent::testing::seat_request;
++    let fx = fx();
++    let (nm, boss, r) = boss_world(&fx);
++    commit(&fx, "seat create other --teamspace alpha");
++    let other = seat_named(&fx, "other").id;
++    let retire = commit(&fx, "seat retire boss");
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(nm));
++    commit_request(&fx, seat_request(&r, Some(&other)));
++
++    let act = action_of(&fx, &retire);
++    let sp = plan(&fx, &format!("undo {}", act.id));
++    assert!(kinds_of(&sp, "seat.manager").is_empty());
++    assert_eq!(sp.plan.warnings.len(), 1, "{:?}", sp.plan.warnings);
++    assert!(
++        sp.plan.warnings[0].contains(&r.to_string()) && sp.plan.warnings[0].contains("changed"),
++        "{:?}",
++        sp.plan.warnings
++    );
++
++    let row = apply_plan(&fx, &sp);
++    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
++    assert_ne!(seat_by_id(&fx, &boss).lifecycle, Lifecycle::Retired);
++    assert_eq!(seat_by_id(&fx, &r).manager, Some(other));
++}

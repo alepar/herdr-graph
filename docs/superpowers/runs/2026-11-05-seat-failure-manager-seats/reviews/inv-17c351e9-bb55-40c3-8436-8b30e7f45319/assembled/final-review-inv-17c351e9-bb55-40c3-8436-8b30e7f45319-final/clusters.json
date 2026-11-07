@@ -1,0 +1,383 @@
+{
+ "changed": [
+  ".gitignore",
+  "CURRENT-DESIGN.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1-step-back.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-2.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-findings-round-1.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-findings-round-2.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-ledger.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-requirements.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-review-1.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-review-2.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/findings-ledger-design.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/findings-overrides-design.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/friction.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv1.json",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv1.md",
+  "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/run.md",
+  "docs/superpowers/specs/INDEX.md",
+  "skills/seat/SKILL.md",
+  "src/bootstrap/instructions.rs",
+  "src/bootstrap/mod.rs",
+  "src/bootstrap/show.rs",
+  "src/bootstrap/tests.rs",
+  "src/cli/daemon_error.rs",
+  "src/cli/instructions.rs",
+  "src/cli/mod.rs",
+  "src/cli/node_manager_warning.rs",
+  "src/cli/ops.rs",
+  "src/cli/plan.rs",
+  "src/cli/request.rs",
+  "src/cli/seat.rs",
+  "src/cli/show.rs",
+  "src/cli/status.rs",
+  "src/cli/undo.rs",
+  "src/cli/who.rs",
+  "src/daemon/client.rs",
+  "src/daemon/doctor.rs",
+  "src/daemon/registry.rs",
+  "src/ipc.rs",
+  "src/model/change.rs",
+  "src/model/effective.rs",
+  "src/model/graph.rs",
+  "src/model/manager.rs",
+  "src/model/mod.rs",
+  "src/model/seat.rs",
+  "src/model/teamspace.rs",
+  "src/model/tests.rs",
+  "src/observe/classify.rs",
+  "src/observe/mutations.rs",
+  "src/observe/step.rs",
+  "src/observe/tests.rs",
+  "src/plan/core_kinds.rs",
+  "src/plan/kind.rs",
+  "src/plan/managers/cycle_guard.rs",
+  "src/plan/managers/edit.rs",
+  "src/plan/managers/first_seat.rs",
+  "src/plan/managers/mod.rs",
+  "src/plan/managers/node_manager.rs",
+  "src/plan/managers/reparent.rs",
+  "src/plan/managers/retire.rs",
+  "src/plan/managers/tests.rs",
+  "src/plan/mod.rs",
+  "src/plan/tests.rs",
+  "src/ports/store.rs",
+  "src/reconcile/desired.rs",
+  "src/reconcile/tests.rs",
+  "src/store/init.rs",
+  "src/store/instruction_source.rs",
+  "src/store/tests.rs",
+  "src/templates/kinds.rs",
+  "src/templates/structure.rs",
+  "src/templates/tests.rs",
+  "src/threads/mod.rs",
+  "src/threads/tests.rs",
+  "src/undo/tests.rs",
+  "src/writer/mod.rs",
+  "src/writer/tests.rs",
+  "tests/daemon_composed.rs",
+  "tests/daemon_error_commands.rs",
+  "tests/daemon_free_reads.rs",
+  "tests/integration_sweep.rs",
+  "tests/node_manager_warning.rs",
+  "tests/seat_exit_codes.rs",
+  "tests/writer_concurrency.rs"
+ ],
+ "clusters": [
+  {
+   "name": "misc",
+   "files": [
+    ".gitignore",
+    "CURRENT-DESIGN.md",
+    "skills/seat/SKILL.md"
+   ],
+   "slices": [
+    "slices/000001.diff",
+    "slices/000002.diff",
+    "slices/000021.diff"
+   ]
+  },
+  {
+   "name": "docs",
+   "files": [
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-design.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-1.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/2026-11-05-seat-failure-manager-seats-roast-design-2.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-ledger.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/friction.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv1.json",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/profile-inv1.md",
+    "docs/superpowers/runs/2026-11-05-seat-failure-manager-seats/run.md",
+    "docs/superpowers/specs/INDEX.md"
+   ],
+   "slices": [
+    "slices/000003.diff",
+    "slices/000004.diff",
+    "slices/000005.diff",
+    "slices/000006.diff",
+    "slices/000007.diff",
+    "slices/000008.diff",
+    "slices/000009.diff",
+    "slices/000010.diff",
+    "slices/000011.diff",
+    "slices/000012.diff",
+    "slices/000013.diff",
+    "slices/000014.diff",
+    "slices/000015.diff",
+    "slices/000016.diff",
+    "slices/000017.diff",
+    "slices/000018.diff",
+    "slices/000019.diff",
+    "slices/000020.diff"
+   ]
+  },
+  {
+   "name": "bootstrap",
+   "files": [
+    "src/bootstrap/instructions.rs",
+    "src/bootstrap/mod.rs",
+    "src/bootstrap/show.rs",
+    "src/bootstrap/tests.rs"
+   ],
+   "slices": [
+    "slices/000022.diff",
+    "slices/000023.diff",
+    "slices/000024.diff",
+    "slices/000025.diff"
+   ]
+  },
+  {
+   "name": "cli",
+   "files": [
+    "src/cli/daemon_error.rs",
+    "src/cli/instructions.rs",
+    "src/cli/mod.rs",
+    "src/cli/node_manager_warning.rs",
+    "src/cli/ops.rs",
+    "src/cli/plan.rs",
+    "src/cli/request.rs",
+    "src/cli/seat.rs",
+    "src/cli/show.rs",
+    "src/cli/status.rs",
+    "src/cli/undo.rs",
+    "src/cli/who.rs"
+   ],
+   "slices": [
+    "slices/000026.diff",
+    "slices/000027.diff",
+    "slices/000028.diff",
+    "slices/000029.diff",
+    "slices/000030.diff",
+    "slices/000031.diff",
+    "slices/000032.diff",
+    "slices/000033.diff",
+    "slices/000034.diff",
+    "slices/000035.diff",
+    "slices/000036.diff",
+    "slices/000037.diff"
+   ]
+  },
+  {
+   "name": "daemon",
+   "files": [
+    "src/daemon/client.rs",
+    "src/daemon/doctor.rs",
+    "src/daemon/registry.rs"
+   ],
+   "slices": [
+    "slices/000038.diff",
+    "slices/000039.diff",
+    "slices/000040.diff"
+   ]
+  },
+  {
+   "name": "ipc-rs",
+   "files": [
+    "src/ipc.rs"
+   ],
+   "slices": [
+    "slices/000041.diff"
+   ]
+  },
+  {
+   "name": "model",
+   "files": [
+    "src/model/change.rs",
+    "src/model/effective.rs",
+    "src/model/graph.rs",
+    "src/model/manager.rs",
+    "src/model/mod.rs",
+    "src/model/seat.rs",
+    "src/model/teamspace.rs",
+    "src/model/tests.rs"
+   ],
+   "slices": [
+    "slices/000042.diff",
+    "slices/000043.diff",
+    "slices/000044.diff",
+    "slices/000045.diff",
+    "slices/000046.diff",
+    "slices/000047.diff",
+    "slices/000048.diff",
+    "slices/000049.diff"
+   ]
+  },
+  {
+   "name": "observe",
+   "files": [
+    "src/observe/classify.rs",
+    "src/observe/mutations.rs",
+    "src/observe/step.rs",
+    "src/observe/tests.rs"
+   ],
+   "slices": [
+    "slices/000050.diff",
+    "slices/000051.diff",
+    "slices/000052.diff",
+    "slices/000053.diff"
+   ]
+  },
+  {
+   "name": "plan",
+   "files": [
+    "src/plan/core_kinds.rs",
+    "src/plan/kind.rs",
+    "src/plan/managers/cycle_guard.rs",
+    "src/plan/managers/edit.rs",
+    "src/plan/managers/first_seat.rs",
+    "src/plan/managers/mod.rs",
+    "src/plan/managers/node_manager.rs",
+    "src/plan/managers/reparent.rs",
+    "src/plan/managers/retire.rs",
+    "src/plan/managers/tests.rs",
+    "src/plan/mod.rs",
+    "src/plan/tests.rs"
+   ],
+   "slices": [
+    "slices/000054.diff",
+    "slices/000055.diff",
+    "slices/000056.diff",
+    "slices/000057.diff",
+    "slices/000058.diff",
+    "slices/000059.diff",
+    "slices/000060.diff",
+    "slices/000061.diff",
+    "slices/000062.diff",
+    "slices/000063.diff",
+    "slices/000064.diff",
+    "slices/000065.diff"
+   ]
+  },
+  {
+   "name": "ports",
+   "files": [
+    "src/ports/store.rs"
+   ],
+   "slices": [
+    "slices/000066.diff"
+   ]
+  },
+  {
+   "name": "reconcile",
+   "files": [
+    "src/reconcile/desired.rs",
+    "src/reconcile/tests.rs"
+   ],
+   "slices": [
+    "slices/000067.diff",
+    "slices/000068.diff"
+   ]
+  },
+  {
+   "name": "store",
+   "files": [
+    "src/store/init.rs",
+    "src/store/instruction_source.rs",
+    "src/store/tests.rs"
+   ],
+   "slices": [
+    "slices/000069.diff",
+    "slices/000070.diff",
+    "slices/000071.diff"
+   ]
+  },
+  {
+   "name": "templates",
+   "files": [
+    "src/templates/kinds.rs",
+    "src/templates/structure.rs",
+    "src/templates/tests.rs"
+   ],
+   "slices": [
+    "slices/000072.diff",
+    "slices/000073.diff",
+    "slices/000074.diff"
+   ]
+  },
+  {
+   "name": "threads",
+   "files": [
+    "src/threads/mod.rs",
+    "src/threads/tests.rs"
+   ],
+   "slices": [
+    "slices/000075.diff",
+    "slices/000076.diff"
+   ]
+  },
+  {
+   "name": "undo",
+   "files": [
+    "src/undo/tests.rs"
+   ],
+   "slices": [
+    "slices/000077.diff"
+   ]
+  },
+  {
+   "name": "writer",
+   "files": [
+    "src/writer/mod.rs",
+    "src/writer/tests.rs"
+   ],
+   "slices": [
+    "slices/000078.diff",
+    "slices/000079.diff"
+   ]
+  },
+  {
+   "name": "tests",
+   "files": [
+    "tests/daemon_composed.rs",
+    "tests/daemon_error_commands.rs",
+    "tests/daemon_free_reads.rs",
+    "tests/integration_sweep.rs",
+    "tests/node_manager_warning.rs",
+    "tests/seat_exit_codes.rs",
+    "tests/writer_concurrency.rs"
+   ],
+   "slices": [
+    "slices/000080.diff",
+    "slices/000081.diff",
+    "slices/000082.diff",
+    "slices/000083.diff",
+    "slices/000084.diff",
+    "slices/000085.diff",
+    "slices/000086.diff"
+   ]
+  }
+ ]
+}

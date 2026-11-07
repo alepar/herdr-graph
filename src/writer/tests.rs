@@ -39,6 +39,7 @@ impl Mutation for TestSeed {
             retired: None,
             runtime: Default::default(),
             project_repo: None,
+            default_manager: None,
             channel: Default::default(),
         };
         cx.tree
@@ -55,6 +56,7 @@ impl Mutation for TestSeed {
                 retired: None,
                 system_duty: None,
                 template_ref: None,
+                manager: None,
                 applications: vec![],
                 overrides: Default::default(),
                 participation: Default::default(),
@@ -1287,4 +1289,17 @@ fn recovery_reapplies_missing_supersede() {
         fx.w.recover().unwrap().resuperseded.is_empty(),
         "idempotent"
     );
+}
+
+#[test]
+fn integrity_store_error_is_data_not_infra() {
+    use crate::ports::store::unresolved;
+    assert!(matches!(
+        Fail::from(unresolved("st_a", "manager", "st_b")),
+        Fail::Data(_)
+    ));
+    assert!(matches!(
+        Fail::from(StoreError::Git("boom".into())),
+        Fail::Infra(_)
+    ));
 }

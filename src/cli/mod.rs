@@ -5,8 +5,10 @@ use std::process::ExitCode;
 
 pub mod content;
 pub mod daemon;
+pub mod daemon_error;
 pub mod init;
 pub mod instructions;
+pub mod node_manager_warning;
 pub mod ops;
 pub mod plan;
 pub mod request;
@@ -83,6 +85,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
 
 pub fn main() -> ExitCode {
     let cli = Cli::parse();
+    node_manager_warning::warn(&cli.command);
     match run(cli) {
         Ok(code) => code,
         Err(e) => {

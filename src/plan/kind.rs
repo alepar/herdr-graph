@@ -70,6 +70,7 @@ pub fn make_plan(
     mut reserved: Reserved,
 ) -> Result<Plan, PlanError> {
     let body = kind.plan(cx, &args, &mut reserved)?;
+    super::managers::admit(cx.tree, &body.effects)?;
     Ok(Plan {
         id: PlanId::new(),
         request: PlanRequest {

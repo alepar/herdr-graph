@@ -1,0 +1,34 @@
+requirements:
+R1 → hg-k4l.1, hg-k4l.12
+R2 → hg-k4l.2
+R3 → hg-k4l.1, hg-k4l.2, hg-k4l.11, hg-k4l.12
+R4 → hg-k4l.2, hg-k4l.11
+R5 → hg-k4l.3
+R6 → hg-k4l.4, hg-k4l.13
+R7 → hg-k4l.5, hg-k4l.6, hg-k4l.13, hg-k4l.15
+R8 → hg-k4l.4, hg-k4l.6, hg-k4l.8, hg-k4l.13
+R9 → hg-k4l.15
+R10 → hg-k4l.7, hg-k4l.14
+R11 → hg-k4l.9
+R12 → hg-k4l.6, hg-k4l.10
+R13 → hg-k4l.6
+R14 → hg-k4l.16
+R15 → hg-k4l.11
+R16 → hg-k4l.2
+R-new: the node manager cannot be moved (its placement, meaning tab and workspace, is fixed while it holds the role) → (unmapped)
+R-new: a seat that is a manager learns its duty (listen, detect, unblock) and who its reports are → (unmapped)
+R-new: every CLI command that needs the daemon reports it unavailable the same way (exit 5, retry-later wording) → hg-k4l.2, hg-k4l.3
+
+findings (condensed by orchestrator; full text in session transcript):
+GAP · B11 node manager cannot be moved (placement)
+GAP · B10 hydrate/other seat-creating paths; "gets seated" reading
+GAP · B2 retry guidance; route every daemon-requiring command through cli::daemon_error
+GAP · manager duties and reports for non-node managers
+GAP · R15 text output of herdr-graph seat
+GAP · R9 undo-driven retirement reparents
+GAP · R3 dangling or retired node_manager_seat
+GAP · R11 workspace closure reopen
+GAP · hg-k4l.10 direct read; show integrity exit code
+UNOWNED-SEAM · plan node-manager set spelling
+UNOWNED-SEAM · seat_reply integrity message format
+UNOWNED-SEAM · manager-pointer rewrite effect kinds

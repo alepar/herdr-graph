@@ -1,6 +1,6 @@
 //! Desired-vs-live diff for the Herdr effect family (spec §4.4). Level-triggered and pure: the same
 //! committed state and snapshot always yield the same effect ids.
-use super::desired::{DesiredPane, DesiredRuntime};
+use super::desired::{DesiredPane, DesiredRuntime, DesiredTab};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
@@ -239,6 +239,25 @@ impl<'a> LiveIndex<'a> {
         })
     }
 
+    /// The live workspace belongs to a teamspace other than `ts`: its graph token names another teamspace, or
+    /// another desired teamspace's committed binding (this incarnation) names it. Such a workspace never places
+    /// `ts`'s workspace nor holds its tabs (spec §4.9 Workspace placement).
+    pub fn foreign_to(&self, ws: &WorkspaceInfo, ts: &TeamspaceId) -> bool {
+        if token_of(&ws.metadata)
+            .and_then(|t| TeamspaceId::parse(t.as_str()).ok())
+            .is_some_and(|t| t != *ts)
+        {
+            return true;
+        }
+        self.desired.teamspaces.iter().any(|(id, t)| {
+            id != ts
+                && t.runtime.bound.as_ref().is_some_and(|b| {
+                    b.incarnation == self.snap.incarnation
+                        && b.workspace_id.as_ref() == Some(&ws.id)
+                })
+        })
+    }
+
     pub fn workspace(&self, ts: &TeamspaceId) -> Option<LiveWorkspace<'a>> {
         let any = ts.to_any();
         if let Some(ws) = self
@@ -300,12 +319,14 @@ impl<'a> LiveIndex<'a> {
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
-        // A rebound clone pane (see `pane`) places its teamspace's workspace.
+        // A rebound clone pane (see `pane`) places its teamspace's workspace, unless it sits in a workspace that
+        // belongs to another teamspace (a moved clone lives in someone else's). Placement reads the pane's
+        // workspace, never `moved_out`: a node manager with a clone elsewhere still has its own workspace.
         self.desired
             .panes
             .iter()
             .filter(|p| p.ts == *ts)
-            .find_map(|p| self.pane(&p.clone))
+            .find_map(|p| self.pane(&p.clone).filter(|lp| !self.foreign_to(lp.ws, ts)))
             .map(|lp| LiveWorkspace {
                 ws: lp.ws,
                 stamped: false,
@@ -446,22 +467,33 @@ impl<'a> LiveIndex<'a> {
             return Some(found);
         }
         // A moved-out seat's clones live in other tabs: a token search would find (and claim) someone else's tab.
-        if self.desired.tab(seat).is_some_and(|t| t.moved_out) {
+        if self
+            .desired
+            .tab(seat)
+            .is_some_and(|t| gates_recreation(self.desired, t))
+        {
             return None;
         }
+        // Spec §4.9: a workspace stamped for or bound to another teamspace never holds this seat's tab, the same
+        // exclusion `workspace` applies. The binding and live-ref branches above name tabs graph recorded itself.
+        let ts = self.desired.tab(seat).map(|t| &t.ts);
+        let foreign = |w: &WorkspaceInfo| ts.is_some_and(|ts| self.foreign_to(w, ts));
         let clone_seat = |p: &PaneInfo| {
             token_of(&p.metadata)
                 .and_then(|a| CloneId::parse(a.as_str()).ok())
                 .and_then(|c| self.desired.clones.get(&c))
                 .map(|c| &c.seat)
         };
-        for w in &self.snap.workspaces {
+        // A tab another seat owns or holds a clone in is never this seat's tab.
+        let others = |t: &TabInfo| {
+            self.owned_by_other(&t.id, seat)
+                || t.panes
+                    .iter()
+                    .any(|p| clone_seat(p).is_some_and(|s| s != seat))
+        };
+        for w in self.snap.workspaces.iter().filter(|w| !foreign(w)) {
             for t in &w.tabs {
-                if self.owned_by_other(&t.id, seat)
-                    || t.panes
-                        .iter()
-                        .any(|p| clone_seat(p).is_some_and(|s| s != seat))
-                {
+                if others(t) {
                     continue;
                 }
                 if t.panes.iter().any(|p| clone_seat(p) == Some(seat)) {
@@ -469,10 +501,15 @@ impl<'a> LiveIndex<'a> {
                 }
             }
         }
-        // A rebound clone pane (see `pane`) places its seat's tab.
+        // A rebound clone pane (see `pane`) places its seat's tab, unless it sits in another teamspace's
+        // workspace or in a tab another seat claims (a moved clone): the survivor's tab is not where the missing
+        // clone reopens (§4.9).
         self.desired
             .panes_of(seat)
-            .find_map(|p| self.pane(&p.clone))
+            .find_map(|p| {
+                self.pane(&p.clone)
+                    .filter(|lp| !foreign(lp.ws) && !others(lp.tab))
+            })
             .map(|lp| (lp.ws, lp.tab))
     }
 
@@ -535,6 +572,11 @@ impl<'a> LiveIndex<'a> {
             .filter(|p| !p.is_unknown() && self.pane(&p.clone).is_none())
             .collect()
     }
+}
+
+/// `moved_out` gates tab and pane recreation for plain seats only; the node manager is reopened whatever it says (spec §4.9 Reopening).
+fn gates_recreation(d: &DesiredRuntime, tab: &DesiredTab) -> bool {
+    tab.moved_out && d.node_manager.as_ref() != Some(&tab.seat)
 }
 
 fn pred(object: AnyId, container: ContainerKind, end: EndState, induced: bool) -> PredictedEnd {
@@ -686,7 +728,9 @@ pub fn plan_effects(
                 // An empty workspace is pointless (and Herdr closes it with its last tab): only create one when
                 // a seat tab is going into it.
                 let wanted = desired.tabs.iter().filter(|t| t.ts == ws.ts).any(|t| {
-                    !t.moved_out && !t.is_unknown() && !idx.missing_clones(&t.seat).is_empty()
+                    !gates_recreation(desired, t)
+                        && !t.is_unknown()
+                        && !idx.missing_clones(&t.seat).is_empty()
                 });
                 if ws.is_unknown() || !wanted {
                     continue;
@@ -770,7 +814,7 @@ pub fn plan_effects(
             match idx.tab_for_seat(&tab.seat) {
                 None => {
                     // r2: no create_tab for a moved-out seat, nor when every active clone already lives elsewhere.
-                    if tab.moved_out || tab.is_unknown() {
+                    if gates_recreation(desired, tab) || tab.is_unknown() {
                         continue;
                     }
                     // A clone adopted into a pane outside the seat's own tab (undo from the caller's pane) is bound

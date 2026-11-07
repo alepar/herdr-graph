@@ -1,0 +1,45 @@
+diff --git a/tests/daemon_composed.rs b/tests/daemon_composed.rs
+index 905e893..4f607dc 100644
+--- a/tests/daemon_composed.rs
++++ b/tests/daemon_composed.rs
+@@ -303,7 +303,7 @@ async fn writer_resume_not_halted() {
+     d.stop().await;
+ }
+ 
+-const ORG_KINDS: [&str; 23] = [
++const ORG_KINDS: [&str; 24] = [
+     "teamspace_create",
+     "teamspace_rename",
+     "teamspace_retire",
+@@ -315,6 +315,7 @@ const ORG_KINDS: [&str; 23] = [
+     "seat_retire",
+     "seat_resurrect",
+     "seat_override",
++    "node_manager_set",
+     "clone_add",
+     "clone_retire",
+     "clone_rebind",
+@@ -1062,6 +1063,7 @@ fn seat_lifecycle(d: &Daemon, name: &str) -> herdr_graph::model::common::Lifecyc
+ async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
+     use herdr_graph::model::common::{Availability, CloneLifecycle};
+     let (_dir, root) = new_instance();
++    support::node_manager_opt_out(&root);
+     let d = Daemon::start(&root).await;
+     two_clone_seat(&d).await;
+     let victim = clones_of_seat(&d, "foreman")
+@@ -1139,6 +1141,7 @@ async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
+ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
+     use herdr_graph::model::common::{Availability, CloneLifecycle, RetireMechanism};
+     let (_dir, root) = new_instance();
++    support::node_manager_opt_out(&root);
+     let d = Daemon::start(&root).await;
+     two_clone_seat(&d).await;
+     let pane_of_clone = |c: &herdr_graph::model::clone::CloneRecord| {
+@@ -1270,6 +1273,7 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
+ async fn undo_tab_close_from_pane_adopts_caller_pane() {
+     use herdr_graph::model::common::Lifecycle;
+     let (_dir, root) = new_instance();
++    support::node_manager_opt_out(&root);
+     let d = Daemon::start(&root).await;
+     d.committed(&["teamspace", "create", "t", "--active"]).await;
+     d.committed(&[

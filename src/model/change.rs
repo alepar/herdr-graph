@@ -18,6 +18,8 @@ pub enum RequestKind {
     SeatRetire,
     SeatResurrect,
     SeatOverride,
+    ManagerEdit,
+    NodeManagerSet,
     CloneAdd,
     CloneRetire,
     ClonePurge,

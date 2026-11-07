@@ -1,0 +1,12 @@
+diff --git a/src/plan/mod.rs b/src/plan/mod.rs
+index 10074d8..bd37794 100644
+--- a/src/plan/mod.rs
++++ b/src/plan/mod.rs
+@@ -12,6 +12,7 @@ pub mod hash;
+ pub mod instructions;
+ pub mod kind;
+ pub mod line_diff;
++pub mod managers;
+ pub mod store;
+ pub mod types;
+ 

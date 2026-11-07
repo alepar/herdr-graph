@@ -91,7 +91,17 @@ impl PrivateHerdr {
         Self::start_with_credentials(false)
     }
 
+    /// A server whose panes find each `(name, script)` first on `PATH` (in `<root>/bin`), e.g. a `claude` that
+    /// exits at once.
+    pub fn start_with_agent_stubs(stubs: &[(&str, &str)]) -> anyhow::Result<Self> {
+        Self::start_inner(true, stubs)
+    }
+
     fn start_with_credentials(include_api_keys: bool) -> anyhow::Result<Self> {
+        Self::start_inner(include_api_keys, &[])
+    }
+
+    fn start_inner(include_api_keys: bool, stubs: &[(&str, &str)]) -> anyhow::Result<Self> {
         let herdr =
             super::herdr_binary().ok_or_else(|| anyhow::anyhow!("herdr is not installed"))?;
         let root = herdr_graph::config::tmp_dir().join(format!(
@@ -123,6 +133,20 @@ impl PrivateHerdr {
         )?;
         herdr_graph::herdr::isolation::arm();
         let mut env = scrubbed_env(&root);
+        if !stubs.is_empty() {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = root.join("bin");
+            std::fs::create_dir_all(&bin)?;
+            for (name, script) in stubs {
+                let path = bin.join(name);
+                std::fs::write(&path, script)?;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            }
+            match env.iter_mut().find(|(k, _)| k == "PATH") {
+                Some((_, v)) => *v = format!("{}:{v}", bin.display()),
+                None => env.push(("PATH".into(), bin.display().to_string())),
+            }
+        }
         if !include_api_keys {
             env.retain(|(name, _)| {
                 !matches!(name.as_str(), "ANTHROPIC_API_KEY" | "OPENAI_API_KEY")

@@ -91,7 +91,8 @@ enum Fail {
 impl From<StoreError> for Fail {
     fn from(e: StoreError) -> Self {
         match e {
-            StoreError::Corrupt { .. } => Fail::Data(e.to_string()),
+            // A dangling reference is as deterministic as a corrupt record; retrying it forever is wrong.
+            StoreError::Corrupt { .. } | StoreError::Integrity { .. } => Fail::Data(e.to_string()),
             other => Fail::Infra(other.to_string()),
         }
     }

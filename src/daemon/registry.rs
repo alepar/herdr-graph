@@ -57,6 +57,20 @@ impl CommandError {
             message: m.into(),
         }
     }
+    /// A graph reference does not resolve (spec §4.1): not transient.
+    pub fn integrity(m: impl Into<String>) -> Self {
+        Self {
+            code: IpcErrorCode::Integrity,
+            message: m.into(),
+        }
+    }
+    /// The one store-error classifier: `StoreError::Integrity` -> `integrity`, every other variant -> `internal`.
+    pub fn from_store(e: crate::ports::store::StoreError) -> Self {
+        match e {
+            crate::ports::store::StoreError::Integrity { .. } => Self::integrity(e.to_string()),
+            other => Self::internal(other.to_string()),
+        }
+    }
     /// The request's budget ran out while `op` was still non-terminal.
     pub fn still_running(op: &crate::model::OpId, state: crate::model::operation::OpState) -> Self {
         Self {
@@ -176,6 +190,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ports::store::{StoreError, unresolved};
 
     #[test]
     #[should_panic(expected = "duplicate command kind")]
@@ -198,5 +213,43 @@ mod tests {
             });
         }
         assert_eq!(r.command_kinds(), vec!["a.a", "z.z"]);
+    }
+
+    #[test]
+    fn integrity_constructor_sets_code() {
+        let e = CommandError::integrity("broken");
+        assert_eq!(e.code, IpcErrorCode::Integrity);
+        assert_eq!(e.message, "broken");
+    }
+
+    #[test]
+    fn from_store_maps_integrity_to_integrity() {
+        let e = CommandError::from_store(unresolved("st_a", "teamspace", "ts_b"));
+        assert_eq!(e.code, IpcErrorCode::Integrity);
+        assert_eq!(
+            e.message,
+            "st_a: teamspace ts_b not found at the committed revision"
+        );
+    }
+
+    #[test]
+    fn from_store_maps_every_other_store_error_to_internal() {
+        let others = [
+            StoreError::NoInstance("/x".into()),
+            StoreError::UnknownCommit("abc".into()),
+            StoreError::InvalidPath("../x".into()),
+            StoreError::Corrupt {
+                path: "graph.toml".into(),
+                reason: "bad toml".into(),
+            },
+            StoreError::Git("boom".into()),
+            StoreError::Io(std::io::Error::other("disk")),
+        ];
+        for e in others {
+            let msg = e.to_string();
+            let c = CommandError::from_store(e);
+            assert_eq!(c.code, IpcErrorCode::Internal, "{msg}");
+            assert_eq!(c.message, msg);
+        }
     }
 }

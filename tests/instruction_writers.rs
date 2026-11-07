@@ -127,6 +127,9 @@ fn instruction_source_writers_are_inventoried() {
         "src/plan/core_kinds.rs",
         // InstructionsKind::mutate is the only writer of instruction paths (rules/**, seat AGENTS.md).
         "src/plan/instructions.rs",
+        // plan::managers::write_graph writes graph.toml (node_manager_seat) only, from the NodeManagerSet and
+        // first-seat plan kinds committed by apply; graph.toml is not an InstructionSource path.
+        "src/plan/managers/mod.rs",
         // template kinds write under templates/ only.
         "src/templates/kinds.rs",
         // TombstoneDone deletes only a purge-tombstone clone record (clone.toml), never an instruction path.

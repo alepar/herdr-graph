@@ -1,0 +1,12 @@
+diff --git a/src/daemon/doctor.rs b/src/daemon/doctor.rs
+index c1247e6..d3735ba 100644
+--- a/src/daemon/doctor.rs
++++ b/src/daemon/doctor.rs
+@@ -663,6 +663,7 @@ mod tests {
+                 observed_at: None,
+             },
+             project_repo: None,
++            default_manager: None,
+             channel: Default::default(),
+         }
+     }

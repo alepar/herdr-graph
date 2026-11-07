@@ -1,0 +1,528 @@
+{
+ "inspected": [
+  {
+   "path": ".gitignore",
+   "hunks": [
+    "@@ -23,3 +23,6 @@"
+   ]
+  },
+  {
+   "path": "CHANGELOG.md",
+   "hunks": [
+    "@@ -13,15 +13,22 @@"
+   ]
+  },
+  {
+   "path": "CURRENT-DESIGN.md",
+   "hunks": [
+    "@@ -21,6 +21,7 @@ Consolidated contract for the authorized implementation. Detailed decisions and",
+    "@@ -79,6 +80,16 @@ New transcript indexes use `transcripts/<team-name>-<team-id>/<seat-name>-<seat-"
+   ]
+  },
+  {
+   "path": "README.md",
+   "hunks": [
+    "@@ -45,6 +45,16 @@ herdr-graph apply <pl> --confirm <hash> --confirmed-by user-relay",
+    "@@ -77,8 +87,10 @@ herdr-graph undo"
+   ]
+  },
+  {
+   "path": "docs/superpowers/specs/INDEX.md",
+   "hunks": [
+    "@@ -7,3 +7,4 @@ Format: date \u00b7 title \u00b7 link \u00b7 summary \u00b7 status \u00b7 tags"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -12,6 +12,13 @@ Find out who you are in the graph, then read what applies to you.",
+    "@@ -27,6 +34,14 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "src/bootstrap/examples.rs",
+   "hunks": [
+    "@@ -26,6 +26,18 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &["
+   ]
+  },
+  {
+   "path": "src/bootstrap/instructions.rs",
+   "hunks": [
+    "@@ -1,11 +1,10 @@",
+    "@@ -81,8 +80,13 @@ impl Walk {",
+    "@@ -100,31 +104,27 @@ pub fn template_participation(",
+    "@@ -270,8 +270,9 @@ pub fn revision_line(name: &str, seat: &SeatId, short_rev: &str) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -7,12 +7,14 @@",
+    "@@ -20,6 +22,7 @@ use crate::store::tree::{CommitView, TreeRead};",
+    "@@ -131,14 +134,14 @@ fn bound_paths(",
+    "@@ -208,11 +211,76 @@ fn bound_paths(",
+    "@@ -249,6 +317,10 @@ pub fn seat_reply(",
+    "@@ -260,7 +332,25 @@ pub fn seat_reply(",
+    "@@ -278,8 +368,8 @@ pub fn seat_reply(",
+    "@@ -308,6 +398,11 @@ pub fn seat_reply(",
+    "@@ -360,6 +455,27 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/show.rs",
+   "hunks": [
+    "@@ -2,7 +2,7 @@",
+    "@@ -153,6 +153,15 @@ pub fn show(tree: &dyn TreeRead, root: &Path, target: &str) -> Result<String, Sh"
+   ]
+  },
+  {
+   "path": "src/cli/daemon_error.rs",
+   "hunks": [
+    "@@ -0,0 +1,298 @@"
+   ]
+  },
+  {
+   "path": "src/cli/instructions.rs",
+   "hunks": [
+    "@@ -128,6 +128,7 @@ mod tests {",
+    "@@ -141,6 +142,7 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/cli/mod.rs",
+   "hunks": [
+    "@@ -5,8 +5,10 @@ use std::process::ExitCode;",
+    "@@ -83,6 +85,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/node_manager_warning.rs",
+   "hunks": [
+    "@@ -0,0 +1,201 @@"
+   ]
+  },
+  {
+   "path": "src/cli/ops.rs",
+   "hunks": [
+    "@@ -1,12 +1,10 @@",
+    "@@ -62,45 +60,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -135,12 +102,10 @@ fn render_op(o: &Value) -> String {",
+    "@@ -156,13 +121,10 @@ fn list(unresolved: bool) -> anyhow::Result<ExitCode> {",
+    "@@ -183,19 +145,24 @@ fn show(id: &str) -> anyhow::Result<ExitCode> {",
+    "@@ -208,18 +175,13 @@ fn reassign(op: &str, to: &str) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/plan.rs",
+   "hunks": [
+    "@@ -5,7 +5,8 @@",
+    "@@ -96,14 +97,12 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -135,12 +134,14 @@ pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {",
+    "@@ -156,12 +157,14 @@ fn apply("
+   ]
+  },
+  {
+   "path": "src/cli/request.rs",
+   "hunks": [
+    "@@ -1,15 +1,13 @@",
+    "@@ -118,11 +116,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -133,7 +126,6 @@ fn mutate(kind: &str, args: serde_json::Value) -> anyhow::Result<ExitCode> {",
+    "@@ -141,23 +133,10 @@ fn mutate(kind: &str, args: serde_json::Value) -> anyhow::Result<ExitCode> {",
+    "@@ -165,9 +144,7 @@ fn list(filter: ListFilter) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/seat.rs",
+   "hunks": [
+    "@@ -1,13 +1,15 @@",
+    "@@ -48,8 +50,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -60,12 +68,28 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -168,6 +192,62 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/cli/show.rs",
+   "hunks": [
+    "@@ -1,5 +1,6 @@",
+    "@@ -16,6 +17,15 @@ pub enum Commands {",
+    "@@ -26,9 +36,16 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -45,3 +62,25 @@ fn ensure_newline(mut s: String) -> String {"
+   ]
+  },
+  {
+   "path": "src/cli/status.rs",
+   "hunks": [
+    "@@ -1,4 +1,5 @@",
+    "@@ -40,10 +41,7 @@ fn writer_resume() -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/undo.rs",
+   "hunks": [
+    "@@ -1,11 +1,10 @@",
+    "@@ -30,29 +29,14 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -66,7 +50,10 @@ fn relay_hint(",
+    "@@ -110,12 +97,14 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {",
+    "@@ -130,20 +119,24 @@ fn interactive(cands: &[Value]) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/who.rs",
+   "hunks": [
+    "@@ -1,11 +1,10 @@",
+    "@@ -21,20 +20,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {",
+    "@@ -42,12 +27,7 @@ fn run_who(target: &str) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/daemon/client.rs",
+   "hunks": [
+    "@@ -15,12 +15,19 @@ use super::budget::CALL_TIMEOUT;",
+    "@@ -100,7 +107,7 @@ pub enum CallMode {",
+    "@@ -122,7 +129,7 @@ pub fn call_daemon_with_timeout(",
+    "@@ -171,3 +178,38 @@ pub fn instance_or_none() -> Option<PathBuf> {"
+   ]
+  },
+  {
+   "path": "src/daemon/doctor.rs",
+   "hunks": [
+    "@@ -663,6 +663,7 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/daemon/registry.rs",
+   "hunks": [
+    "@@ -57,6 +57,20 @@ impl CommandError {",
+    "@@ -176,6 +190,7 @@ impl Registry {",
+    "@@ -199,4 +214,42 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/ipc.rs",
+   "hunks": [
+    "@@ -41,6 +41,9 @@ pub enum IpcErrorCode {",
+    "@@ -245,4 +248,26 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -18,6 +18,8 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/model/effective.rs",
+   "hunks": [
+    "@@ -7,7 +7,7 @@ use crate::model::harness::{Harness, profile};",
+    "@@ -123,22 +123,17 @@ pub fn referenced_seat_template("
+   ]
+  },
+  {
+   "path": "src/model/graph.rs",
+   "hunks": [
+    "@@ -10,6 +10,9 @@ pub struct GraphRecord {"
+   ]
+  },
+  {
+   "path": "src/model/manager.rs",
+   "hunks": [
+    "@@ -0,0 +1,519 @@"
+   ]
+  },
+  {
+   "path": "src/model/seat.rs",
+   "hunks": [
+    "@@ -24,6 +24,9 @@ pub struct SeatRecord {"
+   ]
+  },
+  {
+   "path": "src/model/teamspace.rs",
+   "hunks": [
+    "@@ -1,6 +1,6 @@",
+    "@@ -19,6 +19,9 @@ pub struct TeamspaceRecord {"
+   ]
+  },
+  {
+   "path": "src/observe/classify.rs",
+   "hunks": [
+    "@@ -3,6 +3,11 @@",
+    "@@ -50,7 +55,10 @@ pub struct Cascade {",
+    "@@ -80,6 +88,8 @@ pub struct Classified {",
+    "@@ -189,9 +199,25 @@ fn live_clones<'a>(",
+    "@@ -202,8 +228,16 @@ fn seat_group(d: &DesiredRuntime, seat: &SeatId, rule: CascadeRule, root: bool)",
+    "@@ -259,11 +293,14 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -275,15 +312,20 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -294,20 +336,15 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {",
+    "@@ -330,6 +367,7 @@ pub fn classify(cx: &ClassifyCx<'_>, elements: Vec<DiffElement>) -> Classified {"
+   ]
+  },
+  {
+   "path": "src/observe/mutations.rs",
+   "hunks": [
+    "@@ -1,7 +1,11 @@",
+    "@@ -17,13 +21,15 @@ use crate::model::{ActionId, AnyId, CloneId, IdKind, NsId, SeatId, Timestamp};",
+    "@@ -56,7 +62,47 @@ fn observed(args: serde_json::Value) -> ChangeRequest {",
+    "@@ -151,13 +197,37 @@ fn end_occupant(rec: &mut CloneRecord, reason: SessionEndReason, at: Timestamp)",
+    "@@ -165,16 +235,22 @@ impl CascadeMutation {",
+    "@@ -185,31 +261,54 @@ impl CascadeMutation {",
+    "@@ -217,7 +316,6 @@ impl CascadeMutation {",
+    "@@ -225,7 +323,7 @@ impl CascadeMutation {",
+    "@@ -234,8 +332,9 @@ impl CascadeMutation {",
+    "@@ -244,10 +343,17 @@ impl CascadeMutation {",
+    "@@ -258,7 +364,7 @@ impl CascadeMutation {",
+    "@@ -277,7 +383,10 @@ impl Mutation for CascadeMutation {",
+    "@@ -291,21 +400,54 @@ impl Mutation for CascadeMutation {"
+   ]
+  },
+  {
+   "path": "src/observe/step.rs",
+   "hunks": [
+    "@@ -5,7 +5,8 @@ use super::classify::{Classified, ClassifyCx, EndedSession, classify};",
+    "@@ -97,6 +98,9 @@ struct LoopState {",
+    "@@ -179,6 +183,23 @@ fn runtime_of<'a>(d: &'a DesiredRuntime, object: &AnyId) -> Option<&'a Runtime>",
+    "@@ -194,12 +215,14 @@ fn build_ops(",
+    "@@ -214,6 +237,7 @@ fn build_ops(",
+    "@@ -260,6 +284,7 @@ fn build_ops(",
+    "@@ -430,6 +455,27 @@ impl RuntimeLoop {",
+    "@@ -438,13 +484,13 @@ impl RuntimeLoop {",
+    "@@ -453,10 +499,15 @@ impl RuntimeLoop {",
+    "@@ -539,7 +590,7 @@ impl RuntimeLoop {",
+    "@@ -549,6 +600,12 @@ impl RuntimeLoop {",
+    "@@ -632,6 +689,7 @@ impl RuntimeLoop {"
+   ]
+  },
+  {
+   "path": "src/plan/core_kinds.rs",
+   "hunks": [
+    "@@ -2,6 +2,10 @@",
+    "@@ -47,6 +51,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {",
+    "@@ -263,6 +268,7 @@ fn new_seat_record(",
+    "@@ -311,6 +317,15 @@ pub(crate) struct Acc {",
+    "@@ -344,6 +359,14 @@ pub(crate) fn write_action(",
+    "@@ -404,6 +427,9 @@ pub(crate) fn do_retire_seat(",
+    "@@ -541,6 +567,35 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -638,6 +693,7 @@ impl OrgKind for TeamspaceCreate {",
+    "@@ -684,10 +740,12 @@ impl OrgKind for TeamspaceRetire {",
+    "@@ -711,6 +769,7 @@ impl OrgKind for TeamspaceRetire {",
+    "@@ -734,10 +793,17 @@ impl OrgKind for TeamspaceRetire {",
+    "@@ -801,22 +867,30 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -826,12 +900,51 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -871,8 +984,27 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -966,20 +1098,22 @@ impl OrgKind for SeatCreate {",
+    "@@ -1002,9 +1136,14 @@ impl OrgKind for SeatCreate {",
+    "@@ -1026,8 +1165,9 @@ impl OrgKind for SeatCreate {",
+    "@@ -1046,6 +1186,7 @@ impl OrgKind for SeatCreate {",
+    "@@ -1092,7 +1233,7 @@ fn activation_effects(",
+    "@@ -1394,6 +1535,7 @@ impl OrgKind for SeatRetire {",
+    "@@ -1482,6 +1624,8 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1490,7 +1634,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1507,7 +1651,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1544,9 +1688,14 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1573,8 +1722,9 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1596,6 +1746,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1769,6 +1920,7 @@ impl OrgKind for CloneRetire {"
+   ]
+  },
+  {
+   "path": "src/plan/kind.rs",
+   "hunks": [
+    "@@ -70,6 +70,7 @@ pub fn make_plan("
+   ]
+  },
+  {
+   "path": "src/plan/kinds_extra.rs",
+   "hunks": [
+    "@@ -1036,6 +1036,7 @@ pub(crate) mod testkit {"
+   ]
+  },
+  {
+   "path": "src/plan/managers/cycle_guard.rs",
+   "hunks": [
+    "@@ -0,0 +1,147 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/edit.rs",
+   "hunks": [
+    "@@ -0,0 +1,250 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/first_seat.rs",
+   "hunks": [
+    "@@ -0,0 +1,147 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/mod.rs",
+   "hunks": [
+    "@@ -0,0 +1,286 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/node_manager.rs",
+   "hunks": [
+    "@@ -0,0 +1,193 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/reparent.rs",
+   "hunks": [
+    "@@ -0,0 +1,306 @@"
+   ]
+  },
+  {
+   "path": "src/plan/managers/retire.rs",
+   "hunks": [
+    "@@ -0,0 +1,67 @@"
+   ]
+  },
+  {
+   "path": "src/plan/mod.rs",
+   "hunks": [
+    "@@ -12,6 +12,7 @@ pub mod hash;"
+   ]
+  },
+  {
+   "path": "src/ports/store.rs",
+   "hunks": [
+    "@@ -65,6 +65,50 @@ pub enum StoreError {",
+    "@@ -104,3 +148,43 @@ pub fn read_record<R: DeserializeOwned>("
+   ]
+  },
+  {
+   "path": "src/reconcile/desired.rs",
+   "hunks": [
+    "@@ -95,6 +95,8 @@ pub struct DesiredRuntime {",
+    "@@ -108,6 +110,7 @@ impl DesiredRuntime {"
+   ]
+  },
+  {
+   "path": "src/reconcile/herdr_exec.rs",
+   "hunks": [
+    "@@ -148,7 +148,10 @@ impl HerdrExecutor {",
+    "@@ -779,3 +782,74 @@ impl EffectExecutor for HerdrExecutor {"
+   ]
+  },
+  {
+   "path": "src/reconcile/planner.rs",
+   "hunks": [
+    "@@ -1,6 +1,6 @@",
+    "@@ -144,6 +144,25 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -200,12 +219,14 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -333,16 +354,24 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -356,10 +385,11 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -424,6 +454,11 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -523,7 +558,9 @@ pub fn plan_effects(",
+    "@@ -607,7 +644,7 @@ pub fn plan_effects("
+   ]
+  },
+  {
+   "path": "src/store/init.rs",
+   "hunks": [
+    "@@ -31,6 +31,7 @@ pub fn init_instance(path: &Path) -> Result<CommitId, StoreError> {"
+   ]
+  },
+  {
+   "path": "src/store/instruction_source.rs",
+   "hunks": [
+    "@@ -110,6 +110,17 @@ impl Clone for StoreError {"
+   ]
+  },
+  {
+   "path": "src/templates/kinds.rs",
+   "hunks": [
+    "@@ -29,6 +29,8 @@ use crate::plan::core_kinds::{",
+    "@@ -337,8 +339,10 @@ fn created_object(acc: &mut Acc, id: AnyId, lifecycle: &str) {",
+    "@@ -409,12 +413,13 @@ fn create_effects(",
+    "@@ -494,14 +499,16 @@ fn create_member_seat(",
+    "@@ -520,7 +527,11 @@ fn create_member_seat(",
+    "@@ -1049,6 +1060,15 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1093,6 +1113,7 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1116,15 +1137,24 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1171,6 +1201,11 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1235,7 +1270,16 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1263,6 +1307,15 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1270,8 +1323,9 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1334,6 +1388,7 @@ impl OrgKind for TemplateEdit {",
+    "@@ -1720,6 +1775,14 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1732,7 +1795,8 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1746,8 +1810,13 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1808,7 +1877,8 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1822,6 +1892,7 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1849,6 +1920,7 @@ impl OrgKind for ApplicationApply {",
+    "@@ -1926,6 +1998,7 @@ impl OrgKind for ApplicationRetire {",
+    "@@ -1961,7 +2034,10 @@ impl OrgKind for ApplicationRetire {"
+   ]
+  },
+  {
+   "path": "src/templates/structure.rs",
+   "hunks": [
+    "@@ -92,6 +92,7 @@ pub fn member_seat_record("
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -3,8 +3,8 @@",
+    "@@ -24,6 +24,7 @@ use crate::plan::core_kinds::{",
+    "@@ -320,7 +321,7 @@ fn restore_mutate(",
+    "@@ -371,6 +372,12 @@ fn restore_mutate("
+   ]
+  },
+  {
+   "path": "src/undo/preview.rs",
+   "hunks": [
+    "@@ -5,12 +5,17 @@ use super::adopt::{Adoption, adoption};",
+    "@@ -88,6 +93,9 @@ pub struct Restore {",
+    "@@ -126,10 +134,13 @@ impl Restore {",
+    "@@ -241,6 +252,25 @@ pub fn compute_restore(",
+    "@@ -304,7 +334,8 @@ pub fn restore_preview(",
+    "@@ -425,6 +456,13 @@ pub fn restore_preview(",
+    "@@ -465,6 +503,83 @@ pub fn restore_preview("
+   ]
+  },
+  {
+   "path": "src/writer/mod.rs",
+   "hunks": [
+    "@@ -91,7 +91,8 @@ enum Fail {"
+   ]
+  },
+  {
+   "path": "templates/node-manager/AGENTS.md",
+   "hunks": [
+    "@@ -0,0 +1,20 @@"
+   ]
+  },
+  {
+   "path": "templates/node-manager/template.toml",
+   "hunks": [
+    "@@ -0,0 +1,8 @@"
+   ]
+  },
+  {
+   "path": "templates/office/template.toml",
+   "hunks": [
+    "@@ -0,0 +1,15 @@"
+   ]
+  },
+  {
+   "path": "tests/e2e_private_herdr.rs",
+   "hunks": [
+    "@@ -123,6 +123,8 @@ impl E2e {",
+    "@@ -347,7 +349,13 @@ impl E2e {",
+    "@@ -1657,7 +1665,13 @@ fn e2e_rebind_restamps_token_after_herdr_restart() {"
+   ]
+  },
+  {
+   "path": "src/threads/mod.rs",
+   "hunks": [
+    "@@ -256,6 +256,41 @@ pub struct WhoReply {",
+    "@@ -263,7 +298,8 @@ impl WhoReply {",
+    "@@ -277,7 +313,7 @@ impl WhoReply {",
+    "@@ -324,11 +360,16 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {",
+    "@@ -349,7 +390,7 @@ pub fn register_commands(reg: &mut Registry, store: Arc<dyn Store>) {"
+   ]
+  }
+ ]
+}

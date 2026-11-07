@@ -29,6 +29,8 @@ use crate::plan::core_kinds::{
 use crate::plan::grammar::{self, Scope, flag, positional};
 use crate::plan::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use crate::plan::line_diff::{self, Side};
+use crate::plan::managers::first_seat;
+use crate::plan::managers::reparent::reparent_effects;
 use crate::plan::types::{Plan, PlanEffect, Reserved, ReservedId};
 use crate::ports::store::{ObjectLocation, RepoPath, StoreError};
 use crate::store::instruction_source::check_content;
@@ -337,8 +339,10 @@ fn created_object(acc: &mut Acc, id: AnyId, lifecycle: &str) {
     });
 }
 
-fn startup_lifecycle(s: Startup) -> &'static str {
-    if s == Startup::Active {
+/// The lifecycle a member seat is created with: its `startup`, unless the plan assigns it the node manager role
+/// (`force_active`, spec §4.9 C3), which needs an Active seat.
+fn member_lifecycle(member: &TemplateMember, force_active: bool) -> &'static str {
+    if force_active || member.startup == Startup::Active {
         "active"
     } else {
         "dormant"
@@ -409,12 +413,13 @@ fn create_effects(
     clone: Option<&CloneId>,
     cfg: &EffectiveSeatConfig,
     activated: &mut BTreeSet<TeamspaceId>,
+    force_active: bool,
 ) -> Vec<PlanEffect> {
     let mut v = vec![PlanEffect::new(
         "seat.create",
         seat.clone(),
         json!({
-            "name": member.name, "teamspace": ts.rec.id, "lifecycle": startup_lifecycle(member.startup),
+            "name": member.name, "teamspace": ts.rec.id, "lifecycle": member_lifecycle(member, force_active),
             "member": member.id, "template": tpl, "application": app,
             "seat_template": member.seat_template, "responsibility": member.responsibility,
         }),
@@ -494,14 +499,16 @@ fn create_member_seat(
     seat_id: &SeatId,
     clone_id: Option<&CloneId>,
     acc: &mut Acc,
+    force_active: bool,
 ) -> Result<(), MutationError> {
     let ts = read_ts(&cx.tree, ts_id).map_err(mm)?;
     ensure_ts_live(&ts).map_err(mm)?;
     let slug = seat_slug_for(&cx.tree, &ts.loc.folder, &member.name, seat_id, None).map_err(mm)?;
     let seat_dir = layout::seat_dir(&ts.loc.folder, &slug);
     let mut rec = member_seat_record(seat_id.clone(), &tpl.id, member, ts_id, app);
-    let active = member.startup == Startup::Active;
+    let active = member.startup == Startup::Active || force_active;
     if active {
+        rec.lifecycle = Lifecycle::Active;
         rec.activation.last_op = Some(cx.op.clone());
         let clone_id = clone_id
             .ok_or_else(|| MutationError::Bug("active member without a clone id".into()))?;
@@ -520,7 +527,11 @@ fn create_member_seat(
     }
     cx.tree
         .put_record(layout::seat_record(&seat_dir), &mut rec)?;
-    created_object(acc, seat_id.to_any(), startup_lifecycle(member.startup));
+    created_object(
+        acc,
+        seat_id.to_any(),
+        member_lifecycle(member, force_active),
+    );
     Ok(())
 }
 
@@ -1049,6 +1060,15 @@ impl OrgKind for TemplateEdit {
         relied_on.extend(edit.dependencies.clone());
         let graph = layout::read_graph(cx.tree)?;
         let mut activated = BTreeSet::new();
+        let mut retiring = Vec::new();
+        // The first created addition (application, then member order) is the node manager candidate.
+        let first: Option<SeatId> = edit.apps.iter().find_map(|ae| {
+            ae.adds.iter().find_map(|add| match add {
+                AddOp::Create { seat, .. } => Some(seat.clone()),
+                AddOp::Resurrect { .. } => None,
+            })
+        });
+        let assign = first_seat::assignment(cx.tree, first.as_ref())?;
         for ae in &edit.apps {
             relied_on.push(rev_of(ae.app.id.clone(), ae.app.rev));
             if let Some((_, tpl)) = read_template(cx.tree, &ae.app.template)? {
@@ -1093,6 +1113,7 @@ impl OrgKind for TemplateEdit {
                         relied_on.push(rev_of(s.id.clone(), s.rev));
                     }
                     effects.extend(withdrawal_effects(cx.tree, &w.seat, &ae.app.id)?);
+                    retiring.push(w.seat.clone());
                 }
             }
             for add in &ae.adds {
@@ -1116,15 +1137,24 @@ impl OrgKind for TemplateEdit {
                             Some(member),
                             &stand_in,
                         )?;
+                        let force_active = assign.is_some() && first.as_ref() == Some(seat);
+                        let forced_clone: Option<CloneId> = match clone {
+                            Some(c) => Some(c.clone()),
+                            None if force_active => Some(
+                                reserved.get_or_mint(&format!("clone:{}:{}", ae.app.id, member.id)),
+                            ),
+                            None => None,
+                        };
                         effects.extend(create_effects(
                             &new.id,
                             member,
                             &ae.app.id,
                             &ae.ts,
                             seat,
-                            clone.as_ref(),
+                            forced_clone.as_ref(),
                             &cfg,
                             &mut activated,
+                            force_active,
                         ));
                         effects.push(PlanEffect::new(
                             "application.map",
@@ -1170,6 +1200,11 @@ impl OrgKind for TemplateEdit {
                     json!({ "thread": r.thread, "kind": "thread_participation" }),
                 ));
             }
+        }
+        effects.extend(reparent_effects(cx.tree, &retiring)?);
+        if let Some((effect, graph_rev)) = assign {
+            effects.push(effect);
+            relied_on.push(graph_rev);
         }
         effects[0].detail["template_dependencies"] = json!(
             relied_on
@@ -1235,7 +1270,16 @@ impl OrgKind for TemplateEdit {
             cx.tree.put_file(file, bytes.clone());
         }
 
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            retiring: edit
+                .apps
+                .iter()
+                .flat_map(|ae| &ae.withdraw)
+                .filter(|w| matches!(w.outcome, Outcome::Retire))
+                .map(|w| w.seat.clone())
+                .collect(),
+            ..Acc::default()
+        };
         let mut created: Vec<AnyId> = Vec::new();
         let mut resurrected: Vec<AnyId> = Vec::new();
         for ae in edit.apps {
@@ -1263,6 +1307,15 @@ impl OrgKind for TemplateEdit {
                         seat,
                         clone,
                     } => {
+                        let force_active = first_seat::forces_active(&plan.effects, seat);
+                        let forced_clone: Option<CloneId> = match clone {
+                            Some(c) => Some(c.clone()),
+                            None if force_active => Some(reserved_id(
+                                plan,
+                                &format!("clone:{}:{}", app.id, member.id),
+                            )?),
+                            None => None,
+                        };
                         create_member_seat(
                             cx,
                             &new,
@@ -1270,8 +1323,9 @@ impl OrgKind for TemplateEdit {
                             &app.id,
                             &app.teamspace,
                             seat,
-                            clone.as_ref(),
+                            forced_clone.as_ref(),
                             &mut acc,
+                            force_active,
                         )?;
                         app.member_map.insert(member.id.clone(), seat.clone());
                         created.push(seat.to_any());
@@ -1334,6 +1388,7 @@ impl OrgKind for TemplateEdit {
                 after: Some(toml::Value::Table(after.to_table())),
             },
         );
+        first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
         write_action(cx, &act, ActionKind::TemplateEdit, acc, comp)?;
         Ok(Applied {
             summary: format!("edit template {}", old.name),
@@ -1450,11 +1505,19 @@ fn edit_cap_warnings(
         if seat.lifecycle == Lifecycle::Retired {
             continue;
         }
-        if !template_participation(&patched, &seat)?
-            .iter()
-            .any(|p| p.template.record_path == loc.record_path)
-        {
-            continue;
+        match template_participation(&patched, &seat) {
+            Ok(parts)
+                if parts
+                    .iter()
+                    .any(|p| p.template.record_path == loc.record_path) => {}
+            Ok(_) => continue,
+            Err(e @ StoreError::Integrity { .. }) => {
+                out.push(crate::bootstrap::instructions::unsized_warning(
+                    &seat.id, &e,
+                ));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
         }
         if let Some(w) = cap_warning(&patched, &cx.at, &seat.id)? {
             out.push(w);
@@ -1720,6 +1783,14 @@ impl OrgKind for ApplicationApply {
         ];
         relied_on.extend(template_dependencies(cx.tree, &h.tpl)?);
         let mut activated = BTreeSet::new();
+        // The first member (in template order) that is created, not reused, is the node manager candidate.
+        let first: Option<SeatId> = h
+            .tpl
+            .members
+            .iter()
+            .find(|m| !h.reused.contains_key(&m.id))
+            .map(|m| reserved.get_or_mint(&format!("seat:{}", m.id)));
+        let assign = first_seat::assignment(cx.tree, first.as_ref())?;
         for m in &h.tpl.members {
             if let Some(f) = h.reused.get(&m.id) {
                 let from = seat_owner(cx.tree, &f.rec)?.map(|o| o.id);
@@ -1732,7 +1803,8 @@ impl OrgKind for ApplicationApply {
                 continue;
             }
             let seat: SeatId = reserved.get_or_mint(&format!("seat:{}", m.id));
-            let clone: Option<CloneId> = (m.startup == Startup::Active)
+            let force_active = assign.is_some() && first.as_ref() == Some(&seat);
+            let clone: Option<CloneId> = (m.startup == Startup::Active || force_active)
                 .then(|| reserved.get_or_mint(&format!("clone:{}", m.id)));
             let stand_in = member_seat_record(seat.clone(), &h.tpl.id, m, &h.ts.rec.id, &app);
             let cfg =
@@ -1746,7 +1818,12 @@ impl OrgKind for ApplicationApply {
                 clone.as_ref(),
                 &cfg,
                 &mut activated,
+                force_active,
             ));
+        }
+        if let Some((effect, graph_rev)) = assign {
+            effects.push(effect);
+            relied_on.push(graph_rev);
         }
         for r in &h.tpl.relationships {
             effects.push(PlanEffect::new(
@@ -1808,7 +1885,8 @@ impl OrgKind for ApplicationApply {
                 continue;
             }
             let seat: SeatId = reserved_id(plan, &format!("seat:{}", m.id))?;
-            let clone: Option<CloneId> = if m.startup == Startup::Active {
+            let force_active = first_seat::forces_active(&plan.effects, &seat);
+            let clone: Option<CloneId> = if m.startup == Startup::Active || force_active {
                 Some(reserved_id(plan, &format!("clone:{}", m.id))?)
             } else {
                 None
@@ -1822,6 +1900,7 @@ impl OrgKind for ApplicationApply {
                 &seat,
                 clone.as_ref(),
                 &mut acc,
+                force_active,
             )?;
             member_map.insert(m.id.clone(), seat);
         }
@@ -1849,6 +1928,7 @@ impl OrgKind for ApplicationApply {
         cx.tree
             .put_record(layout::application_record(&app_id), &mut app)?;
         created_object(&mut acc, app_id.to_any(), "active");
+        first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
 
         let created: Vec<AnyId> = std::iter::once(app_id.to_any())
             .chain(seat_ids_of(&acc, true))
@@ -1926,6 +2006,7 @@ impl OrgKind for ApplicationRetire {
                 relied_on.push(rev_of(s.id.clone(), s.rev));
             }
         }
+        effects.extend(reparent_effects(cx.tree, &preview.retire)?);
         for (seat, why) in &preview.keep {
             let name = read_seat_rec(cx.tree, seat)?
                 .map(|(_, s)| s.name)
@@ -1961,7 +2042,10 @@ impl OrgKind for ApplicationRetire {
         let (loc, mut app) = resolve_application(&cx.tree, &a.application).map_err(mm)?;
         let act: ActionId = reserved_id(plan, "act")?;
         let preview = withdraw_plan(&cx.tree, &app)?;
-        let mut acc = Acc::default();
+        let mut acc = Acc {
+            retiring: preview.retire.iter().cloned().collect(),
+            ..Acc::default()
+        };
         for seat in &preview.retire {
             do_retire_seat(
                 cx,

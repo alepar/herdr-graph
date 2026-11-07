@@ -1,0 +1,185 @@
+diff --git a/src/plan/core_kinds.rs b/src/plan/core_kinds.rs
+index 571c311..3d88c55 100644
+--- a/src/plan/core_kinds.rs
++++ b/src/plan/core_kinds.rs
+@@ -2,6 +2,10 @@
+ //! retire/resurrect, clone add/retire (spec §2.2, §3.3, §6). Args shapes are normative for later kinds.
+ use super::grammar::{self, Scope, flag, has, positional};
+ use super::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
++use super::managers::first_seat;
++use super::managers::reparent::{
++    REPARENT_FALLBACK_KEY, REPARENTED_KEY, Rewrite, reparent, reparent_effects,
++};
+ use super::types::{Plan, PlanEffect, Reserved};
+ use crate::daemon::registry::CallerInfo;
+ use crate::model::action::{ActionKind, ActionRecord, AffectedObject};
+@@ -47,6 +51,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
+     reg.register(Arc::new(CloneAdd));
+     reg.register(Arc::new(CloneRetire));
+     reg.register(Arc::new(crate::plan::instructions::InstructionsKind));
++    crate::plan::managers::register_kinds(reg);
+ }
+ 
+ // ---------------------------------------------------------------------------------------------
+@@ -263,6 +268,7 @@ fn new_seat_record(
+         retired: None,
+         system_duty: a.system_duty,
+         template_ref: None,
++        manager: None,
+         applications: vec![],
+         overrides: Default::default(),
+         participation: Default::default(),
+@@ -311,6 +317,12 @@ pub(crate) struct Acc {
+     /// Application exclusions this retirement added, `(seat, application, member)`; recorded in the
+     /// action's compensation so resurrect/undo removes exactly these.
+     pub(crate) exclusions_added: Vec<(SeatId, AppId, MemberId)>,
++    /// Manager pointers `do_retire_seat` rewrote (plan::managers::reparent); recorded in the compensation.
++    pub(crate) reparented: Vec<Rewrite>,
++    /// Observed cascades: an integrity error computing the reparent target falls back instead of failing.
++    pub(crate) lenient_reparent: bool,
++    /// Fallback notes from lenient reparenting.
++    pub(crate) notes: Vec<String>,
+ }
+ 
+ impl Acc {
+@@ -344,6 +356,14 @@ pub(crate) fn write_action(
+             .collect();
+         compensation.insert("exclusions_added".into(), toml::Value::Array(rows));
+     }
++    if !acc.reparented.is_empty() && !compensation.contains_key(REPARENTED_KEY) {
++        let rows = acc.reparented.iter().map(Rewrite::to_toml).collect();
++        compensation.insert(REPARENTED_KEY.into(), toml::Value::Array(rows));
++    }
++    if !acc.notes.is_empty() && !compensation.contains_key(REPARENT_FALLBACK_KEY) {
++        let rows = acc.notes.iter().cloned().map(toml::Value::String).collect();
++        compensation.insert(REPARENT_FALLBACK_KEY.into(), toml::Value::Array(rows));
++    }
+     let mut rec = ActionRecord {
+         schema: SCHEMA_VERSION,
+         id: act.clone(),
+@@ -404,6 +424,9 @@ pub(crate) fn do_retire_seat(
+         acc.already.push(f.rec.id.to_any());
+         return Ok(());
+     }
++    let (rewrites, note) = reparent(&mut cx.tree, seat, acc.lenient_reparent)?;
++    acc.reparented.extend(rewrites);
++    acc.notes.extend(note);
+     let retirement = |cx: &MutationCx<'_>| Retirement {
+         op: cx.op.clone(),
+         action: Some(act.clone()),
+@@ -638,6 +661,7 @@ impl OrgKind for TeamspaceCreate {
+             retired: None,
+             runtime: absent(),
+             project_repo: a.project_repo.map(PathBuf::from),
++            default_manager: None,
+             channel: Default::default(),
+         };
+         cx.tree
+@@ -684,10 +708,12 @@ impl OrgKind for TeamspaceRetire {
+             json!({ "name": ts.rec.name, "path_from": ts.loc.folder.as_str(), "path_to": archive.as_str() }),
+         )];
+         let mut relied_on = vec![rev_of(id.clone(), ts.rec.rev)];
++        let mut retiring = Vec::new();
+         for (loc, seat) in layout::list_seats(cx.tree, &ts.loc.folder)? {
+             if seat.lifecycle == Lifecycle::Retired {
+                 continue;
+             }
++            retiring.push(seat.id.clone());
+             effects.push(PlanEffect::new(
+                 "seat.retire",
+                 seat.id.clone(),
+@@ -711,6 +737,7 @@ impl OrgKind for TeamspaceRetire {
+                 json!({ "name": ts.rec.name }),
+             ));
+         }
++        effects.extend(reparent_effects(cx.tree, &retiring)?);
+         Ok(PlanBody {
+             effects,
+             relied_on,
+@@ -966,20 +993,22 @@ impl OrgKind for SeatCreate {
+         ensure_ts_live(&ts)?;
+         let seat_id: SeatId = reserved.get_or_mint("seat");
+         let clone_id: CloneId = reserved.get_or_mint("clone:0");
++        let assign = first_seat::assignment(cx.tree, Some(&seat_id))?;
++        let active = a.active || assign.is_some();
+         let slug = seat_slug_for(cx.tree, &ts.loc.folder, &a.name, &seat_id, None)?;
+         let seat_dir = layout::seat_dir(&ts.loc.folder, &slug);
+-        let rec = new_seat_record(seat_id.clone(), &a.name, &ts_id, a.active, &a);
++        let rec = new_seat_record(seat_id.clone(), &a.name, &ts_id, active, &a);
+         let cfg = resolve_in(cx.tree, &rec)?;
+         let mut effects = vec![PlanEffect::new(
+             "seat.create",
+             seat_id.clone(),
+             json!({
+                 "name": a.name, "teamspace": ts_id, "path": seat_dir.as_str(),
+-                "lifecycle": if a.active { "active" } else { "dormant" },
++                "lifecycle": if active { "active" } else { "dormant" },
+                 "harness": a.harness, "model": a.model, "system_duty": a.system_duty,
+             }),
+         )];
+-        if a.active {
++        if active {
+             effects.push(PlanEffect::new(
+                 "clone.add",
+                 clone_id.clone(),
+@@ -1002,9 +1031,14 @@ impl OrgKind for SeatCreate {
+             ));
+             effects.extend(open_clone_effects(&clone_id, &seat_id, &cfg));
+         }
++        let mut relied_on = vec![rev_of(ts_id, ts.rec.rev)];
++        if let Some((effect, graph)) = assign {
++            effects.push(effect);
++            relied_on.push(graph);
++        }
+         Ok(PlanBody {
+             effects,
+-            relied_on: vec![rev_of(ts_id, ts.rec.rev)],
++            relied_on,
+             warnings: vec![],
+             repair_required: None,
+             summary: format!("create seat {}", a.name),
+@@ -1026,8 +1060,9 @@ impl OrgKind for SeatCreate {
+             .ok_or_else(|| MutationError::Bug("plan reserved no seat id".into()))?;
+         let slug = seat_slug_for(&cx.tree, &ts.loc.folder, &a.name, &seat_id, None).map_err(mm)?;
+         let seat_dir = layout::seat_dir(&ts.loc.folder, &slug);
+-        let mut rec = new_seat_record(seat_id.clone(), &a.name, &ts_id, a.active, &a);
+-        if a.active {
++        let active = a.active || first_seat::forces_active(&plan.effects, &seat_id);
++        let mut rec = new_seat_record(seat_id.clone(), &a.name, &ts_id, active, &a);
++        if active {
+             rec.activation.last_op = Some(cx.op.clone());
+             let clone_id: CloneId = plan
+                 .reserved
+@@ -1046,6 +1081,7 @@ impl OrgKind for SeatCreate {
+         }
+         cx.tree
+             .put_record(layout::seat_record(&seat_dir), &mut rec)?;
++        first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
+         Ok(Applied {
+             summary: format!("create seat {}", a.name),
+             action: None,
+@@ -1092,7 +1128,7 @@ fn activation_effects(
+     effects
+ }
+ 
+-struct SeatActivate;
++pub(crate) struct SeatActivate;
+ impl OrgKind for SeatActivate {
+     fn kind(&self) -> RequestKind {
+         RequestKind::SeatActivate
+@@ -1394,6 +1430,7 @@ impl OrgKind for SeatRetire {
+             })
+             .collect();
+         effects.splice(1..1, clones);
++        effects.extend(reparent_effects(cx.tree, std::slice::from_ref(&f.rec.id))?);
+         Ok(PlanBody {
+             effects,
+             relied_on: vec![rev_of(f.rec.id.clone(), f.rec.rev)],
+@@ -1769,6 +1806,7 @@ impl OrgKind for CloneRetire {
+         if f.last_of_active_seat {
+             relied_on.push(rev_of(seat.id.clone(), seat.rev));
+             effects.extend(seat_retire_effects(cx.tree, &f.seat, true)?);
++            effects.extend(reparent_effects(cx.tree, std::slice::from_ref(&seat.id))?);
+             warnings.push(format!(
+                 "retiring the last clone closes the tab and retires seat {}; consider 'seat deactivate {}'",
+                 seat.name, seat.name

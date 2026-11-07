@@ -1,0 +1,11 @@
+diff --git a/.gitignore b/.gitignore
+index 0f18b11..4ed633a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -23,3 +23,6 @@
+ research/**/*.json
+ research/**/*.json.gz
+ research/**/*.jsonl
++
++# superpowers execution workspaces
++.superpowers/
