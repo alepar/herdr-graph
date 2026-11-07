@@ -148,7 +148,7 @@ codeBuckets:
   parked: 
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: SWEEP DEFERRED (caller-owned)
+  sweep: 3f8e808 — 4001 passed, 8 failed, 0 errors, 8 skipped; failing: integration_sweep golden::sweep_golden_path, wiring::seat_identity::sweep_undo_restores_onto_a_succeeded_seat (x3 tiers); e2e_close_then_undo_keeps_the_seat_and_memberships, e2e_cold_restart_fresh_agent_reattaches_by_key, e2e_node_manager_failing_agent_does_not_respawn_loop, e2e_unseated_clone_headless_cold_restart_is_launched_and_seated; leak count after: 0; command: toolbox hg-build, --no-fail-fast, three tiers @ 3f8e808cd4ad45647acfcd355a749684532a65f4
   slowness: 
   worktreesKept: 54 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
