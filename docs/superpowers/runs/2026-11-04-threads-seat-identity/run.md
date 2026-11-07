@@ -1,5 +1,6 @@
 # super-auto run — 2026-11-04-threads-seat-identity
 
+resumeChange: 2026-11-07 · "1 lgtm" · hg-66u.14 keeps a preserved-pane-id fallback for seatless clones; matcher deleted otherwise (spec S1)
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
 phase: code
 codeMechanism: Workflow
@@ -17,6 +18,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- review-collection · {"invocationId": "inv-cef1709c-2f16-4a29-a694-c154c775b2ea", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cef1709c-2f16-4a29-a694-c154c775b2ea.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-3f52876e-246a-4f9a-8d50-858e849ea7b2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-3f52876e-246a-4f9a-8d50-858e849ea7b2.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-e33fc801-f307-464a-8b9a-fc849dbb309d", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e33fc801-f307-464a-8b9a-fc849dbb309d.md", "review": "pending", "required": [], "settled": false}
