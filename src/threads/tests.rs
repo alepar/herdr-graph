@@ -3235,17 +3235,20 @@ async fn resurrection_succeeds_the_seat() {
 
 #[tokio::test]
 async fn live_or_unresolved_seat_is_never_succeeded() {
+    // `None` reads Resolved on the clone's own bound pane.
     for (name, state) in [
-        ("resolved", json!({ "state": "resolved", "pane": "p-live" })),
-        ("unresolved", json!({ "state": "unresolved" })),
+        ("resolved", None),
+        ("unresolved", Some(json!({ "state": "unresolved" }))),
     ] {
         let fx = fx();
         let clone = base(&fx).await;
         seat_the_clone(&fx, &clone, "seat-A");
         let epoch = OpId::new();
         write_restore(&fx, &clone.id, &epoch);
+        let own = pane_of(&clone_rec(&fx, &clone.id));
+        let state = state.unwrap_or_else(|| json!({ "state": "resolved", "pane": own.0 }));
         seat_fact(&fx, &clone.id, "seat-A", state);
-        fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+        fx.map.set(&own, "seat-B");
         let before = fx.map.resolve_ops().len();
         steps(&fx, 4).await;
         let c = clone_rec(&fx, &clone.id);
@@ -3260,6 +3263,70 @@ async fn live_or_unresolved_seat_is_never_succeeded() {
         assert!(succeed_rows(&fx).is_empty(), "{name}");
         assert_eq!(ack_rows(&fx).len(), 1, "{name}");
     }
+}
+
+#[tokio::test]
+async fn restore_ack_needs_the_clone_s_own_live_pane() {
+    // The node manager's cascade writes its Restore in the step that sees Herdr's close, while threads may still
+    // read the seat on the pane that closed: that read says nothing about the reopened pane.
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": "p-gone" }),
+    );
+    steps(&fx, 3).await;
+    assert!(ack_rows(&fx).is_empty() && succeed_rows(&fx).is_empty());
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, false, false)
+    );
+
+    let own = pane_of(&clone_rec(&fx, &clone.id));
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": own.0 }),
+    );
+    steps(&fx, 2).await;
+    assert_eq!(ack_rows(&fx).len(), 1);
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, true, false)
+    );
+}
+
+#[tokio::test]
+async fn restore_ack_on_unresolved_waits_for_a_bound_pane() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    let own = pane_of(&clone_rec(&fx, &clone.id));
+    // Bound to its pane but not Present: the clone's binding is not verified yet.
+    set_binding(&fx, &clone.id, true, false, Some(&own));
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(&fx, &clone.id, "seat-A", json!({ "state": "unresolved" }));
+    steps(&fx, 3).await;
+    assert!(ack_rows(&fx).is_empty(), "{:?}", ack_rows(&fx));
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, false, false)
+    );
+
+    set_binding(&fx, &clone.id, true, true, Some(&own));
+    steps(&fx, 2).await;
+    assert_eq!(ack_rows(&fx).len(), 1);
+    assert_eq!(
+        clone_rec(&fx, &clone.id).seat_intent,
+        restore("seat-A", &epoch, true, false)
+    );
 }
 
 #[tokio::test]
