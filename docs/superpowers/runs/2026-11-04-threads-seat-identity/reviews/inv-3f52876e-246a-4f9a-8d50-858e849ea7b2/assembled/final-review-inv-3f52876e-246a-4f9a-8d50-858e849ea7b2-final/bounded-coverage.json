@@ -1,0 +1,328 @@
+{
+ "inspected": [
+  {
+   "path": "Cargo.lock",
+   "hunks": [
+    "@@ -528,7 +528,7 @@ dependencies = ["
+   ]
+  },
+  {
+   "path": "third_party/herdr-threads",
+   "hunks": [
+    "@@ -1 +1 @@"
+   ]
+  },
+  {
+   "path": "skills/seat/SKILL.md",
+   "hunks": [
+    "@@ -22,14 +22,17 @@ Find out who you are in the graph, then read what applies to you."
+   ]
+  },
+  {
+   "path": "skills/graph/SKILL.md",
+   "hunks": [
+    "@@ -13,7 +13,7 @@ Organizational changes are never made directly. They go plan, user confirmation,"
+   ]
+  },
+  {
+   "path": "src/cli/ops.rs",
+   "hunks": [
+    "@@ -1,4 +1,4 @@",
+    "@@ -34,12 +34,6 @@ pub enum Commands {",
+    "@@ -49,16 +43,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {"
+   ]
+  },
+  {
+   "path": "src/cli/mod.rs",
+   "hunks": [
+    "@@ -145,7 +145,6 @@ mod tests {"
+   ]
+  },
+  {
+   "path": "src/cli/plan.rs",
+   "hunks": [
+    "@@ -100,7 +100,7 @@ fn remote(e: ClientError) -> anyhow::Error {"
+   ]
+  },
+  {
+   "path": "src/cli/session.rs",
+   "hunks": [
+    "@@ -54,6 +54,7 @@ fn report(from_hook: &str) -> anyhow::Result<()> {"
+   ]
+  },
+  {
+   "path": "src/config.rs",
+   "hunks": [
+    "@@ -28,6 +28,8 @@ pub struct Env {",
+    "@@ -53,6 +55,7 @@ impl Env {"
+   ]
+  },
+  {
+   "path": "src/ports/herdr.rs",
+   "hunks": [
+    "@@ -107,6 +107,8 @@ pub struct StartAgent {"
+   ]
+  },
+  {
+   "path": "src/model/change.rs",
+   "hunks": [
+    "@@ -20,6 +20,9 @@ pub enum RequestKind {"
+   ]
+  },
+  {
+   "path": "src/model/launch.rs",
+   "hunks": [
+    "@@ -6,6 +6,17 @@ pub const ENV_GRAPH: &str = \"HERDR_GRAPH\";"
+   ]
+  },
+  {
+   "path": "src/daemon/doctor.rs",
+   "hunks": [
+    "@@ -181,7 +181,6 @@ fn failed_ops_check(rows: &[OpRow]) -> Check {",
+    "@@ -200,7 +199,6 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {",
+    "@@ -215,14 +213,11 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {"
+   ]
+  },
+  {
+   "path": "src/daemon/mod.rs",
+   "hunks": [
+    "@@ -7,6 +7,7 @@ use std::time::Duration;"
+   ]
+  },
+  {
+   "path": "src/bootstrap/mod.rs",
+   "hunks": [
+    "@@ -457,13 +457,12 @@ pub fn render_seat(reply: &Value) -> String {"
+   ]
+  },
+  {
+   "path": "src/bootstrap/show.rs",
+   "hunks": [
+    "@@ -89,7 +89,11 @@ pub fn list(tree: &dyn TreeRead, root: &Path, kind: Option<&str>) -> Result<Vec<"
+   ]
+  },
+  {
+   "path": "src/bootstrap/resolve.rs",
+   "hunks": [
+    "@@ -1,6 +1,6 @@",
+    "@@ -42,9 +42,6 @@ pub enum Resolution {",
+    "@@ -59,17 +56,19 @@ pub enum Resolution {",
+    "@@ -147,7 +146,6 @@ fn bound(f: &Fact, via: &str) -> Resolution {",
+    "@@ -309,7 +307,6 @@ fn pane_name(caller: &CallerInfo, pane: Option<&PaneInfo>) -> String {",
+    "@@ -320,25 +317,12 @@ pub fn proposal_words("
+   ]
+  },
+  {
+   "path": "src/observe/matcher.rs",
+   "hunks": [
+    "@@ -2,9 +2,10 @@",
+    "@@ -150,7 +151,7 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -197,8 +198,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -206,7 +207,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {",
+    "@@ -254,7 +257,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {"
+   ]
+  },
+  {
+   "path": "src/observe/mod.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@ pub mod classify;"
+   ]
+  },
+  {
+   "path": "src/observe/step.rs",
+   "hunks": [
+    "@@ -1,12 +1,16 @@",
+    "@@ -19,11 +23,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};",
+    "@@ -114,8 +120,20 @@ pub struct RuntimeLoop {",
+    "@@ -339,6 +357,7 @@ impl RuntimeLoop {",
+    "@@ -362,9 +381,24 @@ impl RuntimeLoop {",
+    "@@ -482,6 +516,152 @@ impl RuntimeLoop {",
+    "@@ -508,7 +688,8 @@ impl RuntimeLoop {",
+    "@@ -530,7 +711,14 @@ impl RuntimeLoop {",
+    "@@ -538,6 +726,19 @@ impl RuntimeLoop {",
+    "@@ -549,7 +750,8 @@ impl RuntimeLoop {"
+   ]
+  },
+  {
+   "path": "src/observe/mutations.rs",
+   "hunks": [
+    "@@ -5,7 +5,7 @@ use super::classify::CascadeRule;",
+    "@@ -32,7 +32,10 @@ pub const OCCUPANCY_KEY: &str = \"observed.occupancy\";",
+    "@@ -94,6 +97,18 @@ pub fn move_request(",
+    "@@ -249,6 +264,7 @@ impl CascadeMutation {",
+    "@@ -632,3 +648,36 @@ impl Mutation for AvailabilityMutation {"
+   ]
+  },
+  {
+   "path": "src/observe/seat_observation.rs",
+   "hunks": [
+    "@@ -0,0 +1,207 @@"
+   ]
+  },
+  {
+   "path": "src/threads/assignment.rs",
+   "hunks": [
+    "@@ -0,0 +1,352 @@"
+   ]
+  },
+  {
+   "path": "src/reconcile/planner.rs",
+   "hunks": [
+    "@@ -4,6 +4,7 @@ use super::desired::{DesiredPane, DesiredRuntime};",
+    "@@ -11,7 +12,7 @@ use crate::model::effect::{",
+    "@@ -51,6 +52,81 @@ pub fn launched_key(clone: &CloneId) -> String {",
+    "@@ -100,9 +176,10 @@ impl Surplus<'_> {",
+    "@@ -144,6 +221,24 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -159,12 +254,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -242,9 +342,9 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -287,11 +387,10 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -317,12 +416,17 @@ impl<'a> LiveIndex<'a> {",
+    "@@ -451,7 +555,23 @@ impl Out<'_> {",
+    "@@ -487,9 +607,43 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {",
+    "@@ -747,6 +901,7 @@ pub fn plan_effects(",
+    "@@ -786,6 +941,140 @@ pub fn plan_effects("
+   ]
+  },
+  {
+   "path": "src/reconcile/desired.rs",
+   "hunks": [
+    "@@ -1,5 +1,5 @@",
+    "@@ -57,6 +57,15 @@ pub struct DesiredPane {",
+    "@@ -198,6 +207,11 @@ impl DesiredRuntime {"
+   ]
+  },
+  {
+   "path": "src/reconcile/session.rs",
+   "hunks": [
+    "@@ -37,6 +37,7 @@ pub fn start_outcome(r: Result<StartOutcome, HerdrError>) -> ExecOutcome {",
+    "@@ -127,6 +128,7 @@ async fn start("
+   ]
+  },
+  {
+   "path": "src/reconcile/herdr_exec.rs",
+   "hunks": [
+    "@@ -5,21 +5,24 @@ use super::bookkeeping::admit_binding;",
+    "@@ -124,6 +127,16 @@ impl HerdrExecutor {",
+    "@@ -519,7 +532,8 @@ impl HerdrExecutor {",
+    "@@ -536,6 +550,11 @@ impl HerdrExecutor {",
+    "@@ -545,19 +564,69 @@ impl HerdrExecutor {",
+    "@@ -640,9 +709,11 @@ impl HerdrExecutor {",
+    "@@ -657,6 +728,9 @@ impl HerdrExecutor {"
+   ]
+  },
+  {
+   "path": "src/herdr/client.rs",
+   "hunks": [
+    "@@ -47,6 +47,29 @@ fn lines_of(v: &[(String, String)]) -> Value {",
+    "@@ -539,6 +562,9 @@ impl HerdrApi for HerdrClient {",
+    "@@ -562,6 +588,16 @@ impl HerdrApi for HerdrClient {"
+   ]
+  },
+  {
+   "path": "src/herdr/fake.rs",
+   "hunks": [
+    "@@ -509,6 +509,41 @@ impl FakeHerdr {"
+   ]
+  },
+  {
+   "path": "src/ports/threads.rs",
+   "hunks": [
+    "@@ -1,8 +1,9 @@",
+    "@@ -86,6 +87,48 @@ pub enum ThreadsError {",
+    "@@ -157,4 +200,33 @@ pub trait ThreadsPort: Send + Sync {"
+   ]
+  },
+  {
+   "path": "src/model/clone.rs",
+   "hunks": [
+    "@@ -1,6 +1,9 @@",
+    "@@ -28,6 +31,119 @@ pub struct CloneRecord {",
+    "@@ -35,7 +151,7 @@ pub struct Invitation {",
+    "@@ -46,7 +162,8 @@ pub struct Invitation {"
+   ]
+  },
+  {
+   "path": "src/undo/commands.rs",
+   "hunks": [
+    "@@ -1,10 +1,9 @@",
+    "@@ -82,30 +81,11 @@ pub fn register_commands(reg: &mut Registry, deps: UndoDeps) {"
+   ]
+  },
+  {
+   "path": "src/undo/compensate.rs",
+   "hunks": [
+    "@@ -1,6 +1,5 @@",
+    "@@ -11,13 +10,11 @@ use crate::model::action::{ActionKind, ActionRecord};",
+    "@@ -212,7 +209,7 @@ impl OrgKind for UndoKind {",
+    "@@ -303,29 +300,17 @@ fn restamp(cx: &mut MutationCx<'_>, id: &AnyId, act: &ActionId) -> Result<(), Mu",
+    "@@ -385,8 +370,7 @@ fn restore_mutate(",
+    "@@ -426,80 +410,6 @@ fn restore_mutate("
+   ]
+  },
+  {
+   "path": "src/undo/mod.rs",
+   "hunks": [
+    "@@ -1,5 +1,4 @@"
+   ]
+  },
+  {
+   "path": "src/plan/core_kinds.rs",
+   "hunks": [
+    "@@ -46,6 +46,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {",
+    "@@ -91,6 +92,16 @@ pub(crate) fn absent() -> Runtime {",
+    "@@ -238,6 +249,11 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR",
+    "@@ -417,6 +433,7 @@ pub(crate) fn do_retire_seat(",
+    "@@ -505,6 +522,7 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -512,8 +530,7 @@ pub(crate) fn do_resurrect_seat(",
+    "@@ -819,6 +836,7 @@ impl OrgKind for TeamspaceResurrect {",
+    "@@ -1176,6 +1194,19 @@ impl OrgKind for SeatActivate {",
+    "@@ -1497,6 +1528,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1570,6 +1602,7 @@ impl OrgKind for SeatResurrect {",
+    "@@ -1802,6 +1835,7 @@ impl OrgKind for CloneRetire {",
+    "@@ -1826,3 +1860,104 @@ impl OrgKind for CloneRetire {"
+   ]
+  },
+  {
+   "path": "src/plan/grammar.rs",
+   "hunks": [
+    "@@ -132,7 +132,9 @@ pub fn resolve_clone(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<Clone"
+   ]
+  },
+  {
+   "path": "src/threads/effects.rs",
+   "hunks": [
+    "@@ -348,15 +423,269 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {",
+    "@@ -378,27 +707,24 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {",
+    "@@ -417,15 +743,22 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {",
+    "@@ -468,7 +801,7 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {"
+   ]
+  },
+  {
+   "path": "src/daemon/compose.rs",
+   "hunks": [
+    "@@ -47,11 +47,24 @@ pub const STARTUP_STEPS: [&str; 6] = [",
+    "@@ -68,6 +81,9 @@ impl Services {",
+    "@@ -89,14 +105,13 @@ impl Services {",
+    "@@ -106,13 +121,33 @@ pub fn production_threads(",
+    "@@ -181,6 +216,9 @@ pub async fn compose_with(",
+    "@@ -217,7 +255,12 @@ pub async fn compose_with(",
+    "@@ -229,7 +272,9 @@ pub async fn compose_with(",
+    "@@ -313,8 +358,17 @@ pub async fn compose_with(",
+    "@@ -378,6 +432,28 @@ pub fn register_threads_connection(",
+    "@@ -385,7 +461,33 @@ pub fn register_threads_connection(",
+    "@@ -440,9 +542,9 @@ fn register_writer_commands(reg: &mut Registry, writer: &Arc<WriterCore>) {",
+    "@@ -455,6 +557,18 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {",
+    "@@ -824,15 +938,36 @@ mod lazy {",
+    "@@ -840,20 +975,29 @@ mod lazy {",
+    "@@ -884,7 +1028,63 @@ mod lazy {",
+    "@@ -949,6 +1149,111 @@ mod lazy {"
+   ]
+  },
+  {
+   "path": "src/undo/preview.rs",
+   "hunks": [
+    "@@ -1,7 +1,6 @@"
+   ]
+  }
+ ]
+}
