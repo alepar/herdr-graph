@@ -2765,6 +2765,31 @@ fn seat_status_maps_v3_inspection_fixtures() {
     );
 }
 
+/// G5 (herdr-threads v3.1.0): an unresolved seat whose pane never came back is retired by threads after its
+/// window, reversibly when it holds a key (`retirement_state: reversible`), else finally (field absent). Both
+/// read as the existing Retired state, so SeatObservation's Retired arm applies with no new variant.
+#[test]
+fn g5_disposition_maps_from_seat_inspect() {
+    use super::mapping::seat_status;
+    use herdr_threads::protocol::results::SeatRetirementState;
+    let limbo = |reversible: bool| {
+        let mut i = inspection_fixture("retired", None, Some(600_000));
+        i.retirement_state = reversible.then_some(SeatRetirementState::Reversible);
+        i
+    };
+    for reversible in [true, false] {
+        assert!(
+            matches!(seat_status(&limbo(reversible)), SeatStatus::Retired { .. }),
+            "reversible={reversible}"
+        );
+    }
+    // Before the window the same seat is only unresolved, and nothing retires it.
+    assert_eq!(
+        seat_status(&inspection_fixture("unresolved", None, None)),
+        SeatStatus::Unresolved
+    );
+}
+
 #[tokio::test]
 async fn fake_seat_view_errors_are_errors() {
     use super::fake::{FakeSeatViewError, FakeThreadsSeatView};

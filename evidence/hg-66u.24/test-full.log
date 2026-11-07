@@ -1,0 +1,49 @@
+     Running unittests src/lib.rs (target/debug/deps/herdr_graph-b9a6c892bf51eabc)
+test daemon::doctor::tests::failed_ops_listed ... ok
+test journal::tests::cancel_only_admitted_or_failed ... ok
+test journal::tests::failed_reason_roundtrip ... ok
+test daemon::server::tests::failed_start_releases_held_command ... ok
+test plan::ops::tests::cancel_failed_allowed ... ok
+test plan::reminders::tests::failed_notify_is_retried_on_the_next_tick ... ok
+test reconcile::tests::failed_effect_is_noticed_and_counted ... ok
+test reconcile::tests::failed_restore_launch_is_not_retried_by_either_trigger ... ok
+test reconcile::tests::failed_mark_launched_is_retried_without_launching ... ok
+test writer::tests::cancel_failed_allowed ... ok
+test writer::tests::poison_panic_marks_failed_and_fifo_continues ... ok
+test writer::tests::poison_finish_failed_error_halts_run_and_resume_finishes ... ok
+test result: ok. 924 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+     Running unittests src/main.rs (target/debug/deps/herdr_graph-3887490fe599203b)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/config_smoke.rs (target/debug/deps/config_smoke-625795f974c11ec3)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/daemon_composed.rs (target/debug/deps/daemon_composed-fc45864d8d33a106)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.99s
+     Running tests/daemon_ipc.rs (target/debug/deps/daemon_ipc-87179e54d96ae9ce)
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-c4bc24b899679e5c)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-ba3c8803fa4c9f37)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/herdr_spikes.rs (target/debug/deps/herdr_spikes-182bf2d0ca016661)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/instruction_writers.rs (target/debug/deps/instruction_writers-6cbc21877615772d)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-75464c719d37ebe9)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.59s
+     Running tests/packaging.rs (target/debug/deps/packaging-17b0aa8c6db1cfb1)
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/real_agent_smoke.rs (target/debug/deps/real_agent_smoke-680370369c15769d)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/test_isolation.rs (target/debug/deps/test_isolation-8cc060b5b6d5616b)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.45s
+     Running tests/threads_real.rs (target/debug/deps/threads_real-b39f2ef6ef28b0af)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/writer_concurrency.rs (target/debug/deps/writer_concurrency-190c149cd8b4bcdd)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+     Running tests/writer_crash.rs (target/debug/deps/writer_crash-63b08d778fbd0abd)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+real	0m29.198s
+user	0m0.097s
+sys	0m0.112s
