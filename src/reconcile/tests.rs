@@ -4283,3 +4283,153 @@ async fn unretired_restore_with_its_key_already_bound_launches_at_once() {
     assert_eq!(starts[0].pane, pane);
     assert_eq!(starts[0].env, agent_env(&c.id, true));
 }
+
+// -------------------------------------------------------------------------------------------------
+// fresh-agent path after a cold restart (hg-66u.21): a reserved clone with no resumable session
+// -------------------------------------------------------------------------------------------------
+
+/// A reserved claude clone that had an agent but has no session to resume (its only ended session is another
+/// harness's), after a headless cold restart: its pane is bare and kept its id, its seat reads Unresolved.
+async fn non_resumable_after_cold_restart(fx: &Fx) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step(fx).await;
+    let c = only_clone(fx, "foreman");
+    assert!(c.key_reservation.is_some(), "reserved before its launch");
+    end_session(fx, &c, "cx", "codex");
+    let pane = cold_restart(fx, &c.id).await;
+    keep_pane_id(fx, &c.id, &pane);
+    assert!(
+        crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.deps.instance)
+            .map(|d| d.panes.iter().all(|p| p.resume.is_none()))
+            .unwrap_or(false),
+        "the fixture has no resumable session"
+    );
+    (c, pane)
+}
+
+#[tokio::test]
+async fn cold_restart_fresh_launches_a_non_resumable_reserved_clone_after_grace() {
+    let fx = fx();
+    let (c, pane) = non_resumable_after_cold_restart(&fx).await;
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    let early = step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1, "{early:?}");
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane, "into its last pane");
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    // Once per incarnation change.
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_needs_a_recorded_reservation() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "cx", "codex");
+    fx.herdr.restart(true, true);
+    step_unreserved(&fx).await;
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    keep_pane_id(&fx, &c.id, &pane);
+    // A clone without a recorded reservation (the pre-D1 shape).
+    assert!(the_clone(&fx, &c.id).key_reservation.is_none());
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(relaunch_rows(&fx), 0);
+    // With the reservation recorded the fresh launch follows.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_unreachable_threads_launches_nothing() {
+    let fx = fx();
+    let (c, _) = non_resumable_after_cold_restart(&fx).await;
+    // Threads did not answer since the restart (Disconnected / ServiceBusy): the fact is absent or stale.
+    for fact_json in [
+        serde_json::Value::Null,
+        unresolved("seat-1", fx.clock.now() - chrono::Duration::seconds(30)),
+    ] {
+        seat_state(
+            &fx,
+            &c.id,
+            json!({ "threads_seat": "seat-1", "fact": fact_json }),
+        );
+        fx.clock.advance(chrono::Duration::seconds(91));
+        step(&fx).await;
+        step(&fx).await;
+        assert_eq!(relaunch_rows(&fx), 0);
+        assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    }
+}
+
+#[tokio::test]
+async fn fresh_path_agent_exit_without_restart_launches_nothing() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "cx", "codex");
+    let pane = pane_of(&fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_key_conflict_never_launches() {
+    let fx = fx();
+    let (c, pane) = non_resumable_after_cold_restart(&fx).await;
+    let conflict = fact(
+        "seat-1",
+        SeatFactState::KeyConflict { pane: Some(pane) },
+        fx.clock.now(),
+    );
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": conflict }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
