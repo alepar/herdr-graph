@@ -158,6 +158,16 @@ The Cargo command requires its locked registry dependencies to be cached. A sour
 | 4 real agents | `HG_REAL_AGENTS=1 cargo test --features private-herdr --test config_smoke --test real_agent_smoke -- --test-threads=1 --nocapture` |
 | 5 real threads | `HG_REAL_THREADS=1 cargo test --features private-herdr --test threads_real -- --test-threads=1 --nocapture` |
 
+To build and test on a host without a C toolchain (Fedora Atomic), use this project's toolbox, `hg-build`. The Rust toolchain comes from `~/.rustup` on the host:
+
+```sh
+toolbox create -c hg-build --distro fedora --release 44
+podman exec -u root hg-build dnf install -y gcc make pkgconf-pkg-config zlib-ng-compat-devel git
+toolbox run -c hg-build cargo test
+```
+
+Tier 5 against the installed threads daemon instead of the pinned build: add `HG_TEST_THREADS_BINARY=~/.local/share/herdr-threads/bin/herdr-threads`.
+
 All tiers use private servers and isolated state. The release-build packaging test is ignored by default: `cargo test --test packaging -- --ignored build_script_places_binary`.
 
 Test isolation: every test that spawns a process (Herdr, the daemon, the CLI) goes through `tests/support/isolated.rs` (`TestRoot`) or `PrivateHerdr`. Each gets its own temp root with HOME, the XDG dirs, `CLAUDE_CONFIG_DIR`, the Herdr plugin dirs, the Herdr socket and `HERDR_GRAPH_INSTANCE` all inside it, and `HG_TEST_ROOT=<root>` as a marker. A child that resolves a path outside its root exits 97 and fails the test; an in-process test that resolves the real `~/.config/herdr-graph`, `~/.claude` or the live Herdr socket panics. When a test ends (pass, fail, panic, timeout) its children are signalled and every process still carrying the marker is swept. `tests/test_isolation.rs` pins all of this.
