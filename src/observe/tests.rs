@@ -2966,6 +2966,48 @@ async fn seat_retired_retires_the_clone_undoably() {
     }
 }
 
+/// A seated node manager is never retired (spec §4.9): when threads retires its seat (its pane closed), the
+/// closure keeps the clone and gives it a Restore intent, so the reopened pane succeeds to a new seat instead of
+/// the clone being closed again on every step.
+#[tokio::test]
+async fn seated_node_manager_retired_seat_is_kept_and_restored() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    make_node_manager(&fx, &c.seat);
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    step(&fx).await;
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert!(
+        matches!(
+            after.seat_intent,
+            Some(SeatIntent::Restore {
+                ref seat,
+                threads_done: false,
+                ..
+            }) if seat == "seat-1"
+        ),
+        "{:?}",
+        after.seat_intent
+    );
+    // Threads still says Retired: the pending Restore holds, so later steps change nothing.
+    settle(&fx).await;
+    let held = clone_by_id(&fx, &c.id);
+    step(&fx).await;
+    step(&fx).await;
+    let later = clone_by_id(&fx, &c.id);
+    assert_eq!(later.lifecycle, CloneLifecycle::Active);
+    assert_eq!(later.seat_intent, held.seat_intent);
+    assert_eq!(later.runtime.bound, held.runtime.bound);
+}
+
 #[tokio::test]
 async fn seat_key_conflict_marks_unknown_and_sets_the_alert() {
     let fx = fx();

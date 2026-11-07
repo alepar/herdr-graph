@@ -283,6 +283,10 @@ impl CascadeMutation {
             let mut c = c.clone();
             end_occupant(&mut c, SessionEndReason::PaneClosed, at);
             c.runtime = absent();
+            // The node manager's closed clone stays and is reopened on its threads seat, as a restore does.
+            if nm == Some(seat) {
+                crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
+            }
             cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         }
         let mut rec = f.rec.clone();
@@ -374,8 +378,10 @@ impl CascadeMutation {
         }
         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
         rec.runtime = absent();
-        // A node manager's clone is kept: the closure is recorded, nothing is retired.
+        // A node manager's clone is kept: the closure is recorded, nothing is retired. Its pane is reopened on the
+        // same threads seat, as a restore does (a Retired seat then holds instead of closing the clone again).
         if nm == Some(&rec.seat) {
+            crate::threads::assignment::write_restore_intent(&mut rec, &cx.op);
             let seat = rec.seat.clone();
             cx.tree.put_record(loc.record_path, &mut rec)?;
             node_manager_closed(cx, &seat)?;
