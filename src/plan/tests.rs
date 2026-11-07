@@ -2082,6 +2082,7 @@ mod effective {
             threads_seat_history: vec![],
             seat_intent: None,
             seat_fact: None,
+            key_reservation: None,
         }
     }
 
@@ -3619,6 +3620,70 @@ fn purge_of_a_retired_seatless_clone_removes_the_record() {
     assert!(find_clone(&fx, &c.id).is_none());
 }
 
+/// Record a key reservation on `clone` the way production does: through ThreadsSeatAssignment.
+fn reserve_key(fx: &Fx, clone: &crate::model::CloneId, seat: Option<&str>) {
+    crate::threads::assignment::admit_threads_seat(
+        &*fx.w,
+        clone,
+        &crate::threads::assignment::SeatTransition::RecordReservation {
+            key: clone.to_string(),
+            seat: seat.map(str::to_owned),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+#[test]
+fn purge_of_a_reserved_seatless_clone_writes_release_key() {
+    let fx = fx();
+    let c = retired_second(&fx, None);
+    reserve_key(&fx, &c.id, None);
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "release_key");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &c.id).expect("a ReleaseKey tombstone stays to drive the release");
+    assert!(t.is_tombstone());
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::ReleaseKey {
+            key: c.id.to_string()
+        })
+    );
+    assert_eq!(t.threads_seat, None);
+    assert_eq!(
+        t.key_reservation, None,
+        "the tombstone carries no reservation"
+    );
+}
+
+#[test]
+fn purge_of_a_seated_clone_keeps_no_release_key() {
+    // A seat holder's key is the seat's: threads deletes it at final retirement, and the Finalize tombstone
+    // is hg-66u.31's (before D2 a seated clone is deleted outright). A recorded reservation changes neither.
+    let fx = fx();
+    let c = retired_second(&fx, Some("seat-42"));
+    reserve_key(&fx, &c.id, Some("seat-42"));
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(find_clone(&fx, &c.id).is_none());
+}
+
+#[test]
+fn purge_of_an_unreserved_seatless_clone_deletes_the_record() {
+    let fx = fx();
+    let c = retired_second(&fx, None);
+    assert_eq!(c.key_reservation, None);
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(find_clone(&fx, &c.id).is_none());
+}
+
 #[test]
 fn purge_of_an_active_clone_is_refused() {
     let fx = fx();
@@ -3686,7 +3751,10 @@ fn purged_seated_clone_is_not_revived_by_seat_resurrect() {
         }
         Err(_) => {}
     }
-    assert!(find_clone(&fx, &only).is_none(), "the purged clone stays gone");
+    assert!(
+        find_clone(&fx, &only).is_none(),
+        "the purged clone stays gone"
+    );
 }
 
 #[test]

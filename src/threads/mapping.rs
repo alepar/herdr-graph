@@ -83,7 +83,6 @@ impl PaneSeatMap for ThreadsSeatMap {
             operation: OperationId::new(format!("graph-resolve-{}", uuid::Uuid::new_v4())),
             locator_hint: None,
             tmux_hint: None,
-            // The key's reserve/resolve use belongs to the D1 beads; the pin bump only keeps the struct whole.
             continuity_key: None,
         };
         let budget = call_budget(&*self.clock, self.timeout);
@@ -115,7 +114,6 @@ impl PaneSeatMap for ThreadsSeatMap {
             operation: operation_id(op),
             locator_hint: None,
             tmux_hint: None,
-            // The key's reserve/resolve use belongs to the D1 beads; the pin bump only keeps the struct whole.
             continuity_key: None,
         };
         let budget = call_budget(&*self.clock, self.timeout);
@@ -134,6 +132,11 @@ impl PaneSeatMap for ThreadsSeatMap {
             // seat mapping and an owner needing structural reconciliation with TargetUnresolved
             // (store/seats/resolution.rs); all of them lift without graph action.
             Err(e) if e.code == ErrorCode::TargetUnresolved => Ok(SeatResolution::NotYet(e.detail)),
+            // v3.1.0: the pane's key is bound to an unresolved seat, so no seat is minted for it; it lifts when
+            // that seat resolves.
+            Err(e) if e.code == ErrorCode::ContinuityKeyPending => {
+                Ok(SeatResolution::NotYet(e.detail))
+            }
             Err(e) => Err(api_error(e)),
         }
     }

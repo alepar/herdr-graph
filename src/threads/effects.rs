@@ -49,6 +49,9 @@ pub const ACK_RESTORE_KIND: &str = "threads.ack_restore";
 /// (hg-66u.31) every seat is final and purge deletes a seated clone outright, so a tombstone written by an
 /// earlier build is dropped on load. hg-66u.31 replaces this with the finalize want.
 pub const DROP_TOMBSTONE_KIND: &str = "threads.drop_tombstone";
+/// `EffectKind::Custom` name of the seatless continuity-key reservation of an active clone (spec §5, §16.5). The
+/// key-link want (hg-66u.68) is the only want that binds a key to a seat.
+pub const RESERVE_KEY_KIND: &str = "threads.reserve_key";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -275,6 +278,8 @@ pub(crate) enum Payload {
     },
     /// Delete the pre-existing `Finalize` tombstone record (pre-D2 drain, see `DROP_TOMBSTONE_KIND`).
     DropTombstone,
+    /// Reserve the clone's continuity key (its id) with threads, bound to no seat.
+    ReserveKey,
 }
 
 struct Want {
@@ -412,6 +417,11 @@ fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
         .flatten()
 }
 
+/// An active clone with no recorded key reservation: the reserve-key want reserves its key, seatless (§16.5).
+fn reservable(g: &Graph, c: &CloneRecord) -> bool {
+    g.clone_active(c) && !c.is_tombstone() && c.key_reservation.is_none()
+}
+
 /// What an unacknowledged Restore intent asks of threads (spec §2 succession rule, §8 interim).
 #[derive(Debug, PartialEq, Eq)]
 enum Succession {
@@ -510,6 +520,15 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 object.clone(),
                 c.rev,
                 Payload::DropTombstone,
+            ));
+        }
+        if reservable(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESERVE_KEY_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ReserveKey,
             ));
         }
         if let Some(epoch) = reattached_restore(g, c) {
@@ -1448,6 +1467,47 @@ impl ThreadsExecutor {
         }
     }
 
+    /// Reserve the clone's continuity key (its id) with threads, bound to no seat, and record the answer. The
+    /// operation key is stable per clone, so a retry after an unreachable threads replays the same request; a
+    /// `Conflict` records nothing and waits (the status alert is hg-66u.40's).
+    async fn reserve_key(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if !reservable(&g, clone) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = clone.id.to_string();
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("reserve:{}", clone.id),
+        ));
+        match self.threads.reserve_continuity_key(&key, None, &op).await {
+            Ok(ReserveOutcome::Reserved { seat }) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::RecordReservation {
+                    key,
+                    seat: seat.map(|s| s.0),
+                },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("key reservation write: {err}")),
+            },
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred("threads reports a continuity key conflict".into())
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
     async fn resolve_seat(
         &self,
         cx: &ExecCx<'_>,
@@ -1834,6 +1894,7 @@ impl EffectExecutor for ThreadsExecutor {
                 SUCCEED_KIND,
                 ACK_RESTORE_KIND,
                 DROP_TOMBSTONE_KIND,
+                RESERVE_KEY_KIND,
             ]
             .contains(&k.as_str()),
             _ => false,
@@ -1931,6 +1992,7 @@ impl ThreadsExecutor {
                 self.ack_restore(cx, e, &epoch)
             }
             (EffectKind::Custom(_), Some(Payload::DropTombstone)) => self.drop_tombstone(cx, e),
+            (EffectKind::Custom(_), Some(Payload::ReserveKey)) => self.reserve_key(cx, e).await,
             (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
                 self.succeed_seat(cx, e, &pane, &from, &epoch).await
             }

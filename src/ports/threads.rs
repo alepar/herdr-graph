@@ -119,6 +119,17 @@ pub trait ThreadsSeatView: Send + Sync {
     ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError>;
 }
 
+/// What threads answers to a continuity-key reservation. A key bound elsewhere, or a seat holding another key,
+/// is a typed `Conflict`, not an error; a refusal (retired, named or hc seat) is `ThreadsError::Rejected`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReserveOutcome {
+    /// The key is reserved for the graph; `seat` is the seat it is bound to, if any.
+    Reserved {
+        seat: Option<ThreadsSeatRef>,
+    },
+    Conflict,
+}
+
 #[async_trait::async_trait]
 pub trait ThreadsPort: Send + Sync {
     /// Managed public channel; `op_key` derived from the owning object id (spec §7.1).
@@ -190,4 +201,14 @@ pub trait ThreadsPort: Send + Sync {
     ) -> Result<Vec<MessageReceipts>, ThreadsError>;
     /// Which delivery path this connection supports (spec §7.4).
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError>;
+    /// Reserve the continuity key `key` for the graph, binding it to `seat` when one is named (spec §5). Idempotent
+    /// under `op`. Additive to the original trait: the default is `Unsupported`.
+    async fn reserve_continuity_key(
+        &self,
+        _key: &str,
+        _seat: Option<&ThreadsSeatRef>,
+        _op: &OpKey,
+    ) -> Result<ReserveOutcome, ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
 }
