@@ -104,6 +104,22 @@ pub fn resumed_key(clone: &CloneId) -> String {
     format!("resumed_at:{clone}")
 }
 
+/// Journal meta key of the time threads last answered the key resolution of an unseated clone: the restart
+/// trigger of an unseated clone waits for an answer taken after the restart (written by the threads executor).
+pub fn threads_answered_key(clone: &CloneId) -> String {
+    format!("threads_answered_at:{clone}")
+}
+
+fn threads_answered_at(journal: &Journal, clone: &CloneId) -> Option<Timestamp> {
+    let raw = journal
+        .meta_get(&threads_answered_key(clone))
+        .ok()
+        .flatten()?;
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|t| t.to_utc())
+}
+
 pub fn incarnation_changed_at(journal: &Journal) -> Option<Timestamp> {
     let raw = journal.meta_get("incarnation:changed_at").ok().flatten()?;
     chrono::DateTime::parse_from_rfc3339(&raw)
@@ -1009,9 +1025,11 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
             && p.key_reservation.is_some()
             && let Some(changed) = changed_at
             && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
-            // A seated clone waits for threads to answer after the restart; an unseated one has no fact to wait
-            // for, only the incarnation change and the grace.
+            // A seated clone waits for a threads fact read after the restart; an unseated one has none, so it
+            // waits for an answer to its key resolution taken after the restart: with threads unreachable
+            // nothing launches.
             && (restart_unseated(p)
+                && threads_answered_at(journal, &p.clone).is_some_and(|at| at > changed)
                 || restart_covered(p)
                     && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed))
         {

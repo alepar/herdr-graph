@@ -3609,7 +3609,8 @@ async fn restart_arm_needs_an_earlier_agent() {
     fx.clock.advance(chrono::Duration::seconds(91));
     step(&fx).await;
     assert_eq!(relaunch_rows(&fx), 0);
-    // Seatless clone with an earlier agent but no key reservation: the unseated arm needs the key.
+    // Seatless clone with an earlier agent but no key reservation: the unseated arm needs the key (with one it
+    // is covered by `clone_unseated_at_cold_restart_is_launched_then_seated`).
     end_session(&fx, &c, "abc", "claude");
     seat_state(&fx, &c.id, json!({ "threads_seat": null, "fact": null }));
     admit_bookkeeping(
@@ -3619,10 +3620,6 @@ async fn restart_arm_needs_an_earlier_agent() {
     step_unreserved(&fx).await;
     assert_eq!(relaunch_rows(&fx), 0);
     assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
-    // With the reservation recorded the unseated arm (hg-66u.33) takes it.
-    record_reservation(&fx, &c.id, None);
-    step_unreserved(&fx).await;
-    assert_eq!(relaunch_rows(&fx), 1);
 }
 
 #[tokio::test]
@@ -4219,10 +4216,12 @@ async fn clone_unseated_at_cold_restart_is_launched_then_seated() {
         before.key_reservation.as_ref().map(|r| r.key.clone()),
         Some(c.id.to_string())
     );
-    // Inside the grace nothing launches; after it the restart trigger resumes the session once.
+    // Inside the grace nothing launches; after it the restart trigger resumes the session once, as soon as a
+    // threads answer taken after the restart is on record (the first pass stamps it, the next launches).
     step(&fx).await;
     assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
     fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
     step(&fx).await;
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
@@ -4242,6 +4241,34 @@ async fn clone_unseated_at_cold_restart_is_launched_then_seated() {
     assert_eq!(after.threads_seat.as_deref(), Some("seat-K"));
     assert_eq!(map.resolve_ops().len(), resolves, "no pane resolution");
     assert!(start_calls(&fx).is_empty(), "one launch: {:?}", calls(&fx));
+}
+
+/// With threads unreachable at a cold restart an unseated reserved clone is not launched, whatever the grace;
+/// once threads answers, the restart trigger launches it.
+#[tokio::test]
+async fn unseated_clone_waits_for_threads_before_the_restart_launch() {
+    let fx = fx();
+    let (threads, _map) = with_threads(&fx);
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    threads.set_reserve_error(Some(crate::threads::fake::FakeSeatViewError::Disconnected));
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(91));
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert_eq!(the_clone(&fx, &c.id).threads_seat, None);
+    threads.set_reserve_error(None);
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
 }
 
 /// A restored clone with an acknowledged Restore of `epoch` for `seat-1`, its pane bare, whose key reservation

@@ -4317,18 +4317,16 @@ async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
 }
 
 #[tokio::test]
-async fn unseated_reserved_clone_unreachable_threads_writes_nothing_and_launches_nothing() {
+async fn unseated_reserved_clone_unreachable_threads_writes_no_seat() {
     let fx = fx();
     let c = reserved_unbound(&fx).await;
     let key = c.id.to_string();
     fx.threads.set_key_binding(&key, "seat-K");
     fx.threads
         .set_reserve_error(Some(FakeSeatViewError::Disconnected));
-    let starts = fx.herdr.calls().len();
     later(&fx).await;
     later(&fx).await;
     assert_eq!(clone_rec(&fx, &c.id).threads_seat, None);
-    assert_eq!(fx.herdr.calls().len(), starts, "nothing is launched");
     fx.threads.set_reserve_error(None);
     later(&fx).await;
     later(&fx).await;

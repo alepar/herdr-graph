@@ -26,6 +26,7 @@ use crate::model::{
 use crate::plan::store::PlanStore;
 use crate::ports::store::StoreError;
 use crate::ports::threads::*;
+use crate::reconcile::planner::threads_answered_key;
 use crate::reconcile::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
@@ -39,6 +40,7 @@ use std::sync::{Arc, Mutex};
 pub const POLL_KIND: &str = "threads.membership";
 /// `EffectKind::Custom` name of the seat resolution of a bound clone without a `threads_seat`.
 pub const RESOLVE_KIND: &str = "threads.resolve_seat";
+/// `EffectKind::Custom` name of the seat resolution of an unseated clone from its key reservation.
 pub const RESOLVE_RESERVED_KIND: &str = "threads.resolve_reserved_seat";
 /// `EffectKind::Custom` name of the clear-on-reattach of a finished Restore intent (spec §14.4).
 pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
@@ -432,19 +434,37 @@ fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
 }
 
 /// The key to resolve an unseated clone's seat from: the clone is active, has no `threads_seat` and no pending
-/// Restore intent, holds a recorded key reservation and has no verified pane for `resolvable_pane` to resolve
-/// (a verified pane keeps its existing want). The key is the evidence, so no pane binding is needed (spec §2
-/// "Unseated clone after D1").
+/// Restore intent and holds a recorded key reservation. The key is the evidence, so no pane binding is needed
+/// (spec §2 "Unseated clone after D1").
 fn resolvable_key(g: &Graph, c: &CloneRecord) -> Option<String> {
     if c.threads_seat.is_some()
         || !g.clone_active(c)
         || c.is_tombstone()
         || matches!(c.seat_intent, Some(SeatIntent::Restore { .. }))
-        || verified_pane(g, c).is_some()
     {
         return None;
     }
     c.key_reservation.as_ref().map(|r| r.key.clone())
+}
+
+/// An unseated reserved clone with a verified pane (which keeps its pane want) still asks its key once after
+/// each restart: the answer is how the restart trigger learns that threads is reachable.
+fn awaiting_restart_answer(journal: &Journal, c: &CloneRecord) -> bool {
+    let parse = |raw: Option<String>| {
+        chrono::DateTime::parse_from_rfc3339(&raw?)
+            .ok()
+            .map(|t| t.to_utc())
+    };
+    let Some(changed) = parse(journal.meta_get("incarnation:changed_at").ok().flatten()) else {
+        return false;
+    };
+    let answered = parse(
+        journal
+            .meta_get(&threads_answered_key(&c.id))
+            .ok()
+            .flatten(),
+    );
+    answered.is_none_or(|at| at <= changed)
 }
 
 /// The clone's pane when its binding is verified: the clone is active, present, and the pane carries the
@@ -567,7 +587,7 @@ fn reattached_restore(g: &Graph, c: &CloneRecord) -> Option<OpId> {
         .then(|| epoch.clone())
 }
 
-fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
+fn clone_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
     for c in g.clones.values() {
         let object = c.id.to_any();
         if let Some(pane) = resolvable_pane(g, c) {
@@ -579,7 +599,9 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 Payload::ResolveSeat { pane },
             ));
         }
-        if let Some(key) = resolvable_key(g, c) {
+        if let Some(key) = resolvable_key(g, c)
+            .filter(|_| verified_pane(g, c).is_none() || awaiting_restart_answer(journal, c))
+        {
             out.push(want(
                 g,
                 EffectKind::Custom(RESOLVE_RESERVED_KIND.into()),
@@ -779,7 +801,7 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
 fn system_wants(g: &Graph, journal: &Journal) -> Vec<Want> {
     let mut out = Vec::new();
     channel_wants(g, journal, &mut out);
-    clone_wants(g, &mut out);
+    clone_wants(g, journal, &mut out);
     out
 }
 
@@ -1893,7 +1915,13 @@ impl ThreadsExecutor {
             &g.epoch,
             &format!("reserve:{}:none", clone.id),
         ));
-        let seat = match self.threads.reserve_continuity_key(key, None, &op).await {
+        let answer = self.threads.reserve_continuity_key(key, None, &op).await;
+        if matches!(answer, Ok(ReserveOutcome::Reserved { .. })) {
+            let _ = self
+                .journal
+                .meta_set(&threads_answered_key(&clone.id), &cx.now.to_rfc3339());
+        }
+        let seat = match answer {
             Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => seat,
             Ok(ReserveOutcome::Reserved { seat: None }) => {
                 return ExecOutcome::Deferred("continuity key not bound to a seat yet".into());
