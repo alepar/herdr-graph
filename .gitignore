@@ -26,3 +26,6 @@ research/**/*.jsonl
 
 # superpowers execution workspaces
 .superpowers/
+
+# Raw test logs from run evidence (summaries only are committed)
+docs/superpowers/runs/**/evidence/**/*.log

@@ -103,7 +103,13 @@ impl E2e {
     }
 
     fn start_inner(daemon: bool) -> Option<Self> {
-        let herdr = match PrivateHerdr::start() {
+        Self::start_custom(daemon, true, &[])
+    }
+
+    /// `opt_out`: commit the node-manager opt-out (every rig but the node-manager flows); `stubs`: agent
+    /// executables the private server's panes find first on `PATH`.
+    fn start_custom(daemon: bool, opt_out: bool, stubs: &[(&str, &str)]) -> Option<Self> {
+        let herdr = match PrivateHerdr::start_with_agent_stubs(stubs) {
             Ok(h) => h,
             Err(e) if support::herdr_binary().is_none() => {
                 support::skip(&format!("{e}"));
@@ -124,7 +130,9 @@ impl E2e {
         let out = rig.cli(&["init", rig.instance.to_str().unwrap()]);
         assert!(out.status.success(), "init: {}", stderr(&out));
         // The first seat created would become the node manager, which closure never retires: opt the graph out.
-        support::node_manager_opt_out(&rig.instance);
+        if opt_out {
+            support::node_manager_opt_out(&rig.instance);
+        }
         if daemon {
             let out = rig.cli(&["daemon", "--ensure"]);
             assert!(out.status.success(), "daemon --ensure: {}", stderr(&out));
@@ -2399,3 +2407,59 @@ fn e2e_plugin_link_status_action_single_daemon() {
 }
 
 // FLOWS-END
+
+/// Escalation 3 (spec §4.9 reopening): a node manager whose agent exits at once must not crash-loop. Herdr's
+/// `agent.start` types the agent command into the pane's shell, so the pane outlives the agent; the graph starts
+/// an agent once per pane. Over 60 s the node manager keeps one tab and one pane, and the agent starts once.
+#[test]
+fn e2e_node_manager_failing_agent_does_not_respawn_loop() {
+    let stub = "#!/bin/sh\necho start >> \"$(dirname \"$0\")/claude.starts\"\nexit 1\n";
+    let Some(rig) = E2e::start_custom(true, false, &[("claude", stub)]) else {
+        return;
+    };
+    rig.plan_apply(&["teamspace", "create", "t", "--active"]);
+    rig.plan_apply(&[
+        "seat",
+        "create",
+        "nm",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "claude",
+    ]);
+    let graph = std::fs::read_to_string(rig.instance.join("graph.toml")).unwrap();
+    let nm = rig.seat("nm");
+    assert!(
+        graph.contains(&nm.id),
+        "the first seat is the node manager: {graph}"
+    );
+    rig.wait_until("nm's tab", WAIT, |r| r.tab_labelled("nm").is_some());
+    let starts = rig.herdr.root.join("bin/claude.starts");
+    rig.wait_until("the agent to start and exit", WAIT, |_| starts.exists());
+
+    let (mut tabs, mut panes) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
+        if let Some((_, t)) = rig.tab_labelled("nm") {
+            tabs.insert(t.id.0.clone());
+            panes.extend(t.panes.iter().map(|p| p.id.0.clone()));
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let launched = std::fs::read_to_string(&starts).unwrap().lines().count();
+    assert_eq!(tabs.len(), 1, "one tab over 60 s: {tabs:?}");
+    assert_eq!(panes.len(), 1, "one pane over 60 s: {panes:?}");
+    assert_eq!(
+        launched, 1,
+        "the failing agent was started {launched} times in 60 s"
+    );
+    let clone = rig.live_clone(&nm.id);
+    assert!(
+        rig.pane_of(&clone.id).is_some(),
+        "the pane outlives its agent"
+    );
+}
