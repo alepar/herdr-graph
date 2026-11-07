@@ -20,6 +20,8 @@ pub struct PrivateHerdr {
     child: Child,
     pid: u32,
     guard: IsolationGuard,
+    /// Declared last: dropped after `Drop for PrivateHerdr` has swept and removed the root.
+    lease: super::isolated::RootLease,
 }
 
 fn output(program: &str, args: &[&str]) -> Option<String> {
@@ -104,6 +106,9 @@ impl PrivateHerdr {
     fn start_inner(include_api_keys: bool, stubs: &[(&str, &str)]) -> anyhow::Result<Self> {
         let herdr =
             super::herdr_binary().ok_or_else(|| anyhow::anyhow!("herdr is not installed"))?;
+        if std::env::var_os("HG_MATRIX_REGISTRY").is_none() {
+            super::isolated::reap_orphans();
+        }
         let root = herdr_graph::config::tmp_dir().join(format!(
             "hg-{}",
             ulid::Ulid::new().to_string().to_lowercase()
@@ -123,6 +128,7 @@ impl PrivateHerdr {
         ] {
             std::fs::create_dir_all(root.join(d))?;
         }
+        let lease = super::isolated::RootLease::acquire(&root)?;
         super::isolated::register_matrix_root(&root, None);
         // Private compatibility fixtures must not start network update workers
         // whose curl children can outlive the server during teardown. These
@@ -181,6 +187,7 @@ impl PrivateHerdr {
             child,
             pid,
             guard,
+            lease,
         })
     }
 

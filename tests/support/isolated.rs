@@ -5,13 +5,21 @@
 //! sets `HG_TEST_ROOT=<root>`: the library tripwire refuses (exit 97) any path a child resolves outside
 //! it, and `Drop` sweeps every process still carrying the marker, so a setsid daemon or a grandchild does
 //! not outlive the test, whether it passed, failed, panicked or timed out.
+//!
+//! A hard kill (SIGKILL, a cargo timeout) skips `Drop`, so each root also holds an `owner.lock` flock for the
+//! owner's lifetime (the kernel releases it however the owner dies) and starts a [`RootLease`] watchdog that
+//! sweeps the root the moment the lock is free. [`reap_orphans`] is the backstop at the start of every run: it
+//! sweeps any root whose owner lock is free (or that is gone, or is a lock-less root older than two hours).
 #![allow(dead_code)]
 use herdr_graph::daemon::client::Client;
 use herdr_graph::daemon::lock;
 use herdr_graph::herdr::isolation::{
     self, IsolationGuard, PATH_VARS, TEST_ROOT_VAR, VIOLATIONS_LOG, scrubbed_env,
 };
+use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::fs::File;
+use std::os::fd::AsRawFd;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -20,8 +28,17 @@ use std::time::{Duration, Instant};
 /// Roots this fixture family creates (`PrivateHerdr` uses `hg-`, `TestRoot` uses `hgt-`).
 const ROOT_PREFIXES: &[&str] = &["hgt-", "hg-"];
 
+/// The owner lock file, directly under a root.
+const OWNER_LOCK: &str = "owner.lock";
+/// Set (to the root) in the environment of a watchdog process; its presence turns [`root_watchdog`] on.
+const WATCHDOG_VAR: &str = "HG_ROOT_WATCHDOG";
+/// A root with no owner lock (made by an older checkout of this code) is only swept once this old.
+const LOCKLESS_ROOT_AGE: Duration = Duration::from_secs(2 * 60 * 60);
+
 pub struct TestRoot {
     root: PathBuf,
+    /// Declared last: dropped after `Drop for TestRoot` has swept and removed the root.
+    lease: RootLease,
 }
 
 impl TestRoot {
@@ -49,6 +66,7 @@ impl TestRoot {
         ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
+        let lease = RootLease::acquire(&root).unwrap_or_else(|e| panic!("root lease: {e}"));
         register_matrix_root(&root, None);
         std::fs::write(root.join("config/herdr.toml"), "").unwrap();
         let guard = IsolationGuard::new(&root);
@@ -60,7 +78,12 @@ impl TestRoot {
             }
         }
         isolation::arm();
-        TestRoot { root }
+        TestRoot { root, lease }
+    }
+
+    /// Pid of this root's watchdog (it outlives this process and sweeps the root once the owner lock is free).
+    pub fn watchdog_pid(&self) -> u32 {
+        self.lease.watchdog_pid().expect("watchdog running")
     }
 
     pub fn path(&self) -> &Path {
@@ -358,23 +381,176 @@ pub fn reap_root(root: &Path) {
     });
 }
 
-/// Same, for processes whose `HG_TEST_ROOT` names a test root that no longer exists (a SIGKILLed run left them).
-pub fn reap_orphans() {
-    sweep(|| {
-        ps_lines()
-            .into_iter()
-            .filter(|(_, l)| {
-                markers(l).iter().any(|m| {
-                    let tmp = herdr_graph::config::tmp_dir().to_string_lossy();
-                    ROOT_PREFIXES
-                        .iter()
-                        .any(|p| m.starts_with(&format!("{tmp}/{p}")))
-                        && !Path::new(m).exists()
-                })
+/// `<tmp_dir>/<prefix><ulid>` for a path that is a test root or lies inside one (`None` for anything else, so a
+/// prefix of another directory's name never matches).
+fn root_of(path: &str) -> Option<PathBuf> {
+    let rest = Path::new(path)
+        .strip_prefix(herdr_graph::config::tmp_dir())
+        .ok()?;
+    let name = rest.components().next()?.as_os_str().to_str()?;
+    ROOT_PREFIXES
+        .iter()
+        .any(|p| {
+            name.strip_prefix(p).is_some_and(|id| {
+                id.len() == 26
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
             })
-            .map(|(p, _)| p)
-            .collect()
-    });
+        })
+        .then(|| herdr_graph::config::tmp_dir().join(name))
+}
+
+/// Roots named by the `HG_TEST_ROOT` marker of a live process. (Pane shells inherit the marker, checked on a
+/// live private Herdr, so a cwd-based selection is not needed.)
+fn candidate_roots() -> BTreeSet<PathBuf> {
+    let mut out = BTreeSet::new();
+    for (_, line) in ps_lines() {
+        out.extend(markers(&line).into_iter().filter_map(root_of));
+    }
+    out
+}
+
+/// A root is orphaned when its directory is gone, its owner lock is free (the owner died; the kernel released
+/// the flock), or it has no owner lock and is older than [`LOCKLESS_ROOT_AGE`] (another checkout may run the
+/// old code concurrently, so a fresh lock-less root is never touched).
+pub fn root_is_orphaned(root: &Path) -> bool {
+    if !root.exists() {
+        return true;
+    }
+    match File::open(root.join(OWNER_LOCK)) {
+        Ok(f) => try_flock(&f).is_ok(), // the probe lock is released when `f` drops
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => std::fs::metadata(root)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > LOCKLESS_ROOT_AGE),
+        Err(_) => false,
+    }
+}
+
+/// Sweep every orphaned root (what a SIGKILLed run left behind): its marked processes and their descendants,
+/// then the directory. Roots with a live owner are never touched.
+pub fn reap_orphans() {
+    for root in candidate_roots() {
+        if root_is_orphaned(&root) {
+            reap_root(&root);
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}
+
+fn try_flock(f: &File) -> std::io::Result<()> {
+    flock(f, libc::LOCK_EX | libc::LOCK_NB)
+}
+
+fn flock(f: &File, op: i32) -> std::io::Result<()> {
+    loop {
+        // SAFETY: the fd is owned by `f` for the duration of the call.
+        if unsafe { libc::flock(f.as_raw_fd(), op) } == 0 {
+            return Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
+}
+
+/// An exclusive flock on `<root>/owner.lock`, held for the owner's lifetime. The file is opened
+/// close-on-exec, so no child inherits the lock; the kernel releases it when the owner dies, SIGKILL included.
+pub struct OwnerLock {
+    _file: File,
+}
+
+impl OwnerLock {
+    pub fn acquire(root: &Path) -> std::io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(root.join(OWNER_LOCK))?;
+        try_flock(&file)?;
+        Ok(Self { _file: file })
+    }
+}
+
+/// The owner lock plus a watchdog that outlives this process: a re-exec of the current test binary running
+/// [`root_watchdog`], in its own process group, with a bare environment (no `HG_TEST_ROOT`, so it is never
+/// swept as a rig process). It blocks on the lock and sweeps the root as soon as the owner is gone.
+pub struct RootLease {
+    lock: Option<OwnerLock>,
+    watchdog: Option<Child>,
+}
+
+impl RootLease {
+    pub fn acquire(root: &Path) -> std::io::Result<Self> {
+        let lock = OwnerLock::acquire(root)?;
+        // The test name as libtest prints it: this module's path without the crate name.
+        let module = module_path!().split_once("::").map_or("", |(_, rest)| rest);
+        let name = if module.is_empty() {
+            "root_watchdog".to_string()
+        } else {
+            format!("{module}::root_watchdog")
+        };
+        let watchdog = Command::new(std::env::current_exe()?)
+            .args(["--exact", &name, "--test-threads=1", "--nocapture"])
+            .env_clear()
+            .env(WATCHDOG_VAR, root)
+            .current_dir(herdr_graph::config::tmp_dir())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        Ok(Self {
+            lock: Some(lock),
+            watchdog: Some(watchdog),
+        })
+    }
+
+    pub fn watchdog_pid(&self) -> Option<u32> {
+        self.watchdog.as_ref().map(Child::id)
+    }
+}
+
+impl Drop for RootLease {
+    /// Release the lock (the watchdog finds nothing left to sweep and exits), then reap the watchdog.
+    fn drop(&mut self) {
+        drop(self.lock.take());
+        let Some(mut watchdog) = self.watchdog.take() else {
+            return;
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if matches!(watchdog.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// The watchdog body. Returns at once in a normal run; with `HG_ROOT_WATCHDOG=<root>` it blocks until the
+/// root's owner lock is free, then sweeps the root (and removes it unless `HG_KEEP_PRIVATE_ROOT=1`).
+#[test]
+fn root_watchdog() {
+    let Some(root) = std::env::var_os(WATCHDOG_VAR) else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    // A root already removed by its owner has nothing to watch.
+    let Ok(lock) = File::open(root.join(OWNER_LOCK)) else {
+        return;
+    };
+    if flock(&lock, libc::LOCK_EX).is_err() {
+        return;
+    }
+    reap_root(&root);
+    if std::env::var("HG_KEEP_PRIVATE_ROOT").as_deref() != Ok("1") {
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 /// Register before any spawn; the controller can still reap marked forks if killed
