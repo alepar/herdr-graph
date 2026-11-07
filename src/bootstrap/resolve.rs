@@ -1,6 +1,6 @@
 //! Caller resolution for `/seat` (spec §9): which clone, seat and teamspace is the calling pane?
 //!
-//! `resolve_caller` is pure over a committed tree. Proposals (create / resurrect / rebind plans) are
+//! `resolve_caller` is pure over a committed tree. Proposals (create / resurrect / add plans) are
 //! computed as plan WORDS by `proposal_words`; the daemon turns the words into a stored plan through
 //! `plan.create` and attaches it as a `Proposal`. `/seat` never applies a proposal.
 use crate::daemon::registry::CallerInfo;
@@ -42,9 +42,6 @@ pub enum Resolution {
         native_session: Option<NsId>,
         /// "binding" | "env" | "agent_session"
         via: String,
-        /// A rebind plan when the pane binding is stale (via env / agent_session).
-        #[serde(skip_serializing_if = "Option::is_none")]
-        proposal: Option<Proposal>,
     },
     Unbound {
         candidates: Vec<Candidate>,
@@ -59,17 +56,19 @@ pub enum Resolution {
 impl Resolution {
     pub fn set_proposal(&mut self, p: Option<Proposal>) {
         match self {
-            Resolution::Bound { proposal, .. }
-            | Resolution::Unbound { proposal, .. }
-            | Resolution::Ambiguous { proposal, .. } => *proposal = p,
+            Resolution::Bound { .. } => {}
+            Resolution::Unbound { proposal, .. } | Resolution::Ambiguous { proposal, .. } => {
+                *proposal = p;
+            }
         }
     }
 
     pub fn proposal(&self) -> Option<&Proposal> {
         match self {
-            Resolution::Bound { proposal, .. }
-            | Resolution::Unbound { proposal, .. }
-            | Resolution::Ambiguous { proposal, .. } => proposal.as_ref(),
+            Resolution::Bound { .. } => None,
+            Resolution::Unbound { proposal, .. } | Resolution::Ambiguous { proposal, .. } => {
+                proposal.as_ref()
+            }
         }
     }
 }
@@ -147,7 +146,6 @@ fn bound(f: &Fact, via: &str) -> Resolution {
         clone: f.clone.id.clone(),
         native_session: f.clone.occupant.as_ref().map(|o| o.native_session.clone()),
         via: via.to_owned(),
-        proposal: None,
     }
 }
 
@@ -309,7 +307,6 @@ fn pane_name(caller: &CallerInfo, pane: Option<&PaneInfo>) -> String {
 }
 
 /// The plan words that would fix `res`, for `plan.create`:
-/// stale binding (env / agent session) or one moved candidate → `clone rebind <cl> --pane <pane>`;
 /// a retired seat the env names → `seat resurrect <st>`; a retired clone of a live seat → `clone add <st>`;
 /// nothing identifiable → `seat create <name> --teamspace <ts>` when a teamspace is identifiable.
 pub fn proposal_words(
@@ -320,25 +317,12 @@ pub fn proposal_words(
 ) -> Option<Vec<String>> {
     let all = facts(tree).ok()?;
     let w = |parts: &[&str]| parts.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    let rebind =
-        |clone: &CloneId, pane: &str| w(&["clone", "rebind", clone.as_str(), "--pane", pane]);
     match res {
         Resolution::Ambiguous { .. } => None,
-        Resolution::Bound { via, clone, .. } if via != "binding" => {
-            let pane = caller.pane_id.as_deref()?;
-            let f = all.iter().find(|f| &f.clone.id == clone)?;
-            (f.bound_pane() != Some(pane)).then(|| rebind(clone, pane))
-        }
         Resolution::Bound { .. } => None,
         Resolution::Unbound { candidates, .. } => {
-            if let [one] = candidates.as_slice() {
-                return caller
-                    .pane_id
-                    .as_deref()
-                    .map(|pane| rebind(&one.clone, pane));
-            }
             if !candidates.is_empty() {
-                return None; // several moved clones: the user chooses
+                return None; // moved clones: the user chooses
             }
             let env_seat = caller
                 .graph_seat

@@ -13,7 +13,7 @@ Organizational changes are never made directly. They go plan, user confirmation,
    `herdr-graph plan --json seat create reviewer --teamspace alpha --active`.
    Other changes: `teamspace create|rename|retire|resurrect`,
    `seat create|activate|deactivate|rename|retire|resurrect|override`,
-   `clone add|retire|purge|rebind`, `participation join|leave`, `template create|edit|copy`,
+   `clone add|retire|purge`, `participation join|leave`, `template create|edit|copy`,
    `application apply|retire`, `undo`.
 2. Show the plan to the user verbatim: the `rendered` text, including warnings and any diff.
    Do not paraphrase it and do not shorten it.

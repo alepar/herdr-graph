@@ -1513,7 +1513,6 @@ mod wiring {
             K::CloneAdd,
             K::CloneRetire,
             K::ClonePurge,
-            K::CloneRebind,
             K::ParticipationJoin,
             K::ParticipationLeave,
             K::TemplateCreate,
@@ -1544,7 +1543,6 @@ mod wiring {
                 K::CloneAdd
                 | K::CloneRetire
                 | K::ClonePurge
-                | K::CloneRebind
                 | K::ParticipationJoin
                 | K::ParticipationLeave => {}
                 K::TemplateCreate
@@ -1555,8 +1553,8 @@ mod wiring {
                 | K::InstructionsEdit
                 | K::ThreadsReconnect
                 | K::Undo => {}
-                // Legacy since H1 (journal deserialization only): no mutation by design, so not in `all`.
-                K::ContentWrite => continue,
+                // Legacy (journal deserialization only; `CloneRebind` since hg-66u.15): no mutation by design, so not in `all`.
+                K::ContentWrite | K::CloneRebind => continue,
                 K::Observed | K::Bookkeeping => {}
             }
             let name = kind_name(k);
@@ -2787,46 +2785,6 @@ mod wiring {
             d.stop().await;
         }
 
-        /// Flow 4c: attended cold restart. Tokens are gone and threads cannot place the seat: the clone is
-        /// Unknown (never retired or recreated) until the operator rebinds it, and then it resumes.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn sweep_attended_cold_restart_rebinds_and_resumes() {
-            let (_dir, root) = new_instance();
-            let d = Daemon::start(&root).await;
-            let (old, tab) = resumable_clone(&d).await;
-            let clone = d.clone_of("worker");
-            d.fakes
-                .seat_view
-                .set(&tseat("th-1"), SeatStatus::Unresolved);
-            d.fakes.herdr.clear_calls();
-
-            let new = herdr_restarts(&d, &root, false, &old).await;
-            eventually("the clone is Unknown", || {
-                d.clone_of("worker").runtime.availability == Availability::Unknown
-            })
-            .await;
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(d.clone_of("worker").lifecycle, CloneLifecycle::Active);
-            assert_eq!(herdr_churn(&d).len(), 0, "{:?}", d.fakes.herdr.calls());
-
-            d.committed(&["clone", "rebind", &clone.id.to_string(), "--pane", &new.0])
-                .await;
-            eventually("the rebound clone is present", || {
-                let c = d.clone_of("worker");
-                c.runtime.availability == Availability::Present
-                    && c.runtime.bound.and_then(|b| b.pane_id) == Some(new.clone())
-            })
-            .await;
-            d.fakes.clock.advance(chrono::Duration::seconds(91));
-            poke(&d, &tab);
-            eventually("the agent is resumed", || !start_calls(&d).is_empty()).await;
-            let starts = start_calls(&d);
-            assert_eq!(starts[0].pane, new);
-            assert_eq!(starts[0].args, ["--resume", "sess-1"]);
-            assert_eq!(d.clone_of("worker").threads_seat.as_deref(), Some("th-1"));
-            d.stop().await;
-        }
-
         /// Flow 5: a clone closed with its pane and brought back by `undo` succeeds onto the seat of its
         /// reopened pane: `threads_seat` moves once (the old seat kept as history), the invitations are
         /// re-keyed to the new seat and the clone is active again.
@@ -3308,7 +3266,6 @@ mod cli_sweep {
                 &body,
             ],
             payload_free.to_vec(),
-            vec!["rebind", &clone, "--pane", "p-none"],
             vec!["ops"],
             vec!["ops", "--unresolved"],
             vec!["op", &op],

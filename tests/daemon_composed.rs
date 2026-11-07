@@ -309,7 +309,7 @@ async fn writer_resume_not_halted() {
     d.stop().await;
 }
 
-const ORG_KINDS: [&str; 23] = [
+const ORG_KINDS: [&str; 22] = [
     "teamspace_create",
     "teamspace_rename",
     "teamspace_retire",
@@ -323,7 +323,6 @@ const ORG_KINDS: [&str; 23] = [
     "seat_override",
     "clone_add",
     "clone_retire",
-    "clone_rebind",
     "participation_join",
     "participation_leave",
     "template_create",
@@ -403,6 +402,11 @@ async fn every_kind_and_command_registered() {
     assert!(
         !keys.iter().any(|k| k.starts_with("content_write")),
         "content_write must not be registered; have {keys:?}"
+    );
+    // `clone rebind` was removed (hg-66u.15): no mutation is registered for it.
+    assert!(
+        !keys.iter().any(|k| k == "clone_rebind"),
+        "clone_rebind must not be registered; have {keys:?}"
     );
     // The composed daemon's writer admits only registered kinds: its registry is this same function's output.
     d.stop().await;
