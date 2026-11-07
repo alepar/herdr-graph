@@ -38,3 +38,11 @@ Source: herdr-threads coordinator (seat snSGTpBk7xGd), message mnSGy0OTGAUK on t
 
 1. Every path that makes a retirement final (pane close of a keyless seat, operator retire, --replace, FinalizeRetirement) deletes the key row in the same transaction: the reservation is released, not returned to reserved-unbound. Relink to a successor is a fresh ReserveContinuityKey{key, seat: successor}; it succeeds if the successor holds no other key and is resolved or unresolved. D1 and D2 land on one branch and ship in one release (no between-releases window). A seat retired final before this ships never had a key row. (Design, not yet implemented.)
 2. A final-retired seat is never a C1 candidate. A resumed check-in on a pane already resolved to the successor falls through to ordinary check-in on that seat (works today). On an unowned pane a non-resume event mints a new seat; the Resume-event case is untraced. A held pane is refused. With the key re-bound to the successor, a check-in on the successor's pane is a key no-op; on another pane it is key_live_elsewhere. Resolving the successor before resuming is the right order. (Verified in today's code: src/cli/hook.rs:2049-2085.)
+
+## Release v3.1.0 (2026-11-07, messages mnSGZjUc26XY, mnSGpz0269ot, mnSGPRMSMiID)
+
+- herdr-threads v3.1.0 released with D1, D2, G2 and G5 (merged as e3ed33f82).
+- SeatInspection.retirement_state is present only as "reversible"; absent means final or not retired ("final" is never emitted: older protocol-9 clients reject unknown values).
+- ContinuityAlerts: the last page's cursor stays at the high-water ordinal; the graph dedupes by ordinal (no after_ordinal resume point).
+- Upgrade order: the daemon must be 3.1.0 before a graph built on this library connects (the client registers service_session_v3). Node schema 17, one-way.
+- Known gap upstream: real-Herdr qualification did not cover a cold restart with a client attached.

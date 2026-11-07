@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-04-threads-seat-identity
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: finish
+phase: code
 codeMechanism: Workflow
 runTag: threads-seat-identity-20261105T073527
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -17,6 +17,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- review-collection · {"invocationId": "inv-3f52876e-246a-4f9a-8d50-858e849ea7b2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-3f52876e-246a-4f9a-8d50-858e849ea7b2.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2992d8ec-17c3-4a55-bb2a-789078dbf9da.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-e33fc801-f307-464a-8b9a-fc849dbb309d", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e33fc801-f307-464a-8b9a-fc849dbb309d.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md", "review": "pending", "required": [], "settled": false}
@@ -184,3 +185,4 @@ roastCodeExit: capped
 baseAbsorbed: 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784 → eae4a3edd9e8bca0c5e1807a7c4372d64ce9f871, 0 conflicted files
 sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run MEASUREMENT INVALID (EAGAIN thread exhaustion) @ 29e7609 · finish re-run in hg-build: 2981 passed, 1 failed (pre-run) @ f2928b1
 friction: 14 events
+gates released: hg-66u.1, hg-66u.2, hg-66u.3 closed 2026-11-07 (herdr-threads v3.1.0); gated subtree re-entered; finish deferred until it lands (post-cap audit covers it)
