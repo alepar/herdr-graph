@@ -226,9 +226,13 @@ impl Rig {
     }
 
     /// The newest undoable action's id.
-    fn latest_act(&self) -> String {
+    /// The newest undoable retirement (observed cascades and hydrations are undoable too and land asynchronously).
+    fn latest_retire(&self) -> String {
         let v: Value = serde_json::from_str(&self.ok(&["undo", "--json"])).unwrap();
-        let first = v.as_array().and_then(|a| a.first()).expect("a candidate");
+        let first = v
+            .as_array()
+            .and_then(|a| a.iter().find(|c| c["kind"] == "retire"))
+            .expect("a retire candidate");
         first["act"]
             .as_str()
             .or_else(|| first["id"].as_str())
@@ -287,7 +291,8 @@ fn seat_failure_flows() {
         .node_manager_seat()
         .expect("office assigned a node manager");
 
-    // Daemon unavailable (dead Herdr socket, nothing to start): exit 5 with the seat text.
+    // Daemon unavailable (the running daemon serves another Herdr socket, so `hello` refuses it): exit 5 with the
+    // seat text.
     let dead = rig.root.home().join("dead.sock");
     let out = rig
         .cmd(&["seat"])
@@ -414,7 +419,7 @@ fn manager_flow_on_fresh_graph() {
     rig.plan_apply(&["seat", "retire", "lead"]);
     assert_eq!(rig.seat("dev").manager.as_deref(), Some(main.id.as_str()));
     // Undo restores the pointer.
-    let act = rig.latest_act();
+    let act = rig.latest_retire();
     rig.plan_apply(&["undo", &act]);
     assert_eq!(rig.seat("dev").manager.as_deref(), Some(lead.id.as_str()));
 

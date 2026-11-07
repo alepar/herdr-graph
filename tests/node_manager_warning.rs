@@ -86,7 +86,7 @@ fn unassigned_graph_with_a_seat_warns_once_and_assignment_silences_it() {
 
     let before = run(&root, &["list", "seats"]);
     assert_eq!(warned(&before), 1, "{}", stderr(&before));
-    assert!(stdout(&before).contains("s"), "{}", stdout(&before));
+    assert!(stdout(&before).contains(SEAT), "{}", stdout(&before));
     assert!(!stdout(&before).contains("warning"), "stdout stays clean");
 
     let nm = graph_with_node_manager(&root.instance(), SEAT);

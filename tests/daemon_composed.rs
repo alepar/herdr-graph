@@ -2083,10 +2083,21 @@ async fn redesign_sweep_composed() {
     // 1. Move.
     d.fakes.herdr.user_move_pane(&nm_moved_pane, &o_tab);
     d.fakes.herdr.user_move_pane(&p_pane, &o_tab);
+    // A committed move sets reload_required on the clone; the binding alone is unchanged, so it proves nothing.
+    let reloaded = |c: &herdr_graph::model::clone::CloneRecord| {
+        d.with_view(|v| {
+            layout::all_clones(v)
+                .unwrap()
+                .into_iter()
+                .any(|(_, x)| x.id == c.id && x.reload_required)
+        })
+    };
+    assert!(!reloaded(&nm_moved) && !reloaded(&p_clone));
     eventually("the moves are observed", || {
-        d.fakes.herdr.calls().is_empty() && pane_of(&nm_moved).as_ref() == Some(&nm_moved_pane)
+        reloaded(&nm_moved) && reloaded(&p_clone)
     })
     .await;
+    assert_eq!(pane_of(&nm_moved), Some(nm_moved_pane.clone()));
     settle(&d).await;
     assert!(ended_clones(&d).is_empty());
     other_untouched("move");
