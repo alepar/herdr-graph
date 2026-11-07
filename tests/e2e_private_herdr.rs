@@ -2321,14 +2321,20 @@ struct CloneFacts {
 impl E2e {
     /// A rig whose graph daemon reaches a real herdr-threads daemon (state dir `threads-state` under the private
     /// root, found through `HERDR_GRAPH_THREADS_STATE_DIR`). `None` (skipped) when no threads binary exists.
-    fn start_with_threads() -> Option<Self> {
-        let bin = match smoke_threads_binary() {
-            Ok(b) => b,
-            Err(reason) => {
-                support::skip(&reason);
-                return None;
-            }
-        };
+    /// `daemon_env` is extra environment for the threads daemon (it keeps it for its whole life).
+    fn start_with_threads_env(daemon_env: &[(&str, &str)]) -> Option<Self> {
+        let rig = Self::start_threads_unstarted()?;
+        rig.ensure_threads_daemon(daemon_env);
+        rig.start_daemon();
+        Some(rig)
+    }
+
+    /// A rig that knows where its threads daemon will live but has started neither it nor the graph daemon.
+    fn start_threads_unstarted() -> Option<Self> {
+        if let Err(reason) = smoke_threads_binary() {
+            support::skip(&reason);
+            return None;
+        }
         let mut rig = Self::start_without_daemon()?;
         let state = rig.herdr.root.join("threads-state");
         rig.herdr
@@ -2339,14 +2345,42 @@ impl E2e {
             "HERDR_GRAPH_THREADS_STATE_DIR".into(),
             state.display().to_string(),
         ));
-        let out = rig
+        Some(rig)
+    }
+
+    /// `herdr-threads daemon stop` for the rig's threads state dir.
+    fn stop_threads_daemon(&self) {
+        let bin = smoke_threads_binary().expect("threads binary");
+        let out = self
             .herdr
             .command(&bin)
             .arg("--state-dir")
-            .arg(&state)
+            .arg(self.herdr.root.join("threads-state"))
             .arg("--host-endpoint")
-            .arg(&rig.herdr.socket)
+            .arg(&self.herdr.socket)
+            .args(["daemon", "stop"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "threads daemon stop: {}",
+            stderr(&out)
+        );
+    }
+
+    /// `herdr-threads daemon ensure` for the rig's threads state dir.
+    fn ensure_threads_daemon(&self, daemon_env: &[(&str, &str)]) {
+        let bin = smoke_threads_binary().expect("threads binary");
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
             .args(["daemon", "ensure"])
+            .envs(daemon_env.iter().copied())
             .env_remove("ANTHROPIC_API_KEY")
             .env_remove("OPENAI_API_KEY")
             .stdin(std::process::Stdio::null())
@@ -2357,8 +2391,6 @@ impl E2e {
             "threads daemon ensure: {}",
             stderr(&out)
         );
-        rig.start_daemon();
-        Some(rig)
     }
 
     fn clone_facts(&self, c: &Row) -> Option<CloneFacts> {
@@ -2390,7 +2422,11 @@ impl E2e {
 
 /// foreman (two clones) and bar (one), each seated by threads, plus the facts to compare later.
 fn seated_rig() -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
-    let rig = E2e::start_with_threads()?;
+    seated_rig_env(&[])
+}
+
+fn seated_rig_env(daemon_env: &[(&str, &str)]) -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
+    let rig = E2e::start_with_threads_env(daemon_env)?;
     let (foreman, bar) = two_seats(&rig);
     rig.plan_apply(&["clone", "add", "foreman"]);
     rig.wait_until("foreman's second pane", WAIT, |r| {
@@ -2592,6 +2628,523 @@ fn e2e_cold_restart_attended_keeps_clones_on_their_seats() {
 fn e2e_live_handoff_keeps_clones_on_their_seats() {
     support::skip(
         "no private-rig-safe live handoff: `herdr update --handoff` downloads and installs a release over the herdr binary",
+    );
+}
+
+// ---- hg-66u.18: configuration smokes after the gates (spec §11, herdr-threads v3.1.0: D1, D2, G5) ---------------
+//
+// Same rig as the pre-D1 smokes above (shell clones, a real 3.1.0 herdr-threads daemon in the private root).
+// Herdr's agent detection needs real agent binaries and credentials, which a private rig does not have, so the
+// graph's own agent launches (fresh keyed agent, resumed session) are not exercised here; each test names what it
+// measures and the unmet remainder is recorded in the task report.
+
+impl E2e {
+    /// Every seat id the rig's threads daemon knows, retired ones included, sorted.
+    fn threads_seat_ids(&self) -> Vec<String> {
+        let bin = smoke_threads_binary().expect("threads binary");
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["--json", "seat", "list", "--include-retired"])
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "seat list: {}", stderr(&out));
+        let v = json_of(&stdout(&out));
+        let mut ids: Vec<String> = v["result"]["data"]["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no seat items: {v}"))
+            .iter()
+            .map(|s| s["seat"].as_str().expect("seat id").to_owned())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// The clone's invitations as `(thread, state, threads invitation id)`, sorted.
+    fn threads_invitations(&self, c: &Row) -> Vec<(String, String, String)> {
+        let s = self.show(&c.id);
+        let mut v: Vec<_> = s
+            .get("invitations")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|i| {
+                (
+                    tstr(i, "thread"),
+                    tstr(i, "state"),
+                    tstr(i, "link.invitation"),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// A fresh agent's keyed check-in in `pane`, through the public `herdr-threads hook claude` with the clone's
+    /// continuity key in its environment. The rig has no agent binary or credentials, so the SessionStart payload
+    /// is synthetic (the same fixture `tests/threads_real.rs` registers sessions with); the daemon, the key and
+    /// the seat resolution it drives are the real ones.
+    fn keyed_check_in(&self, pane: &str, key: &str, session: &str) -> Output {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = smoke_threads_binary().expect("threads binary");
+        let fixtures = self.herdr.root.join("fixture-bin");
+        std::fs::create_dir_all(&fixtures).unwrap();
+        let claude = fixtures.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\necho '2.1.283 (Claude Code)'\n").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let transcript = self.herdr.root.join("fixture-session.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+        let payload = self.herdr.root.join("fixture-hook.json");
+        std::fs::write(
+            &payload,
+            serde_json::to_vec(&json!({
+                "hook_event_name": "SessionStart", "session_id": session,
+                "transcript_path": transcript, "cwd": self.herdr.root.join("home"), "source": "startup"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let path = self
+            .herdr
+            .env
+            .iter()
+            .find(|(k, _)| k == "PATH")
+            .expect("PATH in the private env")
+            .1
+            .clone();
+        self.herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["hook", "claude"])
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .env("CLAUDE_CODE_SESSION_ID", session)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .env("HERDR_ENV", "1")
+            .env("HERDR_PANE_ID", pane)
+            .env("HERDR_SOCKET_PATH", &self.herdr.socket)
+            .env("HERDR_THREADS_CONTINUITY_KEY", key)
+            .env("PATH", format!("{}:{path}", fixtures.display()))
+            .stdin(std::process::Stdio::from(
+                std::fs::File::open(payload).unwrap(),
+            ))
+            .output()
+            .unwrap()
+    }
+
+    /// `herdr-threads seat inspect <seat> --json` against the rig's threads daemon: the `result` object.
+    fn seat_inspection(&self, seat: &str) -> Value {
+        let bin = smoke_threads_binary().expect("threads binary");
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["--json", "seat", "inspect", seat])
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "seat inspect: {}", stderr(&out));
+        json_of(&stdout(&out))
+    }
+}
+
+/// Configuration 6 (D2): closing a clone's pane retires its seat reversibly (its key is bound to the seat), and
+/// graph undo brings the clone back on the same threads seat id with its invitations untouched: no succession,
+/// no new seat, no re-invite.
+#[test]
+fn e2e_close_then_undo_keeps_the_seat_and_memberships() {
+    let Some((rig, before)) = seated_rig() else {
+        return;
+    };
+    let (victim, facts) = &before[1];
+    let seat = facts.threads_seat.as_str();
+    assert_eq!(
+        rig.seat_inspection(seat)["result"]["data"]["continuity_key"]["bound_by"],
+        "service_reservation",
+        "the graph bound the clone's key to its seat before the close (key-link want)"
+    );
+    let seats_before = rig.threads_seat_ids();
+    let pane = rig.pane_of(&victim.id).expect("victim pane").id.0;
+    rig.raw_ok("pane.close", json!({ "pane_id": pane }));
+    rig.wait_until("the closed pane's clone to retire", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("retired")
+    });
+    rig.wait_until("threads to retire the seat reversibly", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"] == "reversible"
+    });
+    assert_eq!(
+        rig.threads_invitations(victim),
+        facts.invitations,
+        "reversible retirement keeps the memberships"
+    );
+
+    let act = rig
+        .undo_candidates()
+        .into_iter()
+        .find(|(_, c)| c.contains(&victim.id))
+        .expect("the pane closure is undoable")
+        .0;
+    let (ok, out) = rig.apply_plan(&rig.plan_json(&["undo", &act]));
+    assert!(ok, "undo apply: {out}");
+
+    rig.wait_until("the clone to be active in a new pane", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("active")
+            && r.pane_of(&victim.id).is_some_and(|p| p.id.0 != pane)
+    });
+    rig.wait_settled();
+    let after = rig
+        .clone_facts(victim)
+        .expect("the clone still has its seat");
+    assert_eq!(after.threads_seat, facts.threads_seat, "same seat id");
+    assert_eq!(
+        after.invitations, facts.invitations,
+        "same invitations: no re-invite"
+    );
+    assert_ne!(after.pane, facts.pane, "the clone has a reopened pane");
+    let shown = rig.show(&victim.id);
+    assert!(
+        at(&shown, "threads_seat_history").is_none_or(|h| h.as_array().is_some_and(Vec::is_empty)),
+        "no succession: {shown}"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "undo minted no seat in threads"
+    );
+    rig.wait_until("threads to un-retire the seat", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"].is_null()
+    });
+    let inspected = rig.seat_inspection(seat);
+    assert!(
+        inspected["result"]["data"]["retirement_state"].is_null(),
+        "the seat is no longer retired: {inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["continuity_key"]["key"], victim.id,
+        "the key is still held by the same seat"
+    );
+}
+
+/// The seconds-long form of the 10 minute restored-pane window of herdr-threads G5 (a test hook of the threads
+/// daemon, the one its own qualification uses).
+const G5_GRACE_ENV: (&str, &str) = ("HT_TEST_RESTORED_PANE_GRACE_MS", "3000");
+
+/// Herdr's saved session (written by a graceful `server stop`) in the private root.
+fn saved_session_path(rig: &E2e) -> PathBuf {
+    rig.herdr.root.join("config/herdr/session.json")
+}
+
+/// Edits the saved session so the next start restores no pane `pane` (a number): the pane was closed while
+/// Herdr was down. Its tab keeps the sibling.
+fn drop_saved_pane(rig: &E2e, pane: &str) {
+    let path = saved_session_path(rig);
+    let mut session: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("Herdr saved no session at {}: {e}", path.display())),
+    )
+    .unwrap();
+    let tabs = session["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|w| w["tabs"].as_array_mut().unwrap().iter_mut());
+    let mut dropped = false;
+    for tab in tabs {
+        if tab["panes"].get(pane).is_none() {
+            continue;
+        }
+        let split = tab["layout"]["Split"].clone();
+        let (gone, kept) = if split["first"]["Pane"] == pane.parse::<u64>().unwrap() {
+            (&split["first"], &split["second"])
+        } else {
+            (&split["second"], &split["first"])
+        };
+        assert_eq!(
+            gone["Pane"].to_string(),
+            pane,
+            "pane {pane} is a leaf of its tab's split: {split}"
+        );
+        let kept_pane = kept["Pane"].clone();
+        assert!(kept_pane.is_u64(), "the sibling is a single pane: {kept}");
+        tab["layout"] = json!({ "Pane": kept_pane });
+        tab["panes"].as_object_mut().unwrap().remove(pane);
+        tab["focused"] = kept_pane.clone();
+        tab["root_pane"] = kept_pane;
+        dropped = true;
+    }
+    assert!(dropped, "no saved pane {pane}: {session}");
+    std::fs::write(&path, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+}
+
+/// Configuration 5 (G5): a pane closed while Herdr was down. Threads reads its seat unresolved through the
+/// window, then retires it (reversibly: the clone's key is bound to it); the clone is retired and undoable, the
+/// other clones are untouched, and nothing is launched or created for it.
+#[test]
+fn e2e_pane_closed_during_downtime_retires_undoably() {
+    // The threads daemon honours the grace override only when built with its `test-support` feature
+    // (HG_THREADS_TEST_SUPPORT=1 says the HG_TEST_THREADS_BINARY is such a build); otherwise the real window
+    // (10 observed minutes) applies, which HG_G5_FULL_WINDOW=1 waits out.
+    let full_window = std::env::var("HG_G5_FULL_WINDOW").as_deref() == Ok("1");
+    if !full_window && std::env::var("HG_THREADS_TEST_SUPPORT").as_deref() != Ok("1") {
+        support::skip(
+            "G5 needs a threads build with the test-support grace override (HG_THREADS_TEST_SUPPORT=1 with HG_TEST_THREADS_BINARY) or HG_G5_FULL_WINDOW=1 for the real 10 minute window",
+        );
+        return;
+    }
+    let daemon_env: &[(&str, &str)] = if full_window { &[] } else { &[G5_GRACE_ENV] };
+    let retire_within = if full_window {
+        Duration::from_secs(14 * 60)
+    } else {
+        WAIT * 2
+    };
+    let Some((mut rig, before)) = seated_rig_env(daemon_env) else {
+        return;
+    };
+    let victim_pane = "w1:p4";
+    let (victim, victim_facts) = before
+        .iter()
+        .find(|(_, f)| f.pane == victim_pane)
+        .expect("a clone in the second foreman pane");
+    let survivors: Vec<&(Row, CloneFacts)> =
+        before.iter().filter(|(c, _)| c.id != victim.id).collect();
+    let launches_before = rig.effects_of(&victim.id).len();
+
+    let out = rig
+        .herdr
+        .command(rig.herdr.herdr_path())
+        .args(["server", "stop"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "server stop: {}", stderr(&out));
+    rig.wait_until("the server to be down", WAIT, |r| !r.herdr.socket.exists());
+    std::thread::sleep(Duration::from_secs(1));
+    drop_saved_pane(&rig, victim_pane.trim_start_matches("w1:p"));
+    rig.herdr_restart();
+
+    rig.wait_until(
+        "the clone of the vanished pane to retire",
+        retire_within,
+        |r| r.show(&victim.id)["lifecycle"].as_str() == Some("retired"),
+    );
+    rig.wait_until("threads to retire its seat reversibly", WAIT, |r| {
+        r.seat_inspection(&victim_facts.threads_seat)["result"]["data"]["retirement_state"]
+            == "reversible"
+    });
+    rig.wait_settled();
+    let acts = rig.undo_candidates();
+    assert!(
+        acts.iter().any(|(_, c)| c.contains(&victim.id)),
+        "the retirement is undoable: {acts:?}"
+    );
+    for (c, f) in survivors {
+        assert_eq!(tstr(&rig.show(&c.id), "lifecycle"), "active", "{}", c.name);
+        assert_eq!(
+            rig.clone_facts(c).as_ref().map(|x| &x.threads_seat),
+            Some(&f.threads_seat),
+            "clone {} kept its seat",
+            c.name
+        );
+    }
+    let launched: Vec<_> = rig
+        .effects_of(&victim.id)
+        .into_iter()
+        .skip(launches_before)
+        .filter(|(k, _)| {
+            matches!(
+                k.as_str(),
+                "start_agent"
+                    | "relaunch_occupant"
+                    | "replace_session"
+                    | "split_pane"
+                    | "create_tab"
+            )
+        })
+        .collect();
+    assert!(
+        launched.is_empty(),
+        "nothing was launched or created for the retired clone: {launched:?}"
+    );
+    let ids = |v: &[(String, String, String)]| -> Vec<(String, String)> {
+        v.iter().map(|i| (i.0.clone(), i.2.clone())).collect()
+    };
+    assert_eq!(
+        ids(&rig.threads_invitations(victim)),
+        ids(&victim_facts.invitations),
+        "the retired seat keeps its threads invitations (the graph's own bookkeeping state may change)"
+    );
+}
+
+/// Configuration 4 (D1): cold restart, then a fresh agent in a bare pane. After a headless cold restart each
+/// clone is rebound on its seat; a fresh agent that checks in from a clone's bare pane with the clone's key
+/// reattaches that same seat (no new seat, no re-invite, the graph reads it resolved at the pane).
+///
+/// Unmet here: the graph launching that agent itself (the resume driver's keyed fresh launch). Herdr's agent
+/// detection needs real agent binaries and credentials, so the shell clones are never launched into; the launch
+/// is covered by the fake-Herdr driver tests (hg-66u.21, hg-66u.30).
+#[test]
+fn e2e_cold_restart_fresh_agent_reattaches_by_key() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    let seats_before = rig.threads_seat_ids();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+
+    let (clone, facts) = &before[0];
+    let out = rig.keyed_check_in(&facts.pane, &clone.id, "fresh-agent-after-restart");
+    assert!(
+        out.status.success() && !stdout(&out).is_empty(),
+        "keyed check-in: {} {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let inspected = rig.seat_inspection(&facts.threads_seat);
+    assert_eq!(
+        inspected["result"]["data"]["continuity_key"]["key"], clone.id,
+        "{inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["mapping"]["state"], "resolved",
+        "{inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["mapping"]["target"], facts.pane,
+        "the seat is resolved at the clone's pane: {inspected}"
+    );
+    assert!(
+        inspected["result"]["data"]["continuity_key"]["conflict"].is_null(),
+        "no key conflict: {inspected}"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "the keyed check-in reattached an existing seat and minted none"
+    );
+    rig.wait_settled();
+    assert_eq!(
+        rig.clone_facts(clone).as_ref(),
+        Some(facts),
+        "the clone kept its seat, pane and invitations"
+    );
+    assert_eq!(
+        tstr(&rig.show(&clone.id), "seat_fact.state"),
+        "resolved",
+        "{}",
+        rig.show(&clone.id)
+    );
+}
+
+/// Configuration 7 (post-D1): a clone with no threads seat goes through a headless cold restart and ends seated
+/// with no operator step. The clone is added while the threads daemon is down (the graph is already bound to
+/// it), so it has no seat when Herdr restarts; once threads is back the graph seats it by itself.
+///
+/// Unmet here: the clone being launched by the graph (the restart trigger's keyed launch). It is a shell clone,
+/// which has no agent to launch, and after a restart threads holds fresh seats back while any seat is
+/// unresolved (the restore baseline hold), so nothing seats a bare pane but its keyed agent: the fixture's
+/// keyed check-in stands in for that agent and the test measures the seating half only. The fake-backed tests
+/// of hg-66u.33 cover the launch.
+#[test]
+fn e2e_unseated_clone_headless_cold_restart_is_launched_and_seated() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    rig.stop_threads_daemon();
+    rig.plan_apply(&["clone", "add", "foreman"]);
+    rig.wait_until("foreman's third pane", WAIT, |r| {
+        r.tab_labelled("foreman")
+            .is_some_and(|t| t.1.panes.len() == 3)
+    });
+    rig.wait_settled();
+    let foreman = rig.seat("foreman");
+    let added = rig
+        .clones_of(&foreman.id)
+        .into_iter()
+        .find(|c| !before.iter().any(|(b, _)| b.id == c.id))
+        .expect("the added clone");
+    let shown = rig.show(&added.id);
+    assert!(
+        at(&shown, "threads_seat").is_none() && at(&shown, "key_reservation").is_none(),
+        "added with threads down, the clone has no seat and no reservation: {shown}"
+    );
+    let pane = rig.pane_of(&added.id).expect("clone pane").id.0;
+    let generation = bound_generation(&rig, &added);
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+
+    rig.herdr_restart();
+    rig.wait_until("the unseated clone to be rebound", WAIT, |r| {
+        bound_generation(r, &added) > generation
+            && tstr(&r.show(&added.id), "runtime.availability") == "present"
+    });
+    rig.ensure_threads_daemon(&[]);
+    rig.wait_until("the clone's key reservation", WAIT, |r| {
+        at(&r.show(&added.id), "key_reservation").is_some()
+    });
+    // After a restart threads holds fresh seats back until no seat is unresolved (the restore baseline hold), so
+    // the seated clones' agents check in first, each with its key, as the resume driver's launches would; then
+    // the unseated clone's agent does. The graph's launch of those agents is the unmet half, the check-ins are
+    // made by the fixture hook.
+    for (i, (c, f)) in before.iter().enumerate() {
+        let out = rig.keyed_check_in(&f.pane, &c.id, &format!("agent-{i}"));
+        assert!(
+            out.status.success() && stdout(&out).contains("hookSpecificOutput"),
+            "keyed check-in of {}: {} {}",
+            c.name,
+            stdout(&out),
+            stderr(&out)
+        );
+    }
+    rig.wait_until("the baseline hold to lift", WAIT, |r| {
+        let out = r.keyed_check_in(&pane, &added.id, "unseated-clone-agent");
+        out.status.success() && !stdout(&out).contains("check-in unavailable")
+    });
+    rig.wait_until("the clone to be seated with no operator step", WAIT, |r| {
+        at(&r.show(&added.id), "threads_seat").is_some()
+    });
+    rig.wait_settled();
+    let facts = rig.clone_facts(&added).expect("seated clone");
+    assert_eq!(facts.pane, pane, "same pane");
+    assert!(
+        rig.threads_seat_ids().contains(&facts.threads_seat),
+        "the seat is a real threads seat"
+    );
+    assert_eq!(rig.show(&added.id)["lifecycle"].as_str(), Some("active"));
+    assert_eq!(retired_seat_count(&rig), 0, "nothing was retired");
+    assert_eq!(
+        pane_infos(&rig.snapshot()).len(),
+        5,
+        "no pane was recreated"
+    );
+    assert_eq!(tab_labels(&rig), ["1", "bar", "foreman"]);
+    for ((c, f), g) in before.iter().zip(&generations) {
+        assert!(bound_generation(&rig, c) > *g, "{} was rebound", c.name);
+        assert_eq!(rig.clone_facts(c).as_ref(), Some(f), "{} unchanged", c.name);
+    }
+    assert!(
+        !rig.ops_text().lines().any(|l| l.contains("rule=")),
+        "nothing was observed as closed:\n{}",
+        rig.ops_text()
     );
 }
 
