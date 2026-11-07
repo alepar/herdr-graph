@@ -602,6 +602,14 @@ fn restart_covered(p: &DesiredPane) -> bool {
         })
 }
 
+/// An unseated clone that had an agent and holds a key reservation: the restart rule launches it so the keyed
+/// check-in tells threads its seat (spec §2 "Unseated clone after D1", §9). Unlike `restart_covered` it does
+/// not shut the ordinary start rule out: that rule only fires for a pane with no launch record (a fresh pane),
+/// the restart rule only for a launch lost with the previous incarnation, and an agent in the pane stops both.
+fn restart_unseated(p: &DesiredPane) -> bool {
+    p.had_agent && p.threads_seat.is_none() && p.key_reservation.is_some()
+}
+
 /// An acknowledged `Restore` whose launch mark predates `changed_at`: the restore launch ran in an earlier
 /// incarnation and the clone never reattached, so the restart trigger owns it again (spec §14.8, §16.7).
 pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bool {
@@ -998,11 +1006,14 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 );
             }
         } else if startable
-            && restart_covered(p)
             && p.key_reservation.is_some()
             && let Some(changed) = changed_at
             && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
-            && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed)
+            // A seated clone waits for threads to answer after the restart; an unseated one has no fact to wait
+            // for, only the incarnation change and the grace.
+            && (restart_unseated(p)
+                || restart_covered(p)
+                    && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed))
         {
             match &pane {
                 Some(lp) => {

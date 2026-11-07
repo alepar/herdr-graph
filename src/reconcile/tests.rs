@@ -157,6 +157,12 @@ impl Mutation for TestSeatState {
         if let Some(p) = a.get("bound_pane").and_then(|p| p.as_str()) {
             rec.runtime.bound.as_mut().unwrap().pane_id = Some(HerdrPaneId(p.to_owned()));
         }
+        if a.get("drop_reservation").is_some() {
+            rec.key_reservation = None;
+        }
+        if a.get("drop_token").is_some() {
+            rec.runtime.bound.as_mut().unwrap().token = None;
+        }
         cx.tree.put_record(loc.record_path, &mut rec)?;
         Ok(Applied {
             summary: "set seat state".into(),
@@ -3603,12 +3609,20 @@ async fn restart_arm_needs_an_earlier_agent() {
     fx.clock.advance(chrono::Duration::seconds(91));
     step(&fx).await;
     assert_eq!(relaunch_rows(&fx), 0);
-    // Seatless clone with an earlier agent: the unseated arm belongs to the D1 beads.
+    // Seatless clone with an earlier agent but no key reservation: the unseated arm needs the key.
     end_session(&fx, &c, "abc", "claude");
     seat_state(&fx, &c.id, json!({ "threads_seat": null, "fact": null }));
-    step(&fx).await;
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_seat_state", "clone": c.id, "drop_reservation": true}),
+    );
+    step_unreserved(&fx).await;
     assert_eq!(relaunch_rows(&fx), 0);
     assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // With the reservation recorded the unseated arm (hg-66u.33) takes it.
+    record_reservation(&fx, &c.id, None);
+    step_unreserved(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1);
 }
 
 #[tokio::test]
@@ -4182,6 +4196,52 @@ async fn pre_d1_clone_survives_headless_cold_restart_on_its_seat() {
         after.key_reservation.map(|r| (r.key, r.seat)),
         Some((c.id.to_string(), Some("seat-1".to_owned())))
     );
+}
+
+/// An unseated clone (reserved key, no `threads_seat`, no matcher evidence) whose agent is gone at a cold
+/// restart is launched into its bare pane by the restart trigger, keyed; the keyed check-in binds the key to a
+/// seat in threads, and the next pass admits it from the reservation answer.
+#[tokio::test]
+async fn clone_unseated_at_cold_restart_is_launched_then_seated() {
+    let fx = fx();
+    let (threads, map) = with_threads(&fx);
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    // No token evidence: the pane-based resolve does not apply, only the key can seat the clone.
+    seat_state(&fx, &c.id, json!({ "drop_token": true }));
+    let before = the_clone(&fx, &c.id);
+    assert_eq!(before.threads_seat, None);
+    assert_eq!(
+        before.key_reservation.as_ref().map(|r| r.key.clone()),
+        Some(c.id.to_string())
+    );
+    // Inside the grace nothing launches; after it the restart trigger resumes the session once.
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane);
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert_eq!(the_clone(&fx, &c.id).threads_seat, None, "not seated yet");
+    // The keyed agent checks in: threads binds the key to a seat. The pane map knows nothing (no matcher).
+    let resolves = map.resolve_ops().len();
+    threads.set_key_binding(&c.id.to_string(), "seat-K");
+    fx.herdr.clear_calls();
+    for _ in 0..4 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-K"));
+    assert_eq!(map.resolve_ops().len(), resolves, "no pane resolution");
+    assert!(start_calls(&fx).is_empty(), "one launch: {:?}", calls(&fx));
 }
 
 /// A restored clone with an acknowledged Restore of `epoch` for `seat-1`, its pane bare, whose key reservation

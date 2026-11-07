@@ -39,6 +39,7 @@ use std::sync::{Arc, Mutex};
 pub const POLL_KIND: &str = "threads.membership";
 /// `EffectKind::Custom` name of the seat resolution of a bound clone without a `threads_seat`.
 pub const RESOLVE_KIND: &str = "threads.resolve_seat";
+pub const RESOLVE_RESERVED_KIND: &str = "threads.resolve_reserved_seat";
 /// `EffectKind::Custom` name of the clear-on-reattach of a finished Restore intent (spec §14.4).
 pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
 /// `EffectKind::Custom` name of the seat succession of an undone or resurrected clone (spec §2, §8 interim).
@@ -267,6 +268,10 @@ pub(crate) enum Payload {
     ResolveSeat {
         pane: HerdrPaneId,
     },
+    /// Resolve the seat of an unseated clone from its recorded key reservation (`key`); no pane is needed.
+    ResolveReserved {
+        key: String,
+    },
     /// Drop the Restore intent of `epoch`: the restored agent reattached its seat.
     ClearRestore {
         epoch: OpId,
@@ -426,6 +431,22 @@ fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
     verified_pane(g, c)
 }
 
+/// The key to resolve an unseated clone's seat from: the clone is active, has no `threads_seat` and no pending
+/// Restore intent, holds a recorded key reservation and has no verified pane for `resolvable_pane` to resolve
+/// (a verified pane keeps its existing want). The key is the evidence, so no pane binding is needed (spec §2
+/// "Unseated clone after D1").
+fn resolvable_key(g: &Graph, c: &CloneRecord) -> Option<String> {
+    if c.threads_seat.is_some()
+        || !g.clone_active(c)
+        || c.is_tombstone()
+        || matches!(c.seat_intent, Some(SeatIntent::Restore { .. }))
+        || verified_pane(g, c).is_some()
+    {
+        return None;
+    }
+    c.key_reservation.as_ref().map(|r| r.key.clone())
+}
+
 /// The clone's pane when its binding is verified: the clone is active, present, and the pane carries the
 /// clone's own token.
 fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
@@ -556,6 +577,15 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 object.clone(),
                 c.rev,
                 Payload::ResolveSeat { pane },
+            ));
+        }
+        if let Some(key) = resolvable_key(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESOLVE_RESERVED_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ResolveReserved { key },
             ));
         }
         match succession(g, c) {
@@ -1842,6 +1872,58 @@ impl ThreadsExecutor {
         }
     }
 
+    /// Resolve an unseated clone's seat from its key reservation: re-issue the (idempotent) reservation and
+    /// admit the seat the answer carries. A key not bound yet, or in conflict, defers; a retry replays the
+    /// same operation key.
+    async fn resolve_reserved(&self, cx: &ExecCx<'_>, e: &EffectRecord, key: &str) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if resolvable_key(&g, clone).as_deref() != Some(key) {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("reserve:{}:none", clone.id),
+        ));
+        let seat = match self.threads.reserve_continuity_key(key, None, &op).await {
+            Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => seat,
+            Ok(ReserveOutcome::Reserved { seat: None }) => {
+                return ExecOutcome::Deferred("continuity key not bound to a seat yet".into());
+            }
+            Ok(ReserveOutcome::Conflict) => {
+                return ExecOutcome::Deferred("threads reports a continuity key conflict".into());
+            }
+            Err(err) => return port_outcome(err),
+        };
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Assign { seat: seat.0 },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
+    }
+
     async fn ensure(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
@@ -2175,6 +2257,7 @@ impl EffectExecutor for ThreadsExecutor {
             EffectKind::Custom(k) => [
                 POLL_KIND,
                 RESOLVE_KIND,
+                RESOLVE_RESERVED_KIND,
                 CLEAR_RESTORE_KIND,
                 SUCCEED_KIND,
                 ACK_RESTORE_KIND,
@@ -2272,6 +2355,9 @@ impl ThreadsExecutor {
             }
             (EffectKind::Custom(_), Some(Payload::ResolveSeat { pane })) => {
                 self.resolve_seat(cx, e, &pane).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ResolveReserved { key })) => {
+                self.resolve_reserved(cx, e, &key).await
             }
             (EffectKind::Custom(_), Some(Payload::ClearRestore { epoch })) => {
                 self.clear_restore(cx, e, &epoch)
