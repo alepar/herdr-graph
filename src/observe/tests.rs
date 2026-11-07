@@ -767,6 +767,103 @@ async fn node_manager_move_is_tolerated_and_warned() {
     assert_eq!(seat(&fx, "foreman").lifecycle, Lifecycle::Active);
 }
 
+/// Foreman (node manager) and `other` active in alpha, settled.
+async fn nm_and_other() -> (Fx, SeatRecord) {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    commit(
+        &fx,
+        "seat create other --teamspace alpha --active --harness shell",
+    );
+    settle(&fx).await;
+    let foreman = seat(&fx, "foreman");
+    make_node_manager(&fx, &foreman.id);
+    (fx, foreman)
+}
+
+/// Spec §4.9 B11: the node manager's only pane moved out of a plan into a fresh tab (`pane move --new-tab`, or
+/// `--new-workspace` when `new_workspace`). The seat follows: the new tab becomes its tab, nothing reopens at the
+/// old home, the seat keeps its name (the tab is relabelled to it), and the clone is told to reload.
+async fn nm_follows_move_to_fresh_tab(new_workspace: bool) {
+    let (fx, foreman) = nm_and_other().await;
+    let fc = only_clone(&fx, "foreman");
+    let pane = pane_of(&fx, &fc);
+    let home_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let target = (!new_workspace).then_some(&home_ws);
+    fx.herdr.clear_calls();
+    let new_tab = fx.herdr.user_move_pane_new_tab(&pane, target, "7");
+    settle(&fx).await;
+
+    let all = calls(&fx);
+    let s = seat(&fx, "foreman");
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+    assert!(!s.moved_out, "the seat follows its pane: {all:?}");
+    assert_eq!(s.name, foreman.name, "a move is not a rename: {all:?}");
+    assert_eq!(tab_of_seat(&fx, "foreman"), new_tab, "{all:?}");
+    assert_eq!(s.runtime.availability, Availability::Present);
+    assert_eq!(creates(&fx), 0, "nothing reopens at the old home: {all:?}");
+    let c = clone_by_id(&fx, &fc.id);
+    assert_eq!(pane_of(&fx, &c), pane, "the clone stays bound to its pane");
+    assert!(c.reload_required);
+    let snap = snapshot(&fx).await;
+    let live = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|t| t.id == new_tab)
+        .expect("the followed tab is live");
+    assert_eq!(
+        live.label, foreman.name,
+        "the followed tab carries the seat's name"
+    );
+    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
+    assert_eq!(seat(&fx, "other").lifecycle, Lifecycle::Active);
+
+    // Closing the followed tab is an ordinary node-manager closure: it reopens.
+    fx.herdr.user_close_tab(&new_tab);
+    fx.herdr.clear_calls();
+    settle(&fx).await;
+    assert_reopened(&fx, "foreman").await;
+}
+
+#[tokio::test]
+async fn nm_follows_pane_moved_to_new_tab() {
+    nm_follows_move_to_fresh_tab(false).await;
+}
+
+#[tokio::test]
+async fn nm_follows_pane_moved_to_new_workspace() {
+    nm_follows_move_to_fresh_tab(true).await;
+}
+
+/// A plain seat moved the same way keeps the moved-out rule: B11 adoption is for the node manager only.
+#[tokio::test]
+async fn plain_seat_pane_moved_to_new_tab_is_moved_out() {
+    let (fx, _) = nm_and_other().await;
+    let oc = only_clone(&fx, "other");
+    let home_ws = ts_rec(&fx, "alpha")
+        .runtime
+        .bound
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    fx.herdr
+        .user_move_pane_new_tab(&pane_of(&fx, &oc), Some(&home_ws), "7");
+    settle(&fx).await;
+    let s = seat(&fx, "other");
+    assert!(s.moved_out);
+    assert_eq!(s.lifecycle, Lifecycle::Active);
+}
+
 /// Foreman (node manager) and `other` active in alpha, settled; foreman's only pane is moved into `other`'s tab.
 /// Returns the fixture, foreman's clone and `other`'s tab.
 async fn node_manager_moved_into_other() -> (Fx, CloneRecord, HerdrTabId) {

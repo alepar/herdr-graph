@@ -135,9 +135,21 @@ pub fn move_request(
     binding: Option<&Binding>,
     seat_moved_out: Option<&SeatId>,
 ) -> ChangeRequest {
-    observed(
-        json!({ "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out }),
-    )
+    move_request_following(clone, binding, seat_moved_out, None)
+}
+
+/// `move_request` with the tab the moved-out seat's surviving panes now share (`seat_follow`), when no other
+/// seat claims it: the node manager adopts it as its tab at apply time (spec §4.9), every other seat is moved out.
+pub fn move_request_following(
+    clone: Option<&CloneId>,
+    binding: Option<&Binding>,
+    seat_moved_out: Option<&SeatId>,
+    seat_follow: Option<&Binding>,
+) -> ChangeRequest {
+    observed(json!({
+        "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out,
+        "seat_follow": seat_follow,
+    }))
 }
 
 pub fn availability_request(object: &AnyId, availability: Availability) -> ChangeRequest {
@@ -684,6 +696,8 @@ struct MoveArgs {
     binding: Option<Binding>,
     #[serde(default)]
     seat_moved_out: Option<SeatId>,
+    #[serde(default)]
+    seat_follow: Option<Binding>,
 }
 
 struct MoveMutation;
@@ -725,14 +739,36 @@ impl Mutation for MoveMutation {
             parts.push(format!("clone {c} moved"));
         }
         if let Some(s) = &a.seat_moved_out {
+            // Spec §4.9 B11: the node manager follows an observed move. When its surviving panes share one tab no
+            // other seat claims, that tab becomes its tab; it is not moved out, so nothing reopens at the old home.
+            // The live answer decides, as for closures.
+            let follow = a.seat_follow.as_ref().filter(|_| {
+                crate::model::manager::live_node_manager(&cx.tree)
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    == Some(s)
+            });
             edit::<SeatRecord>(cx, &s.to_any(), |rec, cx| {
-                rec.moved_out = true;
-                rec.runtime.availability = Availability::Absent;
-                rec.runtime.bound = None;
+                match follow {
+                    Some(b) => {
+                        rec.moved_out = false;
+                        rec.runtime.availability = Availability::Present;
+                        rec.runtime.bound = Some(b.clone());
+                    }
+                    None => {
+                        rec.moved_out = true;
+                        rec.runtime.availability = Availability::Absent;
+                        rec.runtime.bound = None;
+                    }
+                }
                 rec.runtime.observed_at = Some(cx.now);
                 Ok(())
             })?;
-            parts.push(format!("seat {s} moved out"));
+            parts.push(match follow {
+                Some(_) => format!("seat {s} follows its moved pane"),
+                None => format!("seat {s} moved out"),
+            });
         }
         Ok(Applied {
             summary: parts.join(", "),

@@ -5,8 +5,8 @@ use super::classify::{Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
 use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
 use super::mutations::{
-    applied_ends, availability_request, cascade_request_with, move_request, occupancy_request,
-    rename_request,
+    applied_ends, availability_request, cascade_request_with, move_request_following,
+    occupancy_request, rename_request,
 };
 use crate::config::InstancePaths;
 use crate::journal::Journal;
@@ -242,6 +242,27 @@ fn build_ops(
     }
 
     let locs = pane_locs(snap);
+    // The one tab a moved-out seat's surviving panes now share, when no other seat owns it or has a clone in it.
+    let follow_of = |seat: &SeatId| -> Option<Binding> {
+        let mut tabs = d
+            .clones
+            .values()
+            .filter(|c| &c.seat == seat && c.lifecycle != CloneLifecycle::Retired)
+            .filter_map(|c| m.clone_pane.get(&c.id).and_then(|p| locs.get(p)));
+        let first = tabs.next()?;
+        if tabs.any(|l| l.tab.id != first.tab.id) {
+            return None;
+        }
+        let claimed = m.tabs.get(&first.tab.id).is_some_and(|s| s != seat)
+            || first.tab.panes.iter().any(|p| {
+                m.clone_pane
+                    .iter()
+                    .find(|(_, pid)| **pid == p.id)
+                    .and_then(|(c, _)| d.clones.get(c))
+                    .is_some_and(|c| &c.seat != seat)
+            });
+        (!claimed).then(|| seat_binding(first.ws, first.tab, &snap.incarnation))
+    };
     let mut attached: BTreeSet<SeatId> = BTreeSet::new();
     let mut moved: BTreeSet<CloneId> = BTreeSet::new();
     for mv in &c.moves {
@@ -262,14 +283,21 @@ fn build_ops(
         if let Some(s) = &seat {
             attached.insert(s.clone());
         }
-        ops.push(plain(move_request(
+        let follow = seat.as_ref().and_then(follow_of);
+        ops.push(plain(move_request_following(
             Some(&mv.clone),
             binding.as_ref(),
             seat.as_ref(),
+            follow.as_ref(),
         )));
     }
     for seat in c.moved_out.iter().filter(|s| !attached.contains(*s)) {
-        ops.push(plain(move_request(None, None, Some(seat))));
+        ops.push(plain(move_request_following(
+            None,
+            None,
+            Some(seat),
+            follow_of(seat).as_ref(),
+        )));
     }
 
     for object in &c.gone {

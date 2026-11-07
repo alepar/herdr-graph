@@ -53,7 +53,7 @@ herdr-graph plan manager clear <seat|teamspace>
 herdr-graph plan node-manager set <seat>
 ```
 
-Every seat has a manager it escalates lifecycle issues to: its own `manager`, else its teamspace's default, else the node manager. The node manager is the first seat created on a graph; it is always kept open and is moved only with `plan node-manager set`. While no node manager is assigned, every graph command prints a warning on stderr pointing at `plan node-manager set`.
+Every seat has a manager it escalates lifecycle issues to: its own `manager`, else its teamspace's default, else the node manager. The node manager is the first seat created on a graph; it is always kept open, the role moves only with `plan node-manager set`, and when its pane is moved in Herdr into a tab no other seat uses, the seat follows it there (with a warning). While no node manager is assigned, every graph command prints a warning on stderr pointing at `plan node-manager set`.
 
 ## Reusable templates and state paths
 
