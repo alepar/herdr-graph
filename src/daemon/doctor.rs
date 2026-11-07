@@ -181,7 +181,6 @@ fn failed_ops_check(rows: &[OpRow]) -> Check {
 
 fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
     let mut names = Vec::new();
-    let mut clones = Vec::new();
     let read = (|| -> Result<(), crate::ports::store::StoreError> {
         for (_, t) in layout::list_teamspaces(tree)? {
             if t.lifecycle != Lifecycle::Retired && t.runtime.availability == Availability::Unknown
@@ -200,7 +199,6 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
                 && c.runtime.availability == Availability::Unknown
             {
                 names.push(format!("clone {}", c.name));
-                clones.push(c.name);
             }
         }
         Ok(())
@@ -215,14 +213,11 @@ fn unknown_objects_check(tree: &dyn TreeRead) -> Check {
     if names.is_empty() {
         return check("unknown objects", true, "none");
     }
-    let hint = clones.first().map_or(String::new(), |c| {
-        format!(" — herdr-graph rebind {c} --pane <pane>")
-    });
     check(
         "unknown objects",
         false,
         format!(
-            "{} with unknown availability: {}{hint}",
+            "{} with unknown availability: {}",
             names.len(),
             capped(&names)
         ),

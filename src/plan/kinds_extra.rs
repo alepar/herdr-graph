@@ -1,6 +1,6 @@
-//! Remaining organizational kinds (override, participation, teamspace rename, clone rebind). Owned by hg-zmi.17.
+//! Remaining organizational kinds (override, participation, teamspace rename). Owned by hg-zmi.17.
 //! Supersession and reminders live in `ops` / `reminders`. Args shapes are normative for hg-zmi.12 (participation
-//! intent) and hg-zmi.14 (`/seat` proposes a rebind).
+//! intent).
 use super::grammar::{self, Scope, flag, positional};
 use super::kind::{KindRegistry, OrgKind, PlanBody, PlanCx, PlanError};
 use super::types::{Plan, PlanEffect, Reserved};
@@ -8,15 +8,12 @@ use crate::bootstrap::instructions::{PatchedTree, cap_warning};
 use crate::daemon::registry::CallerInfo;
 use crate::model::change::{ReliedOn, RequestKind, Version};
 use crate::model::clone::CloneRecord;
-use crate::model::common::{
-    Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource,
-};
+use crate::model::common::{CloneLifecycle, Lifecycle, NameChange, NameSource};
 use crate::model::effective::{resolve_in, session_replacements};
 use crate::model::harness::Harness;
-use crate::model::launch::graph_token;
 use crate::model::seat::{InstructionSection, SeatRecord};
 use crate::model::teamspace::TeamspaceRecord;
-use crate::model::{AnyId, HerdrPaneId, TeamspaceId};
+use crate::model::{AnyId, TeamspaceId};
 use crate::ports::store::{ObjectLocation, RepoPath};
 use crate::store::instruction_source::check_content;
 use crate::store::layout;
@@ -29,13 +26,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
-/// Registers teamspace rename, seat override, participation join/leave and clone rebind.
+/// Registers teamspace rename, seat override and participation join/leave.
 pub fn register_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(TeamspaceRename));
     reg.register(Arc::new(SeatOverride));
     reg.register(Arc::new(ParticipationJoin));
     reg.register(Arc::new(ParticipationLeave));
-    reg.register(Arc::new(CloneRebind));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -808,128 +804,6 @@ impl OrgKind for ParticipationLeave {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// clone rebind
-// ---------------------------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize)]
-struct CloneRebindArgs {
-    clone: String,
-    pane: String,
-}
-
-struct CloneRebind;
-impl OrgKind for CloneRebind {
-    fn kind(&self) -> RequestKind {
-        RequestKind::CloneRebind
-    }
-    fn verbs(&self) -> &'static [(&'static str, &'static str)] {
-        &[("clone", "rebind")]
-    }
-    fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
-        let usage = || PlanError::Usage("clone rebind <clone> --pane <pane>".into());
-        let clone = positional(words, 0).ok_or_else(usage)?;
-        let pane = flag(words, "--pane")
-            .filter(|p| !p.is_empty())
-            .ok_or_else(usage)?;
-        Ok(json!({ "clone": clone, "pane": pane }))
-    }
-    fn plan(
-        &self,
-        cx: &PlanCx<'_>,
-        args: &serde_json::Value,
-        _: &mut Reserved,
-    ) -> Result<PlanBody, PlanError> {
-        let a: CloneRebindArgs = parse_args(args)?;
-        let f = live_clone(cx.tree, &a.clone)?;
-        let from = f.rec.runtime.bound.as_ref().and_then(|b| b.pane_id.clone());
-        let mut warnings = Vec::new();
-        let mut repair_required = None;
-        for (_, other) in layout::all_clones(cx.tree)? {
-            let bound_here = other
-                .runtime
-                .bound
-                .as_ref()
-                .and_then(|b| b.pane_id.as_ref())
-                .is_some_and(|p| p.0 == a.pane);
-            if other.id != f.rec.id && other.lifecycle == CloneLifecycle::Active && bound_here {
-                let why = format!(
-                    "pane {} is already bound to clone {} ({}); rebind that clone first",
-                    a.pane, other.id, other.name
-                );
-                warnings.push(why.clone());
-                repair_required = Some(why);
-            }
-        }
-        if f.rec.reload_required {
-            warnings.push(format!(
-                "clone {} was flagged reload_required; rebinding clears the flag",
-                f.rec.id
-            ));
-        }
-        let effects = vec![
-            PlanEffect::new(
-                "clone.rebind",
-                f.rec.id.clone(),
-                json!({ "pane": a.pane, "from": from.map(|p| p.0), "seat": f.rec.seat }),
-            ),
-            PlanEffect::new(
-                "runtime.stamp_token",
-                f.rec.id.clone(),
-                json!({ "clone": f.rec.id, "pane": a.pane }),
-            ),
-        ];
-        Ok(PlanBody {
-            effects,
-            relied_on: vec![rev_of(f.rec.id.clone(), f.rec.rev)],
-            warnings,
-            repair_required,
-            summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane),
-        })
-    }
-    fn mutate(
-        &self,
-        cx: &mut MutationCx<'_>,
-        args: &serde_json::Value,
-        _: &Plan,
-    ) -> Result<Applied, MutationError> {
-        let a: CloneRebindArgs = parse_args(args).map_err(mm)?;
-        let f = live_clone(&cx.tree, &a.clone).map_err(mm)?;
-        let mut rec = f.rec.clone();
-        let pane = HerdrPaneId(a.pane.clone());
-        let old = rec.runtime.bound.clone().unwrap_or_default();
-        let same_pane = old.pane_id.as_ref() == Some(&pane);
-        rec.runtime.bound = Some(Binding {
-            token: Some(graph_token(&rec.id.to_any())),
-            workspace_id: if same_pane {
-                old.workspace_id.clone()
-            } else {
-                None
-            },
-            tab_id: if same_pane { old.tab_id.clone() } else { None },
-            pane_id: Some(pane),
-            // The terminal id the clone had may belong to a server that restarted since; the observer fills in
-            // the pane's own once it matches the adoption.
-            terminal_id: None,
-            incarnation: old.incarnation,
-        });
-        rec.runtime.availability = Availability::Present;
-        rec.runtime.observed_at = Some(cx.now);
-        rec.reload_required = false;
-        cx.tree.put_record(f.loc.record_path.clone(), &mut rec)?;
-        // The re-stamp effect is attributed to this op, so its id differs from the original stamp's (hg-zmi.50).
-        let seat = live_seat(&cx.tree, rec.seat.as_str()).map_err(mm)?;
-        let mut seat_rec = seat.rec;
-        attribute(cx, &mut seat_rec);
-        cx.tree
-            .put_record(seat.loc.record_path.clone(), &mut seat_rec)?;
-        Ok(Applied {
-            summary: format!("rebind clone {} to pane {}", f.rec.name, a.pane),
-            action: None,
-        })
-    }
-}
-
 /// Test fixture shared with `ops` and `reminders` tests: a temp instance with writer, all kinds and ops mutations.
 #[cfg(test)]
 pub(crate) mod testkit {
@@ -940,9 +814,9 @@ pub(crate) mod testkit {
     use super::*;
     use crate::journal::{Journal, OpRow};
     use crate::model::change::{ChangeRequest, Requester};
-    use crate::model::common::Occupant;
+    use crate::model::common::{Availability, Binding, Occupant};
     use crate::model::operation::OpState;
-    use crate::model::{CloneId, PlanId, SeatId};
+    use crate::model::{CloneId, HerdrPaneId, PlanId, SeatId};
     use crate::ports::clock::ManualClock;
     use crate::ports::store::Store;
     use crate::store::GitStore;
@@ -1534,67 +1408,6 @@ mod tests {
                 "participation join th_a --scope seat --seat one --clone c"
             )
             .contains("only applies")
-        );
-    }
-
-    #[test]
-    fn rebind_binds_clone_to_pane_and_clears_reload_required() {
-        let fx = fx();
-        commit(&fx, "teamspace create alpha");
-        commit(&fx, "seat create one --teamspace alpha --active");
-        let clone = clones_of(&fx, &seat(&fx, "one").id).remove(0);
-        // moved clone: bound to an old pane, flagged reload_required
-        occupy(&fx, &clone.id, false, Some("p_old"));
-        assert!(clones_of(&fx, &clone.seat)[0].reload_required);
-        let sp = plan(&fx, &format!("clone rebind {} --pane p_new", clone.id));
-        assert_eq!(kinds_of(&sp), vec!["clone.rebind", "runtime.stamp_token"]);
-        assert_eq!(sp.plan.effects[0].detail["from"], "p_old");
-        assert_eq!(sp.plan.effects[1].detail["pane"], "p_new");
-        assert!(sp.plan.repair_required.is_none());
-        let row = apply_plan(&fx, &sp);
-        assert_eq!(row.state, OpState::Committed);
-        let c = clones_of(&fx, &clone.seat).remove(0);
-        let b = c.runtime.bound.expect("bound");
-        assert_eq!(b.pane_id, Some(HerdrPaneId("p_new".into())));
-        assert_eq!(b.token, Some(graph_token(&c.id.to_any())));
-        assert!(!c.reload_required);
-        assert_eq!(c.runtime.availability, Availability::Present);
-        assert_eq!(
-            seat(&fx, "one").activation.last_op,
-            Some(row.op.clone()),
-            "re-stamp is attributed to the rebind op"
-        );
-    }
-
-    #[test]
-    fn rebind_conflicting_bound_pane_is_repair_required() {
-        let fx = fx();
-        commit(&fx, "teamspace create alpha");
-        commit(&fx, "seat create one --teamspace alpha --active");
-        commit(&fx, "seat create two --teamspace alpha --active");
-        let c1 = clones_of(&fx, &seat(&fx, "one").id).remove(0);
-        let c2 = clones_of(&fx, &seat(&fx, "two").id).remove(0);
-        occupy(&fx, &c2.id, false, Some("p_taken"));
-        let sp = plan(&fx, &format!("clone rebind {} --pane p_taken", c1.id));
-        let why = sp.plan.repair_required.clone().expect("conflict refuses");
-        assert!(
-            why.contains(c2.id.as_str()),
-            "plan names the clone holding the pane: {why}"
-        );
-        assert!(sp.plan.warnings.iter().any(|w| w.contains(c2.id.as_str())));
-        // apply is refused: the admission gate refuses a plan needing repair
-        let err = super::super::commands::admit_apply(
-            &fx.deps,
-            &CallerInfo::default(),
-            sp.plan.id.as_str(),
-            Some(&sp.hash),
-            "relay",
-        )
-        .unwrap_err();
-        assert!(err.message.contains("repair"), "{}", err.message);
-        assert!(
-            clones_of(&fx, &c1.seat)[0].runtime.bound.is_none(),
-            "nothing changed"
         );
     }
 }

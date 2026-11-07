@@ -145,7 +145,6 @@ mod tests {
                 "/tmp/a",
             ],
             &["session-report", "--from-hook", "claude"],
-            &["rebind", "cl_x", "--pane", "p1"],
             &["ops"],
             &["ops", "--unresolved"],
             &["op", "op_x"],

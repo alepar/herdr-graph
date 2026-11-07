@@ -1565,7 +1565,7 @@ fn restarted_rig() -> Option<(E2e, Vec<(Row, String)>)> {
 }
 
 #[test]
-fn e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates() {
+fn e2e_herdr_restart_no_mass_retirement_no_duplicates() {
     let Some((rig, clones)) = restarted_rig() else {
         return;
     };
@@ -1610,51 +1610,6 @@ fn e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates() {
         "nothing was observed as closed:\n{}",
         rig.ops_text()
     );
-
-    // The explicit rebind plan re-adopts each pane: the binding follows the pane and the clone is present again.
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_settled();
-    for (c, pane) in &clones {
-        let s = rig.show(&c.id);
-        assert_eq!(
-            tstr(&s, "runtime.availability"),
-            "present",
-            "clone {}",
-            c.name
-        );
-        assert_eq!(&tstr(&s, "runtime.bound.pane_id"), pane, "clone {}", c.name);
-    }
-    assert_eq!(
-        tab_labels(&rig),
-        ["1", "bar", "foreman"],
-        "rebinding creates nothing"
-    );
-    assert_eq!(pane_infos(&rig.snapshot()).len(), 4);
-    assert_eq!(retired_seat_count(&rig), 0);
-}
-
-/// D2 regression: after a Herdr restart dropped the pane tokens, `clone rebind` binds the pane and the reconciler
-/// re-stamps the Herdr pane metadata token with a fresh effect identity (spec §4.2).
-#[test]
-fn e2e_rebind_restamps_token_after_herdr_restart() {
-    let Some((rig, clones)) = restarted_rig() else {
-        return;
-    };
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
-    });
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_until("every pane to carry its clone's token again", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, p)| r.pane_of(&c.id).is_some_and(|lp| &lp.id.0 == p))
-    });
 }
 
 fn json_of(text: &str) -> Value {
@@ -1693,66 +1648,6 @@ fn e2e_seat_resolution_in_bound_pane() {
     ));
     assert_ne!(r["resolution"]["status"], "bound", "{r}");
     assert!(r["resolution"]["clone"].is_null(), "{r}");
-}
-
-#[test]
-fn e2e_restored_panes_resolve_without_env() {
-    let Some((rig, clones)) = restarted_rig() else {
-        return;
-    };
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
-    });
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_settled();
-    let (target, pane) = &clones[0];
-    // The restored shell has no creation-time HERDR_GRAPH* env; it keeps only what Herdr gives every pane.
-    let bare = format!(
-        "env -u HERDR_GRAPH -u HERDR_GRAPH_SEAT -u HERDR_GRAPH_CLONE -u HERDR_GRAPH_INSTANCE {BIN}"
-    );
-    let r = json_of(&pane_capture(
-        &rig,
-        pane,
-        "seat-restored.json",
-        &format!("{bare} seat --json"),
-    ));
-    assert_eq!(r["resolution"]["status"], "bound", "{r}");
-    assert_eq!(
-        r["resolution"]["clone"],
-        target.id.as_str(),
-        "resolved through HERDR_PANE_ID and the binding: {r}"
-    );
-
-    let payload = rig.herdr.root.join("hook-restored.json");
-    std::fs::write(
-        &payload,
-        r#"{"session_id":"restored-1","cwd":"/tmp","source":"resume"}"#,
-    )
-    .unwrap();
-    let out = pane_capture(
-        &rig,
-        pane,
-        "report-restored.txt",
-        &format!(
-            "{bare} session-report --from-hook claude < {}; echo rc=$?",
-            payload.display()
-        ),
-    );
-    assert!(out.contains("rc=0"), "{out}");
-    rig.wait_until(
-        "the session to be recorded on the restored clone",
-        WAIT,
-        |r| {
-            r.show(&target.id)["sessions"].as_array().is_some_and(|s| {
-                s.iter()
-                    .any(|s| s["native_session_id"].as_str() == Some("restored-1"))
-            })
-        },
-    );
 }
 
 #[test]
@@ -2527,7 +2422,7 @@ fn bound_generation(rig: &E2e, clone: &Row) -> i64 {
 
 /// After the event (`before_generations`: each clone's generation just before it): every clone is rebound under
 /// the new incarnation and present on the same seat, pane and invitations, with nothing created or retired and
-/// no operator step (no rebind plan is ever applied here).
+/// no operator step.
 fn assert_clones_kept_their_seats(
     rig: &E2e,
     before: &[(Row, CloneFacts)],

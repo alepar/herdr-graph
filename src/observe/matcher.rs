@@ -151,7 +151,7 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
                 continue;
             };
             let term_eq = pane.terminal_id.is_some() && b.terminal_id == pane.terminal_id;
-            // `clone rebind` records the chosen pane with the graph token but no terminal id (the id it had
+            // An adopted binding (written from threads' target pane) records the pane with the graph token but no terminal id (the id it had
             // belongs to a server that may be gone). Until the reconciler stamps the pane, this explicit
             // adoption is the only evidence, and it holds across a restart.
             let adopted = b.terminal_id.is_none()

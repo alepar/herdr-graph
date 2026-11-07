@@ -161,8 +161,7 @@ Spikes 1–4 retain their historical private-server evidence from 2026-10-02; th
 | application retire closes the application's exclusive seats and their tabs, a bystander seat stays | 5 | verified-real | `e2e_application_retire_closes_exclusive_seats` |
 | events withheld from the daemon (SIGSTOP burst: 60 renames, final rename, pane close) converge from a fresh snapshot | 4.3.1 | verified-real | `e2e_event_loss_reconnect_converges`; whether Herdr buffers or drops the withheld events was not distinguished, so a truly dropped event is not shown at this tier (tier 2: `src/observe/tests.rs`) |
 | SIGKILL of the daemon right after three seat ops commit: restart converges, one tab/pane/token per seat, nothing duplicated | 3.6, 4.4 | verified-real | `e2e_daemon_kill_mid_op_recovers_no_duplicates` (the kill lands while effects are in flight; not a deterministic failpoint, those are tier 2) |
-| Herdr private-server restart: bound objects become `unknown`, no mass retirement, no recreation, no duplicate tab/pane; an explicit `clone rebind` re-adopts each pane and the clone is present again | 4.3.2 | verified-real | `e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates` |
-| after a rebind the pane's Herdr token is re-stamped | 4.2 | verified-real | `e2e_rebind_restamps_token_after_herdr_restart` (D2 regression); tier 2: `rebind_after_restart_restamps_token` in `src/observe/tests.rs` |
+| Herdr private-server restart: bound objects become `unknown`, no mass retirement, no recreation, no duplicate tab/pane (the removed `clone rebind` no longer re-adopts panes; a seated clone returns through its threads seat or key reattach) | 4.3.2 | verified-real | `e2e_herdr_restart_no_mass_retirement_no_duplicates` |
 | close a tab while the daemon is down: seat `unknown` on restart, not retired, tab not recreated | 4.3.2 | verified-real | `e2e_close_while_daemon_down_unknown_not_recreated` |
 | retire a seat's last clone: plan shows the induced `seat.retire` and `runtime.close_tab`; afterwards tab gone, seat retired exactly once, no "observed" closure | 3.3, 4.4 | verified-real | `e2e_retire_last_clone_induced_seat_retirement_once` |
 | seat deactivate: tab closed, seat dormant, clones and seat not retired, not recorded as a closure | 4.4 | verified-real | `e2e_seat_deactivate_closes_tab_no_retirement` |
@@ -262,7 +261,7 @@ These historical product defects were fixed during MVP implementation. Their reg
   `admit_adopted_binding` watcher is gone); `src/reconcile/planner.rs` stamps the token of a bound live pane
   outside the seat's own tab instead of creating a tab. Code: `src/undo/adopt.rs`, `src/undo/commands.rs`,
   `src/undo/compensate.rs`.
-- **D2: no token re-stamp after `clone rebind`.** The reconciler emits `stamp_token` with the clone's creation rev, so
+- **D2: no token re-stamp after `clone rebind` (the kind was removed by hg-66u.15; the fix stays in `LiveIndex::pane`).** The reconciler emits `stamp_token` with the clone's creation rev, so
   the effect id (`EffectRecord::identity(op, object, kind, rev)`) equals the original, already `done` effect and nothing
   runs. The binding names the pane but Herdr's pane metadata stays empty, so `LiveIndex::pane` works only through
   the same-incarnation binding, and the token never returns. Spec 4.2 says graph re-stamps tokens on rebind. The same

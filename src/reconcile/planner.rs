@@ -342,9 +342,9 @@ impl<'a> LiveIndex<'a> {
                 ..lp
             });
         }
-        // `clone rebind` is an explicit user assertion that a pane is the clone's: a binding it wrote while the
+        // An adopted binding is an explicit assertion that a pane is the clone's: a binding written while the
         // clone was `unknown` keeps the old incarnation but is `present`, so honor it when that pane exists in
-        // this snapshot and carries no graph token of its own (spec 4.2: graph re-stamps tokens on rebind).
+        // this snapshot and carries no graph token of its own (spec 4.2: graph re-stamps tokens on adoption).
         if let Some(b) = bound
             && rec.is_some_and(|c| c.runtime.availability == Availability::Present)
             && let Some(id) = &b.pane_id

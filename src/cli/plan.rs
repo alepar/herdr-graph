@@ -100,7 +100,7 @@ fn remote(e: ClientError) -> anyhow::Error {
     anyhow::anyhow!("{e}")
 }
 
-/// The whole plan → confirm flow, reused by other command groups (e.g. `rebind`).
+/// The whole plan → confirm flow, reused by other command groups.
 pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
     let reply =
         call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure).map_err(remote)?;
