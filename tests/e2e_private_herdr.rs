@@ -1729,7 +1729,12 @@ fn e2e_summary_lands_in_archived_seat_folder() {
             .contains("pending")
     });
     let line = rig.cli_ok(&["request", "list", "--pending"]);
-    let rq = line.split_whitespace().next().unwrap().to_owned();
+    let mut cols = line.split_whitespace();
+    let (rq, tr) = (
+        cols.next().unwrap().to_owned(),
+        cols.nth(1).unwrap().to_owned(),
+    );
+    assert!(rq.starts_with("rq_") && tr.starts_with("tr_"), "{line}");
     assert!(
         line.contains("scribe") && line.contains(&format!("0-{}", body.len())),
         "routed to the summarizer, covering the transcript: {line}"
@@ -1748,39 +1753,30 @@ fn e2e_summary_lands_in_archived_seat_folder() {
         archived.display()
     );
 
-    // No real summarizer runs here: the test plays it through the CLI (ack, write, complete).
+    // No real summarizer runs here: the test plays it through the CLI (ack, then complete with
+    // `--summary-from`, which stores the summary in the seat folder and completes the request).
     assert_eq!(
         rig.cli_ok(&["request", "ack", &rq]).trim(),
         format!("{rq} dispatched")
     );
     let summary = rig.herdr.root.join("summary.md");
     std::fs::write(&summary, "# hello\nthe user said hello\n").unwrap();
-    let out = rig.cli_ok(&[
-        "content",
-        "write",
-        "--object",
-        &seat.id,
-        "--rel",
-        "summaries/sess-1.md",
-        "--from",
-        summary.to_str().unwrap(),
-    ]);
-    assert!(out.contains("committed"), "{out}");
+    let covered = format!("0-{}", body.len());
     assert_eq!(
         rig.cli_ok(&[
             "request",
             "complete",
             &rq,
-            "--output",
-            "summaries/sess-1.md",
+            "--summary-from",
+            summary.to_str().unwrap(),
             "--covered",
-            &format!("0-{}", body.len())
+            &covered
         ])
         .trim(),
         format!("{rq} completed")
     );
 
-    let landed = archived.join("summaries/sess-1.md");
+    let landed = archived.join(format!("summaries/{tr}-{covered}.md"));
     assert_eq!(
         std::fs::read_to_string(&landed).unwrap_or_else(|e| panic!("{}: {e}", landed.display())),
         "# hello\nthe user said hello\n"
