@@ -591,11 +591,11 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {
         .unwrap_or(false)
 }
 
-/// Statically covered by the restart resume rule (spec §9): the clone had an agent, can resume its last
-/// session and threads says its seat is unresolved. Whether the rule fires now is `resume_pane`'s question.
+/// Statically covered by the restart resume rule (spec §9): the clone had an agent and threads says its seat
+/// is unresolved. With a resumable session the rule resumes it, without one it starts a fresh keyed agent
+/// (the key reattaches the seat). Whether the rule fires now is `plan_resume`'s question.
 fn restart_covered(p: &DesiredPane) -> bool {
     p.had_agent
-        && p.resume.is_some()
         && p.threads_seat.is_some()
         && p.seat_fact.as_ref().is_some_and(|f| {
             Some(&f.seat) == p.threads_seat.as_ref() && f.state == SeatFactState::Unresolved
@@ -951,8 +951,8 @@ fn put_meta_if_changed(journal: &Journal, key: &str, wanted: Option<&str>) {
 
 /// The resume driver (spec §9, §14.4): the single launcher for the restart and restore triggers. Both need
 /// the clone's bound pane to exist in this snapshot with no agent in it; only the session path exists before
-/// D1, so the restart trigger requires a resumable session; the restore trigger resumes when it can and
-/// otherwise launches a fresh agent. `RelaunchOccupant` carries the 90 s incarnation grace and the
+/// D1: both triggers resume the last session when there is one and otherwise launch a fresh keyed agent, which
+/// the key reattaches to the same seat. `RelaunchOccupant` carries the 90 s incarnation grace and the
 /// shell-foreground guard; the restore launch runs at once, once per Restore epoch.
 fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
     let changed_at = incarnation_changed_at(journal);
@@ -962,7 +962,6 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
         let blocked_key = resume_blocked_key(&p.clone);
         let mut blocked: Option<serde_json::Value> = None;
         let startable = p.harness != crate::model::harness::Harness::Shell && p.occupant.is_none();
-        let eligible = startable && p.resume.is_some();
         let pane = idx.bound_pane(&p.clone);
         let key_conflict = p
             .seat_fact
@@ -998,7 +997,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                     vec![],
                 );
             }
-        } else if eligible
+        } else if startable
             && restart_covered(p)
             && p.key_reservation.is_some()
             && let Some(changed) = changed_at
