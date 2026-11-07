@@ -74,3 +74,35 @@ retires the clone undoably (was Unknown); duplicate candidates are decided by th
 Real herdr-threads behaviour (C1 reattach, process continuity across a handoff, KeyConflict production) is simulated by the
 fake view; the live check belongs to hg-66u.14 against a threads release carrying D1. e2e restart tests in
 `tests/e2e_private_herdr.rs` are listed as old tests; they need a private Herdr rig and were not run for this task.
+
+## D1 re-run (bead hg-66u.14, gate check before deleting the matcher)
+
+D1 is released (gate hg-66u.1 closed) and its graph side is in the stack: key reservation (hg-66u.13/.43), keyed launches
+(hg-66u.44), unseated clone resolves its seat from its key and the resume driver relaunches it (hg-66u.33). Re-run of
+the three findings against that code (read from the source; the live threads D1 behaviour is still only the fake view):
+
+| finding | after D1 | verdict |
+|---|---|---|
+| F1 bare pane / agent not yet checked in, tokens survive | An agent clone: the resume driver relaunches it with `HERDR_THREADS_CONTINUITY_KEY`, threads reattaches the seat by key, SeatObservation reads Resolved. A Shell-harness clone: `start_needed` and `plan_resume` exclude `Harness::Shell`, so no agent ever starts, nothing presents a key, and the clone never has a `threads_seat` (`threads.resolve_seat` needs a pane threads already knows). | closed for agents; OPEN for Shell clones |
+| F2 operator `clone rebind --pane` | Deleted by design (spec section 6); the replacement is the key reattach, which exists only for agent clones. | closed for agents; OPEN for Shell clones |
+| F3 agent that never checks in | Nothing closes it; D1 needs the agent to present the key through the threads hook. | OPEN, not closable upstream |
+
+Gate outcome: with the matcher removed, a Shell-harness clone (and any agent that cannot check in) loses its only location
+evidence across a cold restart and stays Unknown for good, which is worse than the matcher's token pass today. No
+herdr-threads feature closes it (threads has no identity for a pane without an agent). Per the acceptance of hg-66u.14
+the matcher was therefore NOT deleted at that point; the human settled it with S1 (next section).
+
+## S1 waiver (2026-11-07)
+
+Human decision S1 (2026-11-07, spec "Requirement baseline"), verbatim: delete the old clone matcher for every clone that
+has a threads_seat; for a clone with no threads_seat (Shell-harness clones, agents that never check in) keep exactly one
+rule: match by preserved Herdr pane id across incarnations (the hg-66u.11 tab/workspace rule; token first where present;
+absent id -> Unknown). This waives parity findings F1/F2/F3 for seatless clones in favour of the preserved-id rule.
+
+- F1/F2 for agent clones: closed by D1 (the "D1 re-run" table above); SeatObservation locates them.
+- F1/F2 for Shell-harness clones and F3 (an agent that never checks in): waived in favour of the preserved-pane-id rule
+  for seatless clones. A cold restart that keeps pane ids recovers the clone (token first, else its committed pane id);
+  a restart that does not keep them, with no token, leaves the clone Unknown, as for tabs and workspaces. Terminal id,
+  cwd and native session are no longer location evidence for any clone.
+
+No open item remains for hg-66u.14: the matcher's terminal-id, cwd, native-session and rebind-adopted passes are deleted.

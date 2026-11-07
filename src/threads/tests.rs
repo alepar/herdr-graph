@@ -4301,9 +4301,18 @@ async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
         Some("seat-K")
     );
     assert_eq!(fx.map.resolve_ops().len(), resolves, "no pane resolution");
-    let ops = fx.threads.reserve_ops();
-    let asked = &ops[ops.len() - 2..];
-    assert_eq!(asked[0], asked[1], "the same operation key on every retry");
+    // The seat-binding key-link want is a different operation; only the reservation retries are compared.
+    let asked: Vec<_> = fx
+        .threads
+        .reserve_ops()
+        .into_iter()
+        .filter(|o| format!("{o:?}").contains("\"reserve:"))
+        .collect();
+    assert!(asked.len() >= 2, "{asked:?}");
+    assert!(
+        asked.iter().all(|o| o == &asked[0]),
+        "the same operation key on every retry: {asked:?}"
+    );
     // Seated: the want is gone and threads is not asked again.
     let calls = fx.threads.reserve_calls().len();
     steps(&fx, 2).await;

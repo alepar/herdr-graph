@@ -2543,14 +2543,38 @@ mod wiring {
             keep: bool,
             old: &HerdrPaneId,
         ) -> HerdrPaneId {
+            let new = herdr_restart_with(d, root, old, |h| h.restart(keep, keep)).await;
+            assert_ne!(&new, old, "the restart renumbered the pane");
+            new
+        }
+
+        /// The same, for a restart that keeps the pane ids (Herdr's session restore, as in spike 3):
+        /// returns the pane, which has the id it had.
+        async fn herdr_restarts_keeping_pane_ids(
+            d: &Daemon,
+            root: &Path,
+            keep: bool,
+            old: &HerdrPaneId,
+        ) -> HerdrPaneId {
+            let new =
+                herdr_restart_with(d, root, old, |h| h.cold_restart_keeping_pane_ids(keep)).await;
+            assert_eq!(&new, old, "the restart preserved the pane id");
+            new
+        }
+
+        async fn herdr_restart_with(
+            d: &Daemon,
+            root: &Path,
+            old: &HerdrPaneId,
+            restart: impl FnOnce(&FakeHerdr),
+        ) -> HerdrPaneId {
             let journal = Journal::open(&Journal::path_in(root)).unwrap();
             let before = journal.meta_get("incarnation:changed_at").unwrap();
             let at = all_panes(d).await.iter().position(|p| p == old).unwrap();
             // The manual clock stamps the record: move it so the new stamp differs from the old one.
             d.fakes.clock.advance(chrono::Duration::seconds(5));
-            d.fakes.herdr.restart(keep, keep);
+            restart(&d.fakes.herdr);
             let new = all_panes(d).await[at].clone();
-            assert_ne!(&new, old, "the restart renumbered the pane");
             // The fake bumps its generation on every (re)subscription: wait for the observation loop to
             // resubscribe and for the journal to hold the incarnation Herdr reports now.
             let deadline = Instant::now() + WAIT;
@@ -2700,9 +2724,10 @@ mod wiring {
             (pane, tab)
         }
 
-        /// Flow 4a: headless cold restart, graph tokens survive and threads cannot place the seat yet
-        /// (before the continuity key). The clone stays present on its renumbered pane and, after the
-        /// incarnation grace, its agent is resumed with its last session; nothing is created.
+        /// Flow 4a: headless cold restart that keeps the pane ids and the graph tokens, with threads unable to
+        /// place the seat yet (the agent has not checked in again). A seated clone is located only by threads,
+        /// so it is Unknown, never recreated; after the incarnation grace its agent is resumed with its last
+        /// session into the pane it had, keyed; the keyed check-in resolves the seat and the clone is Present.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn sweep_headless_cold_restart_resumes() {
             let (_dir, root) = new_instance();
@@ -2713,11 +2738,9 @@ mod wiring {
                 .set(&tseat("th-1"), SeatStatus::Unresolved);
             d.fakes.herdr.clear_calls();
 
-            let new = herdr_restarts(&d, &root, true, &old).await;
-            eventually("the clone is bound to the renumbered pane", || {
-                let c = d.clone_of("worker");
-                c.runtime.availability == Availability::Present
-                    && c.runtime.bound.and_then(|b| b.pane_id) == Some(new.clone())
+            let pane = herdr_restarts_keeping_pane_ids(&d, &root, true, &old).await;
+            eventually("the clone is Unknown while threads cannot place it", || {
+                d.clone_of("worker").runtime.availability == Availability::Unknown
             })
             .await;
             assert!(start_calls(&d).is_empty(), "inside the incarnation grace");
@@ -2728,7 +2751,7 @@ mod wiring {
             tokio::time::sleep(Duration::from_millis(300)).await;
             let starts = start_calls(&d);
             assert_eq!(starts.len(), 1, "{starts:?}");
-            assert_eq!(starts[0].pane, new);
+            assert_eq!(starts[0].pane, pane);
             assert_eq!(starts[0].args, ["--resume", "sess-1"]);
             assert_eq!(
                 starts[0].env,
@@ -2740,6 +2763,17 @@ mod wiring {
                 "only the resume: {:?}",
                 d.fakes.herdr.calls()
             );
+
+            // The keyed check-in reattaches the seat: threads resolves it to the pane.
+            d.fakes
+                .seat_view
+                .set(&tseat("th-1"), SeatStatus::Resolved { pane: pane.clone() });
+            eventually("the clone is present on its pane", || {
+                let c = d.clone_of("worker");
+                c.runtime.availability == Availability::Present
+                    && c.runtime.bound.and_then(|b| b.pane_id) == Some(pane.clone())
+            })
+            .await;
             assert_eq!(d.clone_of("worker").threads_seat.as_deref(), Some("th-1"));
             d.stop().await;
         }

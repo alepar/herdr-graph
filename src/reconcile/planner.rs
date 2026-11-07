@@ -6,7 +6,7 @@ use crate::journal::Journal;
 use crate::model::Timestamp;
 use crate::model::clone::{SeatFactState, SeatIntent};
 use crate::model::common::{
-    Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
+    CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
 };
 use crate::model::effect::{
     ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd,
@@ -312,47 +312,44 @@ impl<'a> LiveIndex<'a> {
             })
     }
 
+    /// Where the clone's pane is, by the one rule per clone kind (the matcher's). A seated clone
+    /// (`threads_seat`): the pane its committed binding names, when that binding is of this snapshot's
+    /// incarnation (SeatObservation wrote it); never its token or an older binding. A seatless clone: its token,
+    /// else the pane id its committed binding names in any incarnation (Herdr preserves pane ids) unless the pane
+    /// carries another clone's token. For both, last, the pane this incarnation's own create produced (the
+    /// journal live ref): that is create correlation, not re-matching, and a seated clone needs it when the
+    /// graph re-creates its pane (reactivation, undo) before its seat resolves.
     pub fn pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
         let any = clone.to_any();
-        for w in &self.snap.workspaces {
-            for t in &w.tabs {
-                if let Some(p) = t
-                    .panes
-                    .iter()
-                    .find(|p| token_of(&p.metadata).as_ref() == Some(&any))
-                {
-                    return Some(LivePane {
-                        ws: w,
-                        tab: t,
-                        pane: p,
-                        stamped: true,
-                    });
+        let rec = self.desired.clones.get(clone);
+        let bound = rec.and_then(|c| c.runtime.bound.as_ref());
+        let seated = rec.is_some_and(|c| c.threads_seat.is_some());
+        if !seated {
+            for w in &self.snap.workspaces {
+                for t in &w.tabs {
+                    if let Some(p) = t
+                        .panes
+                        .iter()
+                        .find(|p| token_of(&p.metadata).as_ref() == Some(&any))
+                    {
+                        return Some(LivePane {
+                            ws: w,
+                            tab: t,
+                            pane: p,
+                            stamped: true,
+                        });
+                    }
                 }
             }
         }
-        let rec = self.desired.clones.get(clone);
-        let bound = rec.and_then(|c| c.runtime.bound.as_ref());
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
+            && (!seated || b.incarnation == self.snap.incarnation)
             && let Some(id) = &b.pane_id
             && let Some(lp) = self.pane_by_id(id)
+            && (seated || self.carries_no_other_clone_token(lp.pane, clone))
         {
             return Some(LivePane {
-                stamped: false,
-                ..lp
-            });
-        }
-        // An adopted binding is an explicit assertion that a pane is the clone's: a binding written while the
-        // clone was `unknown` keeps the old incarnation but is `present`, so honor it when that pane exists in
-        // this snapshot and carries no graph token of its own (spec 4.2: graph re-stamps tokens on adoption).
-        if let Some(b) = bound
-            && rec.is_some_and(|c| c.runtime.availability == Availability::Present)
-            && let Some(id) = &b.pane_id
-            && let Some(lp) = self.pane_by_id(id)
-            && token_of(&lp.pane.metadata).is_none()
-        {
-            return Some(LivePane {
-                stamped: false,
+                stamped: token_of(&lp.pane.metadata).as_ref() == Some(&any),
                 ..lp
             });
         }
@@ -367,9 +364,21 @@ impl<'a> LiveIndex<'a> {
             return None;
         }
         Some(LivePane {
-            stamped: false,
+            stamped: token_of(&lp.pane.metadata).as_ref() == Some(&any),
             ..lp
         })
+    }
+
+    /// The pane has no graph token, or carries `clone`'s own, or a retired clone's leftover (an undo adopted it).
+    fn carries_no_other_clone_token(&self, pane: &PaneInfo, clone: &CloneId) -> bool {
+        let Some(t) = token_of(&pane.metadata) else {
+            return true;
+        };
+        t == clone.to_any()
+            || CloneId::parse(t.as_str())
+                .ok()
+                .and_then(|c| self.desired.clones.get(&c))
+                .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
     }
 
     /// An active desired clone other than `except` whose committed binding names this pane. Bindings only (no

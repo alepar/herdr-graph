@@ -157,6 +157,9 @@ impl Mutation for TestSeatState {
         if let Some(p) = a.get("bound_pane").and_then(|p| p.as_str()) {
             rec.runtime.bound.as_mut().unwrap().pane_id = Some(HerdrPaneId(p.to_owned()));
         }
+        if a.get("unknown").is_some() {
+            rec.runtime.availability = crate::model::common::Availability::Unknown;
+        }
         if a.get("drop_reservation").is_some() {
             rec.key_reservation = None;
         }
@@ -799,6 +802,104 @@ async fn live_index_does_not_refind_an_absent_bound_tab_or_workspace_by_tokens()
         "a token-stamped clone pane is still live"
     );
     assert!(idx.tab_for_seat(&seat_id).is_none());
+}
+
+/// A seated clone is located by its committed binding of this incarnation, which SeatObservation wrote; its
+/// token, and a binding from before a restart, locate nothing. A seatless clone beside it is still found by
+/// its token.
+#[tokio::test]
+async fn planner_uses_the_seat_observation_binding_not_a_rematch() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    let mut cs = clones_of(&fx, &s.id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let pb = pane_of(&fx, &b);
+    admit_threads_seat(
+        &*fx.w,
+        &a.id,
+        &SeatTransition::Assign {
+            seat: "seat-a".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+
+    // SeatObservation bound A to B's pane (threads resolved the seat there); A's own pane still has A's token.
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let mut binding = the_clone(&fx, &a.id).runtime.bound.expect("bound");
+    binding.pane_id = Some(pb.clone());
+    binding.incarnation = snap.incarnation.clone();
+    admit_binding(&*fx.w, &a.id.to_any(), &binding, Availability::Present).unwrap();
+    fx.w.drain().unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert_eq!(
+        idx.pane(&a.id).map(|l| l.pane.id.clone()),
+        Some(pb.clone()),
+        "the binding, not the token"
+    );
+
+    // After a restart that keeps the tokens, the binding is of an older incarnation: with no answer from
+    // threads yet nothing is planned against A's token pane. The seatless clone is still found by its token.
+    fx.herdr.restart(true, true);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.metadata.get("hg").is_some_and(|v| *v == format!("hg={}", a.id))),
+        "A's token pane is live"
+    );
+    assert!(idx.pane(&a.id).is_none(), "no token re-match for a seated clone");
+    assert!(idx.pane(&b.id).is_some(), "the seatless clone keeps its token");
+}
+
+/// A seatless clone follows its preserved pane id into a new incarnation, but never onto a pane that carries
+/// another clone's token; an id that was not preserved locates nothing.
+#[tokio::test]
+async fn planner_locates_a_seatless_clone_by_its_preserved_pane_id() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    let mut cs = clones_of(&fx, &s.id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let (pa, pb) = (pane_of(&fx, &a), pane_of(&fx, &b));
+    let find = |a: &CloneId, snap: &crate::ports::herdr::HerdrSnapshot| {
+        let desired =
+            super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+        super::planner::LiveIndex::new(snap, &desired, &fx.journal)
+            .pane(a)
+            .map(|l| (l.pane.id.clone(), l.stamped))
+    };
+
+    // Pane ids preserved, tokens gone: found by id, not yet stamped.
+    fx.herdr.cold_restart_keeping_pane_ids(false);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), Some((pa.clone(), false)));
+    assert_eq!(find(&b.id, &snap), Some((pb.clone(), false)));
+
+    // A pane that carries another clone's token is not this clone's.
+    fx.herdr
+        .report_pane_metadata(&pa, "hg", &format!("hg={}", b.id))
+        .await
+        .unwrap();
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), None, "{:?}", find(&a.id, &snap));
+    assert_eq!(find(&b.id, &snap), Some((pa.clone(), true)), "token first");
+
+    // Pane ids renumbered: nothing to find.
+    fx.herdr.restart(false, true);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), None);
+    assert_eq!(find(&b.id, &snap), None);
 }
 
 #[tokio::test]
@@ -2963,8 +3064,10 @@ async fn cold_restart(fx: &Fx, c: &CloneId) -> HerdrPaneId {
 }
 
 /// Herdr kept the pane id across the restart: the binding (old incarnation) names the pane that exists now.
+/// SeatObservation (which these reconciler-only tests do not run) has marked the clone Unknown: its seat does
+/// not resolve, so the old binding is held but locates nothing.
 fn keep_pane_id(fx: &Fx, c: &CloneId, pane: &HerdrPaneId) {
-    seat_state(fx, c, json!({ "bound_pane": pane.0 }));
+    seat_state(fx, c, json!({ "bound_pane": pane.0, "unknown": true }));
 }
 
 fn unresolved(seat: &str, at: Timestamp) -> serde_json::Value {
@@ -3167,7 +3270,7 @@ async fn resume_blocked_meta_is_stable_across_passes() {
     seat_state(
         &fx,
         &c.id,
-        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()), "unknown": true }),
     );
     fx.clock.advance(chrono::Duration::seconds(91));
     step(&fx).await;
