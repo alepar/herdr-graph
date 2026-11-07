@@ -933,6 +933,18 @@ mod lazy {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.receipt_state(messages).await
         }
+        async fn reserve_continuity_key(
+            &self,
+            key: &str,
+            seat: Option<&ThreadsSeatRef>,
+            op: &OpKey,
+        ) -> Result<ReserveOutcome, ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .reserve_continuity_key(key, seat, op)
+                .await
+        }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.delivery_capability().await

@@ -3178,10 +3178,7 @@ async fn refused_succession_is_shown_with_its_last_refusal() {
         done.seat_intent
     );
     let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
-    assert!(
-        st["stuck_restores"].as_array().unwrap().is_empty(),
-        "{st}"
-    );
+    assert!(st["stuck_restores"].as_array().unwrap().is_empty(), "{st}");
 }
 
 #[tokio::test]
@@ -3225,4 +3222,343 @@ async fn seatless_closed_clone_takes_a_first_bind_when_undone() {
         succeed_rows(&fx).is_empty(),
         "a first bind is not a succession"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// continuity key reservation (hg-66u.43; spec §5, §14, §16.1, §16.5)
+// ---------------------------------------------------------------------------------------------
+
+fn reserve_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(
+        fx,
+        EffectKind::Custom(super::effects::RESERVE_KEY_KIND.into()),
+    )
+}
+
+fn record_reservation(fx: &Fx, clone: &CloneId, seat: Option<&str>) -> Option<String> {
+    transition(
+        fx,
+        clone,
+        SeatTransition::RecordReservation {
+            key: clone.to_string(),
+            seat: seat.map(str::to_owned),
+        },
+    )
+}
+
+#[tokio::test]
+async fn reserve_key_reserves_an_active_clone_seatless_and_records_it() {
+    let fx = fx();
+    let c = base(&fx).await;
+    steps(&fx, 2).await;
+    let rec = clone_rec(&fx, &c.id);
+    let key = c.id.to_string();
+    let reservation = rec.key_reservation.expect("reservation recorded");
+    assert_eq!(
+        (reservation.key.as_str(), reservation.seat),
+        (key.as_str(), None)
+    );
+    assert_eq!(fx.threads.reserve_calls(), vec![(key.clone(), None)]);
+    assert!(fx.threads.key_reserved(&key));
+    assert_eq!(fx.threads.key_binding(&key), None, "no seat is bound");
+    assert_eq!(reserve_rows(&fx).len(), 1);
+    assert_eq!(reserve_rows(&fx)[0].status, EffectStatus::Done);
+    // Recorded: nothing further is asked of threads.
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.reserve_calls().len(), 1);
+}
+
+#[tokio::test]
+async fn unreachable_threads_records_no_reservation_and_no_key() {
+    use crate::model::launch::{ENV_CONTINUITY_KEY, agent_env};
+    for busy in [false, true] {
+        let fx = fx();
+        if busy {
+            fx.threads.set_busy(true);
+        } else {
+            fx.threads.disconnect();
+        }
+        let c = base(&fx).await;
+        steps(&fx, 2).await;
+        later(&fx).await;
+        let rec = clone_rec(&fx, &c.id);
+        assert_eq!(rec.key_reservation, None, "busy={busy}");
+        assert!(
+            fx.threads.reserve_calls().is_empty(),
+            "the service never saw a reservation, busy={busy}"
+        );
+        let env = agent_env(&c.id, rec.key_reservation.is_some());
+        assert!(
+            env.iter().all(|(k, _)| k != ENV_CONTINUITY_KEY),
+            "no key without a reservation: {env:?}"
+        );
+        // Reachable again: reserved under the same operation key the first attempt used.
+        fx.threads.set_busy(false);
+        fx.threads.reconnect();
+        later(&fx).await;
+        later(&fx).await;
+        let rec = clone_rec(&fx, &c.id);
+        assert!(rec.key_reservation.is_some(), "busy={busy}");
+        let env = agent_env(&c.id, true);
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == ENV_CONTINUITY_KEY && v == &c.id.to_string())
+        );
+        assert_eq!(fx.threads.reserve_calls(), vec![(c.id.to_string(), None)]);
+    }
+}
+
+#[tokio::test]
+async fn transport_error_retry_reuses_the_reserve_op_id() {
+    let fx = fx();
+    fx.threads
+        .set_reserve_error(Some(FakeSeatViewError::Disconnected));
+    let c = base(&fx).await;
+    steps(&fx, 2).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation, None);
+    assert!(!fx.threads.reserve_ops().is_empty());
+    fx.threads.set_reserve_error(None);
+    later(&fx).await;
+    later(&fx).await;
+    assert!(clone_rec(&fx, &c.id).key_reservation.is_some());
+    let ops = fx.threads.reserve_ops();
+    assert!(ops.len() >= 2, "{ops:?}");
+    assert!(ops.iter().all(|o| o == &ops[0]), "{ops:?}");
+}
+
+#[tokio::test]
+async fn reserve_conflict_records_nothing() {
+    let fx = fx();
+    fx.threads.set_busy(true);
+    let c = base(&fx).await;
+    fx.threads.set_reserve_conflict(&c.id.to_string());
+    fx.threads.set_busy(false);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation, None);
+    assert!(!fx.threads.reserve_calls().is_empty(), "threads was asked");
+    let rs = reserve_rows(&fx);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(
+        rs[0].status,
+        EffectStatus::Pending,
+        "a conflict waits; it is not a failure"
+    );
+}
+
+#[tokio::test]
+async fn backfill_reserves_a_seated_clone_without_binding_a_seat() {
+    // A clone that predates D1 has a threads_seat and no reservation. The reserve-key want reserves its key,
+    // seatless (§16.5); linking the key to the seat is the key-link want's (hg-66u.68).
+    let fx = fx();
+    fx.threads.set_busy(true);
+    let c = base(&fx).await;
+    seat_the_clone(&fx, &c, "seat-A");
+    steps(&fx, 2).await;
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation, None);
+    fx.threads.set_busy(false);
+    later(&fx).await;
+    later(&fx).await;
+    let rec = clone_rec(&fx, &c.id);
+    assert_eq!(rec.threads_seat.as_deref(), Some("seat-A"));
+    let reservation = rec.key_reservation.expect("backfilled");
+    assert_eq!(reservation.seat, None);
+    assert_eq!(fx.threads.reserve_calls(), vec![(c.id.to_string(), None)]);
+    assert_eq!(fx.threads.key_binding(&c.id.to_string()), None);
+}
+
+#[tokio::test]
+async fn unseated_live_agent_is_seated_then_reserved() {
+    // At D1 an unseated clone with a live unkeyed agent: the resolve want seats it on its verified binding;
+    // the reserve-key want then reserves its key.
+    let fx = fx();
+    fx.threads.set_busy(true);
+    let c = base(&fx).await;
+    bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
+    let pane = pane_of(&clone_rec(&fx, &c.id));
+    set_binding(&fx, &c.id, true, true, Some(&pane));
+    fx.map.set(&pane, "seat-A");
+    steps(&fx, 3).await;
+    let mid = clone_rec(&fx, &c.id);
+    assert_eq!(mid.threads_seat.as_deref(), Some("seat-A"), "seated first");
+    assert_eq!(mid.key_reservation, None);
+    fx.threads.set_busy(false);
+    later(&fx).await;
+    later(&fx).await;
+    let end = clone_rec(&fx, &c.id);
+    assert_eq!(end.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(end.key_reservation.map(|r| r.key), Some(c.id.to_string()));
+    assert!(end.occupant.is_some());
+}
+
+#[tokio::test]
+async fn retired_or_tombstoned_clones_are_not_reserved() {
+    let fx = fx();
+    fx.threads.set_busy(true);
+    let c = base(&fx).await;
+    retire_clone_observed(&fx, &c.id);
+    fx.threads.set_busy(false);
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation, None);
+    assert!(fx.threads.reserve_calls().is_empty());
+}
+
+#[tokio::test]
+async fn succession_keeps_the_reservation_record_and_relinks_nothing() {
+    // §16.1: the reserve-key want is seatless and never fires for a clone that has a reservation, so the
+    // succession leaves the record as it was; the key-link want (hg-66u.68) owns the relink.
+    let fx = fx();
+    let (clone, epoch, _st, _ts) = undone_clone(&fx).await;
+    // The binding hg-66u.68 records for a linked key: the predecessor seat.
+    assert_eq!(record_reservation(&fx, &clone.id, Some("seat-A")), None);
+    let before = clone_rec(&fx, &clone.id).key_reservation.expect("reserved");
+    assert_eq!(before.seat.as_deref(), Some("seat-A"));
+    let calls = fx.threads.reserve_calls().len();
+    steps(&fx, 5).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"), "succeeded");
+    assert_eq!(c.seat_intent, restore("seat-B", &epoch, true, false));
+    assert_eq!(
+        c.key_reservation,
+        Some(before),
+        "the record stays; its binding still names the predecessor"
+    );
+    assert_eq!(
+        fx.threads.reserve_calls().len(),
+        calls,
+        "no reservation call follows the succession"
+    );
+    assert!(
+        fx.threads
+            .reserve_calls()
+            .iter()
+            .all(|(_, seat)| seat.is_none()),
+        "this bead binds no key to a seat: {:?}",
+        fx.threads.reserve_calls()
+    );
+}
+
+#[tokio::test]
+async fn succeed_leaves_the_key_reservation_in_place() {
+    let fx = fx();
+    let c = base(&fx).await;
+    steps(&fx, 2).await;
+    transition(&fx, &c.id, assign("seat-a"));
+    assert_eq!(record_reservation(&fx, &c.id, Some("seat-a")), None);
+    let epoch = OpId::new();
+    write_restore(&fx, &c.id, &epoch);
+    let before = clone_rec(&fx, &c.id).key_reservation;
+    assert!(before.is_some());
+    assert_eq!(
+        transition(
+            &fx,
+            &c.id,
+            SeatTransition::Succeed {
+                seat: "seat-b".into(),
+                from: "seat-a".into(),
+                epoch,
+            }
+        ),
+        None
+    );
+    let after = clone_rec(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-b"));
+    assert_eq!(after.key_reservation, before);
+}
+
+#[tokio::test]
+async fn record_reservation_is_idempotent_updates_the_binding_and_refuses_another_key() {
+    let fx = fx();
+    fx.threads.set_busy(true);
+    let c = base(&fx).await;
+    assert_eq!(record_reservation(&fx, &c.id, None), None);
+    let first = clone_rec(&fx, &c.id).key_reservation.unwrap();
+    assert_eq!(first.seat, None);
+    assert_eq!(first.at, t0());
+    fx.clock.advance(chrono::Duration::minutes(1));
+    assert_eq!(record_reservation(&fx, &c.id, None), None);
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation.unwrap(), first);
+    // The binding moves; the reservation time does not.
+    assert_eq!(record_reservation(&fx, &c.id, Some("seat-a")), None);
+    let bound = clone_rec(&fx, &c.id).key_reservation.unwrap();
+    assert_eq!(
+        (bound.seat.as_deref(), bound.at),
+        (Some("seat-a"), first.at)
+    );
+    // A clone's key is its id.
+    assert_eq!(
+        transition(
+            &fx,
+            &c.id,
+            SeatTransition::RecordReservation {
+                key: "other".into(),
+                seat: None
+            }
+        )
+        .as_deref(),
+        Some("key_reservation_conflict")
+    );
+    // A purge tombstone takes none.
+    transition(&fx, &c.id, assign("seat-a"));
+    retire_clone_observed(&fx, &c.id);
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": c.id, "op": "raw_finalize" }),
+    );
+    assert_eq!(
+        record_reservation(&fx, &c.id, None).as_deref(),
+        Some("tombstone")
+    );
+}
+
+#[tokio::test]
+async fn fake_reservations_follow_the_threads_key_rules() {
+    let fx = fx();
+    let op = OpKey("reserve:x".into());
+    let t = &fx.threads;
+    t.set_key_binding("k1", "seat-A");
+    // Seatless re-reserve of a bound key answers its seat.
+    assert_eq!(
+        t.reserve_continuity_key("k1", None, &op).await.unwrap(),
+        ReserveOutcome::Reserved {
+            seat: Some(seat_ref("seat-A"))
+        }
+    );
+    // Bound elsewhere, or the seat holds another key: Conflict.
+    assert_eq!(
+        t.reserve_continuity_key("k1", Some(&seat_ref("seat-B")), &op)
+            .await
+            .unwrap(),
+        ReserveOutcome::Conflict
+    );
+    assert_eq!(
+        t.reserve_continuity_key("k2", Some(&seat_ref("seat-A")), &op)
+            .await
+            .unwrap(),
+        ReserveOutcome::Conflict
+    );
+    assert!(!t.key_reserved("k2"));
+    // A fresh key binds to a free seat.
+    assert_eq!(
+        t.reserve_continuity_key("k3", Some(&seat_ref("seat-C")), &op)
+            .await
+            .unwrap(),
+        ReserveOutcome::Reserved {
+            seat: Some(seat_ref("seat-C"))
+        }
+    );
+    t.set_reserve_conflict("k4");
+    assert_eq!(
+        t.reserve_continuity_key("k4", None, &op).await.unwrap(),
+        ReserveOutcome::Conflict
+    );
+    t.set_reserve_error(Some(FakeSeatViewError::Rejected));
+    assert!(matches!(
+        t.reserve_continuity_key("k5", None, &op).await,
+        Err(ThreadsError::Rejected(_))
+    ));
 }

@@ -253,6 +253,7 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR
         threads_seat_history: vec![],
         seat_intent: None,
         seat_fact: None,
+        key_reservation: None,
     }
 }
 
@@ -1911,8 +1912,10 @@ impl OrgKind for ClonePurge {
     ) -> Result<PlanBody, PlanError> {
         let a: CloneRef = parse_args(args)?;
         let (clone, _) = Self::facts(cx.tree, &a.clone)?;
-        // hg-66u.13 passes the recorded key reservation.
-        let tombstone = match crate::threads::assignment::purge_tombstone(&clone, None) {
+        let tombstone = match crate::threads::assignment::purge_tombstone(
+            &clone,
+            clone.key_reservation.as_ref().map(|r| r.key.as_str()),
+        ) {
             Some(t) => match t.seat_intent {
                 Some(crate::model::clone::SeatIntent::ReleaseKey { .. }) => "release_key",
                 _ => "finalize",
@@ -1942,8 +1945,10 @@ impl OrgKind for ClonePurge {
     ) -> Result<Applied, MutationError> {
         let a: CloneRef = parse_args(args).map_err(mm)?;
         let (clone, loc) = Self::facts(&cx.tree, &a.clone).map_err(mm)?;
-        // hg-66u.13 passes the recorded key reservation.
-        match crate::threads::assignment::purge_tombstone(&clone, None) {
+        match crate::threads::assignment::purge_tombstone(
+            &clone,
+            clone.key_reservation.as_ref().map(|r| r.key.as_str()),
+        ) {
             Some(mut t) => cx.tree.put_record(loc.record_path.clone(), &mut t)?,
             None => cx.tree.delete_file(&loc.record_path),
         }

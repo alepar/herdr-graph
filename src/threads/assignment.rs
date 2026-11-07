@@ -1,7 +1,7 @@
 //! ThreadsSeatAssignment (spec §2, §8, §13, §14): the write-once `threads_seat` of a clone and every
 //! transition of its `seat_intent`. No other code writes either field; callers use the helpers below or
 //! admit `bookkeeping.threads_seat`. This module makes no threads calls.
-use crate::model::clone::{CloneRecord, SeatIntent};
+use crate::model::clone::{CloneRecord, KeyReservation, SeatIntent};
 use crate::model::common::{CloneLifecycle, Runtime};
 use crate::model::{CloneId, OpId};
 use crate::ports::writer::{Writer, WriterError};
@@ -33,6 +33,9 @@ pub enum SeatTransition {
     ClearOnReattach { epoch: OpId },
     /// Threads acknowledged a Finalize/ReleaseKey: delete the tombstone record.
     TombstoneDone,
+    /// Threads reserved the continuity key for this clone (`seat`: the seat it reported the key bound to).
+    /// Records the reservation, or updates the binding of the recorded one; the key never changes.
+    RecordReservation { key: String, seat: Option<String> },
 }
 
 /// Admit a transition for `clone`.
@@ -106,6 +109,7 @@ pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<C
         threads_seat_history: rec.threads_seat_history.clone(),
         seat_intent: Some(seat_intent),
         seat_fact: None,
+        key_reservation: None,
     })
 }
 
@@ -281,6 +285,30 @@ impl Mutation for ThreadsSeatMutation {
                     Some(SeatIntent::Restore { epoch: e, threads_done: true, .. }) if e == epoch
                 ) {
                     rec.seat_intent = None;
+                }
+            }
+            SeatTransition::RecordReservation { key, seat } => {
+                if rec.is_tombstone() {
+                    return Err(reject(
+                        "tombstone",
+                        format!("clone {} is a purge tombstone", a.clone),
+                    ));
+                }
+                match &mut rec.key_reservation {
+                    None => {
+                        rec.key_reservation = Some(KeyReservation {
+                            key: key.clone(),
+                            seat: seat.clone(),
+                            at: cx.now,
+                        });
+                    }
+                    Some(held) if &held.key == key => held.seat = seat.clone(),
+                    Some(held) => {
+                        return Err(reject(
+                            "key_reservation_conflict",
+                            format!("clone {} holds key {}, not {key}", a.clone, held.key),
+                        ));
+                    }
                 }
             }
             SeatTransition::TombstoneDone => {

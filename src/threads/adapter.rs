@@ -8,14 +8,16 @@ use crate::ports::threads::*;
 use herdr_threads::client::service::{
     PersistentServiceClient, ServiceCallError, ServiceIntentJournal,
 };
-use herdr_threads::protocol::ids::{MessageId, OperationId, RequirementId, SeatId, ThreadId};
+use herdr_threads::protocol::ids::{
+    ContinuityKey, MessageId, OperationId, RequirementId, SeatId, ThreadId,
+};
 use herdr_threads::protocol::pagination::PageRequest;
 use herdr_threads::protocol::results::{ApiError, ErrorCode, ReceiptStatus, Recipient};
 use herdr_threads::protocol::service::{
     EnsureManagedThread, InvitationConstraint, NotificationSeverity, ReleaseRequirement,
-    RequirementState, SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership,
-    ServiceMembershipQuery, ServiceNotify, ServiceOperation, ServiceReceiptsQuery, ServiceResult,
-    ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
+    RequirementState, ReserveContinuityKey, SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite,
+    ServiceMembership, ServiceMembershipQuery, ServiceNotify, ServiceOperation,
+    ServiceReceiptsQuery, ServiceResult, ServiceSend, ServiceSetTopic, VoluntaryMembershipState,
 };
 use herdr_threads::protocol::time::{CallBudget, Cancellation, Clock as ThreadsClock, MonoInstant};
 use sha2::{Digest, Sha256};
@@ -51,6 +53,9 @@ pub(crate) fn api_error(e: ApiError) -> ThreadsError {
         code => ThreadsError::Rejected(format!("{code:?}: {}", e.detail)),
     }
 }
+
+/// How `api_error` renders threads' `Conflict` code (`Rejected("Conflict: <detail>")`).
+const CONFLICT_PREFIX: &str = "Conflict:";
 
 fn rejected(what: &str, e: impl std::fmt::Display) -> ThreadsError {
     ThreadsError::Rejected(format!("{what}: {e}"))
@@ -547,6 +552,22 @@ impl ThreadsPort for ServiceThreads {
         Ok(out)
     }
 
+    /// One `ReserveContinuityKey` request (`service_session_v3`). A key bound elsewhere, or a seat holding
+    /// another key, is threads' `Conflict` and comes back as the typed outcome; every other refusal is an error.
+    async fn reserve_continuity_key(
+        &self,
+        key: &str,
+        seat: Option<&ThreadsSeatRef>,
+        op: &OpKey,
+    ) -> Result<ReserveOutcome, ThreadsError> {
+        let op = ServiceOperation::ReserveContinuityKey(ReserveContinuityKey {
+            key: ContinuityKey::parse(key).map_err(|e| rejected("continuity key", e))?,
+            seat: seat.map(seat_id).transpose()?,
+            operation: operation_id(op),
+        });
+        reserve_outcome(self.mutate(op).await)
+    }
+
     #[cfg(not(feature = "threads-service-ack"))]
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
         Ok(DeliveryCapability::NotifyFallback)
@@ -589,6 +610,23 @@ impl ThreadsPort for ServiceThreads {
                 other => Err(other),
             },
         }
+    }
+}
+
+/// Map the answer to a `ReserveContinuityKey` onto the port's outcome. Threads' `Conflict` is a value; every
+/// other refusal (retired, named or hc seat, unknown seat) and every transport problem stays an error.
+pub(crate) fn reserve_outcome(
+    answer: Result<ServiceResult, ThreadsError>,
+) -> Result<ReserveOutcome, ThreadsError> {
+    match answer {
+        Ok(ServiceResult::ContinuityKeyReserved(r)) => Ok(ReserveOutcome::Reserved {
+            seat: r.seat.map(|s| ThreadsSeatRef(s.as_str().to_owned())),
+        }),
+        Ok(_) => Err(rejected("reserve continuity key", "unexpected result")),
+        Err(ThreadsError::Rejected(m)) if m.starts_with(CONFLICT_PREFIX) => {
+            Ok(ReserveOutcome::Conflict)
+        }
+        Err(e) => Err(e),
     }
 }
 

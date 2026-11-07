@@ -382,6 +382,7 @@ fn clone_record_roundtrip() {
         threads_seat_history: vec![],
         seat_intent: None,
         seat_fact: None,
+        key_reservation: None,
     });
     toml_rt(&CloneRecord {
         schema: 1,
@@ -402,6 +403,7 @@ fn clone_record_roundtrip() {
         threads_seat_history: vec![],
         seat_intent: None,
         seat_fact: None,
+        key_reservation: None,
     });
     let epoch = OpId::new();
     for intent in [
@@ -443,6 +445,7 @@ fn clone_record_roundtrip() {
             threads_seat_history: vec!["seat-a".into()],
             seat_intent: Some(intent),
             seat_fact: None,
+            key_reservation: None,
         };
         toml_rt(&rec);
     }
@@ -486,6 +489,7 @@ fn clone_record_seat_fact_roundtrip() {
                 state,
                 read_at: ts(),
             }),
+            key_reservation: None,
         });
     }
 }
@@ -1258,4 +1262,50 @@ fn restore_launched_reads_legacy_bool() {
     .unwrap();
     assert_eq!(launched(serde_json::from_value(written).unwrap()), Some(at));
     assert!(LEGACY_LAUNCHED_AT < at);
+}
+
+#[test]
+fn key_reservation_round_trips_and_defaults_absent() {
+    let mut rec = CloneRecord {
+        schema: 1,
+        id: CloneId::new(),
+        rev: 1,
+        seat: SeatId::new(),
+        name: "c".into(),
+        name_history: vec![],
+        lifecycle: CloneLifecycle::Active,
+        retired: None,
+        runtime: minimal_runtime(),
+        occupant: None,
+        sessions: vec![],
+        opt_outs: vec![],
+        invitations: vec![],
+        reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
+    };
+    // Absent: nothing is written, and a record without the field reads back absent.
+    let text = toml::to_string(&rec).unwrap();
+    assert!(
+        !text.contains("key_reservation"),
+        "absent field written:\n{text}"
+    );
+    assert_eq!(
+        toml::from_str::<CloneRecord>(&text)
+            .unwrap()
+            .key_reservation,
+        None
+    );
+    // Present, unbound and bound.
+    for seat in [None, Some("seat-b".to_owned())] {
+        rec.key_reservation = Some(KeyReservation {
+            key: rec.id.to_string(),
+            seat,
+            at: ts(),
+        });
+        toml_rt(&rec);
+    }
 }

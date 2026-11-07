@@ -45,6 +45,20 @@ pub struct CloneRecord {
     /// (`bookkeeping.seat_fact`); the key-conflict alert level is `state == KeyConflict`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_fact: Option<SeatFact>,
+    /// The continuity key the graph reserved with threads for this clone (spec §5, §14). Written only by
+    /// ThreadsSeatAssignment (`RecordReservation`); a succession leaves it in place (§16.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_reservation: Option<KeyReservation>,
+}
+
+/// A continuity key reserved for a clone. `seat` is the seat threads reported the key bound to when the
+/// reservation was recorded (`None`: reserved, unbound).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyReservation {
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<String>,
+    pub at: Timestamp,
 }
 
 /// One successful threads read of a clone's seat, with its read time.

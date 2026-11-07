@@ -41,6 +41,15 @@ struct State {
     disconnected: bool,
     capability: Option<DeliveryCapability>,
     next_id: u64,
+    /// Reserved continuity keys and the seat each is bound to.
+    keys: BTreeMap<String, Option<String>>,
+    /// Keys whose reservation answers `Conflict`.
+    reserve_conflicts: BTreeSet<String>,
+    reserve_error: Option<FakeSeatViewError>,
+    /// Every `reserve_continuity_key` call that reached the service: (key, seat).
+    reserves: Vec<(String, Option<String>)>,
+    /// The operation key of each of those calls.
+    reserve_ops: Vec<OpKey>,
 }
 
 /// The thread id the fake (and the real adapter) derive from an `ensure:<object>` operation key.
@@ -155,6 +164,43 @@ impl FakeThreads {
     /// Names of the mutating calls that reached the service (`ensure_thread`, `invite`, ...), in order.
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
+    }
+
+    /// The seat the reserved continuity `key` is bound to (`None`: unbound or never reserved).
+    pub fn key_binding(&self, key: &str) -> Option<String> {
+        self.lock().keys.get(key).cloned().flatten()
+    }
+
+    /// Whether `key` is reserved (bound or not).
+    pub fn key_reserved(&self, key: &str) -> bool {
+        self.lock().keys.contains_key(key)
+    }
+
+    /// Pre-bind `key` to `seat`, as if the key had been reserved and linked earlier.
+    pub fn set_key_binding(&self, key: &str, seat: &str) {
+        self.lock()
+            .keys
+            .insert(key.to_owned(), Some(seat.to_owned()));
+    }
+
+    /// Reserving `key` answers `Conflict` while set.
+    pub fn set_reserve_conflict(&self, key: &str) {
+        self.lock().reserve_conflicts.insert(key.to_owned());
+    }
+
+    /// While set, `reserve_continuity_key` fails with this error.
+    pub fn set_reserve_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().reserve_error = error;
+    }
+
+    /// The operation key of every `reserve_continuity_key` call, in order.
+    pub fn reserve_ops(&self) -> Vec<OpKey> {
+        self.lock().reserve_ops.clone()
+    }
+
+    /// Every `reserve_continuity_key` (key, seat) that reached the service, in order, failed ones included.
+    pub fn reserve_calls(&self) -> Vec<(String, Option<String>)> {
+        self.lock().reserves.clone()
     }
 
     pub fn call_count(&self, name: &str) -> usize {
@@ -374,6 +420,40 @@ impl ThreadsPort for FakeThreads {
         Err(ThreadsError::Unsupported)
     }
 
+    async fn reserve_continuity_key(
+        &self,
+        key: &str,
+        seat: Option<&ThreadsSeatRef>,
+        op: &OpKey,
+    ) -> Result<ReserveOutcome, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("reserve_continuity_key".into());
+        st.reserves
+            .push((key.to_owned(), seat.map(|s| s.0.clone())));
+        st.reserve_ops.push(op.clone());
+        if let Some(e) = st.reserve_error {
+            return Err(e.to_error());
+        }
+        let wanted = seat.map(|s| s.0.clone());
+        let bound = st.keys.get(key).cloned().flatten();
+        let other_key_on_seat = wanted.as_ref().is_some_and(|w| {
+            st.keys
+                .iter()
+                .any(|(k, b)| k != key && b.as_ref() == Some(w))
+        });
+        let bound_elsewhere = matches!((&bound, &wanted), (Some(b), Some(w)) if b != w);
+        if st.reserve_conflicts.contains(key) || other_key_on_seat || bound_elsewhere {
+            return Ok(ReserveOutcome::Conflict);
+        }
+        let binding = wanted.or(bound);
+        st.keys.insert(key.to_owned(), binding.clone());
+        Ok(ReserveOutcome::Reserved {
+            seat: binding.map(ThreadsSeatRef),
+        })
+    }
+
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
         let _guard = self.namespace_guard().await?;
         let st = self.lock();
@@ -382,7 +462,7 @@ impl ThreadsPort for FakeThreads {
     }
 }
 
-/// Transport failure a `FakeThreadsSeatView` can be told to report.
+/// Transport failure a `FakeThreadsSeatView` (or `FakeThreads`' key reservation) can be told to report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FakeSeatViewError {
     Disconnected,
