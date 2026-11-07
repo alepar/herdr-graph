@@ -267,8 +267,10 @@ acknowledgement. The restore runs:
    - seat Retired *final* (every seat before D2; an operator's final retire after it): seat
      succession (§2) on the reopened pane; the succession commit sets `Restore.seat` to the new
      seat and `threads_done`. Memberships are re-invited and accepted once.
-   - seat already Unresolved or Resolved under `seat` (an acknowledgement lost to a crash): the
-     restore-ack want (§16.4) sets `threads_done` without a command.
+   - seat reads `Resolved` on the clone's own live, bound pane, or `Unresolved` once that pane is
+     bound (an acknowledgement lost to a crash): the restore-ack want (§16.4) sets `threads_done`
+     without a command. A read on any other pane, or an `Unresolved` one before the pane is bound,
+     waits.
 3. The resume driver (§9) is the single launcher: it starts the agent in the reopened pane with
    the key (resuming the last session when the harness supports it). The key or C1 check-in
    reattaches the (unretired or succeeded) seat.
@@ -499,7 +501,8 @@ supersedes any conflicting sentence earlier in this spec, §14 included.
    supports it (B7). No resume-driver trigger is involved. §13 "Launch ownership" states this.
 4. **Restore-ack want.** A want kind covers §8 step 2's lost-acknowledgement branch: for a clone
    carrying a `Restore` intent without `threads_done` whose committed `seat_fact` for
-   `Restore.seat` reads `Unresolved` or `Resolved`, the threads executor sets `threads_done`
+   `Restore.seat` reads `Resolved` on the clone's own verified (live, bound) pane, or `Unresolved`
+   while the clone has a verified pane, the threads executor sets `threads_done`
    through ThreadsSeatAssignment without a threads command. Because the undo/resurrection commit
    drops the clone's `seat_fact`, such a fact can only come from a read after that commit.
 5. **Reserve-key and key-link do not overlap.** Reserve-key: an active clone with no recorded
@@ -570,7 +573,7 @@ supersedes any conflicting sentence earlier in this spec, §14 included.
 - key link: for an active clone with a recorded reservation and a `threads_seat` whose reservation is not recorded as bound to that seat; issues `ReserveContinuityKey{key, seat: threads_seat}` and records the binding (§14.12). The only relink: after succession the recorded binding names the predecessor, so this want binds the key to the successor (§16.1). D1-gated, landing after the D2 bead (§16.6).
 - unretire seat: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads reversibly retired (§8). No other state produces it.
 - succession: only for a clone carrying a `Restore` intent without `threads_done` whose seat reads final-retired; resolves the reopened pane's seat and admits ThreadsSeatAssignment's succession (§2, §8).
-- restore ack: only for a clone carrying a `Restore` intent without `threads_done` whose committed `seat_fact` for `Restore.seat` reads `Unresolved` or `Resolved` (an acknowledgement lost to a crash); sets `threads_done` through ThreadsSeatAssignment with no threads command (§8 step 2, §16.4).
+- restore ack: only for a clone carrying a `Restore` intent without `threads_done` whose committed `seat_fact` for `Restore.seat` reads `Resolved` on the clone's own verified pane or `Unresolved` with a verified pane (an acknowledgement lost to a crash); sets `threads_done` through ThreadsSeatAssignment with no threads command (§8 step 2, §16.4).
 - finalize retirement: for every `Finalize{seat}` tombstone, retried until threads acknowledges (§8).
 
 `clone_wants` keys desired, satisfied and released on `threads_seat` instead of the occupant (§3). The invite executor invites the recorded seat and does not re-resolve it, and invites only for an active clone: a retired, unpurged clone's want keeps its links but issues no invitation (§16.2).
@@ -631,3 +634,4 @@ Digest:
 
 - 2026-11-07 (hg-66u.14, human decision S1): the matcher deletion keeps one fallback: a clone with no threads seat is located by preserved Herdr pane id (same rule as tabs/workspaces, hg-66u.11); every clone with a threads seat is located only by SeatObservation.
 - 2026-11-07 (merge of main, seat failure and manager seats): the node manager is never retired by an observed closure, so when its pane closes the cascade keeps its clone and writes a Restore intent for its threads seat (`write_restore_intent`, as undo does). Without it a Retired seat reading would close the reopened clone again on every step, because write-once forbids taking the reopened pane's seat without a Restore. See `merge-main-2026-11-07.md`.
+- 2026-11-07 (hg-66u.98): the node manager's cascade-written Restore can precede threads' retirement of its seat, so a `Resolved` or `Unresolved` read taken then must not acknowledge it. The restore-ack want now requires the clone's own verified pane (`Resolved` on that pane, or `Unresolved` once it is bound); otherwise it waits for the `Retired` read, which takes the succession path once. A further hold (a `Retired` read against an acknowledged, unlaunched Restore whose pane is live re-runs the threads step instead of retiring) was considered and not built: with the tightened ack, an `Unresolved` read marks the clone Unknown, so the acknowledgement cannot fire before the `Retired` read in either event order (pinned by `seated_node_manager_stale_unresolved_outlives_the_reopen_then_retired_succeeds_once`).

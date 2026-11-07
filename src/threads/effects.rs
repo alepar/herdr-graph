@@ -513,7 +513,8 @@ enum Succession {
         from: String,
         epoch: OpId,
     },
-    /// The Restore's seat is Unresolved or Resolved: nothing to succeed, record `threads_done`.
+    /// Threads reads the Restore's seat on the clone's own verified pane (Resolved there, or Unresolved once the
+    /// pane is bound): nothing to succeed, record `threads_done`.
     Acknowledge { epoch: OpId },
 }
 
@@ -540,9 +541,18 @@ fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
             from: seat.clone(),
             epoch: epoch.clone(),
         }),
-        F::Unresolved | F::Resolved { .. } => Some(Succession::Acknowledge {
+        // The acknowledgement lost to a crash (§8 step 2, §16.4) is read on the clone's own reopened pane. A read
+        // taken before threads has caught up with a close (the node manager's Restore is written by the closing
+        // cascade itself) must not stand in for it: wait for Retired (succession/unretire) or for this pane.
+        F::Resolved { ref pane } if verified_pane(g, c).as_ref() == Some(pane) => {
+            Some(Succession::Acknowledge {
+                epoch: epoch.clone(),
+            })
+        }
+        F::Unresolved if verified_pane(g, c).is_some() => Some(Succession::Acknowledge {
             epoch: epoch.clone(),
         }),
+        F::Unresolved | F::Resolved { .. } => None,
         F::Retired { reversible: true } | F::KeyConflict { .. } => None,
     }
 }

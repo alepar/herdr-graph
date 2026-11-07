@@ -3008,6 +3008,277 @@ async fn seated_node_manager_retired_seat_is_kept_and_restored() {
     assert_eq!(later.runtime.bound, held.runtime.bound);
 }
 
+// ---- Seated node manager reopen under either event order (hg-66u.98) ----
+
+fn effect_rows(fx: &Fx, kind: &str) -> Vec<crate::model::effect::EffectRecord> {
+    use crate::model::effect::EffectStatus::*;
+    fx.journal
+        .effects_with_status(&[
+            Pending,
+            Done,
+            Obsolete,
+            Failed,
+            Unknown,
+            NeedsRevision,
+            BlockedNeedsHuman,
+        ])
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.kind == crate::model::effect::EffectKind::Custom(kind.into()))
+        .collect()
+}
+
+/// The reconciler fixture's reservation write-back for a Restore: the key is bound to the Restore's seat, which
+/// the restore launch waits for. Not run for a clone whose reservation is already bound there.
+fn bind_key_to_restore_seat(fx: &Fx) {
+    for (_, c) in layout::all_clones(&view(fx)).unwrap() {
+        let (Some(SeatIntent::Restore { seat, .. }), Some(r)) =
+            (&c.seat_intent, &c.key_reservation)
+        else {
+            continue;
+        };
+        if !r.bound_to(seat) {
+            admit_threads_seat(
+                &*fx.w,
+                &c.id,
+                &SeatTransition::RecordReservation {
+                    key: r.key.clone(),
+                    seat: Some(seat.clone()),
+                },
+            )
+            .unwrap();
+            fx.w.drain().unwrap();
+        }
+    }
+}
+
+async fn nm_step(fx: &Fx) {
+    bind_key_to_restore_seat(fx);
+    step(fx).await;
+}
+
+fn pane_closed_ends(c: &CloneRecord) -> usize {
+    c.sessions
+        .iter()
+        .filter(|s| s.end_reason == Some(SessionEndReason::PaneClosed))
+        .count()
+}
+
+/// A seated node manager `seat-1` with an agent in its pane, the threads executor registered, and threads
+/// reading `Resolved` on the pane. Returns the clone, its pane and the pane-to-seat map.
+async fn seated_node_manager(
+    fx: &Fx,
+) -> (
+    CloneRecord,
+    HerdrPaneId,
+    Arc<crate::threads::mapping::FakePaneSeatMap>,
+) {
+    let (c, pane) = seated(fx, "seat-1").await;
+    make_node_manager(fx, &c.seat);
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    crate::threads::register_with(
+        &fx.rec,
+        Arc::new(crate::threads::fake::FakeThreads::new()),
+        map.clone(),
+        fx.seats.clone(),
+    );
+    map.set(&pane, "seat-1");
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    fx.herdr.set_agent(&pane, claude_agent(Some("sess-nm")));
+    step(fx).await;
+    assert!(clone_by_id(fx, &c.id).occupant.is_some());
+    (clone_by_id(fx, &c.id), pane, map)
+}
+
+/// The end state both event orders must reach: the node manager on its reopened pane, succeeded once onto
+/// seat-2, launched once with the key env, closed and ended once, never retired.
+async fn assert_node_manager_reopened_once(fx: &Fx, c: &CloneRecord, old: &HerdrPaneId) {
+    let after = clone_by_id(fx, &c.id);
+    let new_pane = pane_of(fx, &after);
+    assert_ne!(&new_pane, old, "the pane was reopened");
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-2"));
+    assert_eq!(after.threads_seat_history, vec!["seat-1".to_owned()]);
+    assert!(
+        matches!(
+            after.seat_intent,
+            Some(SeatIntent::Restore { ref seat, threads_done: true, launched: Some(_), .. })
+                if seat == "seat-2"
+        ),
+        "{:?}",
+        after.seat_intent
+    );
+    assert_eq!(
+        after.key_reservation.as_ref().and_then(|r| r.seat.clone()),
+        Some("seat-2".to_owned())
+    );
+    let succeeded = effect_rows(fx, crate::threads::effects::SUCCEED_KIND);
+    assert_eq!(succeeded.len(), 1, "{succeeded:?}");
+    assert_eq!(succeeded[0].status, EffectStatus::Done);
+    let starts: Vec<_> = calls(fx)
+        .into_iter()
+        .filter_map(|call| match call {
+            FakeCall::StartAgent(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert_eq!(starts[0].pane, new_pane);
+    assert_eq!(starts[0].env, crate::model::launch::agent_env(&c.id, true));
+    assert_eq!(pane_closed_ends(&after), 1, "{:?}", after.sessions);
+    // A node manager's closure is recorded on the clone and retires nothing, so no cascade action exists.
+    assert!(actions(fx, ActionKind::ClosureCascade).is_empty());
+}
+
+/// Order B (Herdr first): the node manager's pane closes while threads still reads `Resolved` on the old
+/// pane. The cascade keeps the clone with a Restore intent; the stale read must not acknowledge it, the pane is
+/// reopened, and threads' later Retired read leads to one succession and one launch. Doubles as the
+/// reconciler-level test: reopened pane create and binding, SucceedSeat Done, `threads_done`, restore launch.
+#[tokio::test]
+async fn seated_node_manager_herdr_close_before_threads_retired_succeeds_once() {
+    let fx = fx();
+    let (c, old, map) = seated_node_manager(&fx).await;
+    fx.herdr.clear_calls();
+    fx.herdr.user_close_pane(&old);
+    nm_step(&fx).await;
+    let closed = clone_by_id(&fx, &c.id);
+    assert_eq!(closed.lifecycle, CloneLifecycle::Active);
+    assert!(
+        matches!(
+            closed.seat_intent,
+            Some(SeatIntent::Restore { ref seat, threads_done: false, .. }) if seat == "seat-1"
+        ),
+        "{:?}",
+        closed.seat_intent
+    );
+
+    // Threads has not caught up: the fact stays Resolved on the old pane while the pane is reopened.
+    for _ in 0..4 {
+        nm_step(&fx).await;
+    }
+    let reopened = clone_by_id(&fx, &c.id);
+    let new_pane = pane_of(&fx, &reopened);
+    assert_ne!(new_pane, old, "reopened and bound");
+    assert!(
+        matches!(
+            reopened.seat_intent,
+            Some(SeatIntent::Restore {
+                threads_done: false,
+                launched: None,
+                ..
+            })
+        ),
+        "a stale read must not acknowledge: {:?}",
+        reopened.seat_intent
+    );
+    assert!(effect_rows(&fx, crate::threads::effects::ACK_RESTORE_KIND).is_empty());
+    assert!(
+        calls(&fx)
+            .iter()
+            .all(|call| !matches!(call, FakeCall::StartAgent(_)))
+    );
+
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    map.set(&new_pane, "seat-2");
+    for _ in 0..6 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        nm_step(&fx).await;
+    }
+    assert_node_manager_reopened_once(&fx, &c, &old).await;
+    assert_eq!(pane_of(&fx, &clone_by_id(&fx, &c.id)), new_pane);
+}
+
+/// Order A (threads first): threads reads Retired while the old pane is still in the snapshot. The held
+/// Retired arm keeps the clone with a Restore intent; the reopened pane then succeeds once.
+#[tokio::test]
+async fn seated_node_manager_threads_retired_first_succeeds_once() {
+    let fx = fx();
+    let (c, old, map) = seated_node_manager(&fx).await;
+    fx.herdr.clear_calls();
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    nm_step(&fx).await;
+    let kept = clone_by_id(&fx, &c.id);
+    assert_eq!(kept.lifecycle, CloneLifecycle::Active);
+    assert!(matches!(
+        kept.seat_intent,
+        Some(SeatIntent::Restore {
+            threads_done: false,
+            ..
+        })
+    ));
+    // The retired seat's pane then goes away in Herdr, and the planner reopens it.
+    fx.herdr.user_close_pane(&old);
+    for _ in 0..4 {
+        nm_step(&fx).await;
+    }
+    let new_pane = pane_of(&fx, &clone_by_id(&fx, &c.id));
+    assert_ne!(new_pane, old);
+    map.set(&new_pane, "seat-2");
+    for _ in 0..6 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        nm_step(&fx).await;
+    }
+    assert_node_manager_reopened_once(&fx, &c, &old).await;
+}
+
+/// Threads keeps reading `Unresolved` past the reopen: the clone is Unknown while it does (a seated clone is
+/// located only by threads), so the stale read never acknowledges the Restore, and the Retired read that follows
+/// still ends in one succession, one launch and one recorded closure.
+#[tokio::test]
+async fn seated_node_manager_stale_unresolved_outlives_the_reopen_then_retired_succeeds_once() {
+    let fx = fx();
+    let (c, old, map) = seated_node_manager(&fx).await;
+    fx.herdr.clear_calls();
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    fx.herdr.user_close_pane(&old);
+    for _ in 0..6 {
+        nm_step(&fx).await;
+    }
+    let reopened = clone_by_id(&fx, &c.id);
+    let new_pane = pane_of(&fx, &reopened);
+    assert_ne!(new_pane, old, "reopened and bound");
+    assert!(
+        matches!(
+            reopened.seat_intent,
+            Some(SeatIntent::Restore {
+                threads_done: false,
+                launched: None,
+                ..
+            })
+        ),
+        "{:?}",
+        reopened.seat_intent
+    );
+    assert!(effect_rows(&fx, crate::threads::effects::ACK_RESTORE_KIND).is_empty());
+
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+        },
+    );
+    map.set(&new_pane, "seat-2");
+    for _ in 0..6 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        nm_step(&fx).await;
+    }
+    assert_node_manager_reopened_once(&fx, &c, &old).await;
+    assert_eq!(pane_of(&fx, &clone_by_id(&fx, &c.id)), new_pane);
+}
+
 #[tokio::test]
 async fn seat_key_conflict_marks_unknown_and_sets_the_alert() {
     let fx = fx();
