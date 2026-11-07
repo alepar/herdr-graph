@@ -137,7 +137,7 @@ codeBuckets:
   parked: 
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: MEASUREMENT INVALID: re-run @ 29e7609 hit thread/process exhaustion (os error 11, EAGAIN) in toolbox ht-build (pids cgroup limit 2048; 57 stale private test herdr servers running) — 2871 passed, 10 failed, all failures in subprocess/daemon-spawning tests; first sweep @ 59aeb1c (tier 3 re-run alone) measured 2915 passed, 6 failed; known non-environmental failure: e2e_summary_lands_in_archived_seat_folder (pre-run, test still calls the content write removed on main by 9d5c988) @ 29e7609
+  sweep: f2928b1 — 2981 passed, 1 failed, 0 errors, 2 skipped; failing: e2e_summary_lands_in_archived_seat_folder (pre-run: test calls the content write removed on main by 9d5c988); command: toolbox hg-build: nice cargo test && nice cargo test --features test-support && nice cargo test --features private-herdr -- --test-threads=1 @ f2928b11e48e1aea0d34b341e07ec8118f4ae6df
   slowness: 
   worktreesKept: 42 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
@@ -182,5 +182,5 @@ cluster dropped: observation-guard-coverage — Write a negative test for each g
 scope-filter: 14 in-scope · 2 punch-listed
 roastCodeExit: capped
 baseAbsorbed: 0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784 → eae4a3edd9e8bca0c5e1807a7c4372d64ce9f871, 0 conflicted files
-sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run MEASUREMENT INVALID (EAGAIN thread exhaustion) @ 29e7609
+sweepFix: 6 failing → hg-66u.82, hg-66u.83, hg-66u.84 · re-run MEASUREMENT INVALID (EAGAIN thread exhaustion) @ 29e7609 · finish re-run in hg-build: 2981 passed, 1 failed (pre-run) @ f2928b1
 friction: 14 events
