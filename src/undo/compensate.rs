@@ -375,7 +375,9 @@ fn restore_mutate(
     crate::plan::managers::first_seat::apply_assignment(&mut cx.tree, &plan.effects)?;
 
     // After the seats are back, so a pointer restored to a resurrected seat is valid.
-    let (pointer_effects, _) = pointer_restores(&cx.tree, orig).map_err(mm)?;
+    let restored: std::collections::BTreeSet<crate::model::SeatId> =
+        r.seats.iter().map(|(s, _)| s.clone()).collect();
+    let (pointer_effects, _) = pointer_restores(&cx.tree, orig, &restored).map_err(mm)?;
     apply_pointer_effects(&mut cx.tree, &pointer_effects)?;
 
     for c in &r.clones {

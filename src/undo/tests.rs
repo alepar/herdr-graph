@@ -1764,6 +1764,60 @@ fn boss_world(fx: &Fx) -> (SeatId, SeatId, SeatId) {
     (nm, boss, r)
 }
 
+/// The reparented pointer goes back to `a` only if `a` comes back with the undo. Here `a` was resurrected and
+/// retired again by a later action, so undoing the application retirement restores `b` but leaves `x` on the
+/// node manager instead of pointing it at a retired seat.
+#[test]
+fn undo_retire_leaves_pointer_when_old_seat_stays_retired() {
+    use crate::plan::managers::reparent::testing::seat_request;
+    let fx = fx();
+    alpha(&fx);
+    for n in ["nm", "x"] {
+        commit(&fx, &format!("seat create {n} --teamspace alpha"));
+    }
+    let (ma, mb) = (MemberId::new(), MemberId::new());
+    create_template(
+        &fx,
+        "pair",
+        &[m(&ma, "a", "deferred"), m(&mb, "b", "deferred")],
+    );
+    apply_app(&fx, "pair", "one");
+    let (nm, x) = (seat_named(&fx, "nm").id, seat_named(&fx, "x").id);
+    let (a, b) = (seat_named(&fx, "a").id, seat_named(&fx, "b").id);
+    commit_request(&fx, crate::plan::managers::testing::request(Some(&nm)));
+    commit_request(&fx, seat_request(&a, Some(&nm)));
+    commit_request(&fx, seat_request(&x, Some(&a)));
+
+    let first = action_of(&fx, &commit(&fx, "application retire one"));
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(nm.clone()));
+    commit(&fx, "seat resurrect a");
+    commit(&fx, "seat retire a");
+    assert_eq!(seat_by_id(&fx, &a).lifecycle, Lifecycle::Retired);
+
+    let sp = plan(&fx, &format!("undo {}", first.id));
+    assert!(
+        !sp.plan
+            .effects
+            .iter()
+            .any(|e| e.kind == "seat.manager" && e.object == x.to_any()),
+        "{:?}",
+        sp.plan.effects
+    );
+    assert!(
+        sp.plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("not brought back")),
+        "{:?}",
+        sp.plan.warnings
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert_eq!(seat_by_id(&fx, &x).manager, Some(nm));
+    assert_ne!(seat_by_id(&fx, &b).lifecycle, Lifecycle::Retired);
+    assert_eq!(seat_by_id(&fx, &a).lifecycle, Lifecycle::Retired);
+}
+
 #[test]
 fn undo_retire_restores_reparented_pointers() {
     let fx = fx();
@@ -1967,7 +2021,8 @@ fn pointer_restores_collapses_chained_rows() {
         REPARENTED_KEY.into(),
         toml::Value::Array(vec![row(&a, &b), row(&b, &nm)]),
     );
-    let (effects, warnings) = super::preview::pointer_restores(&view(&fx), &act).unwrap();
+    let (effects, warnings) =
+        super::preview::pointer_restores(&view(&fx), &act, &[a.clone()].into()).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(effects.len(), 1, "{effects:?}");
     assert_eq!(effects[0].object, x.to_any());

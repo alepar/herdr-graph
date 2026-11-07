@@ -335,7 +335,8 @@ pub fn restore_preview(
 ) -> Result<PlanBody, PlanError> {
     let tree = cx.tree;
     let r = compute_restore(tree, act, reserved, None)?;
-    let (pointer_effects, pointer_warnings) = pointer_restores(tree, act)?;
+    let restored: BTreeSet<SeatId> = r.seats.iter().map(|(s, _)| s.clone()).collect();
+    let (pointer_effects, pointer_warnings) = pointer_restores(tree, act, &restored)?;
     let mut effects = Vec::new();
     let mut relied_on = Vec::new();
     let mut warnings = r.warnings.clone();
@@ -504,10 +505,12 @@ pub fn restore_preview(
 }
 
 /// The pointer restores an undo of `act` performs: for each `reparented` row whose holder still exists and still
-/// holds the reparent value (`new`), an effect back to `old`; for each other row, a warning listing it.
+/// holds the reparent value (`new`), and whose `old` seat is live or comes back with this undo (`restored`), an
+/// effect back to `old`; for each other row, a warning listing it.
 pub(crate) fn pointer_restores(
     tree: &dyn TreeRead,
     act: &ActionRecord,
+    restored: &BTreeSet<SeatId>,
 ) -> Result<(Vec<PlanEffect>, Vec<String>), PlanError> {
     let Some(rows) = act
         .compensation
@@ -559,6 +562,16 @@ pub(crate) fn pointer_restores(
                 "manager pointer of {} changed since the retirement (now {}); left unchanged",
                 rw.holder,
                 current.map_or("none".to_string(), |c| c.to_string())
+            ));
+            continue;
+        }
+        // Restoring a pointer to a seat that stays retired would leave the holder reporting through an archived
+        // seat (or close a cycle the guard refuses, failing the whole undo).
+        let old_live = pointers.seats.get(&rw.old).is_some_and(|p| !p.retired);
+        if !old_live && !restored.contains(&rw.old) {
+            warnings.push(format!(
+                "manager pointer of {} not restored to {}: that seat is not brought back by this undo; left unchanged",
+                rw.holder, rw.old
             ));
             continue;
         }
