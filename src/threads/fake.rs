@@ -187,6 +187,37 @@ impl FakeThreads {
             .insert(key.to_owned(), Some(seat.to_owned()));
     }
 
+    /// Model closing `seat`'s pane (spec §14.12): the retirement is reversible only while a continuity key is
+    /// bound to the seat, final otherwise. Returns the kind `view` now reports for the seat.
+    pub fn close_pane(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) -> RetirementKind {
+        let keyed = self
+            .lock()
+            .keys
+            .values()
+            .any(|bound| bound.as_ref() == Some(&seat.0));
+        let kind = if keyed {
+            RetirementKind::Reversible
+        } else {
+            RetirementKind::Final
+        };
+        view.set(seat, SeatStatus::Retired { kind });
+        kind
+    }
+
+    /// Model an explicit operator final retire: the seat reads final and threads deletes its key, like
+    /// `finalize_retirement` does at purge.
+    pub fn operator_final_retire(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) {
+        self.lock()
+            .keys
+            .retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        view.set(
+            seat,
+            SeatStatus::Retired {
+                kind: RetirementKind::Final,
+            },
+        );
+    }
+
     /// Reserving `key` answers `Conflict` while set.
     pub fn set_reserve_conflict(&self, key: &str) {
         self.lock().reserve_conflicts.insert(key.to_owned());

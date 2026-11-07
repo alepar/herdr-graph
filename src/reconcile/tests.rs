@@ -4372,6 +4372,306 @@ async fn unretired_restore_with_its_key_already_bound_launches_at_once() {
 }
 
 // -------------------------------------------------------------------------------------------------
+// D2 restore end to end (hg-66u.32): undo and resurrection un-retire the same seat, one keyed launch
+// -------------------------------------------------------------------------------------------------
+
+struct D2World {
+    fx: Fx,
+    threads: Arc<crate::threads::fake::FakeThreads>,
+    seats: Arc<crate::threads::FakeThreadsSeatView>,
+    clone: CloneRecord,
+    old_pane: HerdrPaneId,
+    workspace: crate::model::HerdrWorkspaceId,
+    memberships: [crate::ports::threads::ThreadRef; 2],
+}
+
+/// A seated claude clone on seat-A with (when `resumable`) an ended session `abc`, accepted memberships and its key bound to
+/// seat-A, whose seat is then retired through the graph (the tab closes) and read reversibly retired.
+async fn d2_retired_world(resumable: bool) -> D2World {
+    use crate::ports::threads::{ThreadRef, ThreadsSeatRef};
+    let fx = fx();
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    let seats = Arc::new(crate::threads::FakeThreadsSeatView::new());
+    crate::threads::register_with(&fx.rec, threads.clone(), map.clone(), seats.clone());
+    let a = ThreadsSeatRef("seat-A".into());
+    activate(&fx, "claude");
+    steps(&fx, 3).await;
+    let c = only_clone(&fx, "foreman");
+    let old_pane = pane_of(&fx, &c);
+    map.set(&old_pane, "seat-A");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-A".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    if resumable {
+        end_session(&fx, &c, "abc", "claude");
+    }
+    fx.herdr.set_agent(&old_pane, None);
+    let workspace = workspace_of(&fx, &old_pane).await.expect("pane is listed");
+    // Channels, invitations and the key link settle; the agent accepts both memberships.
+    steps(&fx, 4).await;
+    let st = ThreadRef(
+        seat(&fx, "foreman")
+            .channel
+            .thread_id
+            .expect("seat channel"),
+    );
+    let ts = ThreadRef(
+        layout::list_teamspaces(&view(&fx))
+            .unwrap()
+            .remove(0)
+            .1
+            .channel
+            .thread_id
+            .expect("teamspace channel"),
+    );
+    threads.accept(&st, &a);
+    threads.accept(&ts, &a);
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step(&fx).await;
+    let key = c.id.to_string();
+    assert_eq!(threads.key_binding(&key).as_deref(), Some("seat-A"));
+    // The pane closes: threads retires the keyed seat reversibly.
+    commit(&fx, "seat retire foreman");
+    step(&fx).await;
+    assert_eq!(workspace_of(&fx, &old_pane).await, None, "the pane is gone");
+    assert_eq!(
+        threads.close_pane(&seats, &a),
+        crate::ports::threads::RetirementKind::Reversible
+    );
+    D2World {
+        fx,
+        threads,
+        seats,
+        clone: c,
+        old_pane,
+        workspace,
+        memberships: [st, ts],
+    }
+}
+
+fn retire_action_id(fx: &Fx) -> crate::model::ActionId {
+    use crate::model::action::ActionKind;
+    layout::list_actions(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action")
+        .id
+}
+
+/// Commits `change` (an undo or a resurrection) and returns the Restore epoch it wrote.
+fn commit_restore(fx: &Fx, clone: &CloneId, change: &str) -> OpId {
+    let sp = plan(fx, change);
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let epoch = row.op.clone();
+    assert_eq!(
+        the_clone(fx, clone).seat_intent,
+        serde_json::from_value(restore_intent("seat-A", &epoch, false, false)).unwrap(),
+        "the commit writes the Restore intent for the same seat"
+    );
+    epoch
+}
+
+/// The observation after the commit: the closed seat reads reversibly retired.
+fn observe_reversible(w: &D2World) {
+    seat_state(
+        &w.fx,
+        &w.clone.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true }, w.fx.clock.now()) }),
+    );
+}
+
+/// Steps with the backoff expiring between passes.
+async fn settle(fx: &Fx, n: usize) {
+    for _ in 0..n {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(fx).await;
+    }
+}
+
+/// The restore, driven to the end state: same seat, memberships kept, the tab reopened in its workspace and
+/// exactly one keyed resume launch by the resume driver.
+async fn assert_d2_restore(w: &D2World, epoch: &OpId) {
+    let (fx, threads) = (&w.fx, &w.threads);
+    let id = &w.clone.id;
+    let invites = threads.call_count("invite");
+    fx.herdr.clear_calls();
+    observe_reversible(w);
+    settle(fx, 6).await;
+
+    let c = the_clone(fx, id);
+    assert_eq!(
+        c.threads_seat.as_deref(),
+        Some("seat-A"),
+        "the same seat id"
+    );
+    assert!(c.threads_seat_history.is_empty(), "no succession");
+    assert_eq!(threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert!(
+        rows(
+            fx,
+            EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into())
+        )
+        .is_empty()
+    );
+    assert!(matches!(
+        c.seat_intent,
+        Some(SeatIntent::Restore { ref seat, epoch: ref e, threads_done: true, launched: Some(_), .. })
+            if seat == "seat-A" && e == epoch
+    ));
+    for t in &w.memberships {
+        let m = threads
+            .member(t, &crate::ports::threads::ThreadsSeatRef("seat-A".into()))
+            .unwrap();
+        assert_eq!(
+            m.state,
+            crate::model::clone::InvitationState::Accepted,
+            "{}",
+            t.0
+        );
+    }
+    assert_eq!(threads.call_count("invite"), invites, "no re-acceptance");
+    // Reopened in the original workspace, on a new pane.
+    let reopened = pane_of(fx, &c);
+    assert_ne!(reopened, w.old_pane);
+    assert_eq!(workspace_of(fx, &reopened).await, Some(w.workspace.clone()));
+    // Exactly one launch: the resume driver's, resuming the last session with the continuity key.
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(id, true));
+    assert!(has_key(&starts[0].env));
+    settle(fx, 3).await;
+    assert_eq!(start_calls(fx).len(), 1, "exactly one launch");
+}
+
+#[tokio::test]
+async fn undo_reopens_the_tab_and_resumes_with_the_key_in_one_launch() {
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    assert_d2_restore(&w, &epoch).await;
+}
+
+#[tokio::test]
+async fn resurrection_unretires_the_same_seat() {
+    let w = d2_retired_world(true).await;
+    let id = seat(&w.fx, "foreman").id;
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("seat resurrect {id} --active"));
+    assert_d2_restore(&w, &epoch).await;
+}
+
+#[tokio::test]
+async fn undo_with_threads_unreachable_commits_no_seat_change_and_launches_nothing() {
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    let fx = &w.fx;
+    w.threads.disconnect();
+    w.seats
+        .set_error(Some(crate::threads::FakeSeatViewError::Disconnected));
+    fx.herdr.clear_calls();
+    observe_reversible(&w);
+    settle(fx, 6).await;
+    let c = the_clone(fx, &w.clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(
+        c.seat_intent,
+        serde_json::from_value(restore_intent("seat-A", &epoch, false, false)).unwrap()
+    );
+    assert_eq!(w.threads.call_count("unretire_seat"), 0);
+    assert!(start_calls(fx).is_empty(), "{:?}", calls(fx));
+    // Threads answers again: the restore completes with its one launch.
+    w.threads.reconnect();
+    w.seats.set_error(None);
+    settle(fx, 6).await;
+    assert_eq!(start_calls(fx).len(), 1, "{:?}", calls(fx));
+}
+
+#[tokio::test]
+async fn export_rejected_clone_with_a_resumable_session_reattaches_the_unretired_seat() {
+    // The shell rejected the key export, so the resumed agent presents no key; threads reattaches it to the
+    // unretired seat by its native session (C1). The graph sees the seat Resolved under Restore.seat.
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    assert_d2_restore(&w, &epoch).await;
+    let fx = &w.fx;
+    let reopened = pane_of(fx, &the_clone(fx, &w.clone.id));
+    fx.herdr.set_agent(&reopened, agent(AgentStatus::Idle));
+    // The observer records the resumed session as the occupant (the same native session as before).
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_set_occupant", "clone": w.clone.id, "native": "abc", "harness": "claude"}),
+    );
+    seat_state(
+        fx,
+        &w.clone.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Resolved { pane: reopened.clone() }, fx.clock.now()) }),
+    );
+    settle(fx, 4).await;
+    let c = the_clone(fx, &w.clone.id);
+    assert_eq!(c.seat_intent, None, "the reattach clears the Restore");
+    assert_eq!(
+        c.threads_seat.as_deref(),
+        Some("seat-A"),
+        "same seat, no re-acceptance"
+    );
+    assert!(stuck_restores(fx).is_empty(), "{:?}", stuck_restores(fx));
+    assert_eq!(start_calls(fx).len(), 1, "no second launch");
+}
+
+#[tokio::test]
+async fn export_rejected_clone_without_a_resumable_session_is_named_in_stuck_restores() {
+    let w = d2_retired_world(false).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    let fx = &w.fx;
+    fx.herdr.clear_calls();
+    observe_reversible(&w);
+    settle(fx, 6).await;
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    // The agent never presents the key and has no session to reattach by: the restore is named, once.
+    let stuck = stuck_restores(fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["clone"], w.clone.id.to_string());
+    assert_eq!(stuck[0]["epoch"], epoch.to_string());
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+    assert!(
+        stuck[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("fix the pane shell")
+    );
+    settle(fx, 3).await;
+    assert_eq!(start_calls(fx).len(), 1, "one launch per epoch");
+}
+
+// -------------------------------------------------------------------------------------------------
 // fresh-agent path after a cold restart (hg-66u.21): a reserved clone with no resumable session
 // -------------------------------------------------------------------------------------------------
 
