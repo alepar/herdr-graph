@@ -1,0 +1,10 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.18)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.82s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-18f0440c20943ddf)
+
+running 1 test
+test e2e_pane_closed_during_downtime_retires_undoably ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; finished in 661.34s
+
+exit 0

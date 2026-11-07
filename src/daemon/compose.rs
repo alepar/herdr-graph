@@ -950,6 +950,29 @@ mod lazy {
                 .reserve_continuity_key(key, seat, op)
                 .await
         }
+        async fn unretire_seat(
+            &self,
+            seat: &ThreadsSeatRef,
+            op: &OpKey,
+        ) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.unretire_seat(seat, op).await
+        }
+        async fn finalize_retirement(
+            &self,
+            seat: &ThreadsSeatRef,
+            op: &OpKey,
+        ) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.finalize_retirement(seat, op).await
+        }
+        async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .release_continuity_key(key, op)
+                .await
+        }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.delivery_capability().await
