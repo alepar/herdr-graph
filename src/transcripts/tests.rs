@@ -288,7 +288,12 @@ fn fx_with(
     );
     let threads = Arc::new(FakeThreads::new());
     let map = Arc::new(FakePaneSeatMap::new());
-    crate::threads::register_with(&rec, threads.clone(), map.clone());
+    crate::threads::register_with(
+        &rec,
+        threads.clone(),
+        map.clone(),
+        Arc::new(crate::threads::FakeThreadsSeatView::new()),
+    );
     let tr = Transcripts::new(
         store.clone(),
         dw.clone(),

@@ -205,6 +205,7 @@ struct Fx {
     rec: Arc<Reconciler>,
     threads: Arc<FakeThreads>,
     map: Arc<FakePaneSeatMap>,
+    seats: Arc<FakeThreadsSeatView>,
 }
 
 fn fx() -> Fx {
@@ -257,7 +258,8 @@ fn fx() -> Fx {
     );
     let threads = Arc::new(FakeThreads::new());
     let map = Arc::new(FakePaneSeatMap::new());
-    register_with(&rec, threads.clone(), map.clone());
+    let seats = Arc::new(FakeThreadsSeatView::new());
+    register_with(&rec, threads.clone(), map.clone(), seats.clone());
     Fx {
         _tmp: tmp,
         deps,
@@ -268,6 +270,7 @@ fn fx() -> Fx {
         rec,
         threads,
         map,
+        seats,
     }
 }
 
@@ -1939,6 +1942,7 @@ async fn reconnect_recreates_channels_without_replaying_old_effects_or_external_
     let executor = effects::ThreadsExecutor::new(
         fx.threads.clone(),
         fx.map.clone(),
+        fx.seats.clone(),
         fx.journal.clone(),
         cache.clone(),
     );
@@ -2411,56 +2415,24 @@ async fn pane_close_after_threads_done_retires_and_clears_the_restore_intent() {
 }
 
 #[tokio::test]
-async fn purge_tombstone_of_a_seated_clone_is_none() {
+async fn purge_tombstone_of_a_seated_clone_is_finalize() {
     let fx = fx();
     let c = base(&fx).await;
     transition(&fx, &c.id, assign("seat-a"));
     retire_clone_observed(&fx, &c.id);
     let rec = clone_rec(&fx, &c.id);
     assert_eq!(rec.threads_seat.as_deref(), Some("seat-a"));
-    // Before D2 every seat is final: the record is deleted outright, with or without a reservation.
-    assert!(assignment::purge_tombstone(&rec, None).is_none());
-    assert!(assignment::purge_tombstone(&rec, Some("key-1")).is_none());
-}
-
-#[tokio::test]
-async fn pre_existing_finalize_tombstone_is_deleted_on_load() {
-    let fx = fx();
-    let c = base(&fx).await;
-    transition(&fx, &c.id, assign("seat-a"));
-    retire_clone_observed(&fx, &c.id);
-    bookkeeping(
-        &fx,
-        "test_seat_fixture",
-        json!({ "clone": c.id, "op": "raw_finalize" }),
-    );
-    let t = clone_rec(&fx, &c.id);
-    assert!(t.is_tombstone());
-    assert_eq!(
-        t.seat_intent,
-        Some(SeatIntent::Finalize {
-            seat: "seat-a".into()
-        })
-    );
-    let before = fx.threads.calls().len();
-    steps(&fx, 4).await;
-    later(&fx).await;
-    assert!(
-        layout::all_clones(&view(&fx))
-            .unwrap()
-            .iter()
-            .all(|(_, r)| r.id != c.id),
-        "the pre-existing tombstone is deleted"
-    );
-    let new: Vec<_> = fx.threads.calls().split_off(before);
-    assert!(
-        new.iter().all(|c| !c.contains("seat-a")),
-        "no threads call for the dropped tombstone: {new:?}"
-    );
-    // A second pass plans nothing for it.
-    let head = fx.store.head().unwrap();
-    steps(&fx, 2).await;
-    assert_eq!(fx.store.head().unwrap(), head, "nothing left to do");
+    // A seated clone always keeps Finalize{seat}, with or without a reservation (§14.2).
+    for reservation in [None, Some("key-1")] {
+        let t = assignment::purge_tombstone(&rec, reservation).unwrap();
+        assert_eq!(
+            t.seat_intent,
+            Some(SeatIntent::Finalize {
+                seat: "seat-a".into()
+            })
+        );
+        assert!(t.is_tombstone());
+    }
 }
 
 #[tokio::test]
@@ -2476,9 +2448,15 @@ async fn purge_tombstone_of_a_seatless_clone_with_a_reservation_is_release_key()
     );
     assert!(t.is_tombstone());
     assert_eq!(t.threads_seat, None);
-    // A held seat wins over a reservation: no ReleaseKey, the record is deleted (pre-D2).
+    // A held seat wins over a reservation: Finalize{seat}, not ReleaseKey.
     transition(&fx, &c.id, assign("seat-a"));
-    assert!(assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).is_none());
+    let t = assignment::purge_tombstone(&clone_rec(&fx, &c.id), Some("key-1")).unwrap();
+    assert_eq!(
+        t.seat_intent,
+        Some(SeatIntent::Finalize {
+            seat: "seat-a".into()
+        })
+    );
 }
 
 #[tokio::test]
@@ -2765,6 +2743,38 @@ fn seat_status_maps_v3_inspection_fixtures() {
     );
 }
 
+#[test]
+fn retirement_kind_is_mapped_from_seat_inspect() {
+    use super::mapping::seat_status;
+    use herdr_threads::protocol::results::SeatRetirementState;
+    let retired = |state: Option<SeatRetirementState>| {
+        let mut i = inspection_fixture("retired", None, Some(5_000));
+        i.retirement_state = state;
+        i
+    };
+    assert_eq!(
+        seat_status(&retired(Some(SeatRetirementState::Reversible))),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible
+        }
+    );
+    assert_eq!(
+        seat_status(&retired(None)),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final
+        }
+    );
+    // The state field says nothing about a seat that is not retired.
+    let mut live = inspection_fixture("resolved", Some("w1:p2"), None);
+    live.retirement_state = Some(SeatRetirementState::Reversible);
+    assert_eq!(
+        seat_status(&live),
+        SeatStatus::Resolved {
+            pane: HerdrPaneId("w1:p2".into())
+        }
+    );
+}
+
 /// G5 (herdr-threads v3.1.0): an unresolved seat whose pane never came back is retired by threads after its
 /// window, reversibly when it holds a key (`retirement_state: reversible`), else finally (field absent). Both
 /// read as the existing Retired state, so SeatObservation's Retired arm applies with no new variant.
@@ -2777,9 +2787,13 @@ fn g5_disposition_maps_from_seat_inspect() {
         i.retirement_state = reversible.then_some(SeatRetirementState::Reversible);
         i
     };
-    for reversible in [true, false] {
-        assert!(
-            matches!(seat_status(&limbo(reversible)), SeatStatus::Retired { .. }),
+    for (reversible, kind) in [
+        (true, RetirementKind::Reversible),
+        (false, RetirementKind::Final),
+    ] {
+        assert_eq!(
+            seat_status(&limbo(reversible)),
+            SeatStatus::Retired { kind },
             "reversible={reversible}"
         );
     }
@@ -2923,8 +2937,8 @@ async fn clear_on_reattach_clears_the_restore_and_returns_the_clone_to_the_ordin
         );
     };
     let resolved = json!({ "state": "resolved", "pane": pane_of(&c).0 });
-    // Reversibly retired: the succession want asks nothing of threads, so the Restore stays unacknowledged.
-    fact(json!({ "state": "retired", "reversible": true }));
+    // A key conflict: no want asks anything of threads, so the Restore stays unacknowledged.
+    fact(json!({ "state": "key_conflict", "pane": null }));
     bookkeeping(&fx, "test_set_occupant", json!({ "clone": c.id }));
     let clear_rows = || {
         rows(
@@ -3112,17 +3126,13 @@ async fn live_or_unresolved_seat_is_never_succeeded() {
 }
 
 #[tokio::test]
-async fn reversible_retirement_and_key_conflict_are_left_alone() {
-    for (name, state) in [
-        (
-            "reversible",
-            json!({ "state": "retired", "reversible": true }),
-        ),
-        (
-            "key conflict",
-            json!({ "state": "key_conflict", "pane": null }),
-        ),
-    ] {
+async fn key_conflict_is_left_alone() {
+    // A reversibly retired seat is no longer left alone: the unretire want brings it back (see
+    // `restore_intent_on_a_reversible_seat_unretires`).
+    for (name, state) in [(
+        "key conflict",
+        json!({ "state": "key_conflict", "pane": null }),
+    )] {
         let fx = fx();
         let clone = base(&fx).await;
         seat_the_clone(&fx, &clone, "seat-A");
@@ -3635,4 +3645,401 @@ async fn fake_reservations_follow_the_threads_key_rules() {
         t.reserve_continuity_key("k5", None, &op).await,
         Err(ThreadsError::Rejected(_))
     ));
+}
+
+// --- unretire and finalize wants (hg-66u.31) ---
+
+fn tombstone_of(fx: &Fx, clone: &CloneId, reservation: Option<&str>) {
+    bookkeeping(
+        fx,
+        "test_seat_fixture",
+        json!({ "clone": clone, "op": "tombstone", "reservation": reservation }),
+    );
+}
+
+fn is_gone(fx: &Fx, clone: &CloneId) -> bool {
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .iter()
+        .all(|(_, r)| &r.id != clone)
+}
+
+fn kind_rows(fx: &Fx, kind: &str) -> Vec<EffectRecord> {
+    rows(fx, EffectKind::Custom(kind.into()))
+}
+
+fn reversible() -> serde_json::Value {
+    json!({ "state": "retired", "reversible": true })
+}
+
+fn final_read() -> SeatStatus {
+    SeatStatus::Retired {
+        kind: RetirementKind::Final,
+    }
+}
+
+#[tokio::test]
+async fn restore_intent_on_a_reversible_seat_unretires() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(&fx, &clone.id, "seat-A", reversible());
+    steps(&fx, 4).await;
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false),
+        "SeatUnretired sets threads_done"
+    );
+    assert_eq!(kind_rows(&fx, super::effects::UNRETIRE_KIND).len(), 1);
+    // Level-triggered but not repeating: once acknowledged the want is gone.
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("unretire_seat"), 1);
+}
+
+#[tokio::test]
+async fn reversible_seat_without_intent_triggers_nothing() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    // An active clone whose seat reads reversibly retired but that holds no Restore intent (an ordinary pane
+    // close): never reversed.
+    seat_fact(&fx, &clone.id, "seat-A", reversible());
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    // A retired clone stays retired.
+    retire_clone_observed(&fx, &clone.id);
+    seat_fact(&fx, &clone.id, "seat-A", reversible());
+    steps(&fx, 3).await;
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.lifecycle, CloneLifecycle::Retired);
+    assert_eq!(c.seat_intent, None);
+    assert!(kind_rows(&fx, super::effects::UNRETIRE_KIND).is_empty());
+}
+
+#[tokio::test]
+async fn unretire_only_follows_a_reversible_read_of_the_restore_seat() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    // No fact yet, then a fact about another seat: nothing is asked of threads.
+    steps(&fx, 2).await;
+    seat_fact(&fx, &clone.id, "seat-other", reversible());
+    steps(&fx, 2).await;
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+}
+
+#[tokio::test]
+async fn unretire_rejection_keeps_the_intent_visible_in_status() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(&fx, &clone.id, "seat-A", reversible());
+    fx.threads
+        .set_unretire_error(Some(FakeSeatViewError::Rejected));
+    steps(&fx, 2).await;
+    later(&fx).await;
+    let Some(SeatIntent::Restore {
+        threads_done: false,
+        last_refusal: Some(why),
+        ..
+    }) = intent(&fx, &clone.id)
+    else {
+        panic!("{:?}", intent(&fx, &clone.id));
+    };
+    assert!(why.contains("rejected"), "{why}");
+    let rs = kind_rows(&fx, super::effects::UNRETIRE_KIND);
+    assert_eq!(rs.len(), 1);
+    assert_eq!(rs[0].status, EffectStatus::Pending, "Deferred, not failed");
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    let stuck = st["stuck_restores"].as_array().unwrap();
+    assert_eq!(stuck.len(), 1, "{st}");
+    assert_eq!(stuck[0]["clone"], clone.id.to_string());
+    assert_eq!(stuck[0]["reason"], "threads_pending");
+    // Threads lifts the refusal: the same want is retried and acknowledged.
+    fx.threads.set_unretire_error(None);
+    later(&fx).await;
+    later(&fx).await;
+    assert!(matches!(
+        intent(&fx, &clone.id),
+        Some(SeatIntent::Restore {
+            threads_done: true,
+            last_refusal: None,
+            ..
+        })
+    ));
+    let ops = fx.threads.lifecycle_ops("unretire_seat");
+    assert!(
+        ops.iter().all(|o| o == &ops[0]),
+        "one operation key across retries: {ops:?}"
+    );
+}
+
+#[tokio::test]
+async fn finalize_tombstone_survives_until_acknowledged_then_is_removed() {
+    let fx = fx();
+    let c = base(&fx).await;
+    seat_the_clone(&fx, &c, "seat-a");
+    retire_clone_observed(&fx, &c.id);
+    tombstone_of(&fx, &c.id, None);
+    assert_eq!(
+        intent(&fx, &c.id),
+        Some(SeatIntent::Finalize {
+            seat: "seat-a".into()
+        })
+    );
+    // Unreachable, then refused with the seat not final: the tombstone stays.
+    fx.threads.disconnect();
+    steps(&fx, 2).await;
+    later(&fx).await;
+    assert!(!is_gone(&fx, &c.id));
+    fx.threads.reconnect();
+    fx.threads
+        .set_finalize_error(Some(FakeSeatViewError::Rejected));
+    fx.seats.set(
+        &seat_ref("seat-a"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    later(&fx).await;
+    later(&fx).await;
+    assert!(!is_gone(&fx, &c.id), "a refusal is not an acknowledgement");
+    assert_eq!(
+        kind_rows(&fx, super::effects::FINALIZE_KIND)[0].status,
+        EffectStatus::Pending
+    );
+    // RetirementFinalized: the tombstone is removed.
+    fx.threads.set_finalize_error(None);
+    later(&fx).await;
+    later(&fx).await;
+    assert!(is_gone(&fx, &c.id));
+    assert_eq!(
+        fx.threads.lifecycle_calls("finalize_retirement").last(),
+        Some(&"seat-a".to_owned())
+    );
+    let ops = fx.threads.lifecycle_ops("finalize_retirement");
+    assert!(
+        ops.iter().all(|o| o == &ops[0]),
+        "one operation key across retries: {ops:?}"
+    );
+    // Nothing left to do.
+    let head = fx.store.head().unwrap();
+    steps(&fx, 2).await;
+    assert_eq!(fx.store.head().unwrap(), head);
+}
+
+#[tokio::test]
+async fn finalize_treats_a_final_read_as_acknowledgement() {
+    let fx = fx();
+    let c = base(&fx).await;
+    seat_the_clone(&fx, &c, "seat-a");
+    retire_clone_observed(&fx, &c.id);
+    tombstone_of(&fx, &c.id, None);
+    fx.threads
+        .set_finalize_error(Some(FakeSeatViewError::Rejected));
+    fx.seats.set(&seat_ref("seat-a"), final_read());
+    steps(&fx, 3).await;
+    assert!(is_gone(&fx, &c.id), "a final read answers for the refusal");
+    assert!(fx.seats.reads() >= 1);
+}
+
+#[tokio::test]
+async fn purge_of_a_seated_clone_writes_finalize_without_a_threads_read() {
+    for (name, kind) in [
+        ("reversible", RetirementKind::Reversible),
+        ("final", RetirementKind::Final),
+    ] {
+        let fx = fx();
+        let c = base(&fx).await;
+        seat_the_clone(&fx, &c, "seat-a");
+        retire_clone_observed(&fx, &c.id);
+        fx.seats
+            .set(&seat_ref("seat-a"), SeatStatus::Retired { kind });
+        // Threads is unreachable for the whole commit.
+        fx.threads.disconnect();
+        fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
+        plan_and_apply(&fx, &format!("clone purge {}", c.id));
+        assert_eq!(fx.seats.reads(), 0, "{name}: the purge reads nothing");
+        assert_eq!(
+            intent(&fx, &c.id),
+            Some(SeatIntent::Finalize {
+                seat: "seat-a".into()
+            }),
+            "{name}: Finalize whatever the retirement kind"
+        );
+        // Threads comes back: the tombstone drives the finalization.
+        fx.threads.reconnect();
+        fx.seats.set_error(None);
+        later(&fx).await;
+        later(&fx).await;
+        assert!(is_gone(&fx, &c.id), "{name}");
+        assert_eq!(
+            fx.threads.lifecycle_calls("finalize_retirement"),
+            ["seat-a"]
+        );
+    }
+}
+
+#[tokio::test]
+async fn release_key_tombstone_routes_a_bound_key_to_finalize() {
+    let fx = fx();
+    let c = base(&fx).await;
+    retire_clone_observed(&fx, &c.id);
+    tombstone_of(&fx, &c.id, Some("key-1"));
+    assert_eq!(
+        intent(&fx, &c.id),
+        Some(SeatIntent::ReleaseKey {
+            key: "key-1".into()
+        })
+    );
+    fx.threads.set_key_binding("key-1", "seat-K");
+    steps(&fx, 4).await;
+    assert_eq!(
+        fx.threads.lifecycle_calls("finalize_retirement"),
+        ["seat-K"],
+        "a bound key is finalized through its seat"
+    );
+    assert!(
+        fx.threads
+            .lifecycle_calls("release_continuity_key")
+            .is_empty(),
+        "a bound key is never released directly"
+    );
+    assert!(is_gone(&fx, &c.id));
+    assert!(
+        !fx.threads.key_reserved("key-1"),
+        "finalization released it"
+    );
+}
+
+#[tokio::test]
+async fn release_key_tombstone_releases_an_unbound_key() {
+    let fx = fx();
+    let c = base(&fx).await;
+    retire_clone_observed(&fx, &c.id);
+    tombstone_of(&fx, &c.id, Some("key-1"));
+    fx.threads
+        .reserve_continuity_key("key-1", None, &OpKey("setup".into()))
+        .await
+        .unwrap();
+    // Retried level-triggered: unreachable first.
+    fx.threads.disconnect();
+    steps(&fx, 2).await;
+    assert!(!is_gone(&fx, &c.id));
+    fx.threads.reconnect();
+    later(&fx).await;
+    later(&fx).await;
+    assert!(is_gone(&fx, &c.id));
+    assert!(!fx.threads.key_reserved("key-1"));
+    assert_eq!(
+        fx.threads.lifecycle_calls("release_continuity_key"),
+        ["key-1"]
+    );
+    assert!(fx.threads.lifecycle_calls("finalize_retirement").is_empty());
+}
+
+#[tokio::test]
+async fn unreachable_threads_no_unretire_or_finalize() {
+    for busy in [false, true] {
+        let fx = fx();
+        let live = base(&fx).await;
+        let dead = second(&fx).await;
+        seat_the_clone(&fx, &live, "seat-A");
+        seat_the_clone(&fx, &dead, "seat-B");
+        // Threads goes away before either want exists.
+        if busy {
+            fx.threads.set_busy(true);
+        } else {
+            fx.threads.disconnect();
+        }
+        let epoch = OpId::new();
+        write_restore(&fx, &live.id, &epoch);
+        seat_fact(&fx, &live.id, "seat-A", reversible());
+        retire_clone_observed(&fx, &dead.id);
+        tombstone_of(&fx, &dead.id, None);
+        steps(&fx, 3).await;
+        later(&fx).await;
+        assert!(
+            fx.threads.lifecycle_calls("unretire_seat").is_empty(),
+            "busy={busy}"
+        );
+        assert!(
+            fx.threads.lifecycle_calls("finalize_retirement").is_empty(),
+            "busy={busy}"
+        );
+        assert_eq!(
+            intent(&fx, &live.id),
+            restore("seat-A", &epoch, false, false)
+        );
+        assert!(!is_gone(&fx, &dead.id), "busy={busy}");
+        assert_eq!(fx.seats.reads(), 0, "busy={busy}: no acknowledgement read");
+    }
+}
+
+#[tokio::test]
+async fn tombstones_are_not_planned_listed_undone_resurrected_or_invited() {
+    use crate::plan::grammar::{Scope, resolve_clone};
+    let fx = fx();
+    let c = base(&fx).await;
+    occupy(&fx, &c, "seat-a").await;
+    steps(&fx, 3).await;
+    let invites = fx.threads.call_count("invite");
+    assert!(invites > 0, "the live clone was invited");
+    retire_clone_observed(&fx, &c.id);
+    steps(&fx, 2).await;
+    let before: std::collections::BTreeSet<_> = fx
+        .journal
+        .effects_for_object(&c.id.to_any())
+        .unwrap()
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    tombstone_of(&fx, &c.id, None);
+    // Keep the tombstone in place while the passes run.
+    fx.threads.disconnect();
+    steps(&fx, 3).await;
+    fx.threads.reconnect();
+    // Not planned: the only effect planned for it since is its finalization.
+    let new: Vec<String> = fx
+        .journal
+        .effects_for_object(&c.id.to_any())
+        .unwrap()
+        .into_iter()
+        .filter(|e| !before.contains(&e.id))
+        .map(|e| e.kind.as_str().to_owned())
+        .collect();
+    assert!(!new.is_empty());
+    assert!(
+        new.iter().all(|k| k == super::effects::FINALIZE_KIND),
+        "{new:?}"
+    );
+    // Not invited, not named by `who`, nothing pending.
+    assert!(pending_invitations(&view(&fx), &c.id).is_empty());
+    assert!(who(&view(&fx), c.id.as_str()).unwrap().clone.is_none());
+    // Not listed.
+    let st = crate::daemon::clone_status::clone_status(&view(&fx));
+    assert!(
+        st["retired_unpurged"].as_array().unwrap().is_empty(),
+        "{st}"
+    );
+    let shown =
+        crate::bootstrap::show::list(&view(&fx), &fx._tmp.path().join("inst"), Some("clones"))
+            .unwrap();
+    assert!(shown.is_empty(), "{shown:?}");
+    // Not resurrected or purged again by name.
+    assert!(resolve_clone(&view(&fx), &c.name, Scope::Retired).is_err());
+    assert!(resolve_clone(&view(&fx), &c.name, Scope::Live).is_err());
+    // Finalization completes; nothing else was ever issued for it.
+    later(&fx).await;
+    later(&fx).await;
+    assert!(is_gone(&fx, &c.id));
+    assert_eq!(fx.threads.call_count("invite"), invites, "never invited");
 }

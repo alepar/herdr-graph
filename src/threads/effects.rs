@@ -45,10 +45,12 @@ pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
 pub const SUCCEED_KIND: &str = "threads.succeed_seat";
 /// `EffectKind::Custom` name of the acknowledgement of a Restore whose seat needs no succession.
 pub const ACK_RESTORE_KIND: &str = "threads.ack_restore";
-/// `EffectKind::Custom` name of the deletion of a pre-existing `Finalize` tombstone. Pre-D2 drain: before D2
-/// (hg-66u.31) every seat is final and purge deletes a seated clone outright, so a tombstone written by an
-/// earlier build is dropped on load. hg-66u.31 replaces this with the finalize want.
-pub const DROP_TOMBSTONE_KIND: &str = "threads.drop_tombstone";
+/// `EffectKind::Custom` name of the un-retire of a Restore intent's reversibly retired seat (spec §8, D2).
+pub const UNRETIRE_KIND: &str = "threads.unretire_seat";
+/// `EffectKind::Custom` name of the finalization of a `Finalize{seat}` purge tombstone (spec §14.2).
+pub const FINALIZE_KIND: &str = "threads.finalize_seat";
+/// `EffectKind::Custom` name of the key release of a `ReleaseKey{key}` purge tombstone (spec §14.3).
+pub const RELEASE_KEY_KIND: &str = "threads.release_key";
 /// `EffectKind::Custom` name of the seatless continuity-key reservation of an active clone (spec §5, §16.5). The
 /// key-link want (hg-66u.68) is the only want that binds a key to a seat.
 pub const RESERVE_KEY_KIND: &str = "threads.reserve_key";
@@ -276,8 +278,19 @@ pub(crate) enum Payload {
     AckRestore {
         epoch: OpId,
     },
-    /// Delete the pre-existing `Finalize` tombstone record (pre-D2 drain, see `DROP_TOMBSTONE_KIND`).
-    DropTombstone,
+    /// Un-retire `seat`, the reversibly retired seat of the Restore intent of `epoch`.
+    UnretireSeat {
+        seat: String,
+        epoch: OpId,
+    },
+    /// Finalize the retirement of `seat` for its `Finalize` purge tombstone.
+    FinalizeSeat {
+        seat: String,
+    },
+    /// Release `key` for its `ReleaseKey` purge tombstone, or route it to its seat's finalization.
+    ReleaseKey {
+        key: String,
+    },
     /// Reserve the clone's continuity key (its id) with threads, bound to no seat.
     ReserveKey,
 }
@@ -465,6 +478,27 @@ fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
     }
 }
 
+/// The seat and epoch of a pending Restore whose seat the committed `seat_fact` reads reversibly retired: the
+/// unretire want asks threads to bring it back. Only a Restore intent asks (an ordinary pane close is never
+/// reversed), and only against a reversible read; a final one is the succession's.
+fn unretirable(g: &Graph, c: &CloneRecord) -> Option<(String, OpId)> {
+    use crate::model::clone::SeatFactState as F;
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: false,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    if !g.clone_active(c) || c.threads_seat.as_ref() != Some(seat) {
+        return None;
+    }
+    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
+    matches!(fact.state, F::Retired { reversible: true }).then(|| (seat.clone(), epoch.clone()))
+}
+
 /// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
 /// `Resolved` under the Restore's seat, and an agent occupies the pane again (it checked in).
 fn reattached_restore(g: &Graph, c: &CloneRecord) -> Option<OpId> {
@@ -513,14 +547,31 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
             )),
             None => {}
         }
-        if matches!(c.seat_intent, Some(SeatIntent::Finalize { .. })) {
+        if let Some((seat, epoch)) = unretirable(g, c) {
             out.push(want(
                 g,
-                EffectKind::Custom(DROP_TOMBSTONE_KIND.into()),
+                EffectKind::Custom(UNRETIRE_KIND.into()),
                 object.clone(),
                 c.rev,
-                Payload::DropTombstone,
+                Payload::UnretireSeat { seat, epoch },
             ));
+        }
+        match &c.seat_intent {
+            Some(SeatIntent::Finalize { seat }) => out.push(want(
+                g,
+                EffectKind::Custom(FINALIZE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::FinalizeSeat { seat: seat.clone() },
+            )),
+            Some(SeatIntent::ReleaseKey { key }) => out.push(want(
+                g,
+                EffectKind::Custom(RELEASE_KEY_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ReleaseKey { key: key.clone() },
+            )),
+            _ => {}
         }
         if reservable(g, c) {
             out.push(want(
@@ -1208,6 +1259,8 @@ impl EffectSource for ThreadsSource {
 pub struct ThreadsExecutor {
     threads: Arc<dyn ThreadsPort>,
     mapping: Arc<dyn PaneSeatMap>,
+    /// The finalize acknowledgement read: a refused finalization is done when the seat reads final-retired.
+    seat_view: Arc<dyn ThreadsSeatView>,
     journal: Arc<Journal>,
     cache: Arc<GraphCache>,
 }
@@ -1278,12 +1331,14 @@ impl ThreadsExecutor {
     pub(crate) fn new(
         threads: Arc<dyn ThreadsPort>,
         mapping: Arc<dyn PaneSeatMap>,
+        seat_view: Arc<dyn ThreadsSeatView>,
         journal: Arc<Journal>,
         cache: Arc<GraphCache>,
     ) -> Self {
         Self {
             threads,
             mapping,
+            seat_view,
             journal,
             cache,
         }
@@ -1368,8 +1423,31 @@ impl ThreadsExecutor {
         }
     }
 
-    /// Delete a pre-existing `Finalize` tombstone with no threads command (pre-D2 drain).
-    fn drop_tombstone(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+    /// The clone record of a purge tombstone effect, or None when the effect is no longer implied.
+    fn tombstone<'g>(g: &'g Graph, e: &EffectRecord) -> Option<&'g CloneRecord> {
+        CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+            .filter(|c| c.is_tombstone())
+    }
+
+    fn drop_tombstone(&self, cx: &ExecCx<'_>, clone: &CloneId) -> ExecOutcome {
+        match admit_threads_seat(cx.writer, clone, &SeatTransition::TombstoneDone) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("tombstone delete: {err}")),
+        }
+    }
+
+    /// Ask threads to un-retire the reversibly retired seat of a pending Restore, then record `threads_done`. A
+    /// refusal keeps the intent, remembers why for status and waits: the next read may show the seat final (the
+    /// succession's), or threads may lift the refusal. The operation key is stable per (clone, epoch).
+    async fn unretire_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        seat: &str,
+        epoch: &OpId,
+    ) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
             Err(o) => return o,
@@ -1380,13 +1458,126 @@ impl ThreadsExecutor {
         else {
             return ExecOutcome::Obsolete;
         };
-        if !matches!(clone.seat_intent, Some(SeatIntent::Finalize { .. })) || !clone.is_tombstone()
-        {
+        if unretirable(&g, clone).as_ref() != Some(&(seat.to_owned(), epoch.clone())) {
             return ExecOutcome::Obsolete;
         }
-        match admit_threads_seat(cx.writer, &clone.id, &SeatTransition::TombstoneDone) {
-            Ok(()) => ExecOutcome::Done,
-            Err(err) => ExecOutcome::Transient(format!("tombstone delete: {err}")),
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("unretire:{}:{epoch}", clone.id),
+        ));
+        match self
+            .threads
+            .unretire_seat(&ThreadsSeatRef(seat.to_owned()), &op)
+            .await
+        {
+            Ok(()) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::Acknowledge {
+                    epoch: epoch.clone(),
+                },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+            },
+            Err(ThreadsError::Rejected(msg)) => {
+                record_refusal(cx, clone, epoch, &msg);
+                ExecOutcome::Deferred(msg)
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Finalize the retirement of the tombstone's seat (threads releases its key with it), then delete the
+    /// tombstone. A refusal is an acknowledgement when the seat reads final-retired anyway; otherwise the
+    /// tombstone waits and the want is issued again.
+    async fn finalize_seat(&self, cx: &ExecCx<'_>, e: &EffectRecord, seat: &str) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = Self::tombstone(&g, e) else {
+            return ExecOutcome::Obsolete;
+        };
+        if !matches!(&clone.seat_intent, Some(SeatIntent::Finalize { seat: s }) if s == seat) {
+            return ExecOutcome::Obsolete;
+        }
+        let seat_ref = ThreadsSeatRef(seat.to_owned());
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("finalize:{}:{seat}", clone.id),
+        ));
+        match self.threads.finalize_retirement(&seat_ref, &op).await {
+            Ok(()) => self.drop_tombstone(cx, &clone.id),
+            Err(ThreadsError::Rejected(msg)) => {
+                match self
+                    .seat_view
+                    .inspect(std::slice::from_ref(&seat_ref))
+                    .await
+                {
+                    Ok(read)
+                        if matches!(
+                            read.get(&seat_ref),
+                            Some(SeatStatus::Retired {
+                                kind: RetirementKind::Final
+                            })
+                        ) =>
+                    {
+                        self.drop_tombstone(cx, &clone.id)
+                    }
+                    Ok(_) => ExecOutcome::Deferred(msg),
+                    Err(err) => port_outcome(err),
+                }
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Resolve a `ReleaseKey` tombstone's key to its binding: a key bound to a seat becomes that seat's
+    /// `Finalize` tombstone (finalization releases it); an unbound key is released and the tombstone deleted.
+    async fn release_key_tombstone(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        key: &str,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = Self::tombstone(&g, e) else {
+            return ExecOutcome::Obsolete;
+        };
+        if !matches!(&clone.seat_intent, Some(SeatIntent::ReleaseKey { key: k }) if k == key) {
+            return ExecOutcome::Obsolete;
+        }
+        let ask = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("release-ask:{}", clone.id),
+        ));
+        match self.threads.reserve_continuity_key(key, None, &ask).await {
+            Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::TombstoneFinalize { seat: seat.0 },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("tombstone rewrite: {err}")),
+            },
+            Ok(ReserveOutcome::Reserved { seat: None }) => {
+                let op = OpKey(super::namespace::salt(
+                    &g.epoch,
+                    &format!("release:{}", clone.id),
+                ));
+                match self.threads.release_continuity_key(key, &op).await {
+                    Ok(()) => self.drop_tombstone(cx, &clone.id),
+                    Err(err) => port_outcome(err),
+                }
+            }
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred("threads reports a continuity key conflict".into())
+            }
+            Err(err) => port_outcome(err),
         }
     }
 
@@ -1893,7 +2084,9 @@ impl EffectExecutor for ThreadsExecutor {
                 CLEAR_RESTORE_KIND,
                 SUCCEED_KIND,
                 ACK_RESTORE_KIND,
-                DROP_TOMBSTONE_KIND,
+                UNRETIRE_KIND,
+                FINALIZE_KIND,
+                RELEASE_KEY_KIND,
                 RESERVE_KEY_KIND,
             ]
             .contains(&k.as_str()),
@@ -1991,7 +2184,15 @@ impl ThreadsExecutor {
             (EffectKind::Custom(_), Some(Payload::AckRestore { epoch })) => {
                 self.ack_restore(cx, e, &epoch)
             }
-            (EffectKind::Custom(_), Some(Payload::DropTombstone)) => self.drop_tombstone(cx, e),
+            (EffectKind::Custom(_), Some(Payload::UnretireSeat { seat, epoch })) => {
+                self.unretire_seat(cx, e, &seat, &epoch).await
+            }
+            (EffectKind::Custom(_), Some(Payload::FinalizeSeat { seat })) => {
+                self.finalize_seat(cx, e, &seat).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ReleaseKey { key })) => {
+                self.release_key_tombstone(cx, e, &key).await
+            }
             (EffectKind::Custom(_), Some(Payload::ReserveKey)) => self.reserve_key(cx, e).await,
             (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
                 self.succeed_seat(cx, e, &pane, &from, &epoch).await

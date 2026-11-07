@@ -3597,16 +3597,23 @@ fn seat_activate_writes_a_restore_intent_for_seated_clones_only() {
 }
 
 #[test]
-fn purge_of_a_retired_seated_clone_deletes_the_record() {
+fn purge_of_a_retired_seated_clone_keeps_a_finalize_tombstone() {
     let fx = fx();
     let c = retired_second(&fx, Some("seat-42"));
     let sp = plan(&fx, &format!("clone purge {}", c.id));
     assert_eq!(kinds_of(&sp), vec!["clone.purge"]);
-    // Before D2 every seat is final: no Finalize tombstone is kept.
-    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    // A seated clone always keeps Finalize{seat}, whatever the seat's retirement kind (§14.2).
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "finalize");
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    assert!(find_clone(&fx, &c.id).is_none());
+    let t = find_clone(&fx, &c.id).expect("the tombstone stays to drive the finalization");
+    assert!(t.is_tombstone());
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::Finalize {
+            seat: "seat-42".into()
+        })
+    );
 }
 
 #[test]
@@ -3660,16 +3667,22 @@ fn purge_of_a_reserved_seatless_clone_writes_release_key() {
 
 #[test]
 fn purge_of_a_seated_clone_keeps_no_release_key() {
-    // A seat holder's key is the seat's: threads deletes it at final retirement, and the Finalize tombstone
-    // is hg-66u.31's (before D2 a seated clone is deleted outright). A recorded reservation changes neither.
+    // A seat holder's key is the seat's: threads deletes it at final retirement, so the tombstone is the
+    // seat's Finalize, never a ReleaseKey, whatever reservation the clone recorded.
     let fx = fx();
     let c = retired_second(&fx, Some("seat-42"));
     reserve_key(&fx, &c.id, Some("seat-42"));
     let sp = plan(&fx, &format!("clone purge {}", c.id));
-    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "finalize");
     let row = apply_plan(&fx, &sp);
     assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
-    assert!(find_clone(&fx, &c.id).is_none());
+    let t = find_clone(&fx, &c.id).expect("the tombstone stays");
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::Finalize {
+            seat: "seat-42".into()
+        })
+    );
 }
 
 #[test]
@@ -3729,7 +3742,10 @@ fn purged_seated_clone_is_not_revived_by_seat_resurrect() {
         CloneLifecycle::Retired
     );
     commit(&fx, &format!("clone purge {only}"));
-    assert!(find_clone(&fx, &only).is_none());
+    assert!(
+        find_clone(&fx, &only).is_some_and(|t| t.is_tombstone()),
+        "the purge leaves an inert Finalize tombstone"
+    );
     // The seat has no clone left to bring back: the plan either lists nothing for the purged id or refuses.
     match create_plan(
         &fx.deps,
@@ -3752,8 +3768,10 @@ fn purged_seated_clone_is_not_revived_by_seat_resurrect() {
         Err(_) => {}
     }
     assert!(
-        find_clone(&fx, &only).is_none(),
-        "the purged clone stays gone"
+        find_clone(&fx, &only).is_some_and(|t| t.is_tombstone()
+            && t.lifecycle == CloneLifecycle::Retired
+            && t.occupant.is_none()),
+        "the tombstone is not revived"
     );
 }
 
@@ -3780,4 +3798,33 @@ fn clone_status_lists_retired_unpurged_clones() {
     assert_eq!(listed[0]["name"], "second");
     assert_eq!(listed[0]["seat"], "seat-42");
     assert!(listed[0]["retired_at"].is_string(), "{v}");
+}
+
+#[test]
+fn seat_and_teamspace_resurrect_skip_a_purge_tombstone() {
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create live --teamspace alpha --active --harness shell",
+    );
+    let (_, rec) = seat(&fx, "live", None);
+    let only = clones_of(&fx, &rec.id).remove(0).1.id;
+    assign_seat(&fx, &only, "seat-42");
+    commit(&fx, "teamspace retire alpha");
+    commit(&fx, &format!("clone purge {only}"));
+    let (_, ts) = teamspace(&fx, "alpha");
+    let sp = plan(&fx, &format!("teamspace resurrect {}", ts.id));
+    assert_eq!(count(&sp, "seat.resurrect"), 1);
+    assert_eq!(
+        count(&sp, "clone.resurrect"),
+        0,
+        "the tombstone is not a clone to bring back: {:?}",
+        kinds_of(&sp)
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &only).expect("the tombstone stays");
+    assert!(t.is_tombstone());
+    assert_eq!(t.lifecycle, CloneLifecycle::Retired);
 }

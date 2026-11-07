@@ -255,7 +255,12 @@ pub async fn compose_with(
         }),
         ReconcilerConfig::new(paths.root.clone()),
     );
-    crate::threads::register_with(&reconciler, threads.clone(), pane_seat_map.clone());
+    crate::threads::register_with(
+        &reconciler,
+        threads.clone(),
+        pane_seat_map.clone(),
+        seat_view.clone(),
+    );
     let runtime = RuntimeLoop::new(
         herdr.clone(),
         store.clone(),

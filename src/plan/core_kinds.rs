@@ -836,6 +836,7 @@ impl OrgKind for TeamspaceResurrect {
             ));
             for (_, c) in layout::list_clones(cx.tree, &loc.folder)? {
                 if c.lifecycle == CloneLifecycle::Retired
+                    && !c.is_tombstone()
                     && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
                 {
                     effects.push(PlanEffect::new(
@@ -1527,6 +1528,7 @@ impl OrgKind for SeatResurrect {
         let mut revived: Vec<&CloneRecord> = Vec::new();
         for (_, c) in &f.clones {
             if c.lifecycle == CloneLifecycle::Retired
+                && !c.is_tombstone()
                 && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
             {
                 effects.push(PlanEffect::new(
@@ -1600,6 +1602,7 @@ impl OrgKind for SeatResurrect {
         let set = retired_by(&cx.tree, action.as_ref()).map_err(mm)?;
         let revives_clone = f.clones.iter().any(|(_, c)| {
             c.lifecycle == CloneLifecycle::Retired
+                && !c.is_tombstone()
                 && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
         });
         let mut acc = Acc::default();
