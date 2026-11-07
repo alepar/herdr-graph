@@ -1,14 +1,15 @@
 //! SeatObservation: owns turning seat statuses into clone binding, availability, retirement, the committed
-//! per-clone seat_fact and the key-conflict alert level, plus pre-D1 precedence over the old matcher. It reads
-//! the seat intent but never writes it; new seat-state handling is added in the single match below; callers
-//! never map seat states to graph changes elsewhere.
+//! per-clone seat_fact and the key-conflict alert level. It reads the seat intent but never writes it; new
+//! seat-state handling is added in the single match below; callers never map seat states to graph changes
+//! elsewhere.
 //!
-//! A seat the read omitted (a per-seat refusal) is threads not speaking for that clone: the matcher's result
-//! stands. A refusal that outlasts `SEAT_LOST_AFTER` makes the clone Unknown (seat lost). Clones of a Dormant
-//! seat or teamspace are not inspected.
-//!
-//! Pre-D1 precedence: threads speaks only with Resolved, Retired or KeyConflict. Unresolved, an unreachable
-//! threads service and a clone without `threads_seat` leave the old matcher's result untouched.
+//! A seated clone is located only here. The matcher hands over, for it, just the binding this module last
+//! wrote (the snapshot's own incarnation): Resolved binds the clone to threads' pane; Unresolved, Retired
+//! (unless a Restore is pending) and KeyConflict unbind it (Unknown or retire); a lost seat is unbound; a seat
+//! the read omitted (a per-seat refusal) or an unreachable threads service is threads not speaking, so the
+//! held binding stands. A refusal that outlasts `SEAT_LOST_AFTER` makes the clone Unknown (seat lost). Clones
+//! of a Dormant seat or teamspace are not inspected. A clone without `threads_seat` is none of this module's
+//! business: the matcher locates it by token or preserved pane id.
 use super::matcher::Matches;
 use crate::model::clone::{CloneRecord, SeatFact, SeatFactState, SeatIntent};
 use crate::model::common::CloneLifecycle;
@@ -98,7 +99,7 @@ fn fact_state(status: &SeatStatus) -> SeatFactState {
     }
 }
 
-/// Drop `clone`'s pane from the matcher result; it then has no binding this step (Unknown).
+/// Drop `clone`'s pane from the matches; it then has no binding this step (Unknown).
 fn unbind(m: &mut Matches, out: &mut SeatOutcome, clone: &CloneId) {
     if let Some(pane) = m.clone_pane.remove(clone)
         && m.panes.get(&pane) == Some(clone)
@@ -111,7 +112,7 @@ fn unbind(m: &mut Matches, out: &mut SeatOutcome, clone: &CloneId) {
 }
 
 /// Single match on SeatStatus. Mutates `m` for the clones threads speaks for. `live` is the set of panes in
-/// the snapshot: a Resolved pane that is not there yet cannot be bound, so the matcher's result stands.
+/// the snapshot: a Resolved pane that is not there yet cannot be bound, so the held binding stands.
 /// `lost` holds the seats refused for longer than `SEAT_LOST_AFTER`: their clones are Unknown, never retired.
 /// `bare` is the set of snapshot panes with no agent; `changed_at` is when the Herdr incarnation last changed.
 #[allow(clippy::too_many_arguments)]
@@ -152,7 +153,10 @@ pub fn observe(
                     resolved.push((clone, pane.clone()));
                 }
             }
-            SeatStatus::Unresolved => unresolved.push(clone),
+            SeatStatus::Unresolved => {
+                unbind(m, &mut out, &clone);
+                unresolved.push(clone);
+            }
             SeatStatus::Retired { .. } => {
                 let pending_restore = matches!(
                     d.clones.get(&clone).and_then(|c| c.seat_intent.as_ref()),

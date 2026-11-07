@@ -840,42 +840,160 @@ fn only_clone_pair(fx: &Fx) -> Vec<CloneRecord> {
     clones_of(fx, &seat(fx, "foreman").id)
 }
 
+/// A Shell-harness clone has no agent, so it never gets a threads seat: the preserved pane id is its location.
 #[tokio::test]
-async fn restart_without_tokens_matches_terminal_id_with_cwd() {
+async fn seatless_clone_survives_cold_restart_on_preserved_pane_id() {
     let fx = fx();
-    activate(&fx, "claude");
+    activate(&fx, "shell");
+    settle(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert_eq!(c.threads_seat, None);
+    let pane = pane_of(&fx, &c);
+    fx.herdr.clear_calls();
+    // Tokens and terminal ids are gone; only the pane ids (and tab and workspace ids) were preserved.
+    fx.herdr.cold_restart_keeping_pane_ids(false);
+
+    let sum = step(&fx).await;
+    assert_eq!(sum.mode, Some(StepMode::Rebind));
+    settle(&fx).await;
+    assert_no_closure_and_no_create(&fx);
+    let now = clone_by_id(&fx, &c.id);
+    let snap = snapshot(&fx).await;
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    let b = now.runtime.bound.expect("bound");
+    assert_eq!(b.pane_id, Some(pane.clone()), "the same pane id");
+    assert_eq!(b.incarnation, snap.incarnation, "in the new incarnation");
+    // The reconciler re-stamps what the restart dropped.
+    assert!(
+        snap.workspaces[0]
+            .tabs
+            .iter()
+            .flat_map(|t| &t.panes)
+            .any(|p| p.id == pane
+                && p.metadata
+                    .get("hg")
+                    .is_some_and(|v| *v == format!("hg={}", c.id))),
+        "pane token restored"
+    );
+}
+
+/// Terminal id and cwd are no longer evidence: a restart that kept them but renumbered the panes leaves a
+/// tokenless seatless clone Unknown, never recreated or retired.
+#[tokio::test]
+async fn seatless_clone_without_a_preserved_pane_id_is_unknown() {
+    let fx = fx();
+    activate(&fx, "shell");
     settle(&fx).await;
     let c = only_clone(&fx, "foreman");
     fx.herdr.clear_calls();
     fx.herdr.restart(false, true);
 
-    let sum = step(&fx).await;
-    assert_eq!(sum.mode, Some(StepMode::Rebind));
+    step(&fx).await;
+    step(&fx).await;
     settle(&fx).await;
-    assert!(actions(&fx, ActionKind::ClosureCascade).is_empty());
-    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+    assert_no_closure_and_no_create(&fx);
     let now = clone_by_id(&fx, &c.id);
-    let snap = snapshot(&fx).await;
-    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(now.lifecycle, CloneLifecycle::Active);
+    assert_eq!(now.runtime.availability, Availability::Unknown);
+}
+
+/// The token is the first evidence: where it sits decides, even when the clone's old pane id now names a
+/// pane carrying another clone's token.
+#[tokio::test]
+async fn seatless_clone_token_wins_over_the_preserved_pane_id() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    settle(&fx).await;
+    let mut cs = clones_of(&fx, &seat(&fx, "foreman").id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let (pa, pb) = (pane_of(&fx, &a), pane_of(&fx, &b));
+    fx.herdr.cold_restart_keeping_pane_ids(true);
+    // Herdr's restore put each token on the other clone's pane id.
+    fx.herdr
+        .report_pane_metadata(&pa, "hg", &format!("hg={}", b.id))
+        .await
+        .unwrap();
+    fx.herdr
+        .report_pane_metadata(&pb, "hg", &format!("hg={}", a.id))
+        .await
+        .unwrap();
+    fx.herdr.clear_calls();
+
+    step(&fx).await;
+    assert_eq!(bound_pane(&fx, &a.id), Some(pb), "a is where its token is");
+    assert_eq!(bound_pane(&fx, &b.id), Some(pa), "b is where its token is");
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Token, terminal id and committed pane id would all still find the seated clone after this restart; only
+/// threads' answer does.
+#[tokio::test]
+async fn seated_clone_is_located_only_by_seat_observation() {
+    let fx = fx();
+    let (c, _) = seated(&fx, "seat-1").await;
+    fx.herdr.restart(true, true);
+    let tab = tab_of_seat(&fx, "foreman");
+    let token_pane = {
+        let snap = snapshot(&fx).await;
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .find(|p| {
+                p.metadata
+                    .get("hg")
+                    .is_some_and(|v| *v == format!("hg={}", c.id))
+            })
+            .expect("the token survived the restart")
+            .id
+            .clone()
+    };
+    fx.herdr.clear_calls();
+
+    // Threads does not know the seat: Unknown, however much the matcher's old evidence says.
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    step(&fx).await;
     assert_eq!(
-        now.runtime.bound.as_ref().unwrap().incarnation,
-        snap.incarnation
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown
     );
-    // The reconciler re-stamps what the restart dropped.
-    let stamped = snap.workspaces[0]
-        .tabs
-        .iter()
-        .flat_map(|t| &t.panes)
-        .any(|p| {
-            p.metadata
-                .get("hg")
-                .is_some_and(|v| *v == format!("hg={}", c.id))
-        });
-    assert!(stamped, "pane token restored");
-    assert!(
-        snap.workspaces[0].metadata.contains_key("hg"),
-        "workspace token restored"
-    );
+    assert_no_closure_and_no_create(&fx);
+
+    // Threads resolves the seat to a pane that carries no token, while another pane carries the clone's.
+    let threads_pane = fx.herdr.add_user_pane(&tab, "resumed");
+    assert_ne!(threads_pane, token_pane);
+    fx.seats
+        .set(&seat_ref("seat-1"), resolved(&threads_pane));
+    step(&fx).await;
+    let now = clone_by_id(&fx, &c.id);
+    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(bound_pane(&fx, &c.id), Some(threads_pane));
+    assert_no_closure_and_no_create(&fx);
+}
+
+/// Threads being unreachable is not threads speaking: the binding SeatObservation last wrote stands.
+#[tokio::test]
+async fn seated_clone_holds_its_binding_while_threads_is_unavailable() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(&seat_ref("seat-1"), resolved(&pane));
+    step(&fx).await;
+    let before = clone_by_id(&fx, &c.id);
+    assert_eq!(before.runtime.availability, Availability::Present);
+
+    fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        step(&fx).await;
+        fx.clock.advance(chrono::Duration::minutes(15));
+    }
+    let after = clone_by_id(&fx, &c.id);
+    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(after.runtime.bound, before.runtime.bound);
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
 }
 
 #[tokio::test]
@@ -2131,7 +2249,8 @@ fn fact_state(fx: &Fx, id: &CloneId) -> Option<SeatFactState> {
     clone_by_id(fx, id).seat_fact.map(|f| f.state)
 }
 
-/// Herdr's live handoff: tokens and terminal ids are gone, so the old matcher cannot find the clone.
+/// Herdr's live handoff: tokens and terminal ids are gone and the binding is of the old incarnation, so only
+/// threads can find a seated clone.
 async fn handoff(fx: &Fx) {
     fx.herdr.live_handoff();
     fx.lp.force_rebind();
@@ -2146,7 +2265,7 @@ async fn seat_resolved_binds_and_marks_present() {
     assert_eq!(
         clone_by_id(&fx, &c.id).runtime.availability,
         Availability::Unknown,
-        "without threads the old matcher loses the clone"
+        "without threads' answer a seated clone is Unknown"
     );
 
     fx.seats.set(
@@ -2172,24 +2291,20 @@ async fn seat_resolved_binds_and_marks_present() {
 }
 
 #[tokio::test]
-async fn seat_unresolved_keeps_the_matcher_result() {
+async fn seat_unresolved_unbinds_the_clone() {
     let fx = fx();
     let (c, _) = seated(&fx, "seat-1").await;
-    // Matcher still finds the clone (nothing changed): threads says Unresolved, the binding stays.
+    // The committed binding is of this incarnation and the pane is where it was, but threads does not know
+    // the seat at any pane: a seated clone is located only by threads, so it is Unknown.
     fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    fx.herdr.clear_calls();
     step(&fx).await;
     let after = clone_by_id(&fx, &c.id);
-    assert_eq!(after.runtime.bound, c.runtime.bound);
-    assert_eq!(after.runtime.availability, Availability::Present);
+    assert_eq!(after.runtime.availability, Availability::Unknown);
+    assert_eq!(after.runtime.bound, c.runtime.bound, "the binding is held");
+    assert_eq!(after.lifecycle, CloneLifecycle::Active);
     assert_eq!(fact_state(&fx, &c.id), Some(SeatFactState::Unresolved));
-    // And when the matcher loses it too, Unresolved does not invent a binding.
-    handoff(&fx).await;
-    step(&fx).await;
-    assert_eq!(
-        clone_by_id(&fx, &c.id).runtime.availability,
-        Availability::Unknown
-    );
-    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
+    assert_no_closure_and_no_create(&fx);
 }
 
 #[tokio::test]
@@ -2638,10 +2753,10 @@ async fn parity_cold_restart_headless_bare_pane_is_unknown_not_recreated() {
     assert_no_closure_and_no_create(&fx);
 }
 
-/// Cold restart that keeps pane metadata: the graph token still identifies the clone, threads has nothing
-/// to say about the bare pane (Unresolved), and the matcher's token pass keeps the clone Present (pre-D1).
+/// Cold restart that keeps pane metadata: the graph token survives, but a seated clone is never located by
+/// token, and threads has nothing to say about the bare pane (Unresolved): the clone is Unknown, not recreated.
 #[tokio::test]
-async fn parity_cold_restart_with_surviving_tokens_keeps_the_matcher_result() {
+async fn parity_cold_restart_with_surviving_tokens_does_not_locate_a_seated_clone() {
     let fx = fx();
     let (c, _) = seated(&fx, "seat-1").await;
     fx.herdr.restart(true, true);
@@ -2651,7 +2766,7 @@ async fn parity_cold_restart_with_surviving_tokens_keeps_the_matcher_result() {
     step(&fx).await;
     settle(&fx).await;
     let now = clone_by_id(&fx, &c.id);
-    assert_eq!(now.runtime.availability, Availability::Present);
+    assert_eq!(now.runtime.availability, Availability::Unknown);
     assert_eq!(now.lifecycle, CloneLifecycle::Active);
     assert_no_closure_and_no_create(&fx);
 }
@@ -3048,6 +3163,8 @@ async fn sustained_service_wide_refusal_changes_no_binding() {
         );
     };
     check("during the refusal");
+    // The read recovers and threads answers for the seat again.
+    fx.seats.set(&seat_ref("seat-1"), resolved(&pane));
     fx.seats.set_error(None);
     step(&fx).await;
     check("after the read recovers");
@@ -3101,6 +3218,8 @@ async fn seat_refused_beyond_the_window_is_unknown_with_a_seat_lost_alert() {
 /// (spec §9's precondition) but drops tokens and reallocates terminal ids. `agent_survives` keeps the agent.
 async fn restart_after_occupant(fx: &Fx, agent_survives: bool) -> (CloneRecord, HerdrPaneId) {
     let (c, pane) = seated(fx, "seat-1").await;
+    // Threads locates the seated clone while the agent runs; the occupant is observed through its pane.
+    fx.seats.set(&seat_ref("seat-1"), resolved(&pane));
     fx.herdr.set_agent(&pane, claude_agent(Some("abc")));
     fx.herdr.set_process(&pane, claude_process());
     step(fx).await;
@@ -3120,7 +3239,8 @@ async fn restart_after_occupant(fx: &Fx, agent_survives: bool) -> (CloneRecord, 
         fx.herdr.set_agent(&pane, None);
         fx.herdr.set_process(&pane, shell_process());
     }
-    // `fx.seats` stays unset for seat-1: threads reads Unresolved, the pre-D1 answer.
+    // After the restart threads reads the seat Unresolved until the agent checks in again.
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
     fx.herdr.clear_calls();
     (c, pane)
 }

@@ -161,7 +161,7 @@ Spikes 1–4 retain their historical private-server evidence from 2026-10-02; th
 | application retire closes the application's exclusive seats and their tabs, a bystander seat stays | 5 | verified-real | `e2e_application_retire_closes_exclusive_seats` |
 | events withheld from the daemon (SIGSTOP burst: 60 renames, final rename, pane close) converge from a fresh snapshot | 4.3.1 | verified-real | `e2e_event_loss_reconnect_converges`; whether Herdr buffers or drops the withheld events was not distinguished, so a truly dropped event is not shown at this tier (tier 2: `src/observe/tests.rs`) |
 | SIGKILL of the daemon right after three seat ops commit: restart converges, one tab/pane/token per seat, nothing duplicated | 3.6, 4.4 | verified-real | `e2e_daemon_kill_mid_op_recovers_no_duplicates` (the kill lands while effects are in flight; not a deterministic failpoint, those are tier 2) |
-| Herdr private-server restart: bound objects become `unknown`, no mass retirement, no recreation, no duplicate tab/pane (the removed `clone rebind` no longer re-adopts panes; a seated clone returns through its threads seat or key reattach) | 4.3.2 | verified-real | `e2e_herdr_restart_no_mass_retirement_no_duplicates` |
+| Herdr private-server restart: no mass retirement, no recreation, no duplicate tab/pane; a seatless (shell) clone is recovered on its preserved pane id, a seated clone returns through its threads seat or key reattach (the removed `clone rebind` no longer re-adopts panes) | 4.3.2 | verified-real | `e2e_herdr_restart_no_mass_retirement_no_duplicates` |
 | close a tab while the daemon is down: seat `unknown` on restart, not retired, tab not recreated | 4.3.2 | verified-real | `e2e_close_while_daemon_down_unknown_not_recreated` |
 | retire a seat's last clone: plan shows the induced `seat.retire` and `runtime.close_tab`; afterwards tab gone, seat retired exactly once, no "observed" closure | 3.3, 4.4 | verified-real | `e2e_retire_last_clone_induced_seat_retirement_once` |
 | seat deactivate: tab closed, seat dormant, clones and seat not retired, not recorded as a closure | 4.4 | verified-real | `e2e_seat_deactivate_closes_tab_no_retirement` |
@@ -243,7 +243,7 @@ This is upstream service evidence, not graph's real-agent summarizer flow.
 |---|---|---|---|
 | closing a pane/tab/workspace announces only the container's own event; events are hints, never state | 4.3.1 | verified-real | spike 1; relied on by every tier-3 close flow |
 | closing a workspace's last tab closes the workspace | 4.4 | verified-real | spike 2 |
-| after a server restart tokens are lost, labels survive, terminal ids change, workspace and pane ids happen to be reused | 4.2 | verified-real | spike 3; confirmed again by `e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates` (tokens gone, bound objects `unknown`) |
+| after a server restart tokens are lost, labels survive, terminal ids change, workspace and pane ids happen to be reused | 4.2 | verified-real | spike 3; confirmed again by `e2e_herdr_restart_no_mass_retirement_no_duplicates` (tokens gone, seatless clones recovered on the reused pane ids) |
 | a detached daemon started from `[[startup]]` survives the hook's exit | 1 | verified-real | spike 4; confirmed by `e2e_plugin_link_status_action_single_daemon` |
 | `agent_session` for an `agent.start`ed Claude without Herdr's Claude integration | 4.1 | assumed | spike 5: needs `HG_REAL_AGENTS=1` and an API key; never run |
 | Herdr live handoff (`server.live_handoff`) keeps bindings | 4.2 | assumed | not exercised (spike 3 note) |

@@ -105,6 +105,7 @@ pub struct Binding {
     pub tab_id: Option<HerdrTabId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_id: Option<HerdrPaneId>,
+    /// Recorded for diagnosis only: no clone is located by terminal id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_id: Option<HerdrTerminalId>,
     pub incarnation: Incarnation,

@@ -1569,12 +1569,15 @@ fn e2e_herdr_restart_no_mass_retirement_no_duplicates() {
     let Some((rig, clones)) = restarted_rig() else {
         return;
     };
-    // Herdr keeps labels but not tokens (docs/herdr-spikes.md, spike 3): the daemon cannot match anything
-    // and, per spec §4.3.2, marks the bound objects `unknown` instead of retiring or recreating them.
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
+    // Herdr keeps labels and pane ids but not tokens (docs/herdr-spikes.md, spike 3). These shell clones have
+    // no threads seat, so the daemon locates each by its preserved pane id (spec §6, S1) instead of retiring or
+    // recreating it, and the reconciler re-stamps the token.
+    rig.wait_until("every clone to be present on its preserved pane", WAIT, |r| {
+        clones.iter().all(|(c, pane)| {
+            let now = r.show(&c.id);
+            tstr(&now, "runtime.availability") == "present"
+                && tstr(&now, "runtime.bound.pane_id") == *pane
+        })
     });
     rig.wait_settled();
     std::thread::sleep(Duration::from_secs(4));
