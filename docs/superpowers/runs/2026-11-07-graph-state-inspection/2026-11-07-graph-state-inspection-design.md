@@ -252,9 +252,9 @@ The caller is resolved exactly as those paths already resolve it (`resolve_calle
 - each part: label, path, bytes, digest, and the commit that last changed it;
 - which parts the 9000-byte hook would keep;
 - per clone, the loaded status from the record;
-- **harness-native files present**, listed by path with size and mtime, marked `not graph-managed`, and never read for content. JSON: `harness_files:[{path,bytes,mtime,origin}]`, `origin` one of `project | ancestor | user`:
+- **harness-native files present**, listed by path with size and mtime, marked `not graph-managed`, and never read for content. JSON: `harness_files:[{path,bytes,mtime,origin,harness}]`, `origin` one of `project | ancestor | user`, `harness` one of `claude | codex` (the harness that reads that file name; the seat's own harness is marked, others are listed, not filtered):
   - in the seat's cwd (the `src/model/launch.rs` rule) and its ancestors: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/rules/**/*.md`, `AGENTS.md`, `AGENTS.override.md`;
-  - user-level: `$CLAUDE_CONFIG_DIR/CLAUDE.md` (else `~/.claude/CLAUDE.md`) and `$CODEX_HOME/AGENTS.md` (else `~/.codex/AGENTS.md`), resolved from the inspecting process's environment, which may differ from the agent's own.
+  - user-level: `$CLAUDE_CONFIG_DIR/CLAUDE.md` (else `~/.claude/CLAUDE.md`) and `$CODEX_HOME/AGENTS.md` (else `~/.codex/AGENTS.md`), resolved from the inspecting process's environment, which may differ from the agent's own: graph never reads the agent's environment back (`src/model/launch.rs`), so these entries carry `env: inspector` in text and JSON.
   - Because content is never read, `@`-imports are not followed; the output says so in one line.
 
 Bodies are left out; `seat --instructions` and `show <path>` still print text.
