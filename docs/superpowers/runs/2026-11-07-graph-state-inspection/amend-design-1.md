@@ -1,0 +1,48 @@
+owners:
+- [Should-fix] §2.3 record `parts`/`omitted`/`cut`; Status `current` "every part at HEAD has the same label and digest as the record" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.3 Loaded instructions and staleness
+- [Nit] Key abstractions Scope "resolves retired targets too … reuses `instruction_source`'s `pick` logic and error wording"; hg-blw.7 acceptance → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §Key abstractions
+- [Nit] §2.3 Digest choice ("their `path` is `seat.toml` or `template.toml`"); Status `stale` row "one `git log -1` per changed path" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.3 Loaded instructions and staleness
+- [Nit] Key abstractions Inventory "Errors: `StoreError` only … maps to exit 6"; §2.2 Cost "one render per active seat" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- [Nit] §2.3 harness files "in the seat's cwd … and its ancestors: … `AGENTS.md`, `AGENTS.override.md`"; user-level `$CODEX_HOME/AGENTS.md` → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.3 Loaded instructions and staleness
+- [Nit] §2.3 "`harness` one of `claude | codex` (the harness that reads that file name)" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.3 Loaded instructions and staleness
+- [Should-fix] §2.2 JSON `"instructions":{"status","loaded_rev","loaded_at","source","truncated","stale_parts"}`; task hg-blw.4 acceptance → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- [Nit] §2.1 "Each JSON document carries `schema: 1` and the `head` revision it was computed from"; Inventory "read once from HEAD"; HistoryWalker "walks `main` from HEAD" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- [Should-fix] §2.4 "What it reads per commit: … the `ActionRecord`, when present"; JSON row `action:{id,kind,undoable,undone}`; sample "act_01… undone" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.4 `herdr-graph log [<scope>] [--since <date|dur>] [--limit N] [--by <seat>] [--all] [--json]`
+- [Should-fix] §2.4 Cost "scanned 5000 commits, older history not searched"; §2.4 Journal pointer to `ops`; §2.3 `@`-imports line; §2.5 tombstone footer → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- [Should-fix] §2.4 Scope membership "A commit is in scope when any of these holds: … `--by <seat>`"; LogQuery "or (with `--by`) when the requester's seat matches" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.4 `herdr-graph log [<scope>] [--since <date|dur>] [--limit N] [--by <seat>] [--all] [--json]`
+- [Should-fix] §2.2 With `--live`; Key abstractions Roster Errors "daemon down for `--live` is exit 5" → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- [Nit] §2.2 With --live "`live_pane_matches`: whether the snapshot still shows the committed binding"; §5 S1 unmanaged → owner: docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.2 `herdr-graph roster [<scope>] [--live] [--json]`
+amended:
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.1 Principles
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.2 `herdr-graph roster [<scope>] [--live] [--json]`
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.3 Loaded instructions and staleness
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.4 `herdr-graph log [<scope>] [--since <date|dur>] [--limit N] [--by <seat>] [--all] [--json]`
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §2.5 `herdr-graph sessions [<scope> | clone <c>] [--since <date|dur>] [--limit N] [--json]`
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §3. Recommendation, rejected options, phases
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §5. Overlap with onboarding-design
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §Key abstractions
+- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md §Unchanged behavior
+work:
+- Loaded record keyed by native session id, hook-only writer | LoadedInstructions owns `.graph-local/loaded/<clone>.json` with `native_session_id`, delivered `parts` (whole/cut, delivered-bytes digest) and `omitted`; InjectionSource is `Hook | HookCodex`; status is Unknown unless the record's native id equals the occupant's (consumed from Inventory's occupant `sessions[]` entry), then compares against `fit_hook` over the HEAD manifest (consumed from InstructionManifest); `seat --hook-prompt [--codex] --stdin-payload` parses `session_id` from stdin and is the only writer; `setup` emits `p=$(cat); printf '%s' "$p" | … seat --hook-prompt --stdin-payload; printf '%s' "$p" | … session-report --from-hook claude` and the Codex `--stdin-payload` command; `seat --instructions` and `seat.resolve` do not write; roster/stack `instructions` object carries `loaded_session`, `parts`, `omitted`; tests drive the real hook chain from a clone with no occupant to `current`, plus mismatched-id and null-id `unknown`, and a `seat --json` call leaving the record unchanged | src/inspect/loaded.rs (new), src/cli/seat.rs, src/bootstrap/setup_claude.rs, src/inspect/roster.rs, src/inspect/stack.rs | covers: [Should-fix] §2.3 record `parts`/`omitted`/`cut`; Status `current` "every part at HEAD has the same label and digest as the record"
+supersedes:
+- hg-blw.4 → Loaded record keyed by native session id, hook-only writer
+unchanged:
+- The text an agent receives from `seat --hook-prompt` (both harnesses), `seat --instructions` and `seat --json` `.instructions.text`: same render, same 9000-byte cap and truncation marker, same exit codes; the hook never fails or blocks its session.
+- `session-report --from-hook claude` still receives the full Claude SessionStart payload on stdin and sends the same `session.report` arguments, including from an older installed hook command without `--stdin-payload`.
+- `seat --instructions` and `seat --json` (`seat.resolve`) stay read-only: no Git write and no `.graph-local/loaded/` write.
+- No new Git writes and no reload notice; the loaded record stays local, best-effort and daemon-free.
+- `instructions show` resolution and errors, including its `Retired` error for retired-only matches.
+- `undo --list` output and its undone rule.
+- Default `log` hides `bookkeeping`; `--all` shows it.
+- Harness-native files: presence, size and mtime only; content never read.
+- `roster --live` with the daemon down exits 5; `--unmanaged` only enumerates ids and labels.
+- Exit 6 for an integrity failure that leaves nothing to show.
+requirements:
+- B1: preserved — `roster` from the pinned HEAD still lists every active seat and clone; a seat whose stack fails now shows an `error` instructions row instead of blanking the roster (§2.1, §2.2).
+- B2: preserved — the hook writes the loaded record (`seat --hook-prompt --stdin-payload` → LoadedInstructions), and `roster` / `instructions stack` show its `parts` and `omitted` labels per clone; staleness is reported when the record's native session id matches the occupant's. For Codex, if the hook payload carries no `session_id`, the loaded files are still listed but the status is `unknown` (stated as an honest limit in §2.3).
+- B3: preserved — `log [<scope>]` still answers global/teamspace/seat modifications; `--by` is now an AND filter and `undone` is read from HEAD, so the rows are correct rather than different in kind.
+- B4: preserved — `sessions` is unchanged in rows and order; it gains a `tombstones` JSON field for the existing footer.
+- B5: preserved — staleness is still only shown (roster/stack status), no notice is added.
+- B7: preserved — harness files are still listed by presence, size and mtime only; the amendment changes which file names each harness is credited with, not what is read.
+- B8: preserved — `roster --live` through `roster.live` still adds agent kind/status and binding match; a failed snapshot now sets `live_unavailable` instead of an empty overlay, and binding matches are incarnation-aware.
+- S1: preserved — `--unmanaged` still only enumerates unbound workspace/tab/pane ids and labels; `label` is marked nullable and "bound" is incarnation-aware, adding no extra info.
