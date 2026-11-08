@@ -1,0 +1,46 @@
+schema = 1
+id = "tpl_01M6X1BSTKW729HTM34RAPMJ9A"
+rev = 1
+name = "software-factory"
+kind = "team"
+
+[defaults]
+harness = "claude"
+
+[[members]]
+id = "mem_01M6X1BSTKA5E9QFN1ZVBT3DAN"
+name = "foreman"
+responsibility = "Maintain the project's direction, organize its work, route questions, resolve project conflicts and account for outcomes"
+startup = "active"
+
+[[members]]
+id = "mem_01M6X1BSTKN7969KDQD1RWSN6V"
+name = "secretary"
+responsibility = "Organize incoming information, preserve decisions and commitments, and route communications"
+startup = "deferred"
+
+[[members]]
+id = "mem_01M6X1BSTKQZ03FH46PBDWKNCM"
+name = "lead-researcher"
+seat_template = "tpl_01KRA9GVDGVFPFJVDPV2MSX545"
+responsibility = "Maintain the project's knowledge, investigate uncertainty and connect evidence to decisions"
+startup = "deferred"
+
+[[members]]
+id = "mem_01M6X1BSTKFQD3VZJ6JX4JQRWM"
+name = "designer"
+seat_template = "tpl_01KRA9GVDGVFPFJVDPV2MSX546"
+responsibility = "Shape the experience of project changes with the user"
+startup = "deferred"
+
+[[members]]
+id = "mem_01M6X1BSTK3WFY4A5TJA6HPW30"
+name = "engineer"
+seat_template = "tpl_01KRA9GVDGVFPFJVDPV2MSX543"
+responsibility = "Develop and verify project changes in its code worktrees"
+startup = "deferred"
+
+[[relationships]]
+kind = "thread_participation"
+thread = "project"
+members = "all"

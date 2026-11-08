@@ -1807,6 +1807,7 @@ fn init_with_examples_templates_hydrate() {
             "project-team",
             "researcher",
             "reviewer",
+            "software-factory",
             "system-summarizer"
         ]
     );
@@ -1895,6 +1896,68 @@ fn init_with_examples_templates_hydrate() {
 }
 
 #[test]
+fn software_factory_template_applies() {
+    let fx = fx_with(|root| {
+        examples::install_examples(root).unwrap();
+    });
+    commit(&fx, "teamspace create alpha");
+    commit(
+        &fx,
+        "application apply software-factory --teamspace alpha --name factory",
+    );
+
+    // The foreman starts; the other seats wait until there is work for them.
+    assert_eq!(seat_rec(&fx, "foreman").lifecycle, Lifecycle::Active);
+    for name in ["secretary", "lead-researcher", "designer", "engineer"] {
+        assert_eq!(seat_rec(&fx, name).lifecycle, Lifecycle::Dormant, "{name}");
+    }
+    let tpl = layout::list_templates(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .find(|(_, t)| t.name == "software-factory")
+        .unwrap()
+        .1;
+    assert_eq!(tpl.relationships.len(), 1);
+    assert_eq!(tpl.relationships[0].thread, "project");
+
+    // Every seat renders the rulebook, its shared seat template (if any) and its member file, and the
+    // whole stack fits the hook untruncated.
+    let head = fx.store.head().unwrap();
+    for (name, seat_template) in [
+        ("foreman", None),
+        ("secretary", None),
+        ("lead-researcher", Some("researcher")),
+        ("designer", Some("designer")),
+        ("engineer", Some("engineer")),
+    ] {
+        let seat = seat_rec(&fx, name);
+        let r = crate::bootstrap::instructions::render_instructions(&view(&fx), &head, &seat.id)
+            .unwrap();
+        let labels: Vec<&str> = r.parts.iter().map(|p| p.label.as_str()).collect();
+        assert!(
+            labels.contains(&"template software-factory"),
+            "{name}: {labels:?}"
+        );
+        if let Some(st) = seat_template {
+            let want = format!("seat template {st}");
+            assert!(labels.contains(&want.as_str()), "{name}: {labels:?}");
+        }
+        assert!(r.text.contains("# Software factory rulebook"), "{name}");
+        assert!(r.text.contains(&format!("# {name}\n")), "{name}");
+        assert!(r.text.contains("responsibility: "), "{name}");
+        let fit = crate::bootstrap::instructions::fit_hook(
+            &r,
+            crate::bootstrap::instructions::HOOK_RENDER_CAP,
+        );
+        assert!(
+            fit.omitted.is_empty() && fit.cut.is_none(),
+            "{name}: {} bytes",
+            fit.full_size
+        );
+    }
+}
+
+#[test]
 fn shipped_templates_are_self_consistent() {
     // Every embedded member file belongs to a member of its template, ids are unique across templates.
     let fx = fx_with(|root| {
@@ -1931,7 +1994,7 @@ fn shipped_templates_are_self_consistent() {
             format!("templates/{}", crate::store::slug::slugify(&t.name))
         );
     }
-    assert_eq!(ids.len(), 9 + 7);
+    assert_eq!(ids.len(), 10 + 12);
     // A second install would overwrite the instance's own files, so it is refused.
     let err = examples::install_examples(&fx.root).unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
@@ -2003,6 +2066,7 @@ fn show_list_path_read_committed_state() {
             "project-team",
             "researcher",
             "reviewer",
+            "software-factory",
             "system-summarizer"
         ]
     );

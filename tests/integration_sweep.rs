@@ -645,6 +645,65 @@ mod golden {
             "the summary went back with the folder"
         );
     }
+
+    #[test]
+    fn sweep_software_factory_applies() {
+        let Some(rig) = Rig::start() else { return };
+        let inst = rig.instance.to_str().unwrap().to_owned();
+        let out = rig.cli(&["init", &inst, "--with-examples"]);
+        assert!(out.status.success(), "init: {}", stderr(&out));
+        rig.cli_ok(&["daemon", "--ensure"]);
+        let doc = rig.shell_template("software-factory");
+        rig.plan_apply(&["template", "edit", "software-factory", "--from", &doc]);
+
+        rig.plan_apply(&["teamspace", "create", "factory", "--active"]);
+        // A dedicated first seat takes the node manager role, so the template's seats stay ordinary.
+        rig.plan_apply(&[
+            "seat",
+            "create",
+            "nm",
+            "--teamspace",
+            "factory",
+            "--active",
+            "--harness",
+            "shell",
+        ]);
+        rig.plan_apply(&[
+            "application",
+            "apply",
+            "software-factory",
+            "--teamspace",
+            "factory",
+            "--name",
+            "proj",
+        ]);
+        rig.wait_until("the foreman tab", |r| r.tab_labelled("foreman").is_some());
+        rig.wait_settled();
+        for name in ["secretary", "lead-researcher", "designer", "engineer"] {
+            assert!(
+                rig.row("seats", name, "dormant").is_some(),
+                "{name} dormant"
+            );
+            assert!(rig.tab_labelled(name).is_none(), "{name} has no tab");
+        }
+
+        // The foreman's pane reads the rulebook and its role through the committed instruction stack.
+        let foreman = rig.row("seats", "foreman", "active").expect("foreman seat");
+        let fclone = rig.clone_of(&foreman.id, "active").expect("foreman clone");
+        let pane = rig.pane_of(&fclone.id).expect("foreman pane").id.0;
+        let text = rig.pane_capture(
+            &pane,
+            "foreman-instructions.txt",
+            &format!("{BIN} seat --instructions"),
+        );
+        for want in [
+            "# Software factory rulebook",
+            "# foreman",
+            "responsibility: Maintain the project's direction",
+        ] {
+            assert!(text.contains(want), "missing {want:?} in {text}");
+        }
+    }
 }
 
 // =============================================================================================

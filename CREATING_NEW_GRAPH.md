@@ -98,4 +98,22 @@ Some of these are graph records; others are instructions or references to extern
 
 You generally do not hand-author clone/session history, transcript indexes, processing requests, or undo/operation records. Graph produces those.
 
-The shipped `project-team` and `feature-team` templates are starting examples: they contain foreman/researcher/engineer and engineer/reviewer respectively. Both teams reference the same reusable engineer definition and create independent seats. Engineer, researcher, reviewer and designer seat definitions are supplied. The factory described in the vision needs richer compositions and operating instructions.
+The shipped `project-team` and `feature-team` templates are starting examples: they contain foreman/researcher/engineer and engineer/reviewer respectively. Both teams reference the same reusable engineer definition and create independent seats. Engineer, researcher, reviewer and designer seat definitions are supplied.
+
+### The `software-factory` template
+
+`software-factory` is a starting composition for a project teamspace in the [software factory vision](SOFTWARE-FACTORY-VISION.md):
+
+| Member | Startup | Seat template | Responsibility |
+|---|---|---|---|
+| foreman | active | — | Direction, organizing work, routing, project conflicts, outcomes |
+| secretary | deferred | — | Incoming information, decisions and commitments, routing |
+| lead-researcher | deferred | researcher | Project knowledge, uncertainty, evidence for decisions |
+| designer | deferred | designer | The experience of changes, worked out with the user |
+| engineer | deferred | engineer | Developing and verifying changes |
+
+All members share a `project` thread. The template's `AGENTS.md` holds the factory rulebook, which renders for every member; each member's `AGENTS.md` describes its role and how its work concludes. For temporary feature capacity, apply `feature-team` in the same teamspace.
+
+What it does not do, because graph has no mechanism for it: assign managers, enforce evidence or acceptance, enforce budgets or work-in-progress limits, run task recipes, or hold retirement until commitments have an owner. The rulebook describes these as practice. To make the foreman the teamspace's escalation point, apply `herdr-graph plan manager set <teamspace> foreman` after the application. Project-specific rules belong in teamspace `rules/<name>.md` (`plan instructions set teamspace`), not in the template.
+
+New instances get the template from `init --with-examples`. An existing instance cannot rerun the install, so load the template with `herdr-graph plan template create software-factory --from <doc.toml>`. Build the document from `templates/software-factory/template.toml`: drop `schema`, `id`, `rev` and the member `id`s, then add the root `AGENTS.md` as `agents_md` and each `members/<name>/AGENTS.md` as that member's `agents_md`. Members reference the shipped `researcher`, `designer` and `engineer` seat templates by id. If your instance lacks those templates, point `seat_template` at your own.
