@@ -12,7 +12,7 @@ base: main
 spec: 2026-11-07-graph-state-inspection-design.md
 epic: hg-blw
 roastDesignRound: 2
-roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md
+roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md, 2026-11-08-graph-state-inspection-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
 stepBackDesign-round-1: redesign — applied: loaded record keyed by timestamp and written by every render path → keyed by native_session_id, hook-only writers (dissolves 3)
@@ -25,5 +25,7 @@ approvals:
 - coverage-amend-design-1 · A1–A20 applied auto (coverage-amend-design-1-dispositions.md); P1, P2 parked auto · R6 restated · requirements: 15 · reviewers 2/2 valid
 
 parked:
-- 2026-11-08-graph-state-inspection-roast-design-1.md · degraded-verdict · "requirement partially unmet — B5 for Codex seats whose hook payload lacks session_id: such clones read unknown (loaded parts still shown); hg-blw.12 reads session_id when present (coverage-amend-design-1 P1)"
+- 2026-11-08-graph-state-inspection-roast-design-1.md · degraded-verdict · "requirement partially unmet — B5 for Codex seats: Codex docs say the SessionStart payload carries session_id, but byte equality with the occupant native_session_id (Herdr agent_session file stem / resume argv) is unverified; hg-blw.12 compares byte for byte and reads unknown with a note when forms differ (coverage-amend-design-1 P1, revised after roast-design-2)"
 - 2026-11-08-graph-state-inspection-roast-design-1.md · degraded-verdict · "unverified — whether Codex keys hook trust to the command string, so the --stdin-payload rewrite may need a re-trust; documented in hg-blw.10 (coverage-amend-design-1 P2)"
+- 2026-11-08-graph-state-inspection-roast-design-2.md · escalation · "Codex current/stale path assumes the SessionStart payload session_id equals the occupant native_session_id (src/model/harness.rs:99-102, src/observe/sessions.rs:38-45); unverified external, panel split — hg-blw.12 now tests the documented payload form and degrades to unknown with a note"
+- 2026-11-08-graph-state-inspection-roast-design-2.md · degraded-verdict · "design roast exit: converged at round 2 (Should-fix 4, 0 Blocking); punch list applied inline: Codex re-trust cost (spec §2.3/Unchanged, hg-blw.12), sessions total (spec §2.5, hg-blw.3), hg-blw.11 slot name, InstructionsView owned by hg-blw.7"
