@@ -9,3 +9,6 @@ R8 ops can be filtered by requester seat/teamspace, limited, and emitted as JSON
 R9 roster shows each seat's last change (B3)
 R10 sessions lists every native session newest first, scoped by teamspace/seat/clone (incl. retired and archived), with start/end timestamps, ids and transcript path (B4)
 R11 every new view has --json carrying schema:1 and the head revision, and inspection adds no Git commits (spec §2.1)
+R12 no inspection view (roster, roster --live, instructions stack, sessions, log, ops) creates a Git commit or changes HEAD, index or work tree, and a test checks it (R-new, round 1)
+R13 an operator or agent can find the new views: README and CLI help name roster, sessions, log, instructions stack and the ops filters (R-new, round 1)
+R14 one production path works end to end: a hook injection writes the loaded record, roster and instructions stack show current, a committed part edit makes them stale, and log shows that edit (R-new, round 1)

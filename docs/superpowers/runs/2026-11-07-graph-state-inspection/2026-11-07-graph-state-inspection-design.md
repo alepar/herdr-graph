@@ -252,7 +252,10 @@ The caller is resolved exactly as those paths already resolve it (`resolve_calle
 - each part: label, path, bytes, digest, and the commit that last changed it;
 - which parts the 9000-byte hook would keep;
 - per clone, the loaded status from the record;
-- **harness-native files present** in the seat's cwd and its ancestors (`CLAUDE.md`, `AGENTS.md`, `AGENTS.override.md`), listed by path with size and mtime, marked `not graph-managed`, and never read for content. JSON: `harness_files:[{path,bytes,mtime}]`.
+- **harness-native files present**, listed by path with size and mtime, marked `not graph-managed`, and never read for content. JSON: `harness_files:[{path,bytes,mtime,origin}]`, `origin` one of `project | ancestor | user`:
+  - in the seat's cwd (the `src/model/launch.rs` rule) and its ancestors: `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md`, `.claude/rules/**/*.md`, `AGENTS.md`, `AGENTS.override.md`;
+  - user-level: `$CLAUDE_CONFIG_DIR/CLAUDE.md` (else `~/.claude/CLAUDE.md`) and `$CODEX_HOME/AGENTS.md` (else `~/.codex/AGENTS.md`), resolved from the inspecting process's environment, which may differ from the agent's own.
+  - Because content is never read, `@`-imports are not followed; the output says so in one line.
 
 Bodies are left out; `seat --instructions` and `show <path>` still print text.
 
