@@ -203,7 +203,11 @@ mod golden {
             j.effects_with_status(&[Pending, Unknown, NeedsRevision])
                 .expect("effects")
                 .into_iter()
-                .filter(|e| !THREADS.contains(&e.kind.as_str()))
+                // The seat-identity effects (`threads.reserve_key`, `threads.resolve_seat`, ...) are custom
+                // kinds named `threads.*`; they also stay pending without a threads service.
+                .filter(|e| {
+                    !THREADS.contains(&e.kind.as_str()) && !e.kind.as_str().starts_with("threads.")
+                })
                 .map(|e| (e.kind.as_str().to_owned(), e.object.to_string()))
                 .collect()
         }
@@ -2850,6 +2854,9 @@ mod wiring {
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
         async fn sweep_undo_restores_onto_a_succeeded_seat() {
             let (_dir, root) = new_instance();
+            // `foreman` would be the node manager, whose observed closure is kept for a Restore instead of
+            // retiring (manager-seats spec §4.9); this flow is about a retired clone, so opt out.
+            crate::support::node_manager_opt_out(&root);
             let d = Daemon::start(&root).await;
             d.committed(&["teamspace", "create", "t", "--active"]).await;
             d.committed(&[
