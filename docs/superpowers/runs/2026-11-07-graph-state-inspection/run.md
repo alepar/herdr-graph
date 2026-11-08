@@ -9,3 +9,5 @@ context: Context: claude · planner=200K/167K · implementer=200K/167K · review
 idea: Implement epic hg-blw (graph state inspection) per the approved design 2026-11-07-graph-state-inspection-design.md, fully autonomous, both roasts on. User's words, relayed by the main-tab coordinator: "hg-blw for impl, /superpowers:super-auto fully autonomouth both roasts are on"
 branch: super-auto/graph-state-inspection
 base: main
+spec: 2026-11-07-graph-state-inspection-design.md
+epic: hg-blw
