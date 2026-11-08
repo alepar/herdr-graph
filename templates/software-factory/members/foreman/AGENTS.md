@@ -14,3 +14,7 @@ relay for every conversation: peers may work with the user directly.
 - Resolve project conflicts; send cross-project conflicts to their named owner or the user.
 - When a temporary group finishes, make sure every open commitment has an owner before its seats
   retire.
+- Turn each significant chunk of work into a `milestone` bead labelled `acceptor:<who>`, with the
+  epics and tasks that deliver it as children. Before asking the acceptor, check that every child is
+  closed with `evidence:` or `not done:`. Record acceptance (label `accepted`, a comment quoting it
+  and where it was given) only after the acceptor gives it, then close the milestone citing it.
