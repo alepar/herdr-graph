@@ -652,3 +652,42 @@ fn test_sources_spawn_only_through_isolated_helpers() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn threads_binary_with_a_different_version_is_rejected() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("herdr-threads");
+    std::fs::write(&script, "#!/bin/sh\necho 'herdr-threads 2.6.4'\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let err = support::threads_bin::check_version(&script, "3.1.0").unwrap_err();
+    assert!(err.contains("2.6.4"), "names the reported version: {err}");
+    assert!(err.contains("3.1.0"), "names the pinned version: {err}");
+    assert!(
+        err.contains(&script.display().to_string()),
+        "names the binary: {err}"
+    );
+    support::threads_bin::check_version(&script, "2.6.4").unwrap();
+}
+
+#[test]
+fn pinned_threads_version_is_the_submodule_manifest_version() {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("third_party/herdr-threads/Cargo.toml"),
+    )
+    .unwrap();
+    let scanned = text
+        .lines()
+        .skip_while(|l| l.trim() != "[package]")
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
+        .find_map(|l| {
+            l.strip_prefix("version = \"")?
+                .strip_suffix('"')
+                .map(str::to_owned)
+        })
+        .expect("package version line");
+    let pinned = support::threads_bin::pinned_version();
+    assert!(!pinned.is_empty());
+    assert_eq!(pinned, scanned);
+}

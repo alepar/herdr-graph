@@ -4,6 +4,7 @@
 
 pub mod isolated;
 pub mod private_herdr;
+pub mod threads_bin;
 
 use std::path::PathBuf;
 
