@@ -13,3 +13,19 @@ C12 · r1 · UNOWNED-SEAM · Roster reserved fields · applied — hg-blw.1 rese
 C13 · r1 · GAP · B3 · applied — hg-blw.5 acceptance tests omitted (instance) vs global scope and --help states it
 C14 · r1 · GAP · R14 · applied — hg-blw.11 drives hook → current → edit → stale → log
 C15 · r1 · sweep · hg-blw.11 · applied — root Integration sweep created over every leaf
+C16 · r2 · UNOWNED-SEAM · stack clones[].loaded slot · applied — hg-blw.2 owns InstructionsStack view struct with reserved slot; hg-blw.4 consumes it
+C17 · r2 · GAP · B2 · applied — hg-blw.4: roster JSON instructions carries loaded part labels, text shows count
+C18 · r2 · GAP · R5 per-clone cwd · rejected — spec §1.2 and src/model/launch.rs resolve_cwd: cwd is per seat (override, project_repo, .graph-local/cwd/<seat>); clones share it
+C19 · r2 · GAP · R12 loaded write · applied — hg-blw.4 acceptance: git status --porcelain empty after injection
+C20 · r2 · GAP · R14 · applied — hg-blw.11 asserts current and stale in both roster --json and instructions stack --json
+C21 · r2 · UNOWNED-SEAM · occupant/runtime source · applied — hg-blw.7 Inventory owns runtime binding and current occupant; hg-blw.1 acceptance uses them
+C22 · r2 · UNOWNED-SEAM · ops requester resolution · applied — hg-blw.8 owns ids-in-request, daemon-side match incl. retired seats
+C23 · r2 · GAP · R13 docs timing · applied — hg-blw.10 now depends on hg-blw.1–.6, .8, .9
+C24 · r2 · GAP · B5 text output · applied — hg-blw.4 acceptance: text shows status and stale parts
+C25 · r2 · UNOWNED-SEAM · occupant.since · applied — hg-blw.4 consumes Inventory current occupant/since (upstream via hg-blw.1)
+C26 · r2 · GAP · R5 inspector env · applied — spec §2.3 and hg-blw.2: user-level entries marked env: inspector (graph never reads agent env back)
+C27 · r2 · GAP · R5 per-harness · applied — spec §2.3 and hg-blw.2: harness claude|codex per file, own harness marked
+C28 · r2 · UNOWNED-SEAM · instructions stack registration · applied — hg-blw.2 owns it, every_spec_command_parses
+C29 · r2 · GAP · B3 latest per scope · applied — hg-blw.10 documents log <scope> --limit 1
+C30 · r2 · GAP · B3 non-committed activity · rejected — spec §2.1/§2.4/§2.6: log is committed history, journal via ops, sessions separate; §3 rejects heartbeats; hg-blw.10 documents it
+C31 · r2 · GAP · R8 ops head · applied — hg-blw.8: envelope head is the daemon reply's head

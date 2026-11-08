@@ -12,3 +12,4 @@ R11 every new view has --json carrying schema:1 and the head revision, and inspe
 R12 no inspection view (roster, roster --live, instructions stack, sessions, log, ops) creates a Git commit or changes HEAD, index or work tree, and a test checks it (R-new, round 1)
 R13 an operator or agent can find the new views: README and CLI help name roster, sessions, log, instructions stack and the ops filters (R-new, round 1)
 R14 one production path works end to end: a hook injection writes the loaded record, roster and instructions stack show current, a committed part edit makes them stale, and log shows that edit (R-new, round 1)
+R15 writing the loaded record leaves the instance's git status clean (R-new, round 2)

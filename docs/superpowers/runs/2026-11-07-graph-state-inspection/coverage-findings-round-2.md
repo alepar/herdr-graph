@@ -1,0 +1,16 @@
+UNOWNED-SEAM · stack clones[].loaded slot · hg-blw.2 ↔ hg-blw.4
+GAP · B2 · roster shows loaded files per seat in one view
+GAP · R5 · per-clone cwd for harness files
+GAP · R12 · loaded-record write keeps git status clean
+GAP · R14 · end-to-end path asserts both roster and instructions stack
+UNOWNED-SEAM · occupant/runtime source · hg-blw.7 ↔ hg-blw.1
+UNOWNED-SEAM · ops requester resolution · hg-blw.8 ids and retired seats
+GAP · R13 · docs deps on final view shapes
+GAP · B5 · staleness shown in text output
+UNOWNED-SEAM · occupant.since source · hg-blw.7 → hg-blw.4
+GAP · R5 · user-level harness files from inspector env
+GAP · R5 · per-harness field on harness files
+UNOWNED-SEAM · instructions stack registration · hg-blw.7 ↔ hg-blw.2
+GAP · B3 · latest change per teamspace/global
+GAP · B3 · non-committed activity in log
+GAP · R8 · ops JSON head source

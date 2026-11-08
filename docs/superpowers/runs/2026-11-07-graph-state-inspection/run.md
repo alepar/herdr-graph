@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-07-graph-state-inspection
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: design
+phase: roast-design
 codeMechanism: Workflow
 runTag: graph-state-inspection-20261108T225851
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -15,3 +15,5 @@ epic: hg-blw
 approvals:
 - top-split · auto · hg-blw.1 LEAF, hg-blw.2 LEAF, hg-blw.3 LEAF, hg-blw.4 LEAF, hg-blw.5 LEAF (reviewer PROMOTE overruled: split into hg-blw.5/.8/.9, sp:demoted-by-session), hg-blw.6 LEAF, hg-blw.7 LEAF, hg-blw.8 LEAF, hg-blw.9 LEAF
 - coverage-round-1 · C1 kept-leaf auto, C2–C10 applied auto, C11 rejected auto, C12–C14 applied auto, C15 sweep created auto · R1–R14 (coverage-round-1-requirements.md) · specsAt 1a97a7f1f411b244a1f35232fa3d850f8c53d42d · requirements: 11 · mapped: 11 · unmapped: 0 (R12–R14 appended from r-new)
+- coverage-round-2 · C16, C17, C19–C29, C31 applied auto; C18, C30 rejected auto; NEEDS-SPEC hg-blw.2 not honored (no subepic; answered by src/model/launch.rs) · requirements: 15 · mapped: 14 · unmapped: 1 (R15, proposed by this round; delivered by hg-blw.4 via C19) · findings: 14 → 13 · novel: 8/13 (62%) · widening: no
+roastDesignRound: 1
