@@ -421,3 +421,90 @@ Not now. Every view above is a CLI command with JSON output, so a herdr-bar or p
 Migration from existing Herdr spaces will want to see unmanaged workspaces, tabs and panes next to managed ones. `roster --live` already takes the snapshot, so an `--unmanaged` section listing snapshot objects with no graph binding would be a small, natural extension. This should be coordinated through the main tab before either design fixes the shape.
 
 **Decided (user, 2026-11-08, S1):** `roster --live --unmanaged` adds a section that only enumerates the Herdr workspaces, tabs and panes in the snapshot that have no graph binding, with their ids and labels as Herdr reports them. No other details (no agent kind, threads seat or suggestions). JSON: `unmanaged: {workspaces:[{id,label}], tabs:[{id,label,workspace}], panes:[{id,label,tab}]}`, absent without `--unmanaged`; further fields may be added later without breaking `schema: 1` readers.
+
+## Key abstractions
+
+**InstructionManifest** — extended `bootstrap::instructions::{Part, SeatParts, seat_parts}`: each `Part` gains `bytes` and a `digest` (SHA-256 of the rendered body), computed in one place, `Collector::add`.
+- Owns: the ordered part list of one seat at one tree, with identities that can be compared. The renderer (`render_instructions`), the hook cap (`fit_hook`), doctor, `instructions stack` and the loaded record all consume this one list.
+- Hides: how a part's identity is computed. Per spec §2.3 it is the body digest, not the blob id.
+- Must not: compute staleness or read `.graph-local` (that is LoadedInstructions), or change the rendered text (spec §2.3 implementation note).
+
+**Scope** — new closed enum in a new `inspect` module: `Instance` (scope omitted), `Global`, `Teamspace(id)`, `Seat(id)`, `Clone(id)`, with one parser and one resolver at HEAD.
+- Owns: the shared scope grammar (§2.1) and name-or-id resolution. It resolves retired targets too, because `sessions` and `log` cover retired objects; a live match wins and several live matches are ambiguous. It also owns two membership answers:
+  - object membership: does this teamspace, seat or clone fall in scope;
+  - path membership at a given commit's tree: the folders of the scope's IDs, located in that tree (§2.4), with `global` mapped to its fixed path set and the `mutations/graph-changes` file excluded.
+- Hides: where a scope's objects live in the tree, including `archive/` moves and renames across history.
+- Must not: be `InstructionScope`. That enum is about instruction files, and its `Global` means something else. Scope reuses `instruction_source`'s `pick` logic and error wording rather than redefining them. It must not filter by kind or requester (LogQuery does that).
+- Errors: usage, unknown target and ambiguous name. They follow the `InstructionError` messages and map to the same exit codes as `instructions show`.
+
+**Inventory** — new module: the joined teamspace → seat → clone tree read once from HEAD (live and `archive/`) and filtered by a Scope.
+- Owns: joining clone to seat to teamspace by ID, and attaching each clone's current occupant session (its `sessions[]` entry, plus the transcript path through the transcript record, else `unresolved`). It uses `layout::list_teamspaces`, `all_seats` and `all_clones`.
+- Hides: record enumeration, the parent join, and the transcript-path fallback rule of §2.5.
+- Must not: decide what a view shows (retired filtering, sorting and limits belong to each view), or read `.graph-local` or Git history.
+- Relationships: `roster` (a tree) and `sessions` (a flat list sorted by `started` descending) both consume it. These are the two consumers that justify it.
+- Errors: `StoreError` only. An integrity error stays distinguishable, so it maps to exit 6 as `seat --instructions` already does.
+
+**LoadedInstructions** — new module owning `.graph-local/loaded/<clone>.json`, modelled on `observe::baseline`. It holds the record type, a closed `InjectionSource` enum (`Hook | HookCodex | SeatInstructions | SeatJson`), and a closed `InstructionStatus` enum (`Current | Stale(changes) | Unknown`) with a separate `truncated` flag.
+- Owns:
+  - recording one injection from a manifest plus its `HookFit` (`omitted`, `cut`). The write is atomic through `fsutil::write_atomic` and best-effort;
+  - reading a record;
+  - the single staleness comparison: record against current manifest against `occupant.since`, where a record older than `since` is `Unknown`.
+- Hides: the file format and schema, and the comparison rule (label plus digest; `modified`, `added` or `removed`).
+- Must not: fail or block its caller. Every write error is swallowed. It must not touch Git. Callers never compare digests themselves; `roster` and `instructions stack` both ask this module for the status.
+- Relationships: depends on InstructionManifest. Three injection paths call its single record entry point: `cli::seat` `hook_text` / `print_instructions` (with the clone from `Resolution::Bound`) and the daemon's `seat.resolve` in `bootstrap::seat_reply`.
+- Lifecycle: one file per clone, last writer wins through rename. It lives until the instance is deleted. Nothing removes a purged clone's file; that is harmless, and noted as a follow-up.
+- Errors: none cross the boundary. A missing, corrupt or older-schema record reads as `Unknown`.
+
+**HistoryWalker** — new module (`store::history`, over `GitStore::with_repo`): walks `main` from HEAD, newest first, and yields one `Change` per commit: commit id and time; the `Graph-Op` and `Graph-Action` trailers; the added `OperationRecord` and the `ActionRecord`, when present; the changed paths from `diff-tree`. The walk stops at a scan cap and reports whether it stopped early.
+- Owns: the revwalk, trailer parsing, per-commit record reads, the scan cap and the "older history not searched" report. It also answers "last commit that touched path P", used by `stack` and `stale_parts`.
+- Hides: that the source is a live Git walk. The derived `.graph-local` cache that §2.4 allows later replaces it here without changing any caller.
+- Must not: filter by scope, kind or requester (LogQuery does that), or read the journal (§2.1).
+- Relationships: `writer::recovery::trailers_since` and the walker share one trailer-parsing function, extracted rather than duplicated. Consumers are `log`, roster `last_change` (one pass with the same cap) and `instructions stack`.
+- Lifecycle: one per invocation, borrowing the CLI's `GitStore`. It is not shared, and it is safe while the writer runs because Git objects are immutable.
+- Errors: `StoreError::Git`. Hitting the cap is a reported outcome, not an error. A commit without a `Graph-Op` trailer, such as the init commit, comes through as an unattributed `Change`.
+
+**LogQuery** — new: the `log` filter.
+- Owns: deciding which `Change`s match. A change matches when Scope's path membership holds at that commit's tree, or when `affected` or `retired` names an in-scope object, or (with `--by`) when the requester's seat matches. Without `--all` it drops `RequestKind::Bookkeeping` (§4 decision 2). It also applies `--since` and `--limit`.
+- Must not: walk history itself. Roster `last_change` uses the same predicate with the seat's Scope, so it is not written twice.
+
+**View output** — new small shared piece: an `Envelope` (`schema: 1`, `head`, `live` where applicable, body) and one emit step that chooses JSON or text. Each view renders text from the same struct it serializes (§2.1: the JSON is the contract).
+- Relationships: five views exist now (roster, stack, log, sessions, ops), and each supplies its own text rendering. This is a shared interface with one implementation per view.
+- Must not: hold any logic beyond output selection.
+
+**Roster** — new view builder: Inventory plus InstructionManifest plus LoadedInstructions (plus HistoryWalker for `last_change`), turned into the roster struct.
+- Owns: roster shape, retired filtering (`--all`), and the `reload_required` and manager columns (through `model::manager::Pointers`).
+- Relationships: the CLI calls it on HEAD with no daemon. The daemon's new `roster.live` command calls the same builder, then attaches a `live: Option<CloneLive>` per clone from one Herdr snapshot (agent kind and status, binding match) plus `seat_refusals` and `seat_lost`, and, with `--unmanaged`, the unbound-object list (§5, S1). There is one builder, and the live data is an overlay field, not a second roster.
+- Errors: daemon down for `--live` is exit 5 through `cli::daemon_error`, as `ops` does today.
+
+**`plan::ops::list_ops`** — extended: it takes a requester filter (seat, teamspace, unresolved) and a limit. `pending_for` becomes this function with a filter instead of a second copy of the loop. `ops.list` reads the new arguments, and `cli::ops` gains `--json`.
+
+**`instruction_source` (`pick`, `parse_words`)** — extended only to expose name-picking to Scope. `instructions show` behaviour is unchanged.
+
+Variation:
+- Scope kinds, injection sources, instruction statuses and part-change kinds are fixed sets. Each is a closed enum with `match`, and each is matched only inside its owning module.
+- Views vary by command. Each one renders its own text from its own serialized struct, with JSON-or-text chosen in one emit step.
+- Where history comes from (a Git walk now, an optional cache later per §2.4) is decided only inside HistoryWalker.
+- The live-only roster data is decided only in the daemon's `roster.live` handler.
+
+Walk-through:
+- **Main use case:** `roster seat foreman --json`. Scope parses and resolves `seat foreman` at HEAD; Inventory loads the scoped teamspace, seat and clone tree, with occupant sessions; per active seat, `seat_parts` gives the manifest; per clone, LoadedInstructions reads the record and returns `Current`, `Stale` or `Unknown` plus the truncated flag; HistoryWalker makes one capped pass with LogQuery on the seat's Scope to fill `last_change`; the Roster struct is wrapped in the Envelope and emitted as JSON.
+- **Likely future change:** the onboarding `--unmanaged` section (§5). It touches one new type, an unmanaged-objects list built from the snapshot, and one registration, a field the `roster.live` handler fills. Inventory, Scope, the CLI builder and the other views are untouched.
+- **Second likely change:** a `.graph-local` log cache. It replaces internals of HistoryWalker only.
+
+Per spec §2.5: `clone <c>` is a scope for `sessions` only. Scope's parser therefore takes an "allow clone" switch, and `roster` and `log` reject `Clone`. This is a deliberate mode flag, kept in the parser alone.
+
+Per spec §2.3: the daemon's `seat.resolve`, a read handler, writes local state. LoadedInstructions keeps that write best-effort, so the reply never depends on it.
+
+Per spec §2.1: `log` never reads the journal. Rejected and in-flight ops stay in `ops`, and `log` prints a pointer to it instead of merging them.
+
+Digest:
+- Scope: owns the scope grammar, name-or-id resolution and object/path membership at any commit's tree; new scope kinds are added as a variant here; callers never map scopes to folders or match names themselves.
+- Inventory: owns the HEAD teamspace → seat → clone join with occupant sessions and transcript-path fallback; new per-clone joined facts are added here; views never enumerate records or join parents themselves.
+- LoadedInstructions: owns `.graph-local/loaded/` and the current/stale/unknown/truncated rule; new injection paths call its one record entry point and new sources are added to its enum;
+  callers never compare digests or let a write failure surface.
+- HistoryWalker: owns the newest-first commit walk, trailer parsing, the scan cap and last-touch-per-path; a history cache would go inside it;
+  callers never use revwalk or parse trailers directly.
+- LogQuery: owns change matching (scope paths at the commit's tree, affected objects, `--by`, the bookkeeping filter); new log filters are added here; `log` and roster `last_change` never filter changes themselves.
+- View output: owns the `schema`/`head` envelope and the JSON-or-text choice; a new view supplies one struct and its text rendering; commands never hand-assemble the envelope.
+- Roster: owns the roster shape for both the daemon-free and `--live` modes; live-only data is added to the overlay the daemon fills;
+  the daemon never builds a second roster.
