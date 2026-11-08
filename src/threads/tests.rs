@@ -4067,6 +4067,47 @@ async fn finalize_treats_a_final_read_as_acknowledgement() {
     assert!(fx.seats.reads() >= 1);
 }
 
+/// Threads omits a seat from the read only on a seat-scoped refusal (NotFound): it no longer knows the seat, so a
+/// refused finalize has nothing left to finalize. A seat that is still known (reversibly retired) keeps the tombstone.
+#[tokio::test]
+async fn finalize_treats_a_seat_threads_no_longer_knows_as_finalized() {
+    let fx1 = self::fx();
+    let fx = &fx1;
+    let c = base(fx).await;
+    seat_the_clone(fx, &c, "seat-a");
+    retire_clone_observed(fx, &c.id);
+    tombstone_of(fx, &c.id, None);
+    fx.threads
+        .set_finalize_error(Some(FakeSeatViewError::Rejected));
+    fx.seats
+        .refuse(&seat_ref("seat-a"), "NotFound: no such seat");
+    steps(fx, 3).await;
+    assert!(
+        is_gone(fx, &c.id),
+        "an unknown seat answers for the refusal"
+    );
+
+    let fx2 = self::fx();
+    let fx = &fx2;
+    let c = base(fx).await;
+    seat_the_clone(fx, &c, "seat-a");
+    retire_clone_observed(fx, &c.id);
+    tombstone_of(fx, &c.id, None);
+    fx.threads
+        .set_finalize_error(Some(FakeSeatViewError::Rejected));
+    fx.seats.set(
+        &seat_ref("seat-a"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+        },
+    );
+    steps(fx, 3).await;
+    assert!(
+        !is_gone(fx, &c.id),
+        "a known, reversibly retired seat keeps the tombstone"
+    );
+}
+
 #[tokio::test]
 async fn purge_of_a_seated_clone_writes_finalize_without_a_threads_read() {
     for (name, kind) in [

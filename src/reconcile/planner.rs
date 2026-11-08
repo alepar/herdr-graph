@@ -281,7 +281,9 @@ impl<'a> LiveIndex<'a> {
             if let Some(ws) = self.ws_by_id(id) {
                 return Some(LiveWorkspace { ws, stamped: false });
             }
-            if b.incarnation != self.snap.incarnation {
+            // A restoring teamspace (spec §8 step 1) is the one exception: the workspace its own create made in
+            // this incarnation is found by the journal live ref, below, so the create can be stamped and bound.
+            if b.incarnation != self.snap.incarnation && !self.desired.restoring_teamspace(ts) {
                 return None;
             }
         }
@@ -729,10 +731,10 @@ pub fn plan_effects(
                 // a seat tab is going into it.
                 let wanted = desired.tabs.iter().filter(|t| t.ts == ws.ts).any(|t| {
                     !gates_recreation(desired, t)
-                        && !t.is_unknown()
+                        && (!t.is_unknown() || desired.restoring_seat(&t.seat))
                         && !idx.missing_clones(&t.seat).is_empty()
                 });
-                if ws.is_unknown() || !wanted {
+                if (ws.is_unknown() && !desired.restoring_teamspace(&ws.ts)) || !wanted {
                     continue;
                 }
                 let c = o.mk(
@@ -814,7 +816,11 @@ pub fn plan_effects(
             match idx.tab_for_seat(&tab.seat) {
                 None => {
                     // r2: no create_tab for a moved-out seat, nor when every active clone already lives elsewhere.
-                    if gates_recreation(desired, tab) || tab.is_unknown() {
+                    // Spec section 8 step 1: a pending Restore reopens the seat's tab even when it is Unknown (section 7:
+                    // a bound id absent from the live snapshot vanished); any other Unknown tab gets no create.
+                    if gates_recreation(desired, tab)
+                        || (tab.is_unknown() && !desired.restoring_seat(&tab.seat))
+                    {
                         continue;
                     }
                     // A clone adopted into a pane outside the seat's own tab (undo from the caller's pane) is bound

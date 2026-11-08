@@ -1588,8 +1588,8 @@ impl ThreadsExecutor {
     }
 
     /// Finalize the retirement of the tombstone's seat (threads releases its key with it), then delete the
-    /// tombstone. A refusal is an acknowledgement when the seat reads final-retired anyway; otherwise the
-    /// tombstone waits and the want is issued again.
+    /// tombstone. A refusal is an acknowledgement when the seat reads final-retired anyway, or when threads no
+    /// longer knows the seat (the read omits it); otherwise the tombstone waits and the want is issued again.
     async fn finalize_seat(&self, cx: &ExecCx<'_>, e: &EffectRecord, seat: &str) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
@@ -1624,6 +1624,9 @@ impl ThreadsExecutor {
                     {
                         self.drop_tombstone(cx, &clone.id)
                     }
+                    // The read omits a seat only on a seat-scoped refusal (NotFound, mapping.rs SEAT_SCOPED): threads
+                    // no longer knows the seat, so there is nothing left to finalize.
+                    Ok(read) if !read.contains_key(&seat_ref) => self.drop_tombstone(cx, &clone.id),
                     Ok(_) => ExecOutcome::Deferred(msg),
                     Err(err) => port_outcome(err),
                 }
