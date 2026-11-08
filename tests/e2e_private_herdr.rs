@@ -2349,11 +2349,16 @@ impl E2e {
 
     /// A rig that knows where its threads daemon will live but has started neither it nor the graph daemon.
     fn start_threads_unstarted() -> Option<Self> {
+        Self::start_threads_unstarted_custom(true, &[])
+    }
+
+    /// `start_threads_unstarted` with `start_custom`'s `opt_out` and agent `stubs`.
+    fn start_threads_unstarted_custom(opt_out: bool, stubs: &[(&str, &str)]) -> Option<Self> {
         if let Err(reason) = smoke_threads_binary() {
             support::skip(&reason);
             return None;
         }
-        let mut rig = Self::start_without_daemon()?;
+        let mut rig = Self::start_custom(false, opt_out, stubs)?;
         let state = rig.herdr.root.join("threads-state");
         rig.herdr
             .guard()
@@ -3162,6 +3167,12 @@ fn e2e_cold_restart_fresh_agent_reattaches_by_key() {
     assert_clones_kept_their_seats(&rig, &before, &generations);
 
     let (clone, facts) = &before[0];
+    // Right after the restart the threads daemon still reads the pane's old incarnation as resolved, and a keyed
+    // check-in there is refused as retryable ("pane mapping is not yet confirmed"). Wait for the daemon to
+    // reconcile the new incarnation: the seat's mapping turns unresolved, then the check-in reattaches it.
+    rig.wait_until("threads to reconcile the restarted pane", WAIT, |r| {
+        r.seat_inspection(&facts.threads_seat)["result"]["data"]["mapping"]["state"] == "unresolved"
+    });
     let out = rig.keyed_check_in(&facts.pane, &clone.id, "fresh-agent-after-restart");
     assert!(
         out.status.success() && !stdout(&out).is_empty(),
@@ -3308,9 +3319,13 @@ fn e2e_unseated_clone_headless_cold_restart_is_launched_and_seated() {
 #[test]
 fn e2e_node_manager_failing_agent_does_not_respawn_loop() {
     let stub = "#!/bin/sh\necho start >> \"$(dirname \"$0\")/claude.starts\"\nexit 1\n";
-    let Some(rig) = E2e::start_custom(true, false, &[("claude", stub)]) else {
+    // A keyed launch waits for the clone's recorded key reservation (spec §5, §14.4), which needs a threads
+    // service: without one the node manager's agent never starts (threads-seat-identity spec §16.8).
+    let Some(rig) = E2e::start_threads_unstarted_custom(false, &[("claude", stub)]) else {
         return;
     };
+    rig.ensure_threads_daemon(&[]);
+    rig.start_daemon();
     rig.plan_apply(&["teamspace", "create", "t", "--active"]);
     rig.plan_apply(&[
         "seat",

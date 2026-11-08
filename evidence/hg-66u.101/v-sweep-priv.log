@@ -1,0 +1,32 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.101)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-eeb6a74c093c9bd6)
+
+running 23 tests
+test golden::sweep_golden_path ... ok
+test support::isolated::root_watchdog ... ok
+test wiring::seat_identity::sweep_clear_and_agent_exit_keep_memberships ... ok
+test wiring::seat_identity::sweep_clone_is_seated_and_invited_by_seat ... ok
+test wiring::seat_identity::sweep_headless_cold_restart_resumes ... ok
+test wiring::seat_identity::sweep_headless_cold_restart_without_tokens_follows_the_seat ... ok
+test wiring::seat_identity::sweep_live_handoff_recovers_without_operator ... ok
+test wiring::seat_identity::sweep_seat_identity_mutations_are_registered ... ok
+test wiring::seat_identity::sweep_seat_reply_has_no_accept_command ... ok
+test wiring::seat_identity::sweep_undo_restores_onto_a_succeeded_seat ... ok
+test wiring::sweep_action_and_effect_envelopes_round_trip ... ok
+test wiring::sweep_capability_switch ... ok
+test wiring::sweep_config_values_are_read ... ok
+test wiring::sweep_every_request_kind_has_a_mutation ... ok
+test wiring::sweep_harness_gate_env_resolution ... ok
+test wiring::sweep_harness_gate_install_doctor_uninstall ... ok
+test wiring::sweep_harness_profiles_used_for_start_and_resume ... ok
+test wiring::sweep_instruction_scopes_render_end_to_end ... ok
+test wiring::sweep_launch_env_reaches_create_calls ... ok
+test wiring::sweep_summaries_role_defaults_flow_end_to_end ... ok
+test wiring::sweep_summary_complete_one_commit_retry_and_conflict ... ok
+test wiring::sweep_summary_into_retired_seat_and_instruction_plan_flow ... ok
+test wiring::sweep_summary_path_is_never_an_instruction_source ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.06s
+
+exit 0
