@@ -30,6 +30,62 @@ not enforced gates: graph does not check evidence, budgets or acceptance for you
 - For each meaningful change, state the intended outcome and how it will be assessed. Deliver it with
   the behavior change, the evidence, known limitations and what is and is not accepted or released.
 
+## Track work products in Beads
+Beads (`bd`) holds plans sent into execution, milestones and published artifacts. Graph never
+reads or writes it: these labels and records exist only because seats apply them, so apply them
+every time. Labels are plain `key:value` strings.
+
+- **Identity.** Every bead you create carries the labels that `herdr-graph seat --json` prints under
+  `labels`: `hg-ts:<teamspace>`, `hg-seat:<seat>` and `hg-clone:<clone>`, plus `hg-ns:<ns>` when
+  printed. `hg-seat:` names the executor. A successor finds inherited work with
+  `bd list --label hg-seat:<seat>`. Handing a bead to another seat means replacing its `hg-seat:`
+  label explicitly; retiring a seat moves nothing.
+- **Artifact type.** A bead that produces a work product carries exactly one `artifact:` label:
+  `artifact:code` (a change to the project's code or configuration), `artifact:doc` (a document,
+  spec or guide), `artifact:design` (an agreed experience or design decision) or
+  `artifact:research` (an investigation and its findings). Coordination-only beads carry none.
+- **Visibility.** An artifact bead also carries `visibility:internal` (seen only by this
+  organization) or `visibility:external` (published: a pull request on a shared repository, a
+  merged change, a released build, a published document). Mark it external from the start when it
+  is meant for publication. Publishing still needs the user's or the acceptor's go-ahead.
+
+  ```sh
+  bd create "Retry failed uploads" -t task --parent <epic> \
+    -l hg-ts:<ts>,hg-seat:<seat>,hg-clone:<clone>,artifact:code,visibility:external
+  ```
+- **Epics.** A plan sent into execution is an epic (`bd create -t epic`) with your identity labels;
+  its tasks are children (`--parent <epic>`).
+- **Milestones.** A significant chunk of work the user will judge as a whole is a bead of type
+  `milestone`, labelled `acceptor:<who>`: `acceptor:user` or `acceptor:<seat>`. The epics and tasks
+  that deliver it are its children.
+
+  ```sh
+  bd create "Uploads survive network loss" -t milestone \
+    -l hg-ts:<ts>,hg-seat:foreman,hg-clone:<clone>,acceptor:user
+  ```
+- **Evidence on close.** Close a bead with a reason that starts `evidence:` and points to where the
+  result can be checked: `commit <sha>`, `pr <url>`, `doc <path>`, `test <command> (<result>)` or
+  `summary <path>`. Name every pointer that applies. A published artifact names where it was
+  published. A bead closed without the result says so instead: `not done: <why>`.
+
+  ```sh
+  bd close <id> --reason "evidence: commit 3f2a9c1; test cargo test uploads (14 passed)"
+  ```
+- **Acceptance is separate from closure.** Closing a task or epic records that its executor
+  finished it, not that anyone accepted it. A milestone is accepted only when its named acceptor
+  says so. Record that with the label `accepted` and a comment quoting the acceptance and where it
+  was given (the user's words, or a thread message ID), then close the milestone with evidence that
+  cites the acceptance. Never record acceptance that the acceptor has not given.
+
+  ```sh
+  bd label add <milestone> accepted
+  bd comments add <milestone> "accepted by user in project thread msg <id>: \"ship it\""
+  bd close <milestone> --reason "evidence: accepted by user (msg <id>); pr <url>"
+  ```
+- **Finding the state.** Milestones awaiting acceptance:
+  `bd list -t milestone --status open,in_progress`. Published artifacts:
+  `bd list --label visibility:external --status closed`.
+
 ## Repair mistakes without rewriting the story
 - Investigate failures and correct records by explicit amendment.
 - Propose a new rule only for a demonstrated recurring problem, with an owner.
