@@ -2909,26 +2909,73 @@ fn drop_saved_pane(rig: &E2e, pane: &str) {
     std::fs::write(&path, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
 }
 
-/// Configuration 5 (G5): a pane closed while Herdr was down. Threads reads its seat unresolved through the
-/// window, then retires it (reversibly: the clone's key is bound to it); the clone is retired and undoable, the
-/// other clones are untouched, and nothing is launched or created for it.
-#[test]
-fn e2e_pane_closed_during_downtime_retires_undoably() {
-    // The threads daemon honours the grace override only when built with its `test-support` feature
-    // (HG_THREADS_TEST_SUPPORT=1 says the HG_TEST_THREADS_BINARY is such a build); otherwise the real window
-    // (10 observed minutes) applies, which HG_G5_FULL_WINDOW=1 waits out.
+/// Edits the saved session so the next start restores no tab `tab_label`: the whole tab (its single pane
+/// included) was closed while Herdr was down. A workspace left with no tab goes with it, as Herdr closes an
+/// empty workspace. Returns whether the workspace went too.
+fn drop_saved_tab(rig: &E2e, tab_label: &str) -> bool {
+    let path = saved_session_path(rig);
+    let mut session: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("Herdr saved no session at {}: {e}", path.display())),
+    )
+    .unwrap();
+    let workspaces = session["workspaces"].as_array_mut().unwrap();
+    let mut dropped = false;
+    for ws in workspaces.iter_mut() {
+        let tabs = ws["tabs"].as_array_mut().unwrap();
+        let before = tabs.len();
+        tabs.retain(|t| t["custom_name"].as_str() != Some(tab_label));
+        if tabs.len() == before {
+            continue;
+        }
+        dropped = true;
+        let kept = tabs.len();
+        // Any saved index into the tab list (the active tab) must stay inside it.
+        for (_, v) in ws
+            .as_object_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|(k, _)| k.contains("active") || k.contains("focus"))
+        {
+            if v.as_u64().is_some_and(|i| i as usize >= kept) {
+                *v = json!(kept.saturating_sub(1));
+            }
+        }
+    }
+    assert!(dropped, "no saved tab labelled {tab_label}: {session}");
+    let before = workspaces.len();
+    workspaces.retain(|w| !w["tabs"].as_array().unwrap().is_empty());
+    let workspace_went = workspaces.len() < before;
+    std::fs::write(&path, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+    workspace_went
+}
+
+/// The threads daemon environment and the wait for a G5 retirement, or `None` (skipped) without the threads
+/// build G5 needs. The daemon honours the grace override only when built with its `test-support` feature
+/// (HG_THREADS_TEST_SUPPORT=1 says the HG_TEST_THREADS_BINARY is such a build); otherwise the real window (10
+/// observed minutes) applies, which HG_G5_FULL_WINDOW=1 waits out.
+fn g5_window() -> Option<(&'static [(&'static str, &'static str)], Duration)> {
     let full_window = std::env::var("HG_G5_FULL_WINDOW").as_deref() == Ok("1");
     if !full_window && std::env::var("HG_THREADS_TEST_SUPPORT").as_deref() != Ok("1") {
         support::skip(
             "G5 needs a threads build with the test-support grace override (HG_THREADS_TEST_SUPPORT=1 with HG_TEST_THREADS_BINARY) or HG_G5_FULL_WINDOW=1 for the real 10 minute window",
         );
-        return;
+        return None;
     }
-    let daemon_env: &[(&str, &str)] = if full_window { &[] } else { &[G5_GRACE_ENV] };
-    let retire_within = if full_window {
-        Duration::from_secs(14 * 60)
+    Some(if full_window {
+        (&[], Duration::from_secs(14 * 60))
     } else {
-        WAIT * 2
+        (&[G5_GRACE_ENV], WAIT * 2)
+    })
+}
+
+/// Configuration 5 (G5): a pane closed while Herdr was down. Threads reads its seat unresolved through the
+/// window, then retires it (reversibly: the clone's key is bound to it); the clone is retired and undoable, the
+/// other clones are untouched, and nothing is launched or created for it.
+#[test]
+fn e2e_pane_closed_during_downtime_retires_undoably() {
+    let Some((daemon_env, retire_within)) = g5_window() else {
+        return;
     };
     let Some((mut rig, before)) = seated_rig_env(daemon_env) else {
         return;
@@ -3004,6 +3051,93 @@ fn e2e_pane_closed_during_downtime_retires_undoably() {
         ids(&rig.threads_invitations(victim)),
         ids(&victim_facts.invitations),
         "the retired seat keeps its threads invitations (the graph's own bookkeeping state may change)"
+    );
+}
+
+/// Configuration 5 (G5) with the default one-pane-per-tab layout: the victim is the only pane of its tab, and
+/// the tab closed while Herdr was down. After the window its clone retires; undo reopens the tab (spec section 8
+/// step 1) and brings the clone back on the same threads seat, un-retired, with nothing minted.
+#[test]
+fn e2e_single_pane_tab_closed_during_downtime_undo_reopens_it() {
+    let Some((daemon_env, retire_within)) = g5_window() else {
+        return;
+    };
+    let Some((mut rig, before)) = seated_rig_env(daemon_env) else {
+        return;
+    };
+    let (victim, facts) = before
+        .iter()
+        .find(|(c, _)| {
+            rig.pane_of(&c.id).is_some_and(|p| {
+                rig.tab_labelled("bar")
+                    .is_some_and(|(_, t)| t.panes.iter().any(|q| q.id == p.id))
+            })
+        })
+        .expect("bar's clone is the only pane of the bar tab");
+    let seat = facts.threads_seat.as_str();
+    let seats_before = rig.threads_seat_ids();
+
+    let out = rig
+        .herdr
+        .command(rig.herdr.herdr_path())
+        .args(["server", "stop"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "server stop: {}", stderr(&out));
+    rig.wait_until("the server to be down", WAIT, |r| !r.herdr.socket.exists());
+    std::thread::sleep(Duration::from_secs(1));
+    drop_saved_tab(&rig, "bar");
+    rig.herdr_restart();
+
+    rig.wait_until("bar's clone to retire", retire_within, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("retired")
+    });
+    rig.wait_until("threads to retire its seat reversibly", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"] == "reversible"
+    });
+    rig.wait_settled();
+    assert!(
+        rig.tab_labelled("bar").is_none(),
+        "bar's tab did not come back by itself"
+    );
+    let act = rig
+        .undo_candidates()
+        .into_iter()
+        .find(|(_, c)| c.contains(&victim.id))
+        .expect("the retirement is undoable")
+        .0;
+    let (ok, out) = rig.apply_plan(&rig.plan_json(&["undo", &act]));
+    assert!(ok, "undo apply: {out}");
+
+    rig.wait_until("bar's tab to be reopened", WAIT, |r| {
+        r.tab_labelled("bar").is_some()
+    });
+    rig.wait_until("the clone to be active in a new pane", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("active")
+            && r.pane_of(&victim.id).is_some_and(|p| p.id.0 != facts.pane)
+    });
+    rig.wait_until("threads to un-retire the seat", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"].is_null()
+    });
+    rig.wait_settled();
+    let tabs: Vec<_> = tab_labels(&rig)
+        .into_iter()
+        .filter(|l| l == "bar")
+        .collect();
+    assert_eq!(tabs.len(), 1, "exactly one bar tab: {:?}", tab_labels(&rig));
+    let after = rig
+        .clone_facts(victim)
+        .expect("the clone still has its seat");
+    assert_eq!(after.threads_seat, facts.threads_seat, "same seat id");
+    assert_ne!(after.pane, facts.pane, "the clone has a reopened pane");
+    assert_eq!(
+        after.invitations, facts.invitations,
+        "same invitations: no re-invite"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "undo minted no seat in threads"
     );
 }
 

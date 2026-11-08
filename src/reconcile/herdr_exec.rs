@@ -170,13 +170,14 @@ impl HerdrExecutor {
         match &e.kind {
             EffectKind::CreateWorkspace => ts_of(e)
                 .and_then(|t| d.workspace(&t))
-                .is_some_and(|w| !w.is_unknown()),
+                .is_some_and(|w| !w.is_unknown() || d.restoring_teamspace(&w.ts)),
             EffectKind::RenameWorkspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
             EffectKind::CreateTab => seat_of(e)
                 .and_then(|s| d.tab(&s))
                 // Spec §4.9 Reopening: `moved_out` never gates the node manager's tab recreation.
                 .is_some_and(|t| {
-                    (!t.moved_out || d.node_manager.as_ref() == Some(&t.seat)) && !t.is_unknown()
+                    (!t.moved_out || d.node_manager.as_ref() == Some(&t.seat))
+                        && (!t.is_unknown() || d.restoring_seat(&t.seat))
                 }),
             EffectKind::RenameTab => seat_of(e).and_then(|s| d.tab(&s)).is_some(),
             EffectKind::StampToken => match e.object.kind() {
@@ -940,6 +941,89 @@ mod tests {
         assert!(
             exec.implied(&desired_with_tab(&seat, false, false), &row),
             "a seat that is not moved out keeps its CreateTab"
+        );
+    }
+
+    fn create_workspace_row(ts: &TeamspaceId) -> EffectRecord {
+        EffectRecord {
+            object: ts.to_any(),
+            kind: EffectKind::CreateWorkspace,
+            ..create_tab_row(&SeatId::new())
+        }
+    }
+
+    /// Spec section 8 step 1 over the Unknown rule (section 4.3.2): a seat whose clone carries a pane-less Restore
+    /// reopens its Unknown tab and workspace; without the Restore the old rule holds.
+    #[test]
+    fn create_tab_and_workspace_of_a_restoring_seat_are_implied_while_unknown() {
+        use crate::model::clone::SeatIntent;
+        use crate::model::harness::Harness;
+        use crate::reconcile::desired::{DesiredPane, DesiredWorkspace};
+        let dir = tempfile::tempdir().unwrap();
+        let exec = HerdrExecutor {
+            journal: Arc::new(Journal::open(&dir.path().join("journal.sqlite3")).unwrap()),
+            cfg: ReconcilerConfig::new(dir.path().to_path_buf()),
+            cache: Arc::new(DesiredCache::default()),
+        };
+        let seat = SeatId::new();
+        let ts = TeamspaceId::new();
+        let bound = Some(Binding::default());
+        let mut d = desired_with_tab(&seat, false, false);
+        d.tabs[0].ts = ts.clone();
+        d.tabs[0].bound = bound.clone();
+        d.tabs[0].availability = Availability::Unknown;
+        d.workspaces.push(DesiredWorkspace {
+            ts: ts.clone(),
+            name: "ts".into(),
+            cwd: "/".into(),
+            env: vec![],
+            bound,
+            availability: Availability::Unknown,
+            rev: 1,
+        });
+        d.panes.push(DesiredPane {
+            clone: CloneId::new(),
+            seat: seat.clone(),
+            ts: ts.clone(),
+            name: "c".into(),
+            cwd: "/".into(),
+            env: vec![],
+            harness: Harness::Shell,
+            model: None,
+            args: vec![],
+            resume: None,
+            occupant: None,
+            occupant_native_id: None,
+            bound: None,
+            availability: Availability::Present,
+            rev: 1,
+            threads_seat: Some("seat-1".into()),
+            seat_fact: None,
+            seat_intent: Some(SeatIntent::Restore {
+                seat: "seat-1".into(),
+                epoch: OpId::new(),
+                threads_done: false,
+                launched: None,
+                last_refusal: None,
+            }),
+            key_reservation: None,
+            had_agent: false,
+        });
+        let tab_row = create_tab_row(&seat);
+        let ws_row = create_workspace_row(&ts);
+        assert!(exec.implied(&d, &tab_row), "a restoring seat's CreateTab");
+        assert!(
+            exec.implied(&d, &ws_row),
+            "a restoring seat's CreateWorkspace"
+        );
+        d.panes[0].seat_intent = None;
+        assert!(
+            !exec.implied(&d, &tab_row),
+            "no Restore: Unknown gets no tab"
+        );
+        assert!(
+            !exec.implied(&d, &ws_row),
+            "no Restore: Unknown gets no workspace"
         );
     }
 }

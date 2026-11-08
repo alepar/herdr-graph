@@ -423,6 +423,15 @@ fn pane_of(fx: &Fx, c: &CloneRecord) -> HerdrPaneId {
         .expect("bound to a pane")
 }
 
+fn c_workspace(fx: &Fx, c: &CloneRecord) -> HerdrWorkspaceId {
+    clone_by_id(fx, &c.id)
+        .runtime
+        .bound
+        .expect("clone is bound")
+        .workspace_id
+        .expect("bound to a workspace")
+}
+
 fn tab_of_seat(fx: &Fx, name: &str) -> HerdrTabId {
     seat(fx, name)
         .runtime
@@ -4260,12 +4269,32 @@ async fn live_handoff_with_a_running_agent_keeps_its_occupant() {
 
 /// A resumable clone (observed session `abc`) whose pane closed while Herdr was down. Threads reads the seat
 /// Unresolved through its 10 observed minutes; after the window it reads Retired (G5), and the clone is retired
-/// undoably with no resume attempted. The graph keeps no timer of its own.
+/// undoably with no resume attempted. The graph keeps no timer of its own. Undo reopens the clone: its tab and
+/// workspace vanished with the pane (Unknown, spec section 7), and the pending Restore recreates them (section 8
+/// step 1) and launches once into the new pane.
 #[tokio::test]
 async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_resume() {
     let fx = fx();
     let (c, pane) = restart_after_occupant(&fx, false).await;
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    crate::threads::register_with(&fx.rec, threads.clone(), map.clone(), fx.seats.clone());
+    // The restore launch's key gate (spec sections 14.4, 16.1): the clone's key is bound to its seat on both sides.
+    threads.set_key_binding(&c.id.to_string(), "seat-1");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::RecordReservation {
+            key: c.id.to_string(),
+            seat: Some("seat-1".into()),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    // The clone is the only pane of its tab and the tab the only one of its workspace: all three vanish.
+    let ws = c_workspace(&fx, &c);
     fx.herdr.user_close_pane(&pane);
+    fx.herdr.user_close_workspace(&ws);
     let lp2 = fx.restarted_loop();
     fx.herdr.clear_calls();
 
@@ -4291,13 +4320,10 @@ async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_r
     let now = clone_by_id(&fx, &c.id);
     assert_eq!(now.lifecycle, CloneLifecycle::Retired);
     let act = now.retired.expect("retirement").action.expect("undoable");
-    commit(&fx, &format!("undo {act}"));
-    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
 
-    // Resume never ran: not in the window, not on the retirement, not after the undo's passes.
-    lp2.step_once().await.unwrap();
-    lp2.step_once().await.unwrap();
-    assert!(start_calls(&fx, &pane).is_empty(), "{:?}", calls(&fx));
+    // Resume never ran: not in the window, not on the retirement. An Unknown container with no Restore gets no
+    // creates.
+    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
     assert!(
         calls(&fx)
             .iter()
@@ -4305,7 +4331,67 @@ async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_r
         "{:?}",
         calls(&fx)
     );
-    assert_eq!(creates(&fx), 0, "{:?}", calls(&fx));
+
+    // Undo: the pane-less Restore reopens the vanished workspace and tab and creates the pane.
+    commit(&fx, &format!("undo {act}"));
+    assert_eq!(clone_by_id(&fx, &c.id).lifecycle, CloneLifecycle::Active);
+    lp2.step_once().await.unwrap();
+    assert_eq!(
+        threads.lifecycle_calls("unretire_seat"),
+        vec!["seat-1".to_owned()]
+    );
+    // Threads answers: the seat is back (it reads Unresolved until the agent checks in).
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    for _ in 0..4 {
+        lp2.step_once().await.unwrap();
+        if calls(&fx)
+            .iter()
+            .any(|c| matches!(c, FakeCall::CreateTab(_)))
+        {
+            break;
+        }
+    }
+    let all = calls(&fx);
+    assert!(
+        all.iter()
+            .any(|c| matches!(c, FakeCall::CreateWorkspace(_))),
+        "{all:?}"
+    );
+    assert!(
+        all.iter().any(|c| matches!(c, FakeCall::CreateTab(_))),
+        "{all:?}"
+    );
+    let reopened = clone_by_id(&fx, &c.id);
+    assert_eq!(reopened.lifecycle, CloneLifecycle::Active);
+    let new_pane = pane_of(&fx, &reopened);
+    assert_ne!(new_pane, pane, "a new pane");
+
+    // The Restore is acknowledged and launches once into the new pane.
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    assert!(
+        matches!(
+            clone_by_id(&fx, &c.id).seat_intent,
+            Some(SeatIntent::Restore {
+                threads_done: true,
+                ..
+            })
+        ),
+        "{:?}",
+        clone_by_id(&fx, &c.id).seat_intent
+    );
+    assert_eq!(
+        start_calls(&fx, &new_pane),
+        vec![vec!["--resume".to_owned(), "abc".to_owned()]],
+        "{:?}",
+        calls(&fx)
+    );
+    let creates_then = creates(&fx);
+    lp2.step_once().await.unwrap();
+    lp2.step_once().await.unwrap();
+    assert_eq!(start_calls(&fx, &new_pane).len(), 1, "{:?}", calls(&fx));
+    assert_eq!(creates(&fx), creates_then, "{:?}", calls(&fx));
+    assert!(start_calls(&fx, &pane).is_empty(), "{:?}", calls(&fx));
 }
 
 /// Elapsed time alone never retires a clone: with threads unreachable through (far more than) the G5 window the

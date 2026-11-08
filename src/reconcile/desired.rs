@@ -238,6 +238,22 @@ impl DesiredRuntime {
         self.panes.iter().filter(move |p| p.seat == seat)
     }
 
+    /// A clone of `seat` is being restored (undo, resurrection, the node manager's reopen: spec section 8 step 1): it
+    /// carries a `Restore` intent and has no pane yet. Its tab and workspace are reopened even while they are
+    /// Unknown: a bound id that is absent from the live snapshot vanished (Herdr preserves ids, section 7), and the
+    /// restore must not stall on it.
+    pub fn restoring_seat(&self, seat: &SeatId) -> bool {
+        self.panes_of(seat)
+            .any(|p| p.bound.is_none() && matches!(p.seat_intent, Some(SeatIntent::Restore { .. })))
+    }
+
+    /// A seat of teamspace `ts` is being restored (see `restoring_seat`): its workspace is reopened too.
+    pub fn restoring_teamspace(&self, ts: &TeamspaceId) -> bool {
+        self.tabs
+            .iter()
+            .any(|t| t.ts == *ts && self.restoring_seat(&t.seat))
+    }
+
     /// Object revision (any lifecycle), None when the object is not a teamspace, seat or clone here.
     pub fn rev_of(&self, object: &AnyId) -> Option<u64> {
         if let Ok(t) = TeamspaceId::parse(object.as_str()) {
