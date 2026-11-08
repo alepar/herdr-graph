@@ -93,6 +93,24 @@ pub struct Incarnation {
     pub server_started: Option<String>,
 }
 
+impl Incarnation {
+    /// Both describe the same Herdr server process, so a Herdr id one of them recorded still names the same
+    /// object in the other. `generation` counts this daemon's connections: it restarts at 0 in every daemon
+    /// process and moves on the first subscribe, so it says nothing about the server. Without a probed server
+    /// identity on both sides only full equality counts.
+    pub fn same_server(&self, other: &Incarnation) -> bool {
+        match (
+            (&self.server_pid, &self.server_started),
+            (&other.server_pid, &other.server_started),
+        ) {
+            ((Some(a_pid), Some(a_at)), (Some(b_pid), Some(b_at))) => {
+                a_pid == b_pid && a_at == b_at
+            }
+            _ => self == other,
+        }
+    }
+}
+
 /// Binding of a graph object to live Herdr objects (spec §4.2). Tabs carry no token (Herdr 0.9.1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Binding {

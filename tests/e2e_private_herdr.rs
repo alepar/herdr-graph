@@ -1077,11 +1077,11 @@ fn e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab() {
     rig.wait_until("the clone to get a pane of its own", WAIT, |r| {
         r.pane_of(&clone.id).is_some_and(|p| p.id.0 != caller)
     });
+    // The tab is renamed from its creation nonce only after the clone's pane is stamped.
+    rig.wait_until("the seat's own tab is back", WAIT, |r| {
+        r.tab_labelled("foreman").is_some()
+    });
     assert_eq!(rig.seat_state(&seat.id), "active");
-    assert!(
-        rig.tab_labelled("foreman").is_some(),
-        "the seat's own tab is back"
-    );
 }
 
 /// A template document with the given members, all active shell seats.
