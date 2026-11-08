@@ -3,7 +3,7 @@
 resumeChange: 2026-11-07 · "1 lgtm" · hg-66u.14 keeps a preserved-pane-id fallback for seatless clones; matcher deleted otherwise (spec S1)
 resumeChange: 2026-11-07 · user answers: "Merge main in now (Recommended)" · "Fix it here (Recommended)" (e2e_summary_lands_in_archived_seat_folder) · "1 + moe to hg-build, our own dedicated toolbox. always stop leaks. make note in AGENTS.md project level to use hg-build and avoid leaks" · upstream feedback: "Don't file"
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: finish
+phase: done
 codeMechanism: Workflow
 runTag: threads-seat-identity-20261105T073527
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -204,3 +204,4 @@ main merged: 2026-11-07 4595898 + a2bf5a7 (merge-main-2026-11-07.md); fix beads 
 fix beads landed: hg-66u.95 (55c8348), .96, .97 (ad95dcf), .98 (f473c25); reported open run-failure: integration_sweep sweep_undo_restores_onto_a_succeeded_seat fails at hg-66u.98's base too (to the sweep)
 audit and sweep fixes landed: hg-66u.99, .100, .101
 hg-66u.104 landed (e2e builds/verifies the pinned threads binary); finish ledger read failed (model safeguard flag on read-ledger:finish), metrics unavailable for that invocation
+finish: 2026-11-07 merged into main locally (86513b8, user choice 1); ledger copied to ledger-progress.md; run and task worktrees and branches removed
