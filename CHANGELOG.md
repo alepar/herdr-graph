@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`software-factory` template.** A shipped team template for a project teamspace following [the software factory vision](SOFTWARE-FACTORY-VISION.md). The foreman starts active. The secretary, lead researcher (`researcher` seat template), designer (`designer`) and engineer (`engineer`) start deferred. All members share a `project` thread. The template's `AGENTS.md` is the factory rulebook, rendered for every member, and each member has role instructions. The rulebook is guidance only: graph does not enforce evidence, acceptance, budgets or retirement handoffs. New instances get it from `init --with-examples`. For an existing instance, CREATING_NEW_GRAPH.md describes loading it with `plan template create`.
+
 ## v0.3.0 — 2026-11-07
 
 ### Removed

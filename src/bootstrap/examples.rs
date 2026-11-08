@@ -94,6 +94,34 @@ pub const EXAMPLE_FILES: &[(&str, &str)] = &[
         "templates/feature-team/members/reviewer/AGENTS.md",
         include_str!("../../templates/feature-team/members/reviewer/AGENTS.md"),
     ),
+    (
+        "templates/software-factory/template.toml",
+        include_str!("../../templates/software-factory/template.toml"),
+    ),
+    (
+        "templates/software-factory/AGENTS.md",
+        include_str!("../../templates/software-factory/AGENTS.md"),
+    ),
+    (
+        "templates/software-factory/members/foreman/AGENTS.md",
+        include_str!("../../templates/software-factory/members/foreman/AGENTS.md"),
+    ),
+    (
+        "templates/software-factory/members/secretary/AGENTS.md",
+        include_str!("../../templates/software-factory/members/secretary/AGENTS.md"),
+    ),
+    (
+        "templates/software-factory/members/lead-researcher/AGENTS.md",
+        include_str!("../../templates/software-factory/members/lead-researcher/AGENTS.md"),
+    ),
+    (
+        "templates/software-factory/members/designer/AGENTS.md",
+        include_str!("../../templates/software-factory/members/designer/AGENTS.md"),
+    ),
+    (
+        "templates/software-factory/members/engineer/AGENTS.md",
+        include_str!("../../templates/software-factory/members/engineer/AGENTS.md"),
+    ),
 ];
 
 fn git_err(e: git2::Error) -> StoreError {
