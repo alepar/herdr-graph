@@ -16,6 +16,7 @@ roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md, 2026-11-08-gr
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
 stepBackDesign-round-1: redesign — applied: loaded record keyed by timestamp and written by every render path → keyed by native_session_id, hook-only writers (dissolves 3)
+graph-pass: depth 6→6 · width 1.8→1.8 · applied 0 · parked 3
 redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §2.1, §2.2, §2.3, §2.4, §2.5, §3, §5, Key abstractions, Unchanged behavior · lastGood 131d2fb354fdc7f64d6b811481f805eb387b93c6 · designRoast - · state applied
 
 approvals:
@@ -29,3 +30,6 @@ parked:
 - 2026-11-08-graph-state-inspection-roast-design-1.md · degraded-verdict · "unverified — whether Codex keys hook trust to the command string, so the --stdin-payload rewrite may need a re-trust; documented in hg-blw.10 (coverage-amend-design-1 P2)"
 - 2026-11-08-graph-state-inspection-roast-design-2.md · escalation · "Codex current/stale path assumes the SessionStart payload session_id equals the occupant native_session_id (src/model/harness.rs:99-102, src/observe/sessions.rs:38-45); unverified external, panel split — hg-blw.12 now tests the documented payload form and degrades to unknown with a note"
 - 2026-11-08-graph-state-inspection-roast-design-2.md · degraded-verdict · "design roast exit: converged at round 2 (Should-fix 4, 0 Blocking); punch list applied inline: Codex re-trust cost (spec §2.3/Unchanged, hg-blw.12), sessions total (spec §2.5, hg-blw.3), hg-blw.11 slot name, InstructionsView owned by hg-blw.7"
+- graph-pass · graph-change · "hg-blw.10 <- hg-blw.12 drop (safe no): docs can be drafted from the spec; depth 6→5"
+- graph-pass · graph-change · "proposal: seam-contract HistoryWalker last-commit-touching-path signature in hg-blw.7 (removes hg-blw.2 <- hg-blw.5)"
+- graph-pass · graph-change · "proposal: seam-contract Part.bytes/digest and InstructionsView status stub in hg-blw.7 (removes hg-blw.12 <- hg-blw.2/.1); with the two above, depth 6→4"

@@ -29,3 +29,8 @@ C28 · r2 · UNOWNED-SEAM · instructions stack registration · applied — hg-b
 C29 · r2 · GAP · B3 latest per scope · applied — hg-blw.10 documents log <scope> --limit 1
 C30 · r2 · GAP · B3 non-committed activity · rejected — spec §2.1/§2.4/§2.6: log is committed history, journal via ops, sessions separate; §3 rejects heartbeats; hg-blw.10 documents it
 C31 · r2 · GAP · R8 ops head · applied — hg-blw.8: envelope head is the daemon reply's head
+G1 · graph · GRAPH-EDGE · hg-blw.12 <- hg-blw.2 · kept — consumes Part.bytes/digest and stack.rs
+G2 · graph · GRAPH-EDGE · hg-blw.10 <- hg-blw.12 · parked — drop judged safe no (consumes final JSON shape and test-tier note); depth 6→5 if a human accepts the rework risk
+G3 · graph · GRAPH-EDGE · hg-blw.2 <- hg-blw.5 · kept — consumes HistoryWalker last-commit-touching-path
+G4 · graph · PROPOSAL · hg-blw.7/.5/.2/.12 · parked — seam-contract for last-commit-touching-path signature in hg-blw.7
+G5 · graph · PROPOSAL · hg-blw.7/.2/.12 · parked — seam-contract for Part.bytes/digest and an InstructionsView status stub in hg-blw.7; with G2 and G4, depth 6→4
