@@ -39,7 +39,7 @@ Source: the user's design request (2026-11-07, quoted above), the sessions reque
 
 ### Human scope changes
 
-- none
+- S1 · 2026-11-08 · "not managed by graph - just enumerates them, no additional info" · source: user decision on the `roster --live --unmanaged` shape, relayed by the main-tab coordinator (herdr-threads message mnSGMfHi7SMe) · affects: B8
 
 Every claim about today's behavior below is cited to the v0.3.0 source. A seat-bearing instance needs a private Herdr server, so no sample was captured from one. The samples are reconstructed from the format strings at the cited lines; identifiers in them are placeholders. The daemon-free outputs (`list templates`, `instructions show global`) were run against a scratch `init --with-examples` instance.
 
@@ -419,3 +419,5 @@ Not now. Every view above is a CLI command with JSON output, so a herdr-bar or p
 ## 5. Overlap with onboarding-design
 
 Migration from existing Herdr spaces will want to see unmanaged workspaces, tabs and panes next to managed ones. `roster --live` already takes the snapshot, so an `--unmanaged` section listing snapshot objects with no graph binding would be a small, natural extension. This should be coordinated through the main tab before either design fixes the shape.
+
+**Decided (user, 2026-11-08, S1):** `roster --live --unmanaged` adds a section that only enumerates the Herdr workspaces, tabs and panes in the snapshot that have no graph binding, with their ids and labels as Herdr reports them. No other details (no agent kind, threads seat or suggestions). JSON: `unmanaged: {workspaces:[{id,label}], tabs:[{id,label,workspace}], panes:[{id,label,tab}]}`, absent without `--unmanaged`; further fields may be added later without breaking `schema: 1` readers.
