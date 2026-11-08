@@ -21,7 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const TOKEN_KEY: &str = "hg";
 
 /// Herdr ids returned by a create, kept in the journal until the observer commits the binding, so that
-/// dependent effects of one chain can find their targets (valid only within the same incarnation).
+/// dependent effects of one chain can find their targets (valid while the same Herdr server runs:
+/// `Incarnation::same_server`, so a daemon restart or reconnect keeps them).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LiveRef {
     #[serde(default)]
@@ -287,16 +288,19 @@ impl<'a> LiveIndex<'a> {
                 return None;
             }
         }
-        let live = live_ref(self.journal, &any).filter(|l| l.incarnation == self.snap.incarnation);
+        // The workspace this server's own create made (Herdr never reuses an id within one server process). A
+        // token on it is someone else's: ours would have matched above.
+        let live = live_ref(self.journal, &any)
+            .filter(|l| l.incarnation.same_server(&self.snap.incarnation));
         if let Some(ws) = live
             .and_then(|l| l.workspace)
             .and_then(|id| self.ws_by_id(&id))
+            .filter(|w| token_of(&w.metadata).is_none())
         {
             return Some(LiveWorkspace { ws, stamped: false });
         }
-        // A completed create can outlive its incarnation before token stamping (startup subscription,
-        // disconnect or daemon crash). Its durable nonce identifies the workspace without trusting a
-        // reused Herdr ID. Open creates use the same correlation after a lost response.
+        // A completed create can outlive its server before token stamping (a Herdr restart or handoff). Its
+        // durable nonce identifies the workspace without trusting a reused Herdr ID. Open creates use the same correlation after a lost response.
         let nonces: BTreeSet<_> = self
             .journal
             .effects_for_object(&any)
@@ -377,7 +381,7 @@ impl<'a> LiveIndex<'a> {
             });
         }
         let live = live_ref(self.journal, &any)?;
-        if live.incarnation != self.snap.incarnation {
+        if !live.incarnation.same_server(&self.snap.incarnation) {
             return None;
         }
         // A pane another active clone's committed binding claims (e.g. adopted by an undo from the pane of a
@@ -428,7 +432,7 @@ impl<'a> LiveIndex<'a> {
                 return Some(seat.clone());
             }
             if let Some(live) = live_ref(self.journal, &seat.to_any())
-                && live.incarnation == self.snap.incarnation
+                && live.incarnation.same_server(&self.snap.incarnation)
                 && live.tab.as_ref() == Some(tab)
             {
                 return Some(seat.clone());
@@ -461,7 +465,7 @@ impl<'a> LiveIndex<'a> {
             }
         }
         if let Some(live) = live_ref(self.journal, &seat.to_any())
-            && live.incarnation == self.snap.incarnation
+            && live.incarnation.same_server(&self.snap.incarnation)
             && let Some(id) = &live.tab
             && !self.owned_by_other(id, seat)
             && let Some(found) = self.tab_by_id(id)

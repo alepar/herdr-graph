@@ -668,6 +668,86 @@ async fn retire_after_queued_create_is_obsolete() {
     );
 }
 
+/// A daemon restart (or its first subscribe) moves the connection generation but not the Herdr server: the
+/// pane the tab create made is still the clone's, so the chain resumes on it instead of splitting a second,
+/// never-stamped pane into the seat's tab (e2e_daemon_kill_mid_op_recovers_no_duplicates).
+#[tokio::test]
+async fn create_chain_survives_a_generation_change_on_the_same_server() {
+    use crate::ports::herdr::HerdrApi;
+    let fx = fx();
+    activate(&fx, "shell");
+    // The tab and its pane are created; the stamp of the pane does not get through before the "restart".
+    fx.herdr
+        .fail_next("pane.report_metadata", Fault::Unavailable);
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert_eq!(count_calls(&fx, |x| matches!(x, FakeCall::CreateTab(_))), 1);
+    let before = fx.herdr.snapshot().await.unwrap().incarnation;
+    let _events = fx.herdr.subscribe().await.unwrap();
+    let after = fx.herdr.snapshot().await.unwrap().incarnation;
+    assert_ne!(before.generation, after.generation);
+    assert!(before.same_server(&after));
+
+    fx.clock.advance(chrono::Duration::seconds(30));
+    steps(&fx, 3).await;
+    assert_eq!(
+        count_calls(&fx, |x| matches!(x, FakeCall::SplitPane(_))),
+        0,
+        "{:?}",
+        calls(&fx)
+    );
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let tab = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .find(|t| t.label == "foreman")
+        .expect("the tab is renamed to the seat's name");
+    assert_eq!(tab.panes.len(), 1);
+    assert_eq!(
+        tab.panes[0].metadata.get("hg"),
+        Some(&format!("hg={}", c.id))
+    );
+    assert_eq!(pane_of(&fx, &c), tab.panes[0].id);
+}
+
+#[test]
+fn same_server_ignores_the_connection_generation() {
+    use crate::model::common::Incarnation;
+    let a = Incarnation {
+        generation: 1,
+        server_pid: Some(7),
+        server_started: Some("t0".into()),
+    };
+    let reconnected = Incarnation {
+        generation: 0,
+        ..a.clone()
+    };
+    assert!(a.same_server(&reconnected));
+    let restarted = Incarnation {
+        server_pid: Some(8),
+        ..a.clone()
+    };
+    assert!(!a.same_server(&restarted));
+    let restarted_same_pid = Incarnation {
+        server_started: Some("t1".into()),
+        ..a.clone()
+    };
+    assert!(!a.same_server(&restarted_same_pid));
+    // Without a probed identity only full equality counts.
+    let unprobed = Incarnation {
+        generation: 1,
+        server_pid: None,
+        server_started: None,
+    };
+    assert!(!unprobed.same_server(&Incarnation {
+        generation: 0,
+        ..unprobed.clone()
+    }));
+    assert!(unprobed.same_server(&unprobed.clone()));
+    assert!(!unprobed.same_server(&a));
+}
+
 #[tokio::test]
 async fn transient_failure_retried_with_backoff() {
     let fx = fx();
@@ -752,8 +832,11 @@ async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguit
             .is_some()
     );
 
+    // Herdr never reuses an id within one server process: a reused id comes from another server, whose
+    // incarnation shares no live refs with this one.
     let mut reused = snap.clone();
     reused.workspaces[0].label = "unrelated workspace".into();
+    reused.incarnation.server_pid = reused.incarnation.server_pid.map(|p| p + 1);
     assert!(
         super::planner::LiveIndex::new(&reused, &desired, &fx.journal)
             .workspace(&ts)
@@ -774,6 +857,15 @@ async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguit
     let mut duplicate = snap.workspaces[0].clone();
     duplicate.id = crate::model::HerdrWorkspaceId("other-workspace".into());
     ambiguous.workspaces.push(duplicate);
+    // On the same server the create's own live ref names the workspace; the copy is a late duplicate.
+    assert_eq!(
+        super::planner::LiveIndex::new(&ambiguous, &desired, &fx.journal)
+            .workspace(&ts)
+            .map(|w| w.ws.id.clone()),
+        Some(snap.workspaces[0].id.clone())
+    );
+    // On another server only the nonce is left, and two carriers of it place neither.
+    ambiguous.incarnation.server_pid = ambiguous.incarnation.server_pid.map(|p| p + 1);
     assert!(
         super::planner::LiveIndex::new(&ambiguous, &desired, &fx.journal)
             .workspace(&ts)
