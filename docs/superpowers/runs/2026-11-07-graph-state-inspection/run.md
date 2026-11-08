@@ -14,6 +14,9 @@ epic: hg-blw
 roastDesignRound: 1
 roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
+redesignCycles-design: 1
+stepBackDesign-round-1: redesign — applied: loaded record keyed by timestamp and written by every render path → keyed by native_session_id, hook-only writers (dissolves 3)
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended - · lastGood 131d2fb354fdc7f64d6b811481f805eb387b93c6 · designRoast - · state started
 
 approvals:
 - top-split · auto · hg-blw.1 LEAF, hg-blw.2 LEAF, hg-blw.3 LEAF, hg-blw.4 LEAF, hg-blw.5 LEAF (reviewer PROMOTE overruled: split into hg-blw.5/.8/.9, sp:demoted-by-session), hg-blw.6 LEAF, hg-blw.7 LEAF, hg-blw.8 LEAF, hg-blw.9 LEAF
