@@ -21,3 +21,4 @@ Profile: unmeasured — 4 dispatched bead(s) did not land (not in the model): hg
 - [2026-11-07] gated re-entry: hg-66u.44 recorded its tests in toolbox ht-build and hg-66u.21 in distrobox durak-dev despite the hg-build constraint (planner briefs predated it or implementers ignored it).
 - [2026-11-07] main drifted by a concurrent super-auto run (seat-failure-manager-seats, ~12.5k code lines); trial merge conflicted in 13 files; the run had no point that integrated main before finish.
 - [2026-11-07] session scratchpad wiped again (coordinator.js, code-args.json, settle.sh lost); re-copied coordinator.js from the skill cache and rebuilt args.
+- [2026-11-07] e2e tier ran against a stale cached herdr-threads 2.6.4 in target/threads-bin despite the v3.1.0 pin; 4 false e2e failures and earlier e2e passes were measured against the wrong daemon (hg-66u.104).

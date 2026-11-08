@@ -19,6 +19,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
+- review-collection · {"invocationId": "inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2.md", "review": "pending", "required": [], "settled": false}
 - review-collection · {"invocationId": "inv-2e07a039-6297-4308-8862-f3a2878fe7ab", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2e07a039-6297-4308-8862-f3a2878fe7ab.md", "review": "pending", "required": [], "settled": true}
 - review-collection · {"invocationId": "inv-8d1468f1-4551-46bd-8b96-82617c3ea922", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-8d1468f1-4551-46bd-8b96-82617c3ea922.md", "review": "pending", "required": [], "settled": true}
 - review-collection · {"invocationId": "inv-cef1709c-2f16-4a29-a694-c154c775b2ea", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cef1709c-2f16-4a29-a694-c154c775b2ea.md", "review": "pending", "required": [], "settled": false}
@@ -149,7 +150,7 @@ codeBuckets:
   parked: 
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: 3f8e808 — 4001 passed, 8 failed, 0 errors, 8 skipped; failing: integration_sweep golden::sweep_golden_path, wiring::seat_identity::sweep_undo_restores_onto_a_succeeded_seat (x3 tiers); e2e_close_then_undo_keeps_the_seat_and_memberships, e2e_cold_restart_fresh_agent_reattaches_by_key, e2e_node_manager_failing_agent_does_not_respawn_loop, e2e_unseated_clone_headless_cold_restart_is_launched_and_seated; leak count after: 0; command: toolbox hg-build, --no-fail-fast, three tiers @ 3f8e808cd4ad45647acfcd355a749684532a65f4
+  sweep: 3cff887 — tiers 1-2: 2641 passed, 1 failed (session_end_flows_to_transcripts, load flake: passes 3/3 alone); tier 3 re-run with the pinned herdr-threads 3.1.0 binary (the cached target/threads-bin was 2.6.4, hg-66u.104): 1373 passed, 2 failed (private_process_info_is_shell, e2e_daemon_kill_mid_op_recovers_no_duplicates — main's tests, untouched by this run, intermittent); 0 leaked rigs; command: toolbox hg-build, --no-fail-fast, three tiers @ 3cff8872eb0e7b222c9204a53ca6d533fb2c2761
   slowness: 
   worktreesKept: 54 retained (see invocation result)
   processSweep: stopped 0 · survived 0 · unknown 48 · kept 0
