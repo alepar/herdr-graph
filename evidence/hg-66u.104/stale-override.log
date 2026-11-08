@@ -1,0 +1,15 @@
+running 1 test
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ... 
+thread 'e2e_cold_restart_attended_keeps_clones_on_their_seats' (2250671) panicked at tests/support/threads_bin.rs:87:29:
+herdr-threads binary /tmp/sp-39aed274/hg-66u.104/stale/herdr-threads reports "herdr-threads 2.6.4", but third_party/herdr-threads is pinned at 3.1.0; rebuild it from the submodule or point HG_TEST_THREADS_BINARY at a 3.1.0 build
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    e2e_cold_restart_attended_keeps_clones_on_their_seats
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test e2e_private_herdr`

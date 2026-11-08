@@ -1588,13 +1588,17 @@ fn e2e_herdr_restart_no_mass_retirement_no_duplicates() {
     // Herdr keeps labels and pane ids but not tokens (docs/herdr-spikes.md, spike 3). These shell clones have
     // no threads seat, so the daemon locates each by its preserved pane id (spec §6, S1) instead of retiring or
     // recreating it, and the reconciler re-stamps the token.
-    rig.wait_until("every clone to be present on its preserved pane", WAIT, |r| {
-        clones.iter().all(|(c, pane)| {
-            let now = r.show(&c.id);
-            tstr(&now, "runtime.availability") == "present"
-                && tstr(&now, "runtime.bound.pane_id") == *pane
-        })
-    });
+    rig.wait_until(
+        "every clone to be present on its preserved pane",
+        WAIT,
+        |r| {
+            clones.iter().all(|(c, pane)| {
+                let now = r.show(&c.id);
+                tstr(&now, "runtime.availability") == "present"
+                    && tstr(&now, "runtime.bound.pane_id") == *pane
+            })
+        },
+    );
     rig.wait_settled();
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(
@@ -2309,23 +2313,6 @@ fn e2e_plugin_link_status_action_single_daemon() {
 // agent, an auto-resumed agent, a resumable session) are not exercised and are reported as unmet in the task
 // report. What is measured is the identity path: seat assignment, preserved ids, SeatObservation rebind.
 
-/// The herdr-threads binary for the smoke: `HG_TEST_THREADS_BINARY`, else the one the `threads_real` tests build.
-fn smoke_threads_binary() -> Result<PathBuf, String> {
-    if let Some(p) = std::env::var_os("HG_TEST_THREADS_BINARY") {
-        return Ok(support::validated_binary(PathBuf::from(p)));
-    }
-    let built =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("target/threads-bin/debug/herdr-threads");
-    if built.is_file() {
-        Ok(built)
-    } else {
-        Err(format!(
-            "no herdr-threads binary (set HG_TEST_THREADS_BINARY or build {})",
-            built.display()
-        ))
-    }
-}
-
 /// Everything about a clone that the smokes compare across the event: its seat, bound pane and invitations.
 /// An invitation is `(thread, state, threads invitation id)`: a re-invite would change the id.
 #[derive(Debug, PartialEq, Clone)]
@@ -2338,7 +2325,7 @@ struct CloneFacts {
 
 impl E2e {
     /// A rig whose graph daemon reaches a real herdr-threads daemon (state dir `threads-state` under the private
-    /// root, found through `HERDR_GRAPH_THREADS_STATE_DIR`). `None` (skipped) when no threads binary exists.
+    /// root, found through `HERDR_GRAPH_THREADS_STATE_DIR`). The pinned threads binary is built and version-checked first (panics on failure, never skips).
     /// `daemon_env` is extra environment for the threads daemon (it keeps it for its whole life).
     fn start_with_threads_env(daemon_env: &[(&str, &str)]) -> Option<Self> {
         let rig = Self::start_threads_unstarted()?;
@@ -2354,10 +2341,7 @@ impl E2e {
 
     /// `start_threads_unstarted` with `start_custom`'s `opt_out` and agent `stubs`.
     fn start_threads_unstarted_custom(opt_out: bool, stubs: &[(&str, &str)]) -> Option<Self> {
-        if let Err(reason) = smoke_threads_binary() {
-            support::skip(&reason);
-            return None;
-        }
+        support::threads_bin::threads_binary();
         let mut rig = Self::start_custom(false, opt_out, stubs)?;
         let state = rig.herdr.root.join("threads-state");
         rig.herdr
@@ -2373,7 +2357,7 @@ impl E2e {
 
     /// `herdr-threads daemon stop` for the rig's threads state dir.
     fn stop_threads_daemon(&self) {
-        let bin = smoke_threads_binary().expect("threads binary");
+        let bin = support::threads_bin::threads_binary();
         let out = self
             .herdr
             .command(&bin)
@@ -2394,7 +2378,7 @@ impl E2e {
 
     /// `herdr-threads daemon ensure` for the rig's threads state dir.
     fn ensure_threads_daemon(&self, daemon_env: &[(&str, &str)]) {
-        let bin = smoke_threads_binary().expect("threads binary");
+        let bin = support::threads_bin::threads_binary();
         let out = self
             .herdr
             .command(&bin)
@@ -2664,7 +2648,7 @@ fn e2e_live_handoff_keeps_clones_on_their_seats() {
 impl E2e {
     /// Every seat id the rig's threads daemon knows, retired ones included, sorted.
     fn threads_seat_ids(&self) -> Vec<String> {
-        let bin = smoke_threads_binary().expect("threads binary");
+        let bin = support::threads_bin::threads_binary();
         let out = self
             .herdr
             .command(&bin)
@@ -2716,7 +2700,7 @@ impl E2e {
     /// the seat resolution it drives are the real ones.
     fn keyed_check_in(&self, pane: &str, key: &str, session: &str) -> Output {
         use std::os::unix::fs::PermissionsExt;
-        let bin = smoke_threads_binary().expect("threads binary");
+        let bin = support::threads_bin::threads_binary();
         let fixtures = self.herdr.root.join("fixture-bin");
         std::fs::create_dir_all(&fixtures).unwrap();
         let claude = fixtures.join("claude");
@@ -2767,7 +2751,7 @@ impl E2e {
 
     /// `herdr-threads seat inspect <seat> --json` against the rig's threads daemon: the `result` object.
     fn seat_inspection(&self, seat: &str) -> Value {
-        let bin = smoke_threads_binary().expect("threads binary");
+        let bin = support::threads_bin::threads_binary();
         let out = self
             .herdr
             .command(&bin)

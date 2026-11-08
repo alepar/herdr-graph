@@ -17,7 +17,7 @@ use herdr_graph::ports::herdr::{CreateWorkspace, HerdrApi};
 use herdr_graph::ports::threads::*;
 use herdr_graph::threads::{PaneSeatMap, ServiceThreads, ThreadsSeatMap, discover};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use support::private_herdr::PrivateHerdr;
@@ -26,32 +26,9 @@ fn enabled() -> bool {
     std::env::var("HG_REAL_THREADS").as_deref() == Ok("1")
 }
 
-fn crate_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// The herdr-threads binary built from the symlinked checkout, into this worktree's target directory.
+/// The pinned herdr-threads binary: built and version-checked by the shared helper.
 fn threads_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os("HG_TEST_THREADS_BINARY") {
-        return support::validated_binary(PathBuf::from(path));
-    }
-    assert!(
-        std::env::var("HG_HERDR_MATRIX").as_deref() != Ok("1"),
-        "matrix requires a prebuilt HG_TEST_THREADS_BINARY; nested Cargo is forbidden"
-    );
-    let target = crate_root().join("target/threads-bin");
-    let bin = target.join("debug/herdr-threads");
-    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())) // isolation-ok: cargo build of the threads checkout
-        .args(["build", "--locked", "--offline", "--manifest-path"])
-        .arg(crate_root().join("third_party/herdr-threads/Cargo.toml"))
-        .arg("--target-dir")
-        .arg(&target)
-        .stdin(Stdio::null())
-        .status()
-        .expect("cargo runs");
-    assert!(status.success(), "cargo build of herdr-threads failed");
-    assert!(bin.is_file(), "{} missing after the build", bin.display());
-    bin
+    support::threads_bin::threads_binary()
 }
 
 /// A herdr-threads daemon started (via `daemon ensure`) in the private environment; stopped on drop.
