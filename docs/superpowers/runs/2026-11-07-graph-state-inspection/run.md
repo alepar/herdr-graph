@@ -12,6 +12,8 @@ base: main
 spec: 2026-11-07-graph-state-inspection-design.md
 epic: hg-blw
 roastDesignRound: 1
+roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md
+findingsLedgerDesign: findings-ledger-design.md
 
 approvals:
 - top-split · auto · hg-blw.1 LEAF, hg-blw.2 LEAF, hg-blw.3 LEAF, hg-blw.4 LEAF, hg-blw.5 LEAF (reviewer PROMOTE overruled: split into hg-blw.5/.8/.9, sp:demoted-by-session), hg-blw.6 LEAF, hg-blw.7 LEAF, hg-blw.8 LEAF, hg-blw.9 LEAF
