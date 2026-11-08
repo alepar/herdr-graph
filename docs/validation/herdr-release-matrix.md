@@ -2,7 +2,7 @@
 
 Run `scripts/herdr-release-smoke` from this checkout on macOS or Linux. It reuses the real
 private fixtures in `tests/e2e_private_herdr.rs`, `tests/herdr_client.rs`, and
-`tests/threads_real.rs`: **30 + 5 + 2 = 37 cases per release**. It does not create
+`tests/threads_real.rs`: **38 + 7 + 3 = 48 cases per release**. It does not create
 a second graph/Herdr test harness. The exact expected names live in `SUITES` in
 the driver; an added, removed, ignored, filtered, duplicated, missing, skipped,
 or failing case fails qualification until the inventory is deliberately reviewed.

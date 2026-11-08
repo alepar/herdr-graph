@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Qualify graph with checksum-pinned private Herdr releases on macOS or Linux.
 
-Builds once, then runs 30 graph E2E + 5 Herdr API + 2 actual threads cases per
+Builds once, then runs 38 graph E2E + 7 Herdr API + 3 actual threads cases per
 release. No model launches. See docs/validation/herdr-release-matrix.md.
 """
 from __future__ import annotations
@@ -36,29 +36,38 @@ ASSETS = ('herdr-linux-aarch64', 'herdr-linux-x86_64', 'herdr-macos-aarch64', 'h
 STOP = threading.Event()
 SUITES = {
     'e2e_private_herdr': (
-        'e2e_create_teamspace_seats_tabs_panes_env',
-        'e2e_rename_tab_renames_seat_moves_path_history',
+        'e2e_application_retire_closes_exclusive_seats', 'e2e_cancel_and_reassign_rejected_op',
         'e2e_close_pane_retires_clone', 'e2e_close_tab_retires_seat_and_clones',
-        'e2e_close_workspace_retires_all_incl_dormant',
-        'e2e_undo_tab_close_restores_in_new_tab', 'e2e_undo_from_bound_pane_adopts_and_keeps_it',
-        'e2e_undo_from_pane_adopts_caller_pane', 'e2e_undo_tab_close_from_pane_adopts_caller_pane',
-        'e2e_template_edit_adds_member_new_tab', 'e2e_application_retire_closes_exclusive_seats',
-        'e2e_retire_last_clone_induced_seat_retirement_once', 'e2e_seat_deactivate_closes_tab_no_retirement',
+        'e2e_close_then_undo_keeps_the_seat_and_memberships',
+        'e2e_close_while_daemon_down_unknown_not_recreated', 'e2e_close_workspace_retires_all_incl_dormant',
+        'e2e_cold_restart_attended_keeps_clones_on_their_seats',
+        'e2e_cold_restart_fresh_agent_reattaches_by_key', 'e2e_cold_restart_headless_resumes_via_the_driver',
+        'e2e_create_teamspace_seats_tabs_panes_env', 'e2e_daemon_kill_mid_op_recovers_no_duplicates',
+        'e2e_dropped_rename_recovered', 'e2e_event_loss_reconnect_converges',
+        'e2e_herdr_restart_no_mass_retirement_no_duplicates', 'e2e_live_handoff_keeps_clones_on_their_seats',
         'e2e_move_only_pane_moved_out_no_recreate', 'e2e_move_pane_into_other_seat_tab_keeps_that_seats_name',
-        'e2e_close_while_daemon_down_unknown_not_recreated', 'e2e_rename_while_daemon_down_recorded',
-        'e2e_daemon_kill_mid_op_recovers_no_duplicates', 'e2e_event_loss_reconnect_converges',
-        'e2e_dropped_rename_recovered', 'e2e_herdr_restart_no_mass_retirement_no_duplicates',
-        'e2e_seat_resolution_in_bound_pane', 'e2e_summary_lands_in_archived_seat_folder',
-        'e2e_seat_override_model_change_recorded_shell_not_replaced', 'e2e_participation_join_leave_scopes',
-        'e2e_cancel_and_reassign_rejected_op', 'e2e_resurrect_retired_seat',
-        'e2e_plugin_link_status_action_single_daemon',
+        'e2e_node_manager_failing_agent_does_not_respawn_loop',
+        'e2e_pane_closed_during_downtime_retires_undoably', 'e2e_participation_join_leave_scopes',
+        'e2e_plugin_link_status_action_single_daemon', 'e2e_rename_tab_renames_seat_moves_path_history',
+        'e2e_rename_while_daemon_down_recorded', 'e2e_resurrect_retired_seat',
+        'e2e_retire_last_clone_induced_seat_retirement_once', 'e2e_seat_deactivate_closes_tab_no_retirement',
+        'e2e_seat_override_model_change_recorded_shell_not_replaced', 'e2e_seat_resolution_in_bound_pane',
+        'e2e_single_pane_tab_closed_during_downtime_undo_reopens_it',
+        'e2e_summary_lands_in_archived_seat_folder', 'e2e_template_edit_adds_member_new_tab',
+        'e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane',
+        'e2e_undo_from_pane_leaves_the_callers_pane_alone',
+        'e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab', 'e2e_undo_tab_close_restores_in_new_tab',
+        'e2e_unseated_clone_headless_cold_restart_is_launched_and_seated', 'support::isolated::root_watchdog',
     ),
     'herdr_client': (
         'private_create_tab_panes_with_env_snapshot_matches', 'private_events_created_renamed_closed',
-        'private_snapshot_after_reconnect', 'private_process_info_is_shell', 'private_agent_absent_and_rejections',
+        'private_snapshot_after_reconnect', 'private_process_info_is_shell',
+        'private_agent_absent_and_rejections', 'private_start_agent_env_reaches_the_agent',
+        'support::isolated::root_watchdog',
     ),
     'threads_real': (
-        'real_threads_channel_invite_membership_notify_release', 'production_discovery_reaches_real_threads_daemon',
+        'real_threads_channel_invite_membership_notify_release',
+        'production_discovery_reaches_real_threads_daemon', 'support::isolated::root_watchdog',
     ),
 }
 

@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 — 2026-11-07
 
 ### Removed
 
+- **`rebind <clone> --pane <pane>`.** The command is gone, and `/seat` no longer prints accept or rebind commands; the seat skill leaves invitation acceptance to herdr-threads. A clone's pane is found through its herdr-threads seat (see Changed).
 - **`content write`.** The daemon command and mutation are gone. The CLI stub keeps its arguments, exits 2 and prints guidance; the stub is removed next release. `RequestKind::ContentWrite` and `Category::Content` stay as legacy variants so old history still reads.
 
 ### Added
@@ -16,16 +17,25 @@
 - **Seat failure exit codes.** `/seat` and every other command that calls the daemon now tell a transient outage from a broken graph. Exit 5: graph daemon unavailable (not running, still starting, no well-formed reply); retry later. Exit 6: graph integrity error; not transient, retrying will not help (`seat` also names the node manager to report it to). For `seat` both messages add that the seat context is not loaded, so do not guess your seat; the seat skill carries the matching branch. Among daemon failures, exit 2 means "not inside a Herdr pane" (a command that may start the daemon, such as `plan`, `apply` or `undo`, run outside Herdr, even with the daemon up) or "no instance configured"; a down daemon is exit 5 whatever the environment.
 - **Manager seats.** Every seat has a manager it escalates lifecycle issues to: `SeatRecord.manager`, else `TeamspaceRecord.default_manager`, else the node manager (`node_manager_seat` in `graph.toml`). `herdr-graph plan manager set|clear <seat|teamspace> [<manager-seat>]` and `herdr-graph plan node-manager set <seat>` change them through the ordinary plan, confirm and apply flow. The first seat created on a fresh graph becomes the node manager; no plan retires or moves it, and it is reopened when closed. When its pane is moved outside a plan (`herdr pane move`) into a tab no other seat uses, the seat follows: that tab becomes its tab, with a warning; nothing is moved back. Retiring a seat reparents its reports to the nearest surviving manager, and `plan undo` of the retirement restores the pointers; `manager set|clear` and `node-manager set` themselves record no undoable action (plan the reverse change instead). `who` gains a `manager:` chain line, `show <seat>` prints the same line, and `seat.resolve` gains `manager`, `node_manager`, `reports`, `is_node_manager` and `node_manager_duties` (the duties only for the node manager). The shipped `node-manager` template defers to `/seat` for whether a seat holds the role.
 - **Templates.** Shipped `node-manager` (seat) and `office` (team) templates.
+- **`plan clone purge <clone>`.** Ends a retired clone's undo window and deletes its record. A purged clone that still holds a threads seat or a continuity key stays as an inert tombstone until herdr-threads acknowledges the finalize or key release.
 
 ### Changed
 
 - **`seat --json` paths.** `paths.clone_files` is replaced by `paths.data` (context-only files under the seat and clone folders) and `paths.clone_record` (`clone.toml`).
-- **`[y/n]` prompts.** `plan`, `rebind` and interactive `undo` refuse to prompt under `CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`, `CODEX_THREAD_ID` or `HERDR_GRAPH_SEAT`; they print the plan and the relay hint instead.
+- **`[y/n]` prompts.** `plan` and interactive `undo` refuse to prompt under `CLAUDE_CODE_SESSION_ID`, `CODEX_SESSION_ID`, `CODEX_THREAD_ID` or `HERDR_GRAPH_SEAT`; they print the plan and the relay hint instead.
 - **Hydration.** Seats hydrated from an inline member no longer get a seeded copy of the member `AGENTS.md` as their seat `AGENTS.md`.
 - **Daemon-free reads removed.** `who`, `ops` (list, get, check-instruction), `request` (list) and `undo` (candidate list) no longer fall back to reading the graph when the daemon is down; they exit 5. `status` keeps its fallback; `show`, `list`, `path`, `instructions show` and `seat --hook-prompt` stay daemon-free readers.
 - **Dangling references fail.** References that used to be dropped silently (missing templates, seats and the like) now fail with a graph integrity error naming the broken reference: exit 6 for `seat`, `seat --instructions`, `who`, `show` and `plan`, and `seat` names the node manager to report it to. Plan-time hook-size warnings report such a seat as a warning instead of failing the plan.
+- **Clone identity follows the herdr-threads seat.** Each clone holds one threads seat, written once. Graph starts agents with `HERDR_THREADS_CONTINUITY_KEY`, so a restarted or resumed agent returns to the same seat; retirement is reversible, and `plan undo` of a retirement un-retires the original seat with its memberships instead of creating a new one. Restart and restore go through one resume driver. The old clone matcher is removed; its one survivor matches a clone with no threads seat (a shell pane) by its preserved Herdr pane id. Tabs and workspaces are matched by preserved Herdr ids, and the daemon reconnects across `herdr update --handoff`.
+- **herdr-threads 3.1.0.** `third_party/herdr-threads` is pinned at v3.1.0 (protocol 9). Graph registers `service_session_v3` for continuity keys, un-retirement and finalization.
+
+### Compatibility
+
+Qualified on Linux x86_64 with Herdr 0.9.5 and herdr-threads 3.1.0. The Herdr 0.9.1–0.9.4 release matrix was not run for this release (hg-aka); those versions are unverified. See docs/verification-matrix.md.
 
 ### Migration
+
+**Upgrade herdr-threads first.** On every machine, the herdr-threads daemon must run 3.1.0 before a graph built from this release connects: older daemons refuse `service_session_v3`. The 3.1.0 daemon upgrades its node store to schema 17 one way; back up the threads state directory if you might downgrade. Clone records written by this release carry `threads_seat`, `threads_seat_history`, `seat_intent` and `seat_fact`; older graph binaries do not know these fields, and downgrade is not supported.
 
 Operators of existing graphs: (1) a graph with a dangling reference that used to work now fails with a graph integrity error (exit 6); fix the reference named in the message. (2) Scripts that ran `who`, `ops`, `request list` or `undo` listing without a daemon now get exit 5 instead of output; start the daemon or retry. Scripts that tested for exit 2 on a down daemon should test for 5. (3) An existing graph with a live seat is never assigned a node manager automatically, so every graph command prints `herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>` on stderr until `plan node-manager set <seat>` is applied.
 

@@ -3,6 +3,32 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## v0.3.0 qualification: threads 3.1.0 (2026-11-07)
+
+Graph pins official threads v3.1.0 `482e0d2f8de761d7d31e562faf38c06bdab5f30e` (annotated tag `4fea9a5eddc0f4b145b388b42abb6fe2e1e1f00b`), superseding v3.0.0. Wire protocol stays 9; the threads node store is schema 17 (one-way). Graph registers `service_session_v3`, so the threads daemon must be 3.1.0 before graph connects. Run at main `f9f5bdd` on Linux x86_64 (Fedora 44) in the `hg-build` toolbox with Herdr 0.9.5.
+
+| Tier | Result |
+| --- | --- |
+| `cargo test` | 1316 passed, 0 failed, 1 ignored |
+| `cargo test --no-default-features` | 1312 passed, 1 failed, 1 ignored |
+| `cargo test --features test-support` | 1341 passed, 0 failed, 1 ignored |
+| `cargo test --features private-herdr -- --test-threads=1` | 1379 passed, 1 failed, 6 ignored |
+| `HG_REAL_THREADS=1 … --test threads_real` | 3 passed (pinned v3.1.0 build), 3 passed (installed 3.1.0 daemon) |
+| `cargo test --test packaging -- --ignored build_script_places_binary` | 1 passed |
+| `python3 -m unittest discover -s scripts/tests` | 35 passed |
+| `scripts/herdr-release-smoke --versions 0.9.1 … 0.9.5` | not run to completion (see below) |
+
+The two failures are known flakes outside this release's changes: `session_end_flows_to_transcripts` times out under full-suite load (5/5 alone, 5/5 as the whole `daemon_composed` file; hg-yu6), and `private_process_info_is_shell` samples the shell mid fork/exec (hg-5it). No test rig leaked after any run.
+
+Qualification found two regressions from the threads-seat-identity merge, both fixed before the release:
+
+- `e2e_daemon_kill_mid_op_recovers_no_duplicates` failed about 2 runs in 3 (3/3 before the merge). Live refs were compared on the full Herdr incarnation, including the per-daemon connection generation, so a daemon restart dropped refs that still named the same server's objects and duplicated a seat's pane. Fixed in 5278a66 (`Incarnation::same_server`); 10/10 alone after.
+- `e2e_close_then_undo_keeps_the_seat_and_memberships` failed about 1 run in 5. Threads 3.1.0 reads every membership of a retired seat as Retired; the invitation poll recorded that as the invitation's state. Fixed in 5ad9cea; 17/17 alone after.
+
+Herdr release matrix: every suite on 0.9.1–0.9.5 stops after its first test, because the matrix's cleanup and diagnostic gates predate the test-root watchdog (hg-aka). v0.3.0 is therefore qualified on Herdr 0.9.5 only; 0.9.1–0.9.4 are unverified for this release. The matrix's `SUITES` inventory is updated to 38 + 7 + 3 cases.
+
+Not covered by any tier: Herdr live handoff (not runnable on a private rig) and a threads cold restart with a graph client attached.
+
 ## Threads 2.6.4 qualification and session-context re-injection (2026-10-29)
 
 Graph pins official threads v2.6.4 `cdc8423f51417670426a798d529d394d36fdafb9` (annotated tag `c5b35ad8be314069da471536e31d3581be0c755d`), superseding v2.3.1. Wire protocol stays 9 and node schema is 10, with one-way store upgrades in 2.4.1 (schema 8), 2.4.2 (9) and 2.6.0 (10). Graph compiles against the API with no production change; the lockfile change is the threads version only. All targets and features also compile against v2.7.0, which is in qualification. The real-threads tier passes against a v2.7.0 daemon (2/2), which is the version installed on blacky.
