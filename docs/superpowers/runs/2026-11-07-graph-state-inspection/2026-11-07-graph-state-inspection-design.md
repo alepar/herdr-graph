@@ -8,6 +8,39 @@ The user's request:
 > - which seats are active, which files are loaded into context per each - rules, roles, etc
 > - state activity, latest modifications: global, space, seat
 
+## Goal
+
+An operator or agent can inspect graph state read-only from the CLI, with `--json` on every view: which seats and clones are active and who occupies them (`roster`, `roster --live`), which instruction files each seat's agent was handed and whether they are stale (`instructions stack` plus the loaded record), every native session newest first (`sessions`), and recent changes scoped to global, a teamspace or a seat (`log`, `ops` filters).
+
+## Requirement baseline
+
+Source: the user's design request (2026-11-07, quoted above), the sessions request (2026-11-08, §2.5), the product decisions in §4 (user, 2026-11-07) and the implementation launch (2026-11-08, relayed by the main-tab coordinator).
+
+### Human request
+
+> design for graph state inspection:
+> - which seats are active, which files are loaded into context per each - rules, roles, etc
+> - state activity, latest modifications: global, space, seat
+>
+> ability to list all sessions, by space/seat/clone, with timestamps and most recent first
+>
+> hg-blw for impl, /superpowers:super-auto fully autonomouth both roasts are on
+
+### Requirements
+
+- B1 · "which seats are active" · source: design request 2026-11-07
+- B2 · "which files are loaded into context per each - rules, roles, etc" · source: design request 2026-11-07
+- B3 · "state activity, latest modifications: global, space, seat" · source: design request 2026-11-07
+- B4 · "ability to list all sessions, by space/seat/clone, with timestamps and most recent first" · source: sessions request 2026-11-08
+- B5 · "Staleness is shown, not notified." · source: §4 product decision 1
+- B6 · "`log` hides `bookkeeping` by default." · source: §4 product decision 2
+- B7 · "Harness-native files: presence, size and mtime. … It never reads their content." · source: §4 product decision 3
+- B8 · "`roster --live` is in scope now" · source: §4 product decision 4
+
+### Human scope changes
+
+- none
+
 Every claim about today's behavior below is cited to the v0.3.0 source. A seat-bearing instance needs a private Herdr server, so no sample was captured from one. The samples are reconstructed from the format strings at the cited lines; identifiers in them are placeholders. The daemon-free outputs (`list templates`, `instructions show global`) were run against a scratch `init --with-examples` instance.
 
 ## 1. Today
