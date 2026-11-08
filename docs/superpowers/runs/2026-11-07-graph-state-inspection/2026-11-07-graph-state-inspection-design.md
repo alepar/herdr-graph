@@ -258,7 +258,7 @@ The clone is resolved as the hook already resolves it (`resolve_caller` with no 
 - **Claude.** The SessionStart hook's stdin JSON carries `session_id` (and `source`: startup, resume, clear, compact); `session-report` already parses it with `parse_claude_hook` (`src/transcripts/capture.rs:67-81,97`). Today `seat --hook-prompt` does not read stdin so that `session-report` can (`src/bootstrap/setup_claude.rs:168-172`). The hook command changes to read the payload once and feed both:
   `p=$(cat); printf '%s' "$p" | <bin> seat --hook-prompt --stdin-payload; printf '%s' "$p" | <bin> session-report --from-hook claude # herdr-graph-owned`.
   `--stdin-payload` is a new hidden flag: only with it does `seat --hook-prompt` read stdin, so an older hook command still installed in a user's settings keeps feeding `session-report` unchanged. Such a hook writes `native_session_id: null` until `setup` rewrites the owner-marked hook (`setup_claude.rs:195`).
-- **Codex.** The hook command becomes `<bin> seat --hook-prompt --codex --stdin-payload`, and the hook reads `session_id` from its stdin JSON when the payload carries one. Nothing else reads Codex hook stdin. The repo has no evidence that Codex sends it today: graph takes Codex ids from the Herdr snapshot `agent_session` or `resume <id>` argv (`src/model/harness.rs:89-104`), and the hook comment says "Codex session ids come from Herdr" (`setup_claude.rs:174-175`). The hook does **not** take a Herdr snapshot itself: it is daemon-free, runs under a 10 s budget, and at SessionStart Herdr may not have detected the agent yet. So a Codex payload without `session_id`, like an unparseable payload, records `native_session_id: null`, and that clone's status is `unknown` with the record still shown (`loaded … session not identified`). That is the honest answer, not a bug to paper over with timestamps.
+- **Codex.** The hook command becomes `<bin> seat --hook-prompt --codex --stdin-payload`, and the hook reads `session_id` from its stdin JSON when the payload carries one. Nothing else reads Codex hook stdin. Codex's hooks documentation (https://learn.chatgpt.com/docs/hooks, fetched in design roast round 2) says the SessionStart stdin payload carries `session_id`; the repo itself has no capture of one. Graph takes the occupant's Codex id from the Herdr snapshot `agent_session` (a file stem when Herdr reports a path) or `resume <id>` argv (`src/model/harness.rs:89-104`, `src/observe/sessions.rs:38-45`). The status compares the two byte for byte; hg-blw.12 records which form a real or documented Codex payload uses and, if it differs from the occupant's, the clone reads `unknown` with a `note: "codex session id form differs"` rather than guessing a mapping. The hook does **not** take a Herdr snapshot itself: it is daemon-free, runs under a 10 s budget, and at SessionStart Herdr may not have detected the agent yet. So a Codex payload without `session_id`, like an unparseable payload, records `native_session_id: null`, and that clone's status is `unknown` with the record still shown (`loaded … session not identified`). That is the honest answer, not a bug to paper over with timestamps.
 - Parsing is lenient: a missing or malformed payload never changes the hook's output or exit code.
 
 **Digest choice.** `digest` is the SHA-256 of the rendered part body, not the Git blob id:
@@ -284,7 +284,7 @@ The commit shown beside a stale part, and in `stack`'s part list, is the last co
 **Honest limits.** The record says what graph **injected**, not what the model retained:
 - A session that compacts gets a fresh hook injection with the same `session_id`, and the record updates.
 - A session that ignored the hook, or whose hook failed, shows the last successful injection for that session, or `unknown` if there was none.
-- Codex runs the hook only after the user trusts it, and may not supply a session id (above).
+- Codex runs the hook only after the user trusts it, and Codex records trust against the hook's hash, so the `--stdin-payload` rewrite makes every Codex install skip the hook until the user re-trusts it in `/hooks`. `setup codex` prints that notice when it changes the command, and `doctor` reports an untrusted-after-change hook as a warning it cannot fix (graph never writes trust). Codex may also not supply a usable session id (above).
 - So `unknown` is a real state, not an error.
 
 **New reader:** `herdr-graph instructions stack <seat> [--clone <c>] [--json]`. It is daemon-free and works for **any** seat, not just the caller's. It prints the manifest at HEAD:
@@ -389,7 +389,7 @@ STARTED            ENDED              END          TEAMSPACE/SEAT/CLONE   HARNES
  "transcript":{"id":"tr_…","path":"…","source":"session|transcript_record"}|null,"cwd":"…"}
 ```
 
-`current` is true when this session is the clone's `occupant`. The document is `{schema: 1, head, tombstones: N, rows: […]}`, where `tombstones` is the count of purge tombstones in scope (the text footer below).
+`current` is true when this session is the clone's `occupant`. The document is `{schema: 1, head, tombstones: N, total: M, rows: […]}`, where `tombstones` is the count of purge tombstones in scope (the text footer below).
 
 **Limit — purge discards session history at HEAD.** `clone purge` replaces the record with a tombstone that has `sessions: []` (`src/threads/assignment.rs:89-118`), or removes it entirely. After that:
 - the sessions survive only in Git history and in the transcript index under `transcripts/`;
@@ -398,7 +398,7 @@ STARTED            ENDED              END          TEAMSPACE/SEAT/CLONE   HARNES
 
 Recovering them from history (`--history`, a Git walk like `log`) is possible but not proposed until someone needs it.
 
-**Cost.** O(clone records in scope), the same as `list clones`, plus one transcript-record lookup per session that lacks a path. `--limit` defaults to 50 and `--since` filters on `started`.
+**Cost.** O(clone records in scope), the same as `list clones`, plus one transcript-record lookup per session that lacks a path. `--limit` defaults to 50 and `--since` filters on `started`. The document carries `total` (sessions in scope after `--since`) next to `rows`, and the text adds a footer `showing N of total; use --limit` whenever `rows` is shorter than `total`.
 
 **Roster addition.** The occupant column in `roster` also shows the current session's `native_session_id` and transcript path (or `unresolved`). The JSON `occupant` gains `native_session_id` and `transcript: {id, path, source}|null`. Both come from the occupant's own `sessions[]` entry; `Occupant` itself holds only the ns_ id (`src/model/common.rs:144-148`).
 
@@ -569,7 +569,7 @@ Digest:
 
 The amendment of 2026-11-08 (redesign cycle 1) must not change any of these:
 
-- The text an agent receives from `seat --hook-prompt` (both harnesses), `seat --instructions` and `seat --json` `.instructions.text`: same render, same 9000-byte cap and truncation marker, same exit codes. The hook still never fails or blocks its session.
+- The text an agent receives from `seat --hook-prompt` (both harnesses), `seat --instructions` and `seat --json` `.instructions.text`: same render, same 9000-byte cap and truncation marker, same exit codes. The hook still never fails or blocks its session. One deliberate exception: on Codex the rewritten hook command needs a one-time re-trust in `/hooks` before Codex runs it again (§2.3 Honest limits), and setup says so.
 - `session-report --from-hook claude` still receives the full Claude SessionStart payload on stdin and reports the same `session.report` arguments, including from an older installed hook command that lacks `--stdin-payload`.
 - `seat --instructions` and `seat --json` (`seat.resolve`) stay read-only: they write neither Git nor `.graph-local/loaded/`.
 - No new Git writes and no new reload notice (§2.1, §4 decision 1). The loaded record stays local in `.graph-local/`, best-effort and daemon-free.
