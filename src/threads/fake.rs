@@ -54,6 +54,30 @@ struct State {
     finalize_error: Option<FakeSeatViewError>,
     /// (call name, subject, operation key) of every unretire/finalize/release that reached the service.
     lifecycle: Vec<(String, String, OpKey)>,
+    /// Successful D1/D2 answers by operation key, with the payload each answered. Threads v3.1.0 stores the
+    /// first successful result per (actor scope, operation key) and replays it for the same payload
+    /// (store/service_controls.rs); a refusal is not stored. The key/seat state is not recomputed on replay.
+    stored: BTreeMap<String, (String, StoredAnswer)>,
+    release_error: Option<FakeSeatViewError>,
+}
+
+#[derive(Clone)]
+enum StoredAnswer {
+    Reserved(Option<String>),
+    Done,
+}
+
+/// The stored answer for `op`, if any: `Err` when the key was used with another payload.
+fn replay(st: &State, op: &OpKey, payload: &str) -> Option<Result<StoredAnswer, ThreadsError>> {
+    st.stored.get(&op.0).map(|(p, a)| {
+        if p == payload {
+            Ok(a.clone())
+        } else {
+            Err(ThreadsError::Rejected(
+                "OperationPayloadMismatch: operation key reused with different payload".into(),
+            ))
+        }
+    })
 }
 
 /// The thread id the fake (and the real adapter) derive from an `ensure:<object>` operation key.
@@ -246,6 +270,11 @@ impl FakeThreads {
     /// While set, `finalize_retirement` fails with this error.
     pub fn set_finalize_error(&self, error: Option<FakeSeatViewError>) {
         self.lock().finalize_error = error;
+    }
+
+    /// While set, `release_continuity_key` fails with this error.
+    pub fn set_release_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().release_error = error;
     }
 
     /// The subjects (seat or key) of the lifecycle calls named `name` that reached the service, in order.
@@ -498,6 +527,15 @@ impl ThreadsPort for FakeThreads {
         st.reserves
             .push((key.to_owned(), seat.map(|s| s.0.clone())));
         st.reserve_ops.push(op.clone());
+        let payload = format!("reserve|{key}|{:?}", seat.map(|s| &s.0));
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|a| match a {
+                StoredAnswer::Reserved(b) => ReserveOutcome::Reserved {
+                    seat: b.map(ThreadsSeatRef),
+                },
+                StoredAnswer::Done => ReserveOutcome::Reserved { seat: None },
+            });
+        }
         if let Some(e) = st.reserve_error {
             return Err(e.to_error());
         }
@@ -514,6 +552,10 @@ impl ThreadsPort for FakeThreads {
         }
         let binding = wanted.or(bound);
         st.keys.insert(key.to_owned(), binding.clone());
+        st.stored.insert(
+            op.0.clone(),
+            (payload, StoredAnswer::Reserved(binding.clone())),
+        );
         Ok(ReserveOutcome::Reserved {
             seat: binding.map(ThreadsSeatRef),
         })
@@ -526,9 +568,17 @@ impl ThreadsPort for FakeThreads {
         st.calls.push("unretire_seat".into());
         st.lifecycle
             .push(("unretire_seat".into(), seat.0.clone(), op.clone()));
+        let payload = format!("unretire|{}", seat.0);
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
         match st.unretire_error {
             Some(e) => Err(e.to_error()),
-            None => Ok(()),
+            None => {
+                st.stored
+                    .insert(op.0.clone(), (payload, StoredAnswer::Done));
+                Ok(())
+            }
         }
     }
 
@@ -543,11 +593,17 @@ impl ThreadsPort for FakeThreads {
         st.calls.push("finalize_retirement".into());
         st.lifecycle
             .push(("finalize_retirement".into(), seat.0.clone(), op.clone()));
+        let payload = format!("finalize|{}", seat.0);
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
         if let Some(e) = st.finalize_error {
             return Err(e.to_error());
         }
         // Threads releases the seat's key when its retirement becomes final.
         st.keys.retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        st.stored
+            .insert(op.0.clone(), (payload, StoredAnswer::Done));
         Ok(())
     }
 
@@ -558,6 +614,13 @@ impl ThreadsPort for FakeThreads {
         st.calls.push("release_continuity_key".into());
         st.lifecycle
             .push(("release_continuity_key".into(), key.to_owned(), op.clone()));
+        let payload = format!("release|{key}");
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
+        if let Some(e) = st.release_error {
+            return Err(e.to_error());
+        }
         match st.keys.get(key) {
             None => Err(ThreadsError::Rejected(
                 "NotFound: continuity key is not reserved".into(),
@@ -567,6 +630,8 @@ impl ThreadsPort for FakeThreads {
             )),
             Some(None) => {
                 st.keys.remove(key);
+                st.stored
+                    .insert(op.0.clone(), (payload, StoredAnswer::Done));
                 Ok(())
             }
         }

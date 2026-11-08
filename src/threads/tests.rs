@@ -3813,25 +3813,28 @@ async fn record_reservation_is_idempotent_updates_the_binding_and_refuses_anothe
 #[tokio::test]
 async fn fake_reservations_follow_the_threads_key_rules() {
     let fx = fx();
-    let op = OpKey("reserve:x".into());
+    // Threads stores the first success per operation key, so each distinct request carries its own key.
+    let op = |n: &str| OpKey(format!("reserve:{n}"));
     let t = &fx.threads;
     t.set_key_binding("k1", "seat-A");
     // Seatless re-reserve of a bound key answers its seat.
     assert_eq!(
-        t.reserve_continuity_key("k1", None, &op).await.unwrap(),
+        t.reserve_continuity_key("k1", None, &op("a"))
+            .await
+            .unwrap(),
         ReserveOutcome::Reserved {
             seat: Some(seat_ref("seat-A"))
         }
     );
     // Bound elsewhere, or the seat holds another key: Conflict.
     assert_eq!(
-        t.reserve_continuity_key("k1", Some(&seat_ref("seat-B")), &op)
+        t.reserve_continuity_key("k1", Some(&seat_ref("seat-B")), &op("b"))
             .await
             .unwrap(),
         ReserveOutcome::Conflict
     );
     assert_eq!(
-        t.reserve_continuity_key("k2", Some(&seat_ref("seat-A")), &op)
+        t.reserve_continuity_key("k2", Some(&seat_ref("seat-A")), &op("c"))
             .await
             .unwrap(),
         ReserveOutcome::Conflict
@@ -3839,7 +3842,7 @@ async fn fake_reservations_follow_the_threads_key_rules() {
     assert!(!t.key_reserved("k2"));
     // A fresh key binds to a free seat.
     assert_eq!(
-        t.reserve_continuity_key("k3", Some(&seat_ref("seat-C")), &op)
+        t.reserve_continuity_key("k3", Some(&seat_ref("seat-C")), &op("d"))
             .await
             .unwrap(),
         ReserveOutcome::Reserved {
@@ -3848,12 +3851,14 @@ async fn fake_reservations_follow_the_threads_key_rules() {
     );
     t.set_reserve_conflict("k4");
     assert_eq!(
-        t.reserve_continuity_key("k4", None, &op).await.unwrap(),
+        t.reserve_continuity_key("k4", None, &op("e"))
+            .await
+            .unwrap(),
         ReserveOutcome::Conflict
     );
     t.set_reserve_error(Some(FakeSeatViewError::Rejected));
     assert!(matches!(
-        t.reserve_continuity_key("k5", None, &op).await,
+        t.reserve_continuity_key("k5", None, &op("f")).await,
         Err(ThreadsError::Rejected(_))
     ));
 }
@@ -4155,6 +4160,68 @@ async fn release_key_tombstone_releases_an_unbound_key() {
         ["key-1"]
     );
     assert!(fx.threads.lifecycle_calls("finalize_retirement").is_empty());
+}
+
+#[tokio::test]
+async fn release_key_tombstone_re_asks_after_the_key_binds() {
+    let fx = fx();
+    let c = base(&fx).await;
+    retire_clone_observed(&fx, &c.id);
+    tombstone_of(&fx, &c.id, Some("key-1"));
+    fx.threads
+        .reserve_continuity_key("key-1", None, &OpKey("setup".into()))
+        .await
+        .unwrap();
+    // The ask answers "no seat" and the release fails: the tombstone stays.
+    fx.threads
+        .set_release_error(Some(FakeSeatViewError::Disconnected));
+    steps(&fx, 2).await;
+    assert!(!is_gone(&fx, &c.id));
+    // The keyed check-in lands. A stale stored answer would loop on `None`; a fresh ask sees the binding.
+    fx.threads.set_key_binding("key-1", "seat-K");
+    fx.threads.set_release_error(None);
+    later(&fx).await;
+    later(&fx).await;
+    assert!(is_gone(&fx, &c.id));
+    assert_eq!(
+        fx.threads.lifecycle_calls("finalize_retirement"),
+        ["seat-K"]
+    );
+    assert!(!fx.threads.key_reserved("key-1"));
+}
+
+#[tokio::test]
+async fn fake_threads_replays_a_stored_answer_per_op_key() {
+    let threads = FakeThreads::new();
+    let a = OpKey("a".into());
+    let b = OpKey("b".into());
+    let seat = |o: ReserveOutcome| match o {
+        ReserveOutcome::Reserved { seat } => seat.map(|s| s.0),
+        ReserveOutcome::Conflict => panic!("conflict"),
+    };
+    assert_eq!(
+        seat(threads.reserve_continuity_key("k", None, &a).await.unwrap()),
+        None
+    );
+    threads.set_key_binding("k", "s");
+    assert_eq!(
+        seat(threads.reserve_continuity_key("k", None, &a).await.unwrap()),
+        None,
+        "the same key replays the stored answer"
+    );
+    assert_eq!(
+        seat(threads.reserve_continuity_key("k", None, &b).await.unwrap()),
+        Some("s".into()),
+        "a fresh key sees the binding"
+    );
+    let err = threads
+        .reserve_continuity_key("k", Some(&ThreadsSeatRef("s".into())), &a)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, ThreadsError::Rejected(m) if m.contains("OperationPayloadMismatch")),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -4504,20 +4571,23 @@ async fn unseated_reserved_clone_gets_its_seat_from_the_reservation_answer() {
         Some("seat-K")
     );
     assert_eq!(fx.map.resolve_ops().len(), resolves, "no pane resolution");
-    // Only the resolve want's retries are compared: the setup's reserve-key op and the key-link op are
-    // different wants with their own keys, so they are excluded by exact key.
-    let resolve_key = format!("reserve:{}:none", c.id);
+    // Only the resolve want's asks are compared: the setup's reserve-key op and the key-link op are
+    // different wants with their own keys, so they are excluded by prefix. Threads replays a stored answer for
+    // a repeated key, so every ask must carry a fresh one.
+    let resolve_prefix = format!("reserve:{}:none:", c.id);
     let asked: Vec<_> = fx
         .threads
         .reserve_ops()
         .into_iter()
         .skip(setup_ops)
-        .filter(|o| o.0 == resolve_key)
+        .filter(|o| o.0.contains(&resolve_prefix))
         .collect();
     assert!(asked.len() >= 2, "{asked:?}");
-    assert!(
-        asked.iter().all(|o| o == &asked[0]),
-        "the same operation key on every retry: {asked:?}"
+    let distinct: std::collections::BTreeSet<_> = asked.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        asked.len(),
+        "a fresh operation key on every ask: {asked:?}"
     );
     // Seated: the want is gone and threads is not asked again.
     let calls = fx.threads.reserve_calls().len();

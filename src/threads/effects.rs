@@ -1650,9 +1650,12 @@ impl ThreadsExecutor {
         if !matches!(&clone.seat_intent, Some(SeatIntent::ReleaseKey { key: k }) if k == key) {
             return ExecOutcome::Obsolete;
         }
+        // A fresh key per attempt: threads replays the stored answer for a repeated key, and the first answer
+        // can predate the keyed check-in (spec §2, the ResolveSeat discipline). `release:{clone}` below is the
+        // mutation and keeps its stable key.
         let ask = OpKey(super::namespace::salt(
             &g.epoch,
-            &format!("release-ask:{}", clone.id),
+            &format!("release-ask:{}:{}", clone.id, uuid::Uuid::new_v4()),
         ));
         match self.threads.reserve_continuity_key(key, None, &ask).await {
             Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => match admit_threads_seat(
@@ -1904,9 +1907,11 @@ impl ThreadsExecutor {
         }
     }
 
-    /// Resolve an unseated clone's seat from its key reservation: re-issue the (idempotent) reservation and
-    /// admit the seat the answer carries. A key not bound yet, or in conflict, defers; a retry replays the
-    /// same operation key.
+    /// Resolve an unseated clone's seat from its key reservation: re-ask the reservation and admit the seat the
+    /// answer carries. A key not bound yet, or in conflict, defers. Each attempt is a fresh ask with its own
+    /// operation key, because threads replays a stored answer for a repeated key and the first answer can
+    /// predate the keyed check-in (spec §2, the ResolveSeat discipline). Op keys are stable for mutations,
+    /// where a replay is the intent, and fresh per attempt for read-like asks.
     async fn resolve_reserved(&self, cx: &ExecCx<'_>, e: &EffectRecord, key: &str) -> ExecOutcome {
         let g = match self.graph(cx) {
             Ok(g) => g,
@@ -1923,7 +1928,7 @@ impl ThreadsExecutor {
         }
         let op = OpKey(super::namespace::salt(
             &g.epoch,
-            &format!("reserve:{}:none", clone.id),
+            &format!("reserve:{}:none:{}", clone.id, uuid::Uuid::new_v4()),
         ));
         let answer = self.threads.reserve_continuity_key(key, None, &op).await;
         if matches!(answer, Ok(ReserveOutcome::Reserved { .. })) {
