@@ -3,7 +3,7 @@ R2 roster --live reports, from one Herdr snapshot via the daemon, each clone's a
 R3 roster --live --unmanaged enumerates Herdr workspaces, tabs and panes with no graph binding, ids and labels only (S1)
 R4 instructions stack <seat> shows, for any seat and daemon-free, every graph-rendered instruction part with label, path, bytes, digest and last-changing commit, plus which parts the 9000-byte hook cap keeps (B2)
 R5 instructions stack lists harness-native CLAUDE.md/AGENTS.md/AGENTS.override.md in the seat cwd and ancestors with path, size and mtime, never reading content (B2, B7)
-R6 every injection path (hook for both harnesses, seat --instructions, seat.resolve) records what was injected in .graph-local/loaded without ever failing the caller, and roster and instructions stack show current/stale/unknown/truncated from it, with no notification (B2, B5)
+R6 the SessionStart hook (both harnesses) records what it injected into a native session in .graph-local/loaded, keyed by native_session_id, without ever failing the caller; seat --instructions and seat.resolve never write; roster and instructions stack show current/stale/unknown/error/truncated from it, with no notification (B2, B5) [restated by redesign cycle 1; was: every injection path incl. seat --instructions and seat.resolve writes]
 R7 log shows committed changes newest first, scoped to global, a teamspace or a seat (changes to, or --by <seat> changes made by), with --since/--limit/--max-scan, bookkeeping hidden unless --all (B3, B6)
 R8 ops can be filtered by requester seat/teamspace, limited, and emitted as JSON through the daemon (B3)
 R9 roster shows each seat's last change (B3)
