@@ -30,6 +30,16 @@ fn dead(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) != 0 }
 }
 
+/// Dead, or a zombie awaiting its parent's `wait`.
+fn dead_or_zombie(pid: u32) -> bool {
+    let out = std::process::Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout);
+    stat.trim().is_empty() || stat.trim().starts_with('Z')
+}
+
 fn wait_until(what: &str, secs: u64, mut cond: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(secs);
     while !cond() {
@@ -238,6 +248,135 @@ fn panicking_test_leaves_no_process_behind() {
     assert_helper_left_nothing(&out, &report, &["daemon_pid", "child_pid"]);
 }
 
+// ------------------------------------------------------------------------------------------ hard kill (hg-66u.97)
+
+/// Write a helper's report atomically (the parent polls for the file).
+fn write_report(report: &std::ffi::OsStr, info: serde_json::Value) {
+    let tmp = Path::new(report).with_extension("tmp");
+    std::fs::write(&tmp, info.to_string()).unwrap();
+    std::fs::rename(&tmp, report).unwrap();
+}
+
+/// Re-executed by the SIGKILL tests: owns a rig (fake herdr, detached daemon, process-group child), reports it,
+/// then sleeps without returning. Returns at once in a normal run.
+#[test]
+fn helper_sigkilled_with_live_rig() {
+    let Some(report) = std::env::var_os("HG_ISOLATION_KILL_CHILD") else {
+        return;
+    };
+    let root = TestRoot::new();
+    let _herdr = fake_herdr(&root);
+    let daemon_pid = start_daemon(&root);
+    let child = root.spawn(
+        root.command("sh")
+            .args(["-c", "sleep 600 & exec sleep 600"]),
+    );
+    write_report(
+        &report,
+        json!({
+            "root": root.path(),
+            "daemon_pid": daemon_pid,
+            "child_pid": child.id(),
+            "watchdog_pid": root.watchdog_pid(),
+        }),
+    );
+    std::thread::sleep(Duration::from_secs(600));
+}
+
+/// Spawn `helper` under `root` and wait (bounded) for its report; returns the guard and the report.
+fn spawn_reporting_helper(
+    root: &TestRoot,
+    helper: &str,
+) -> (support::isolated::ChildGuard, serde_json::Value) {
+    let report = root.path().join("report.json");
+    let guard = root.spawn(
+        root.command(std::env::current_exe().unwrap())
+            .args(["--exact", helper, "--nocapture", "--test-threads=1"])
+            .env("HG_ISOLATION_KILL_CHILD", &report),
+    );
+    wait_until("the helper's report", 15, || report.exists());
+    let info = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+    (guard, info)
+}
+
+fn pids_of(info: &serde_json::Value, keys: &[&str]) -> Vec<u32> {
+    keys.iter()
+        .map(|k| info[*k].as_u64().unwrap() as u32)
+        .collect()
+}
+
+/// SIGKILL the helper (no `Drop` runs) and reap its zombie.
+fn sigkill(guard: &mut support::isolated::ChildGuard) {
+    // SAFETY: the pid is the helper this test spawned and has not yet reaped.
+    unsafe { libc::kill(guard.id() as i32, libc::SIGKILL) };
+    assert!(guard.wait_timeout(Duration::from_secs(5)).is_some());
+}
+
+/// The rig of a SIGKILLed test process is removed by its watchdog alone: nothing else runs in this test.
+#[test]
+fn sigkilled_test_leaves_no_rig_behind() {
+    let root = TestRoot::new();
+    let (mut helper, info) = spawn_reporting_helper(&root, "helper_sigkilled_with_live_rig");
+    let child_root = PathBuf::from(info["root"].as_str().unwrap());
+    let pids = pids_of(&info, &["daemon_pid", "child_pid"]);
+    assert!(pids.iter().all(|p| !dead(*p)), "the rig is up");
+    assert!(!processes_under(&child_root).is_empty());
+    sigkill(&mut helper);
+    wait_until("every rig process to be gone", 15, || {
+        pids.iter().all(|p| dead(*p)) && processes_under(&child_root).is_empty()
+    });
+    wait_until("the root to be removed", 15, || !child_root.exists());
+}
+
+/// With the watchdog killed too, the start-of-run sweep (what the next run's `TestRoot::new` calls) reaps the
+/// rig of a dead owner.
+#[test]
+fn start_of_run_sweep_reaps_a_dead_owners_rig() {
+    let root = TestRoot::new();
+    let (mut helper, info) = spawn_reporting_helper(&root, "helper_sigkilled_with_live_rig");
+    let child_root = PathBuf::from(info["root"].as_str().unwrap());
+    let pids = pids_of(&info, &["daemon_pid", "child_pid"]);
+    let watchdog = pids_of(&info, &["watchdog_pid"])[0];
+    // SAFETY: the pid is the watchdog this test's helper reported.
+    unsafe { libc::kill(watchdog as i32, libc::SIGKILL) };
+    // The helper never reaps it, so it lingers as a zombie until the helper dies.
+    wait_until("the watchdog to die", 5, || dead_or_zombie(watchdog));
+    sigkill(&mut helper);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        pids.iter().all(|p| !dead(*p)) && child_root.exists(),
+        "with the owner and its watchdog dead nothing else cleans the rig"
+    );
+    support::isolated::reap_orphans();
+    wait_until("every rig process to be gone", 15, || {
+        pids.iter().all(|p| dead(*p)) && processes_under(&child_root).is_empty()
+    });
+    assert!(!child_root.exists(), "the sweep removes the dead root");
+}
+
+/// A root with no `owner.lock` made by an older checkout of this code is only swept once it is old.
+#[test]
+fn orphan_rule_spares_a_fresh_lockless_root() {
+    let tmp = TestRoot::new();
+    let fresh = tmp.path().join("fresh");
+    std::fs::create_dir(&fresh).unwrap();
+    assert!(!support::isolated::root_is_orphaned(&fresh));
+    // A held lock is a live owner; a released one is a dead owner.
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    let held = support::isolated::OwnerLock::acquire(&locked).unwrap();
+    assert!(!support::isolated::root_is_orphaned(&locked));
+    drop(held);
+    // A sibling test thread forking at this instant holds the lock until its exec closes the fd.
+    wait_until("the released lock to read as a dead owner", 5, || {
+        support::isolated::root_is_orphaned(&locked)
+    });
+    // A root that is gone is orphaned.
+    assert!(support::isolated::root_is_orphaned(
+        &tmp.path().join("gone")
+    ));
+}
+
 /// Private services must not launch background network update children.
 #[cfg(feature = "private-herdr")]
 #[test]
@@ -294,6 +433,40 @@ fn panicking_test_leaves_no_private_herdr_behind() {
         .output()
         .unwrap();
     assert_helper_left_nothing(&out, &report, &["herdr_pid"]);
+}
+
+/// Re-executed by `sigkilled_test_leaves_no_private_herdr_behind`.
+#[cfg(feature = "private-herdr")]
+#[test]
+fn helper_sigkilled_with_private_herdr() {
+    let Some(report) = std::env::var_os("HG_ISOLATION_KILL_CHILD") else {
+        return;
+    };
+    let herdr = support::private_herdr::PrivateHerdr::start().expect("private herdr starts");
+    write_report(
+        &report,
+        json!({ "root": herdr.root, "herdr_pid": herdr.pid() }),
+    );
+    std::thread::sleep(Duration::from_secs(600));
+}
+
+#[cfg(feature = "private-herdr")]
+#[test]
+fn sigkilled_test_leaves_no_private_herdr_behind() {
+    if support::herdr_binary().is_none() {
+        support::skip("herdr is not installed");
+        return;
+    }
+    let root = TestRoot::new();
+    let (mut helper, info) = spawn_reporting_helper(&root, "helper_sigkilled_with_private_herdr");
+    let child_root = PathBuf::from(info["root"].as_str().unwrap());
+    let pids = pids_of(&info, &["herdr_pid"]);
+    assert!(!dead(pids[0]), "the private herdr is up");
+    sigkill(&mut helper);
+    wait_until("the server and its descendants to be gone", 15, || {
+        pids.iter().all(|p| dead(*p)) && processes_under(&child_root).is_empty()
+    });
+    wait_until("the root to be removed", 15, || !child_root.exists());
 }
 
 /// A Rust anchor with a protected system child whose environment macOS ps hides.
@@ -478,4 +651,43 @@ fn test_sources_spawn_only_through_isolated_helpers() {
         "raw spawns / real-HOME reads in test code:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn threads_binary_with_a_different_version_is_rejected() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("herdr-threads");
+    std::fs::write(&script, "#!/bin/sh\necho 'herdr-threads 2.6.4'\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let err = support::threads_bin::check_version(&script, "3.1.0").unwrap_err();
+    assert!(err.contains("2.6.4"), "names the reported version: {err}");
+    assert!(err.contains("3.1.0"), "names the pinned version: {err}");
+    assert!(
+        err.contains(&script.display().to_string()),
+        "names the binary: {err}"
+    );
+    support::threads_bin::check_version(&script, "2.6.4").unwrap();
+}
+
+#[test]
+fn pinned_threads_version_is_the_submodule_manifest_version() {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("third_party/herdr-threads/Cargo.toml"),
+    )
+    .unwrap();
+    let scanned = text
+        .lines()
+        .skip_while(|l| l.trim() != "[package]")
+        .skip(1)
+        .take_while(|l| !l.starts_with('['))
+        .find_map(|l| {
+            l.strip_prefix("version = \"")?
+                .strip_suffix('"')
+                .map(str::to_owned)
+        })
+        .expect("package version line");
+    let pinned = support::threads_bin::pinned_version();
+    assert!(!pinned.is_empty());
+    assert_eq!(pinned, scanned);
 }

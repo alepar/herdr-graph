@@ -1,0 +1,12 @@
+diff --git a/src/cli/session.rs b/src/cli/session.rs
+index 54826bd..e4654b6 100644
+--- a/src/cli/session.rs
++++ b/src/cli/session.rs
+@@ -54,6 +54,7 @@ fn report(from_hook: &str) -> anyhow::Result<()> {
+         &hook,
+         env.graph_clone.as_deref(),
+         env.pane_id.as_deref(),
++        env.continuity_key.as_deref(),
+         cwd,
+     ) else {
+         return Ok(());

@@ -47,6 +47,29 @@ fn lines_of(v: &[(String, String)]) -> Value {
     )
 }
 
+/// The shell line exporting `env`, or why a name or value is not safe to type into a shell unquoted.
+fn export_line(env: &[(String, String)]) -> Result<String, String> {
+    let mut vars = Vec::with_capacity(env.len());
+    for (k, v) in env {
+        let name_ok = k
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !name_ok {
+            return Err(format!("env name {k:?} is not a valid shell variable name"));
+        }
+        let value_ok = !v.is_empty()
+            && v.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c));
+        if !value_ok {
+            return Err(format!("env value of {k} is outside [A-Za-z0-9_.-]"));
+        }
+        vars.push(format!("{k}={v}"));
+    }
+    Ok(format!(" export {}", vars.join(" ")))
+}
+
 fn path_str(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
@@ -539,6 +562,9 @@ impl HerdrApi for HerdrClient {
     /// `agent.start` takes a `name`; the trait carries none, so the pane's label is used (its kind when
     /// the pane is unlabelled). Success is `Started`, `agent_not_ready` is `BlockedNeedsHuman`, a missed
     /// deadline is `Unknown` (never retried here), any other rejection is `NeedsRevision`.
+    /// Starts the agent on the pane. A non-empty `req.env` is delivered first as a shell export typed into the
+    /// pane (spec §5): the line starts with a space so shells that ignore space-prefixed lines keep it out of
+    /// history. Names and values are validated before anything is sent; a bad one is `NeedsRevision`.
     async fn start_agent(&self, req: StartAgent) -> Result<StartOutcome, HerdrError> {
         let reject = |e: HerdrError| match e {
             HerdrError::Timeout => Ok(StartOutcome::Unknown),
@@ -562,6 +588,16 @@ impl HerdrApi for HerdrClient {
             Err(e) => return reject(e),
         }
         .unwrap_or_else(|| req.kind.clone());
+        if !req.env.is_empty() {
+            let line = match export_line(&req.env) {
+                Ok(l) => l,
+                Err(reason) => return Ok(StartOutcome::NeedsRevision { reason }),
+            };
+            let keys = [KeyInput::Text(line), KeyInput::Key("enter".to_owned())];
+            if let Err(e) = self.send_keys(&req.pane, &keys).await {
+                return reject(e);
+            }
+        }
         let p = json!({ "name": name, "kind": req.kind, "pane_id": req.pane.0, "args": req.args });
         let limit = self.timeout.max(AGENT_START_DEADLINE);
         match rpc(&self.socket, self.new_id(), wire::M_AGENT_START, p, limit).await {

@@ -422,6 +422,7 @@ async fn spike5_agent_session_for_agent_started_claude() {
             pane: pane.clone(),
             kind: "claude".into(),
             args: vec![],
+            env: vec![],
         })
         .await
         .unwrap();

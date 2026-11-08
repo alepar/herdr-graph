@@ -5,21 +5,24 @@ use super::bookkeeping::{admit_binding, admit_runtime};
 use super::desired::{DesiredPane, DesiredRuntime};
 use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use super::planner::{
-    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, launched_key, live_ref, plan_effects,
-    set_live_ref, token_of,
+    LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, incarnation_changed_at,
+    launch_env_key, launched_before, launched_key, live_ref, plan_effects, restore_mark_failed_key,
+    restore_mark_failures, resumed_key, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
+use crate::model::clone::SeatIntent;
 use crate::model::common::{Availability, Binding, CommitId, HerdrPaneId};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
 use crate::model::harness::{Harness, profile};
-use crate::model::launch::{graph_token, nonce_label};
+use crate::model::launch::{agent_env, graph_token, nonce_label};
 use crate::model::{AnyId, CloneId, SeatId, TeamspaceId};
 use crate::ports::herdr::{
     CreateTab, CreateWorkspace, HerdrError, SplitDirection, SplitPane, StartAgent,
 };
 use crate::ports::store::StoreError;
 use crate::store::tree::TreeRead;
+use crate::threads::assignment::{SeatTransition, admit_threads_seat};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
@@ -124,6 +127,16 @@ impl HerdrExecutor {
             .meta_set(&launched_key(&p.clone), &p.launch_shape().to_string());
     }
 
+    /// The variable names the start exported into `pane`'s shell, so a check-in that lacks them can be named
+    /// (the shell may have rejected the export, spec §5).
+    fn record_launch_env(&self, clone: &CloneId, pane: &HerdrPaneId, env: &[(String, String)]) {
+        let vars: Vec<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+        let _ = self.journal.meta_set(
+            &launch_env_key(clone),
+            &serde_json::json!({ "pane": pane.0, "vars": vars }).to_string(),
+        );
+    }
+
     /// A new pane for `clone` is a bare shell: forget the previous pane's launch so `start_needed` fires again.
     fn clear_launch(&self, clone: &CloneId) {
         let _ = self.journal.meta_delete(&launched_key(clone));
@@ -157,13 +170,14 @@ impl HerdrExecutor {
         match &e.kind {
             EffectKind::CreateWorkspace => ts_of(e)
                 .and_then(|t| d.workspace(&t))
-                .is_some_and(|w| !w.is_unknown()),
+                .is_some_and(|w| !w.is_unknown() || d.restoring_teamspace(&w.ts)),
             EffectKind::RenameWorkspace => ts_of(e).and_then(|t| d.workspace(&t)).is_some(),
             EffectKind::CreateTab => seat_of(e)
                 .and_then(|s| d.tab(&s))
                 // Spec §4.9 Reopening: `moved_out` never gates the node manager's tab recreation.
                 .is_some_and(|t| {
-                    (!t.moved_out || d.node_manager.as_ref() == Some(&t.seat)) && !t.is_unknown()
+                    (!t.moved_out || d.node_manager.as_ref() == Some(&t.seat))
+                        && (!t.is_unknown() || d.restoring_seat(&t.seat))
                 }),
             EffectKind::RenameTab => seat_of(e).and_then(|s| d.tab(&s)).is_some(),
             EffectKind::StampToken => match e.object.kind() {
@@ -538,7 +552,8 @@ impl HerdrExecutor {
             return ExecOutcome::Done;
         };
         let idx = LiveIndex::new(cx.snapshot, d, &self.journal);
-        let Some(lp) = idx.pane(&clone) else {
+        // The resume driver launches into the clone's last bound pane, which a restart may have left unstamped.
+        let Some(lp) = idx.pane(&clone).or_else(|| idx.bound_pane(&clone)) else {
             return ExecOutcome::Transient("pane is not present".into());
         };
         if relaunch && let Some(wait) = self.grace_remaining(cx) {
@@ -555,6 +570,11 @@ impl HerdrExecutor {
             if e.status == EffectStatus::Unknown {
                 // The earlier start went through; only its response was lost.
                 self.record_launch(p);
+                self.record_launch_env(
+                    &clone,
+                    &lp.pane.id,
+                    &agent_env(&clone, p.key_reservation.is_some()),
+                );
                 return ExecOutcome::Done;
             }
             return ExecOutcome::NeedsRevision("agent already running on the pane".into());
@@ -564,19 +584,69 @@ impl HerdrExecutor {
             Ok(_) => return ExecOutcome::NeedsRevision("pane foreground is not the shell".into()),
             Err(err) => return transient_or_failed(err),
         }
+        // A pending Restore launches once per epoch: the mark is admitted before the dispatch, and a clone whose
+        // epoch is already marked (or acknowledged by no one) is never started here.
+        // A restart relaunch of a Restore launched before the incarnation change is an ordinary restart relaunch.
+        let restart_owned = relaunch
+            && incarnation_changed_at(&self.journal)
+                .is_some_and(|at| launched_before(&p.seat_intent, at));
+        if !restart_owned
+            && let Some(SeatIntent::Restore {
+                epoch,
+                threads_done,
+                launched,
+                ..
+            }) = &p.seat_intent
+        {
+            // Stale: not acknowledged, already launched, or the intent moved to another epoch than this effect's.
+            if !*threads_done || launched.is_some() || *epoch != e.op {
+                return ExecOutcome::Obsolete;
+            }
+            let failed_key = restore_mark_failed_key(&clone);
+            if let Err(err) = admit_threads_seat(
+                cx.writer,
+                &clone,
+                &SeatTransition::MarkLaunched {
+                    epoch: epoch.clone(),
+                },
+            ) {
+                // The intent is unchanged: nothing launches, and the planner retries with a new identity.
+                let failures = restore_mark_failures(&self.journal, &clone, epoch) + 1;
+                let _ = self.journal.meta_set(
+                    &failed_key,
+                    &serde_json::json!({
+                        "epoch": epoch.to_string(),
+                        "error": err.to_string(),
+                        "failures": failures,
+                    })
+                    .to_string(),
+                );
+                return ExecOutcome::Failed(format!("restore launch mark: {err}"));
+            }
+            let _ = self.journal.meta_delete(&failed_key);
+        }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
+        let env = agent_env(&clone, p.key_reservation.is_some());
         let started = cx
             .herdr
             .start_agent(StartAgent {
                 pane: lp.pane.id.clone(),
                 kind: kind.to_owned(),
                 args,
+                env: env.clone(),
             })
             .await;
         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
         let out = start_outcome(started);
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
+            self.record_launch_env(&clone, &lp.pane.id, &env);
+            if relaunch && let Some(at) = incarnation_changed_at(&self.journal) {
+                // One restart relaunch per incarnation change.
+                let _ = self
+                    .journal
+                    .meta_set(&resumed_key(&clone), &at.to_rfc3339());
+            }
         }
         out
     }
@@ -659,9 +729,11 @@ impl HerdrExecutor {
         let resume = (from == p.harness && to_prof.supports_resume())
             .then(|| p.occupant_native_id.clone().or_else(|| p.resume.clone()))
             .flatten();
+        let env = agent_env(&clone, p.key_reservation.is_some());
         let to = to_prof.agent_kind.map(|kind| Relaunch {
             kind,
             args: to_prof.argv(p.model.as_deref(), resume.as_deref(), &p.args),
+            env: env.clone(),
         });
         let out = advance_replacement(
             cx.herdr,
@@ -676,6 +748,9 @@ impl HerdrExecutor {
         .await;
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
             self.record_launch(p);
+            if to_prof.agent_kind.is_some() {
+                self.record_launch_env(&clone, &lp.pane.id, &env);
+            }
         }
         out
     }
@@ -866,6 +941,89 @@ mod tests {
         assert!(
             exec.implied(&desired_with_tab(&seat, false, false), &row),
             "a seat that is not moved out keeps its CreateTab"
+        );
+    }
+
+    fn create_workspace_row(ts: &TeamspaceId) -> EffectRecord {
+        EffectRecord {
+            object: ts.to_any(),
+            kind: EffectKind::CreateWorkspace,
+            ..create_tab_row(&SeatId::new())
+        }
+    }
+
+    /// Spec section 8 step 1 over the Unknown rule (section 4.3.2): a seat whose clone carries a pane-less Restore
+    /// reopens its Unknown tab and workspace; without the Restore the old rule holds.
+    #[test]
+    fn create_tab_and_workspace_of_a_restoring_seat_are_implied_while_unknown() {
+        use crate::model::clone::SeatIntent;
+        use crate::model::harness::Harness;
+        use crate::reconcile::desired::{DesiredPane, DesiredWorkspace};
+        let dir = tempfile::tempdir().unwrap();
+        let exec = HerdrExecutor {
+            journal: Arc::new(Journal::open(&dir.path().join("journal.sqlite3")).unwrap()),
+            cfg: ReconcilerConfig::new(dir.path().to_path_buf()),
+            cache: Arc::new(DesiredCache::default()),
+        };
+        let seat = SeatId::new();
+        let ts = TeamspaceId::new();
+        let bound = Some(Binding::default());
+        let mut d = desired_with_tab(&seat, false, false);
+        d.tabs[0].ts = ts.clone();
+        d.tabs[0].bound = bound.clone();
+        d.tabs[0].availability = Availability::Unknown;
+        d.workspaces.push(DesiredWorkspace {
+            ts: ts.clone(),
+            name: "ts".into(),
+            cwd: "/".into(),
+            env: vec![],
+            bound,
+            availability: Availability::Unknown,
+            rev: 1,
+        });
+        d.panes.push(DesiredPane {
+            clone: CloneId::new(),
+            seat: seat.clone(),
+            ts: ts.clone(),
+            name: "c".into(),
+            cwd: "/".into(),
+            env: vec![],
+            harness: Harness::Shell,
+            model: None,
+            args: vec![],
+            resume: None,
+            occupant: None,
+            occupant_native_id: None,
+            bound: None,
+            availability: Availability::Present,
+            rev: 1,
+            threads_seat: Some("seat-1".into()),
+            seat_fact: None,
+            seat_intent: Some(SeatIntent::Restore {
+                seat: "seat-1".into(),
+                epoch: OpId::new(),
+                threads_done: false,
+                launched: None,
+                last_refusal: None,
+            }),
+            key_reservation: None,
+            had_agent: false,
+        });
+        let tab_row = create_tab_row(&seat);
+        let ws_row = create_workspace_row(&ts);
+        assert!(exec.implied(&d, &tab_row), "a restoring seat's CreateTab");
+        assert!(
+            exec.implied(&d, &ws_row),
+            "a restoring seat's CreateWorkspace"
+        );
+        d.panes[0].seat_intent = None;
+        assert!(
+            !exec.implied(&d, &tab_row),
+            "no Restore: Unknown gets no tab"
+        );
+        assert!(
+            !exec.implied(&d, &ws_row),
+            "no Restore: Unknown gets no workspace"
         );
     }
 }

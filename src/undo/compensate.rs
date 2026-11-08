@@ -1,6 +1,5 @@
 //! The `undo` organizational kind (spec §6): previews and applies compensating operations. An undo is its
 //! own action (`kind = undo`, `undoes = <act_>`); the original action's `undone_by` records the op.
-use super::adopt::{ADOPT_BINDING_KEY, adoption};
 use super::candidates::{is_undoable, read_action};
 use super::preview::{
     Inverse, closes_caller, compute_restore, instructions_inverse, pointer_restores,
@@ -11,13 +10,11 @@ use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
 use crate::model::change::RequestKind;
 use crate::model::clone::CloneRecord;
-use crate::model::common::{
-    AppLifecycle, Binding, CloneLifecycle, Lifecycle, RetireMechanism, Retirement, Runtime,
-};
+use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, RetireMechanism};
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::template::Relationship;
-use crate::model::{ActionId, AnyId, AppId, CloneId, IdKind};
+use crate::model::{ActionId, AnyId, AppId, IdKind};
 use crate::plan::core_kinds::{
     Acc, absent, clone_slug_for, mm, new_clone_record, parse_args, read_seat, read_ts, rev_of,
     write_action,
@@ -213,7 +210,7 @@ impl OrgKind for UndoKind {
             .ok_or_else(|| MutationError::Bug("plan reserved no act id".into()))?;
         match orig.kind {
             ActionKind::ClosureCascade | ActionKind::Retire | ActionKind::ApplicationRetire => {
-                restore_mutate(cx, &orig, &act, a.caller_pane.as_deref(), plan)?;
+                restore_mutate(cx, &orig, &act, plan)?;
             }
             ActionKind::Hydrate => {
                 let app = comp_app(&orig).map_err(mm)?;
@@ -304,29 +301,17 @@ fn restamp(cx: &mut MutationCx<'_>, id: &AnyId, act: &ActionId) -> Result<(), Mu
     Ok(())
 }
 
-/// Resurrect exactly what the action retired; adopt the caller's pane as one restored clone.
+/// Resurrect exactly what the action retired. Restored clones commit with no runtime: the reconciler reopens
+/// each seat's tab in its teamspace's workspace and writes the new pane as the binding. The caller's pane is
+/// never adopted.
 fn restore_mutate(
     cx: &mut MutationCx<'_>,
     orig: &ActionRecord,
     act: &ActionId,
-    caller_pane: Option<&str>,
     plan: &Plan,
 ) -> Result<(), MutationError> {
-    // The caller's pane as Herdr showed it when `undo.apply` admitted the op: an observed input carried in the
-    // request's typed `confirmed.observed`, not a recomputed effect.
-    let observed: Option<Binding> = cx
-        .request
-        .confirmed
-        .as_ref()
-        .and_then(|c| c.observed.get(ADOPT_BINDING_KEY))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
     let mut reserved = plan.reserved.clone();
     let r = compute_restore(&cx.tree, orig, &mut reserved, Some(&plan.effects)).map_err(mm)?;
-    let runtime = r.runtime_clones(&cx.tree).map_err(mm)?;
-    let adopt = match caller_pane {
-        Some(p) => adoption(&cx.tree, p, &runtime)?,
-        None => None,
-    };
     let mut acc = Acc::default();
 
     for (ts_id, active) in &r.teamspaces {
@@ -394,8 +379,7 @@ fn restore_mutate(
         let mut rec = rec;
         rec.lifecycle = CloneLifecycle::Active;
         rec.retired = None;
-        rec.occupant = None;
-        rec.runtime = absent();
+        crate::plan::core_kinds::restore_commit(&mut rec, &cx.op);
         cx.tree.put_record(loc.record_path, &mut rec)?;
         acc.changed(c.to_any(), "retired", "active");
         let f = read_seat(&cx.tree, &rec.seat).map_err(mm)?;
@@ -435,80 +419,6 @@ fn restore_mutate(
         "undoes_kind".into(),
         toml::Value::String(format!("{:?}", orig.kind).to_lowercase()),
     );
-    if let Some(a) = &adopt {
-        if let Some((x, _)) = &a.displaced {
-            displace(cx, x, act, &mut acc)?;
-        }
-        let loc = cx
-            .tree
-            .locate(&a.clone.to_any())?
-            .ok_or_else(|| MutationError::Bug(format!("adopted clone {} vanished", a.clone)))?;
-        let mut rec: CloneRecord = cx
-            .tree
-            .read_record(&loc.record_path)?
-            .ok_or_else(|| MutationError::Bug(format!("adopted clone {} vanished", a.clone)))?;
-        // The adopted clone commits with the caller's pane bound and `present`: the commit that wakes the
-        // reconciler already holds the binding, so there is no restored clone without a pane to create one for.
-        let (availability, binding) = a.committed_runtime(observed.as_ref());
-        rec.runtime = Runtime {
-            availability,
-            bound: Some(binding),
-            observed_at: Some(cx.now),
-        };
-        let mut seat = read_seat(&cx.tree, &rec.seat).map_err(mm)?;
-        seat.rec.activation.last_op = Some(cx.op.clone());
-        cx.tree
-            .put_record(seat.loc.record_path.clone(), &mut seat.rec)?;
-        cx.tree.put_record(loc.record_path, &mut rec)?;
-        let mut t = toml::Table::new();
-        t.insert("clone".into(), toml::Value::String(a.clone.to_string()));
-        t.insert("pane".into(), toml::Value::String(a.pane.clone()));
-        if let Some(rt) = &rec.runtime.bound
-            && let Ok(b) = toml::Value::try_from(rt)
-        {
-            t.insert("binding".into(), b);
-        }
-        if let Some((x, _)) = &a.displaced {
-            t.insert("displaced".into(), toml::Value::String(x.to_string()));
-        }
-        comp.insert("adopt".into(), toml::Value::Table(t));
-    }
     write_action(cx, act, ActionKind::Undo, acc, comp)?;
-    Ok(())
-}
-
-/// Retire the clone the caller's pane was bound to (mechanism `undo`); its pane now belongs to the adopted
-/// clone, so its runtime binding is dropped first and the reconciler has nothing to close.
-fn displace(
-    cx: &mut MutationCx<'_>,
-    x: &CloneId,
-    act: &ActionId,
-    acc: &mut Acc,
-) -> Result<(), MutationError> {
-    let loc = cx
-        .tree
-        .locate(&x.to_any())?
-        .ok_or_else(|| MutationError::Bug(format!("clone {x} vanished")))?;
-    let mut rec = read_clone(&cx.tree, x)
-        .map_err(mm)?
-        .ok_or_else(|| MutationError::Bug(format!("clone {x} vanished")))?;
-    // Backstop: OrgMutation recomputes the plan against this revision first and rejects an occupied displaced clone (repair_required); this guard only matters if a kind ever skips that recompute.
-    if rec.occupant.is_some() {
-        return Err(reject(
-            "repair_required",
-            format!("clone {x} gained an active session since the plan; plan the undo again"),
-        ));
-    }
-    rec.lifecycle = CloneLifecycle::Retired;
-    rec.retired = Some(Retirement {
-        op: cx.op.clone(),
-        action: Some(act.clone()),
-        at: cx.now,
-        mechanism: RetireMechanism::Undo,
-    });
-    rec.runtime = absent();
-    cx.tree.put_record(loc.record_path, &mut rec)?;
-    acc.retired.push(x.to_any());
-    acc.changed(x.to_any(), "active", "retired");
     Ok(())
 }

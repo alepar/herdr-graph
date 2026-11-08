@@ -97,7 +97,7 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
     }
 }
 
-/// The whole plan → confirm flow, reused by other command groups (e.g. `rebind`).
+/// The whole plan → confirm flow, reused by other command groups.
 pub fn plan_flow(words: Vec<String>, json: bool) -> anyhow::Result<ExitCode> {
     let reply = match call_daemon("plan.create", json!({ "words": words }), CallMode::Ensure) {
         Ok(v) => v,

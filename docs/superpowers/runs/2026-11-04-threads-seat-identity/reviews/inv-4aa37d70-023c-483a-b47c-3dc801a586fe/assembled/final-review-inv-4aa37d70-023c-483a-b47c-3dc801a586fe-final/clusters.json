@@ -1,0 +1,453 @@
+{
+ "changed": [
+  "CURRENT-DESIGN.md",
+  "Cargo.lock",
+  "DESIGN-NOTES.md",
+  "GRAPH_STATE.md",
+  "docs/reviews/2026-10-29-seat-review-H2-identity-design.md",
+  "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-design.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1-step-back.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2-format-repair.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/amend-design-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-ledger.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-requirements.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-requirements.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-ledger-design.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-overrides-design.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/friction.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.json",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-10.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-11.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-12.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-13.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-14.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-15.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-17.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-19.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-3.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-4.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-6.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-7.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-8.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-9.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-2.md",
+  "docs/superpowers/runs/2026-11-04-threads-seat-identity/threads-ht-ma6i-protocol-shapes.md",
+  "docs/superpowers/specs/INDEX.md",
+  "skills/graph/SKILL.md",
+  "skills/seat/SKILL.md",
+  "src/bootstrap/mod.rs",
+  "src/bootstrap/tests.rs",
+  "src/cli/session.rs",
+  "src/config.rs",
+  "src/daemon/clone_status.rs",
+  "src/daemon/compose.rs",
+  "src/daemon/mod.rs",
+  "src/herdr/client.rs",
+  "src/herdr/fake.rs",
+  "src/herdr/tests.rs",
+  "src/model/change.rs",
+  "src/model/clone.rs",
+  "src/model/launch.rs",
+  "src/model/tests.rs",
+  "src/observe/matcher.rs",
+  "src/observe/mutations.rs",
+  "src/observe/step.rs",
+  "src/observe/tests.rs",
+  "src/plan/core_kinds.rs",
+  "src/plan/tests.rs",
+  "src/ports/herdr.rs",
+  "src/ports/threads.rs",
+  "src/reconcile/herdr_exec.rs",
+  "src/reconcile/planner.rs",
+  "src/reconcile/session.rs",
+  "src/reconcile/tests.rs",
+  "src/store/tests.rs",
+  "src/threads/assignment.rs",
+  "src/threads/effects.rs",
+  "src/threads/fake.rs",
+  "src/threads/mapping.rs",
+  "src/threads/mod.rs",
+  "src/threads/service_tests.rs",
+  "src/threads/tests.rs",
+  "src/transcripts/capture.rs",
+  "src/transcripts/mod.rs",
+  "src/transcripts/tests.rs",
+  "src/undo/compensate.rs",
+  "src/undo/preview.rs",
+  "src/undo/tests.rs",
+  "tests/daemon_composed.rs",
+  "tests/herdr_client.rs",
+  "tests/herdr_spikes.rs",
+  "tests/instruction_writers.rs",
+  "tests/integration_sweep.rs",
+  "third_party/herdr-threads"
+ ],
+ "clusters": [
+  {
+   "name": "root",
+   "files": [
+    "CURRENT-DESIGN.md",
+    "Cargo.lock",
+    "DESIGN-NOTES.md",
+    "GRAPH_STATE.md",
+    "third_party/herdr-threads"
+   ],
+   "slices": [
+    "slices/000001.diff",
+    "slices/000002.diff",
+    "slices/000003.diff",
+    "slices/000004.diff",
+    "slices/000100.diff"
+   ]
+  },
+  {
+   "name": "docs",
+   "files": [
+    "docs/reviews/2026-10-29-seat-review-H2-identity-design.md",
+    "docs/superpowers/specs/INDEX.md"
+   ],
+   "slices": [
+    "slices/000005.diff",
+    "slices/000052.diff"
+   ]
+  },
+  {
+   "name": "runs-other",
+   "files": [
+    "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-design.md"
+   ],
+   "slices": [
+    "slices/000006.diff"
+   ]
+  },
+  {
+   "name": "runs-top",
+   "files": [
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2-format-repair.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/amend-design-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-ledger.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-requirements.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/friction.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/threads-ht-ma6i-protocol-shapes.md"
+   ],
+   "slices": [
+    "slices/000007.diff",
+    "slices/000008.diff",
+    "slices/000009.diff",
+    "slices/000010.diff",
+    "slices/000011.diff",
+    "slices/000012.diff",
+    "slices/000013.diff",
+    "slices/000014.diff",
+    "slices/000015.diff",
+    "slices/000016.diff",
+    "slices/000017.diff",
+    "slices/000018.diff",
+    "slices/000019.diff",
+    "slices/000020.diff",
+    "slices/000021.diff",
+    "slices/000022.diff",
+    "slices/000023.diff",
+    "slices/000024.diff",
+    "slices/000025.diff",
+    "slices/000026.diff",
+    "slices/000027.diff",
+    "slices/000048.diff",
+    "slices/000049.diff",
+    "slices/000050.diff",
+    "slices/000051.diff"
+   ]
+  },
+  {
+   "name": "runs-reviews-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f",
+   "files": [
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-10.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-11.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-12.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-13.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-14.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-15.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-17.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-19.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-4.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-6.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-7.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-8.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-9.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md"
+   ],
+   "slices": [
+    "slices/000028.diff",
+    "slices/000029.diff",
+    "slices/000030.diff",
+    "slices/000031.diff",
+    "slices/000032.diff",
+    "slices/000033.diff",
+    "slices/000034.diff",
+    "slices/000035.diff",
+    "slices/000036.diff",
+    "slices/000037.diff",
+    "slices/000038.diff",
+    "slices/000039.diff",
+    "slices/000040.diff",
+    "slices/000041.diff",
+    "slices/000042.diff",
+    "slices/000043.diff",
+    "slices/000044.diff",
+    "slices/000045.diff",
+    "slices/000046.diff",
+    "slices/000047.diff"
+   ]
+  },
+  {
+   "name": "skills",
+   "files": [
+    "skills/graph/SKILL.md",
+    "skills/seat/SKILL.md"
+   ],
+   "slices": [
+    "slices/000053.diff",
+    "slices/000054.diff"
+   ]
+  },
+  {
+   "name": "src-bootstrap",
+   "files": [
+    "src/bootstrap/mod.rs",
+    "src/bootstrap/tests.rs"
+   ],
+   "slices": [
+    "slices/000055.diff",
+    "slices/000056.diff"
+   ]
+  },
+  {
+   "name": "src-cli",
+   "files": [
+    "src/cli/session.rs"
+   ],
+   "slices": [
+    "slices/000057.diff"
+   ]
+  },
+  {
+   "name": "src-config",
+   "files": [
+    "src/config.rs"
+   ],
+   "slices": [
+    "slices/000058.diff"
+   ]
+  },
+  {
+   "name": "src-daemon",
+   "files": [
+    "src/daemon/clone_status.rs",
+    "src/daemon/compose.rs",
+    "src/daemon/mod.rs"
+   ],
+   "slices": [
+    "slices/000059.diff",
+    "slices/000060.diff",
+    "slices/000061.diff"
+   ]
+  },
+  {
+   "name": "src-herdr",
+   "files": [
+    "src/herdr/client.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/tests.rs"
+   ],
+   "slices": [
+    "slices/000062.diff",
+    "slices/000063.diff",
+    "slices/000064.diff"
+   ]
+  },
+  {
+   "name": "src-model",
+   "files": [
+    "src/model/change.rs",
+    "src/model/clone.rs",
+    "src/model/launch.rs",
+    "src/model/tests.rs"
+   ],
+   "slices": [
+    "slices/000065.diff",
+    "slices/000066.diff",
+    "slices/000067.diff",
+    "slices/000068.diff"
+   ]
+  },
+  {
+   "name": "src-observe",
+   "files": [
+    "src/observe/matcher.rs",
+    "src/observe/mutations.rs",
+    "src/observe/step.rs",
+    "src/observe/tests.rs"
+   ],
+   "slices": [
+    "slices/000069.diff",
+    "slices/000070.diff",
+    "slices/000071.diff",
+    "slices/000072.diff"
+   ]
+  },
+  {
+   "name": "src-plan",
+   "files": [
+    "src/plan/core_kinds.rs",
+    "src/plan/tests.rs"
+   ],
+   "slices": [
+    "slices/000073.diff",
+    "slices/000074.diff"
+   ]
+  },
+  {
+   "name": "src-ports",
+   "files": [
+    "src/ports/herdr.rs",
+    "src/ports/threads.rs"
+   ],
+   "slices": [
+    "slices/000075.diff",
+    "slices/000076.diff"
+   ]
+  },
+  {
+   "name": "src-reconcile",
+   "files": [
+    "src/reconcile/herdr_exec.rs",
+    "src/reconcile/planner.rs",
+    "src/reconcile/session.rs",
+    "src/reconcile/tests.rs"
+   ],
+   "slices": [
+    "slices/000077.diff",
+    "slices/000078.diff",
+    "slices/000079.diff",
+    "slices/000080.diff"
+   ]
+  },
+  {
+   "name": "src-store",
+   "files": [
+    "src/store/tests.rs"
+   ],
+   "slices": [
+    "slices/000081.diff"
+   ]
+  },
+  {
+   "name": "src-threads",
+   "files": [
+    "src/threads/assignment.rs",
+    "src/threads/effects.rs",
+    "src/threads/fake.rs",
+    "src/threads/mapping.rs",
+    "src/threads/mod.rs",
+    "src/threads/service_tests.rs",
+    "src/threads/tests.rs"
+   ],
+   "slices": [
+    "slices/000082.diff",
+    "slices/000083.diff",
+    "slices/000084.diff",
+    "slices/000085.diff",
+    "slices/000086.diff",
+    "slices/000087.diff",
+    "slices/000088.diff"
+   ]
+  },
+  {
+   "name": "src-transcripts",
+   "files": [
+    "src/transcripts/capture.rs",
+    "src/transcripts/mod.rs",
+    "src/transcripts/tests.rs"
+   ],
+   "slices": [
+    "slices/000089.diff",
+    "slices/000090.diff",
+    "slices/000091.diff"
+   ]
+  },
+  {
+   "name": "src-undo",
+   "files": [
+    "src/undo/compensate.rs",
+    "src/undo/preview.rs",
+    "src/undo/tests.rs"
+   ],
+   "slices": [
+    "slices/000092.diff",
+    "slices/000093.diff",
+    "slices/000094.diff"
+   ]
+  },
+  {
+   "name": "tests",
+   "files": [
+    "tests/daemon_composed.rs",
+    "tests/herdr_client.rs",
+    "tests/herdr_spikes.rs",
+    "tests/instruction_writers.rs",
+    "tests/integration_sweep.rs"
+   ],
+   "slices": [
+    "slices/000095.diff",
+    "slices/000096.diff",
+    "slices/000097.diff",
+    "slices/000098.diff",
+    "slices/000099.diff"
+   ]
+  }
+ ]
+}

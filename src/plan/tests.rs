@@ -107,6 +107,7 @@ fn fx_with_opt_out(opt_out: bool) -> Fx {
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
+    crate::threads::register_mutations(&mut reg);
     reg.register(
         super::managers::reparent::testing::SET_POINTER_KEY,
         Arc::new(super::managers::reparent::testing::SetPointer),
@@ -2103,6 +2104,11 @@ mod effective {
             opt_outs: vec![],
             invitations: vec![],
             reload_required: false,
+            threads_seat: None,
+            threads_seat_history: vec![],
+            seat_intent: None,
+            seat_fact: None,
+            key_reservation: None,
         }
     }
 
@@ -3469,6 +3475,384 @@ fn seat_override_clear_sections_cap_warning() {
     );
     let sp = plan(&fx, "seat override y --clear sections");
     assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+}
+
+// ---------------------------------------------------------------------------------------------
+// clone purge (spec §14.1-3)
+// ---------------------------------------------------------------------------------------------
+
+/// Bind `clone` to a threads seat the way production does: through the write-once mutation.
+fn assign_seat(fx: &Fx, clone: &crate::model::CloneId, seat: &str) {
+    crate::threads::assignment::admit_threads_seat(
+        &*fx.w,
+        clone,
+        &crate::threads::assignment::SeatTransition::Assign { seat: seat.into() },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+/// The `second` clone of seat `foreman`, optionally seated, retired.
+fn retired_second(fx: &Fx, threads_seat: Option<&str>) -> CloneRecord {
+    active_seat_with_two_clones(fx);
+    let (_, rec) = seat(fx, "foreman", None);
+    let second = clones_of(fx, &rec.id)
+        .into_iter()
+        .find(|(_, c)| c.name == "second")
+        .unwrap()
+        .1;
+    if let Some(s) = threads_seat {
+        assign_seat(fx, &second.id, s);
+    }
+    commit(fx, &format!("clone retire {}", second.id));
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .find(|(_, c)| c.id == second.id)
+        .unwrap()
+        .1
+}
+
+fn find_clone(fx: &Fx, id: &crate::model::CloneId) -> Option<CloneRecord> {
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, c)| c)
+        .find(|c| &c.id == id)
+}
+
+fn plan_error(fx: &Fx, change: &str) -> String {
+    match create_plan(&fx.deps, &CallerInfo::default(), words(change)) {
+        Ok(_) => panic!("{change}: expected a planning error"),
+        Err(e) => e.message,
+    }
+}
+
+#[test]
+fn restore_commit_clears_occupant_and_runtime() {
+    use crate::model::clone::{SeatFact, SeatFactState, SeatIntent};
+    use crate::model::common::{Availability, Binding, Occupant};
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness claude",
+    );
+    let (_, rec) = seat(&fx, "foreman", None);
+    let mut c = clones_of(&fx, &rec.id).remove(0).1;
+    let dirty = |c: &mut CloneRecord| {
+        c.occupant = Some(Occupant {
+            native_session: crate::model::NsId::new(),
+            harness: crate::model::harness::Harness::Claude,
+            since: t0(),
+        });
+        c.runtime.availability = Availability::Present;
+        c.runtime.bound = Some(Binding::default());
+        c.runtime.observed_at = Some(t0());
+        c.seat_fact = Some(SeatFact {
+            seat: "seat-7".into(),
+            state: SeatFactState::Retired { reversible: false },
+            read_at: t0(),
+        });
+    };
+    dirty(&mut c);
+    c.threads_seat = Some("seat-7".into());
+    let op = OpId::new();
+    super::core_kinds::restore_commit(&mut c, &op);
+    assert_eq!(c.occupant, None);
+    assert_eq!(c.runtime, super::core_kinds::absent());
+    assert_eq!(c.seat_fact, None);
+    assert_eq!(
+        c.seat_intent,
+        Some(SeatIntent::Restore {
+            seat: "seat-7".into(),
+            epoch: op,
+            threads_done: false,
+            launched: None,
+            last_refusal: None,
+        })
+    );
+
+    // A seatless clone: the survivor is cleared, no intent is written.
+    let mut plain = clones_of(&fx, &rec.id).remove(0).1;
+    dirty(&mut plain);
+    super::core_kinds::restore_commit(&mut plain, &OpId::new());
+    assert_eq!(plain.occupant, None);
+    assert_eq!(plain.runtime, super::core_kinds::absent());
+    assert_eq!(plain.seat_intent, None);
+}
+
+#[test]
+fn seat_activate_writes_a_restore_intent_for_seated_clones_only() {
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    let (_, rec) = seat(&fx, "foreman", None);
+    let only = clones_of(&fx, &rec.id).remove(0).1.id;
+    assign_seat(&fx, &only, "seat-42");
+    commit(&fx, "seat deactivate foreman");
+    assert!(find_clone(&fx, &only).unwrap().seat_intent.is_none());
+    let row = commit(&fx, "seat activate foreman");
+    let c = find_clone(&fx, &only).unwrap();
+    assert_eq!(c.lifecycle, CloneLifecycle::Active);
+    assert_eq!(
+        c.seat_intent,
+        Some(crate::model::clone::SeatIntent::Restore {
+            seat: "seat-42".into(),
+            epoch: row.op.clone(),
+            threads_done: false,
+            launched: None,
+            last_refusal: None,
+        })
+    );
+    assert!(c.seat_fact.is_none());
+
+    // A seatless clone gets no intent: the ordinary start rule applies.
+    commit(
+        &fx,
+        "seat create plain --teamspace alpha --active --harness shell",
+    );
+    let (_, plain) = seat(&fx, "plain", None);
+    let seatless = clones_of(&fx, &plain.id).remove(0).1.id;
+    commit(&fx, "seat deactivate plain");
+    commit(&fx, "seat activate plain");
+    assert!(find_clone(&fx, &seatless).unwrap().seat_intent.is_none());
+}
+
+#[test]
+fn purge_of_a_retired_seated_clone_keeps_a_finalize_tombstone() {
+    let fx = fx();
+    let c = retired_second(&fx, Some("seat-42"));
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(kinds_of(&sp), vec!["clone.purge"]);
+    // A seated clone always keeps Finalize{seat}, whatever the seat's retirement kind (§14.2).
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "finalize");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &c.id).expect("the tombstone stays to drive the finalization");
+    assert!(t.is_tombstone());
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::Finalize {
+            seat: "seat-42".into()
+        })
+    );
+}
+
+#[test]
+fn purge_of_a_retired_seatless_clone_removes_the_record() {
+    let fx = fx();
+    let c = retired_second(&fx, None);
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(find_clone(&fx, &c.id).is_none());
+}
+
+/// Record a key reservation on `clone` the way production does: through ThreadsSeatAssignment.
+fn reserve_key(fx: &Fx, clone: &crate::model::CloneId, seat: Option<&str>) {
+    crate::threads::assignment::admit_threads_seat(
+        &*fx.w,
+        clone,
+        &crate::threads::assignment::SeatTransition::RecordReservation {
+            key: clone.to_string(),
+            seat: seat.map(str::to_owned),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+#[test]
+fn purge_of_a_reserved_seatless_clone_writes_release_key() {
+    let fx = fx();
+    let c = retired_second(&fx, None);
+    reserve_key(&fx, &c.id, None);
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "release_key");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &c.id).expect("a ReleaseKey tombstone stays to drive the release");
+    assert!(t.is_tombstone());
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::ReleaseKey {
+            key: c.id.to_string()
+        })
+    );
+    assert_eq!(t.threads_seat, None);
+    assert_eq!(
+        t.key_reservation, None,
+        "the tombstone carries no reservation"
+    );
+}
+
+#[test]
+fn purge_of_a_seated_clone_keeps_no_release_key() {
+    // A seat holder's key is the seat's: threads deletes it at final retirement, so the tombstone is the
+    // seat's Finalize, never a ReleaseKey, whatever reservation the clone recorded.
+    let fx = fx();
+    let c = retired_second(&fx, Some("seat-42"));
+    reserve_key(&fx, &c.id, Some("seat-42"));
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "finalize");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &c.id).expect("the tombstone stays");
+    assert_eq!(
+        t.seat_intent,
+        Some(crate::model::clone::SeatIntent::Finalize {
+            seat: "seat-42".into()
+        })
+    );
+}
+
+#[test]
+fn purge_of_an_unreserved_seatless_clone_deletes_the_record() {
+    let fx = fx();
+    let c = retired_second(&fx, None);
+    assert_eq!(c.key_reservation, None);
+    let sp = plan(&fx, &format!("clone purge {}", c.id));
+    assert_eq!(sp.plan.effects[0].detail["tombstone"], "none");
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    assert!(find_clone(&fx, &c.id).is_none());
+}
+
+#[test]
+fn purge_of_an_active_clone_is_refused() {
+    let fx = fx();
+    active_seat_with_two_clones(&fx);
+    let (_, rec) = seat(&fx, "foreman", None);
+    let active = clones_of(&fx, &rec.id).remove(0).1;
+    let by_id = plan_error(&fx, &format!("clone purge {}", active.id));
+    assert!(
+        by_id.contains(active.id.as_str()) && by_id.contains("retire it first"),
+        "{by_id}"
+    );
+    let by_name = plan_error(&fx, "clone purge second");
+    assert!(by_name.contains("retire it first"), "{by_name}");
+    assert_eq!(
+        find_clone(&fx, &active.id).unwrap().lifecycle,
+        CloneLifecycle::Active
+    );
+}
+
+#[test]
+fn purge_of_an_already_purged_clone_is_refused() {
+    let fx = fx();
+    let c = retired_second(&fx, Some("seat-42"));
+    commit(&fx, &format!("clone purge {}", c.id));
+    let e = plan_error(&fx, &format!("clone purge {}", c.id));
+    assert!(e.contains(c.id.as_str()), "{e}");
+}
+
+#[test]
+fn purged_seated_clone_is_not_revived_by_seat_resurrect() {
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    let (_, rec) = seat(&fx, "foreman", None);
+    let only = clones_of(&fx, &rec.id).remove(0).1.id;
+    assign_seat(&fx, &only, "seat-42");
+    commit(&fx, "seat retire foreman");
+    assert_eq!(
+        find_clone(&fx, &only).unwrap().lifecycle,
+        CloneLifecycle::Retired
+    );
+    commit(&fx, &format!("clone purge {only}"));
+    assert!(
+        find_clone(&fx, &only).is_some_and(|t| t.is_tombstone()),
+        "the purge leaves an inert Finalize tombstone"
+    );
+    // The seat has no clone left to bring back: the plan either lists nothing for the purged id or refuses.
+    match create_plan(
+        &fx.deps,
+        &CallerInfo::default(),
+        words(&format!("seat resurrect {} --active", rec.id)),
+    ) {
+        Ok(v) => {
+            let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
+            let sp = fx.deps.plans.get(&id).unwrap().unwrap();
+            for e in &sp.plan.effects {
+                assert!(
+                    !matches!(e.kind.as_str(), "clone.resurrect" | "open_pane")
+                        || e.object != only.to_any(),
+                    "purged clone planned: {e:?}"
+                );
+            }
+            let row = apply_plan(&fx, &sp);
+            assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+        }
+        Err(_) => {}
+    }
+    assert!(
+        find_clone(&fx, &only).is_some_and(|t| t.is_tombstone()
+            && t.lifecycle == CloneLifecycle::Retired
+            && t.occupant.is_none()),
+        "the tombstone is not revived"
+    );
+}
+
+#[test]
+fn clone_status_lists_retired_unpurged_clones() {
+    let fx = fx();
+    let retired = retired_second(&fx, Some("seat-42"));
+    // A second retired clone, purged (its record is gone), must not be listed.
+    commit(&fx, "clone add foreman --name third");
+    let (_, rec) = seat(&fx, "foreman", None);
+    let third = clones_of(&fx, &rec.id)
+        .into_iter()
+        .find(|(_, c)| c.name == "third")
+        .unwrap()
+        .1;
+    assign_seat(&fx, &third.id, "seat-43");
+    commit(&fx, &format!("clone retire {}", third.id));
+    commit(&fx, &format!("clone purge {}", third.id));
+
+    let v = crate::daemon::clone_status::clone_status(&view(&fx));
+    let listed = v["retired_unpurged"].as_array().unwrap();
+    assert_eq!(listed.len(), 1, "{v}");
+    assert_eq!(listed[0]["clone"], retired.id.to_string());
+    assert_eq!(listed[0]["name"], "second");
+    assert_eq!(listed[0]["seat"], "seat-42");
+    assert!(listed[0]["retired_at"].is_string(), "{v}");
+}
+
+#[test]
+fn seat_and_teamspace_resurrect_skip_a_purge_tombstone() {
+    let fx = fx();
+    alpha(&fx);
+    commit(
+        &fx,
+        "seat create live --teamspace alpha --active --harness shell",
+    );
+    let (_, rec) = seat(&fx, "live", None);
+    let only = clones_of(&fx, &rec.id).remove(0).1.id;
+    assign_seat(&fx, &only, "seat-42");
+    commit(&fx, "teamspace retire alpha");
+    commit(&fx, &format!("clone purge {only}"));
+    let (_, ts) = teamspace(&fx, "alpha");
+    let sp = plan(&fx, &format!("teamspace resurrect {}", ts.id));
+    assert_eq!(count(&sp, "seat.resurrect"), 1);
+    assert_eq!(
+        count(&sp, "clone.resurrect"),
+        0,
+        "the tombstone is not a clone to bring back: {:?}",
+        kinds_of(&sp)
+    );
+    let row = apply_plan(&fx, &sp);
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let t = find_clone(&fx, &only).expect("the tombstone stays");
+    assert!(t.is_tombstone());
+    assert_eq!(t.lifecycle, CloneLifecycle::Retired);
 }
 
 // ---------------------------------------------------------------------------------------------

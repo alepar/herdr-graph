@@ -1,0 +1,12 @@
+diff --git a/src/undo/compensate.rs b/src/undo/compensate.rs
+index 3c54da8..1d80c1a 100644
+--- a/src/undo/compensate.rs
++++ b/src/undo/compensate.rs
+@@ -491,6 +491,7 @@ fn displace(
+         ));
+     }
+     rec.lifecycle = CloneLifecycle::Retired;
++    crate::threads::assignment::clear_restore_on_retire(&mut rec);
+     rec.retired = Some(Retirement {
+         op: cx.op.clone(),
+         action: Some(act.clone()),

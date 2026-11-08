@@ -1,13 +1,16 @@
 //! The shared runtime loop step (spec §4.3.6): complete snapshot → rebind pass or diff → observed
 //! mutations (admitted, awaited) → baseline advance → session-ended hook → `Reconciler::step`.
 use super::baseline::{self, Baseline};
-use super::classify::{Classified, ClassifyCx, EndedSession, classify};
+use super::classify::{CascadeRule, Classified, ClassifyCx, EndedSession, classify};
 use super::diff::{self, DiffCx, needs_process};
-use super::matcher::{Matches, PaneLoc, find_tab, find_ws, match_snapshot, pane_locs};
-use super::mutations::{
-    applied_ends, availability_request, cascade_request_with, move_request_following,
-    occupancy_request, rename_request,
+use super::matcher::{
+    Matches, PaneLoc, current_native_id, find_tab, find_ws, match_snapshot, pane_locs,
 };
+use super::mutations::{
+    applied_ends, availability_request, cascade_request, cascade_request_with,
+    move_request_following, occupancy_request, rename_request, seat_fact_request,
+};
+use super::seat_observation::{self, ThreadsRead};
 use crate::config::InstancePaths;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
@@ -20,11 +23,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, ProcessInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::Store;
+use crate::ports::threads::{ThreadsError, ThreadsSeatRef, ThreadsSeatView};
 use crate::ports::writer::Writer;
 use crate::reconcile::desired::DesiredRuntime;
-use crate::reconcile::planner::TOKEN_KEY;
+use crate::reconcile::planner::{TOKEN_KEY, incarnation_changed_at};
 use crate::reconcile::{Reconciler, StepReport, consume_prediction, predictions};
 use crate::store::tree::CommitView;
+use crate::threads::mapping::SeatRefusals;
 use crate::writer::OpEvent;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -118,7 +123,19 @@ pub struct RuntimeLoop {
     step_lock: tokio::sync::Mutex<()>,
     tuning: RwLock<LoopTuning>,
     claude_root: RwLock<PathBuf>,
+    /// Read-only threads seat inspection, once per step (SeatObservation).
+    seat_view: Arc<dyn ThreadsSeatView>,
+    seat_view_logged: std::sync::atomic::AtomicBool,
+    /// Per-seat refusal messages of the last read, when the seat view keeps them (the real one does).
+    seat_refusals: Mutex<SeatRefusals>,
+    /// When each currently refused seat was first seen refused.
+    refused_since: Mutex<BTreeMap<ThreadsSeatRef, Timestamp>>,
+    /// Seats refused beyond `SEAT_LOST_AFTER`, for the `threads` status component.
+    seat_lost: SeatLost,
 }
+
+/// Seats refused beyond the staleness window: `{clone, seat, error, since, remedy}` entries.
+pub type SeatLost = Arc<Mutex<Vec<serde_json::Value>>>;
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
     ChangeRequest {
@@ -392,6 +409,7 @@ impl RuntimeLoop {
         tick: Duration,
         op_events: Option<broadcast::Receiver<OpEvent>>,
         claude_root: PathBuf,
+        seat_view: Arc<dyn ThreadsSeatView>,
     ) -> Arc<Self> {
         let (session_ended, _) = broadcast::channel(256);
         let baseline = baseline::load(&paths.baseline);
@@ -415,7 +433,22 @@ impl RuntimeLoop {
             step_lock: tokio::sync::Mutex::new(()),
             tuning: RwLock::new(LoopTuning::default()),
             claude_root: RwLock::new(claude_root),
+            seat_view,
+            seat_view_logged: Default::default(),
+            seat_refusals: Default::default(),
+            refused_since: Default::default(),
+            seat_lost: Default::default(),
         })
+    }
+
+    /// The slot this loop publishes lost seats to.
+    pub fn seat_lost(&self) -> SeatLost {
+        self.seat_lost.clone()
+    }
+
+    /// Where the seat view keeps the message of each per-seat refusal, for the log and the lost-seat entries.
+    pub fn set_seat_refusals(&self, refusals: SeatRefusals) {
+        *self.seat_refusals.lock().unwrap_or_else(|e| e.into_inner()) = refusals;
     }
 
     pub fn subscribe_session_ended(&self) -> broadcast::Receiver<SessionEnded> {
@@ -561,6 +594,155 @@ impl RuntimeLoop {
         all_ok
     }
 
+    /// Read threads' view of the seated clones and let SeatObservation overlay it on `matches`.
+    async fn observe_seats(
+        &self,
+        desired: &DesiredRuntime,
+        snap: &HerdrSnapshot,
+        matches: &mut Matches,
+        now: Timestamp,
+    ) -> seat_observation::SeatOutcome {
+        let seats: Vec<_> = seat_observation::seated_clones(desired)
+            .into_iter()
+            .map(|(_, s)| s)
+            .collect();
+        if seats.is_empty() {
+            self.refused_since
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            self.seat_lost
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+            return Default::default();
+        }
+        let read = match self.seat_view.inspect(&seats).await {
+            Ok(statuses) => ThreadsRead::Statuses(statuses),
+            Err(e) => {
+                // Threads being down changes no binding; a protocol problem is logged once.
+                if matches!(e, ThreadsError::Rejected(_) | ThreadsError::Unsupported)
+                    && !self
+                        .seat_view_logged
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    eprintln!("herdr-graph: observe: threads seat read refused: {e}");
+                }
+                ThreadsRead::Unavailable
+            }
+        };
+        let lost = self.track_refusals(desired, &read, now);
+        let locs = pane_locs(snap);
+        let bare = locs
+            .iter()
+            .filter(|(_, loc)| loc.pane.agent.is_none())
+            .map(|(id, _)| id.clone())
+            .collect();
+        let live = locs.into_keys().collect();
+        let changed_at = incarnation_changed_at(&self.journal);
+        seat_observation::observe(
+            desired, &read, &live, &bare, changed_at, &lost, matches, now,
+        )
+    }
+
+    /// Track the seats this read omitted (a per-seat refusal). A seat refused for longer than
+    /// `SEAT_LOST_AFTER` is returned as lost and published to the status slot. A failed read leaves the
+    /// tracking as it was: it says nothing about any seat.
+    fn track_refusals(
+        &self,
+        desired: &DesiredRuntime,
+        read: &ThreadsRead,
+        now: Timestamp,
+    ) -> BTreeSet<ThreadsSeatRef> {
+        let ThreadsRead::Statuses(statuses) = read else {
+            return BTreeSet::new();
+        };
+        let messages = self
+            .seat_refusals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut since = self.refused_since.lock().unwrap_or_else(|e| e.into_inner());
+        let mut lost = BTreeSet::new();
+        let mut entries = Vec::new();
+        let mut still_refused = BTreeSet::new();
+        for (clone, seat) in seat_observation::seated_clones(desired) {
+            if statuses.contains_key(&seat) {
+                continue;
+            }
+            let message = messages
+                .get(&seat)
+                .cloned()
+                .unwrap_or_else(|| "refused by threads".into());
+            let first = *since.entry(seat.clone()).or_insert_with(|| {
+                eprintln!(
+                    "herdr-graph: observe: threads refused seat {} of clone {clone}: {message}",
+                    seat.0
+                );
+                now
+            });
+            still_refused.insert(seat.clone());
+            if now - first >= seat_observation::SEAT_LOST_AFTER {
+                entries.push(serde_json::json!({
+                    "clone": clone.to_string(),
+                    "seat": seat.0,
+                    "error": message,
+                    "since": first.to_rfc3339(),
+                    "remedy": seat_observation::SEAT_LOST_REMEDY,
+                }));
+                lost.insert(seat);
+            }
+        }
+        since.retain(|seat, _| still_refused.contains(seat));
+        *self.seat_lost.lock().unwrap_or_else(|e| e.into_inner()) = entries;
+        lost
+    }
+
+    /// Retirements threads decided and seat facts to commit, after the step's other observed ops.
+    fn append_seat_ops(
+        &self,
+        ops: &mut Vec<PlannedOp>,
+        desired: &DesiredRuntime,
+        out: seat_observation::SeatOutcome,
+        now: Timestamp,
+    ) {
+        if !out.retire.is_empty() {
+            let retire: Vec<AnyId> = out.retire.iter().map(CloneId::to_any).collect();
+            ops.push(PlannedOp {
+                request: cascade_request(CascadeRule::Pane, &retire, now),
+                ends: vec![],
+                verify_ends: false,
+            });
+        }
+        let changed_at = incarnation_changed_at(&self.journal);
+        for clone in out.unknown() {
+            if let Some(rec) = desired.clones.get(clone)
+                && rec.runtime.bound.is_some()
+                && rec.runtime.availability != Availability::Unknown
+            {
+                ops.push(PlannedOp {
+                    request: availability_request(&clone.to_any(), Availability::Unknown),
+                    ends: vec![],
+                    verify_ends: false,
+                });
+            }
+        }
+        for (clone, fact) in out.facts {
+            let Some(rec) = desired.clones.get(&clone) else {
+                continue;
+            };
+            if seat_observation::fact_needs_write(rec, &fact, changed_at) {
+                ops.push(PlannedOp {
+                    request: seat_fact_request(&clone, &fact),
+                    ends: vec![],
+                    verify_ends: false,
+                });
+            }
+        }
+    }
+
     /// One shared step (spec §4.3.6).
     pub async fn step_once(&self) -> anyhow::Result<StepSummary> {
         let _one_at_a_time = self.step_lock.lock().await;
@@ -587,7 +769,8 @@ impl RuntimeLoop {
             };
             DesiredRuntime::load(&tree, &self.paths.root)?
         };
-        let matches = match_snapshot(&snap, &desired);
+        let mut matches = match_snapshot(&snap, &desired);
+        let seat_out = self.observe_seats(&desired, &snap, &mut matches, now).await;
         let mut procs: BTreeMap<crate::model::HerdrPaneId, ProcessInfo> = BTreeMap::new();
         for pane in needs_process(&desired, &snap, &matches) {
             if let Ok(info) = self.herdr.process_info(&pane).await {
@@ -609,7 +792,14 @@ impl RuntimeLoop {
         let base_matches;
         let (elements, baseline_matches) = match (&baseline, rebind) {
             (Some(b), false) => {
-                base_matches = match_snapshot(&b.snapshot, &desired);
+                let mut bm = match_snapshot(&b.snapshot, &desired);
+                // Clones threads unbound this step are Unknown, not closed.
+                for clone in &seat_out.unbound {
+                    if let Some(p) = bm.clone_pane.remove(clone) {
+                        bm.panes.remove(&p);
+                    }
+                }
+                base_matches = bm;
                 (
                     diff::diff(&cx, &b.snapshot, &base_matches),
                     Some(&base_matches),
@@ -617,6 +807,19 @@ impl RuntimeLoop {
             }
             _ => (diff::rebind(&cx), None),
         };
+        let mut elements = elements;
+        for clone in &seat_out.ended {
+            let already = elements.iter().any(
+                |e| matches!(e, diff::DiffElement::OccupancyEnded { clone: c, .. } if c == clone),
+            );
+            if !already && let Some(rec) = desired.clones.get(clone) {
+                elements.push(diff::DiffElement::OccupancyEnded {
+                    clone: clone.clone(),
+                    ns_native: current_native_id(rec).map(str::to_owned),
+                    reason: SessionEndReason::Unknown,
+                });
+            }
+        }
         let preds = predictions(&self.journal);
         let mut classified = classify(
             &ClassifyCx {
@@ -634,7 +837,8 @@ impl RuntimeLoop {
         for w in &classified.warnings {
             eprintln!("{w}");
         }
-        let ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
+        let mut ops = build_ops(&desired, &snap, &matches, &classified, rebind, now);
+        self.append_seat_ops(&mut ops, &desired, seat_out, now);
 
         let mut summary = StepSummary {
             mode: Some(if rebind {

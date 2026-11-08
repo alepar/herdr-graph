@@ -432,6 +432,7 @@ async fn client_start_agent_maps_outcomes() {
         pane: pane(p),
         kind: "claude".into(),
         args: vec![],
+        env: vec![],
     };
     assert_eq!(
         c.start_agent(start("ready")).await.unwrap(),
@@ -445,6 +446,103 @@ async fn client_start_agent_maps_outcomes() {
         panic!("expected NeedsRevision")
     };
     assert!(reason.contains("pane_busy"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn client_start_agent_exports_env_before_agent_start() {
+    let dir = scratch("agentenv");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
+    let log = seen.clone();
+    let socket = mini_server(&dir, move |m, p, _| {
+        log.lock().unwrap().push((m.to_owned(), p.clone()));
+        match m {
+            "pane.get" => Reply::Result(json!({"pane": {"pane_id": "x", "label": "planner"}})),
+            "agent.start" => Reply::Result(json!({"type": "agent_started"})),
+            _ => Reply::Result(json!({"type": "ok"})),
+        }
+    });
+    let c = HerdrClient::new(socket);
+    let start = |env: Vec<(String, String)>| StartAgent {
+        pane: pane("p1"),
+        kind: "claude".into(),
+        args: vec![],
+        env,
+    };
+    let env = vec![
+        ("HERDR_GRAPH_CLONE".to_owned(), "cl_x".to_owned()),
+        ("HERDR_THREADS_CONTINUITY_KEY".to_owned(), "cl_x".to_owned()),
+    ];
+    assert_eq!(
+        c.start_agent(start(env)).await.unwrap(),
+        StartOutcome::Started
+    );
+    let calls: Vec<(String, Value)> = std::mem::take(&mut *seen.lock().unwrap());
+    let methods: Vec<&str> = calls.iter().map(|c| c.0.as_str()).collect();
+    assert_eq!(
+        methods,
+        [
+            "pane.get",
+            "pane.send_text",
+            "pane.send_keys",
+            "agent.start"
+        ]
+    );
+    assert_eq!(
+        calls[1].1["text"],
+        " export HERDR_GRAPH_CLONE=cl_x HERDR_THREADS_CONTINUITY_KEY=cl_x"
+    );
+    assert_eq!(calls[2].1["keys"], json!(["enter"]));
+
+    // No env, no export.
+    assert_eq!(
+        c.start_agent(start(vec![])).await.unwrap(),
+        StartOutcome::Started
+    );
+    let calls = seen.lock().unwrap().clone();
+    let methods: Vec<&str> = calls.iter().map(|c| c.0.as_str()).collect();
+    assert_eq!(methods, ["pane.get", "agent.start"]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn client_start_agent_refuses_unsafe_env_values() {
+    let dir = scratch("agentenvbad");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let socket = mini_server(&dir, move |m, _, _| {
+        log.lock().unwrap().push(m.to_owned());
+        Reply::Result(json!({"pane": {"pane_id": "x", "label": "planner"}}))
+    });
+    let c = HerdrClient::new(socket);
+    let cases = [
+        ("K", "a b"),
+        ("K", "x;y"),
+        ("K", "$(id)"),
+        ("K", ""),
+        ("K L", "ok"),
+        ("1K", "ok"),
+    ];
+    for (k, v) in cases {
+        let out = c
+            .start_agent(StartAgent {
+                pane: pane("p1"),
+                kind: "claude".into(),
+                args: vec![],
+                env: vec![(k.into(), v.into())],
+            })
+            .await
+            .unwrap();
+        assert!(
+            matches!(out, StartOutcome::NeedsRevision { .. }),
+            "{k}={v:?} gave {out:?}"
+        );
+    }
+    let methods = seen.lock().unwrap().clone();
+    assert!(
+        methods.iter().all(|m| m == "pane.get"),
+        "only the label lookup may be sent: {methods:?}"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -826,6 +924,7 @@ async fn fake_fault_injection_lost_response_still_creates() {
             pane: pane("p1"),
             kind: "claude".into(),
             args: vec![],
+            env: vec![],
         })
         .await
         .unwrap();
@@ -863,6 +962,56 @@ async fn fake_restart_changes_pane_ids_keeps_terminal_ids() {
     let dropped = &fake.snapshot().await.unwrap().workspaces[0].tabs[0].panes[0].clone();
     assert!(dropped.metadata.is_empty());
     assert_ne!(dropped.terminal_id, new.terminal_id);
+}
+
+#[tokio::test]
+async fn fake_live_handoff_keeps_ids_reallocates_terminals_and_drops_tokens() {
+    let fake = FakeHerdr::new();
+    let made = fake.create_workspace(ws_req("ws")).await.unwrap();
+    let p = made.pane.unwrap();
+    fake.report_pane_metadata(&p, "hg", "cl_1").await.unwrap();
+    fake.report_workspace_metadata(made.workspace.as_ref().unwrap(), "hg", "ts_1")
+        .await
+        .unwrap();
+    let agent = Some(AgentInfo {
+        kind: "claude".into(),
+        status: AgentStatus::Idle,
+        session: None,
+    });
+    fake.set_agent(&p, agent.clone());
+    let mut events = fake.subscribe().await.unwrap();
+    let before = fake.snapshot().await.unwrap();
+    fake.live_handoff();
+    let after = fake.snapshot().await.unwrap();
+    let (old, new) = (
+        &before.workspaces[0].tabs[0].panes[0],
+        &after.workspaces[0].tabs[0].panes[0],
+    );
+    assert_eq!(before.workspaces[0].id, after.workspaces[0].id);
+    assert_eq!(
+        before.workspaces[0].tabs[0].id,
+        after.workspaces[0].tabs[0].id
+    );
+    assert_eq!(old.id, new.id, "public pane ids are preserved");
+    assert_ne!(
+        old.terminal_id, new.terminal_id,
+        "terminal ids are reallocated"
+    );
+    assert!(new.metadata.is_empty(), "pane tokens are dropped");
+    assert!(
+        after.workspaces[0].metadata.is_empty(),
+        "workspace tokens are dropped"
+    );
+    assert_ne!(before.incarnation, after.incarnation);
+    assert_eq!(
+        fake.agent(&new.id).await.unwrap(),
+        agent,
+        "the agent keeps running"
+    );
+    assert!(
+        events.recv().await.is_none(),
+        "the subscriber's stream ends"
+    );
 }
 
 #[tokio::test]

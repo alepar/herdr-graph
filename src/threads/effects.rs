@@ -5,21 +5,28 @@
 //! facts); each want becomes a deterministic effect row whose payload lives in the journal's `meta` table
 //! keyed by effect id. `ThreadsExecutor` performs them through `ThreadsPort`, records what threads actually
 //! reported as bookkeeping mutations, and never records acceptance threads did not report.
-use super::mapping::PaneSeatMap;
+use super::assignment::{SeatTransition, admit_threads_seat};
+use super::mapping::{PaneSeatMap, SeatResolution};
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{
-    CloneRecord, Invitation, InvitationState, InviteConstraint, ThreadsLink,
+    CloneRecord, Invitation, InvitationState, InviteConstraint, SeatIntent, ThreadsLink,
 };
-use crate::model::common::{Channel, CloneLifecycle, CommitId, Lifecycle, NameSource};
+use crate::model::common::{
+    Availability, Channel, CloneLifecycle, CommitId, Lifecycle, NameSource,
+};
 use crate::model::effect::{EffectKind, EffectRecord, EffectStatus};
+use crate::model::launch::graph_token;
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
-use crate::model::{AnyId, CloneId, EffectId, IdKind, OpId, SeatId, TeamspaceId, Timestamp};
+use crate::model::{
+    AnyId, CloneId, EffectId, HerdrPaneId, IdKind, OpId, SeatId, TeamspaceId, Timestamp,
+};
 use crate::plan::store::PlanStore;
 use crate::ports::store::StoreError;
 use crate::ports::threads::*;
+use crate::reconcile::planner::threads_answered_key;
 use crate::reconcile::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
@@ -31,6 +38,28 @@ use std::sync::{Arc, Mutex};
 
 /// `EffectKind::Custom` name of the membership poll.
 pub const POLL_KIND: &str = "threads.membership";
+/// `EffectKind::Custom` name of the seat resolution of a bound clone without a `threads_seat`.
+pub const RESOLVE_KIND: &str = "threads.resolve_seat";
+/// `EffectKind::Custom` name of the seat resolution of an unseated clone from its key reservation.
+pub const RESOLVE_RESERVED_KIND: &str = "threads.resolve_reserved_seat";
+/// `EffectKind::Custom` name of the clear-on-reattach of a finished Restore intent (spec §14.4).
+pub const CLEAR_RESTORE_KIND: &str = "threads.clear_restore";
+/// `EffectKind::Custom` name of the seat succession of an undone or resurrected clone (spec §2, §8 interim).
+pub const SUCCEED_KIND: &str = "threads.succeed_seat";
+/// `EffectKind::Custom` name of the acknowledgement of a Restore whose seat needs no succession.
+pub const ACK_RESTORE_KIND: &str = "threads.ack_restore";
+/// `EffectKind::Custom` name of the un-retire of a Restore intent's reversibly retired seat (spec §8, D2).
+pub const UNRETIRE_KIND: &str = "threads.unretire_seat";
+/// `EffectKind::Custom` name of the finalization of a `Finalize{seat}` purge tombstone (spec §14.2).
+pub const FINALIZE_KIND: &str = "threads.finalize_seat";
+/// `EffectKind::Custom` name of the key release of a `ReleaseKey{key}` purge tombstone (spec §14.3).
+pub const RELEASE_KEY_KIND: &str = "threads.release_key";
+/// `EffectKind::Custom` name of the seatless continuity-key reservation of an active clone (spec §5, §16.5). The
+/// key-link want (hg-66u.68) is the only want that binds a key to a seat.
+pub const RESERVE_KEY_KIND: &str = "threads.reserve_key";
+/// `EffectKind::Custom` name of the key-link want: binds a recorded reservation to the clone's target seat
+/// (spec §14.12). It is the only want that issues a seat-bearing `ReserveContinuityKey`.
+pub const KEY_LINK_KIND: &str = "threads.key_link";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -88,12 +117,16 @@ impl Graph {
             && self.seats.get(&c.seat).is_some_and(|s| self.seat_active(s))
     }
 
-    /// Native session record of the clone's occupant, when the clone is active and occupied.
-    fn occupant_of(&self, c: &CloneRecord) -> Option<String> {
-        if !self.clone_active(c) {
-            return None;
-        }
-        c.occupant.as_ref().map(|o| o.native_session.to_string())
+    /// The threads seat whose memberships this clone holds (spec §3, §14.11): its recorded `threads_seat` while
+    /// the clone is active, or retired and not purged. Occupancy does not matter: invitations wait for the
+    /// first SessionStart and survive an agent exit, `/clear` or relaunch on the same pane.
+    fn membership_seat(&self, c: &CloneRecord) -> Option<String> {
+        let seat = c.threads_seat.as_ref()?;
+        let live = match c.lifecycle {
+            CloneLifecycle::Active => self.clone_active(c),
+            CloneLifecycle::Retired => !c.is_tombstone(),
+        };
+        live.then(|| seat.clone())
     }
 
     fn rev_of(&self, object: &AnyId) -> Option<u64> {
@@ -233,6 +266,48 @@ pub(crate) enum Payload {
         body: String,
         key: String,
     },
+    /// Resolve the threads seat of the clone's verified pane (a different pane is a different effect).
+    ResolveSeat {
+        pane: HerdrPaneId,
+    },
+    /// Resolve the seat of an unseated clone from its recorded key reservation (`key`); no pane is needed.
+    ResolveReserved {
+        key: String,
+    },
+    /// Drop the Restore intent of `epoch`: the restored agent reattached its seat.
+    ClearRestore {
+        epoch: OpId,
+    },
+    /// Resolve the reopened `pane` to a fresh seat and succeed the final-retired seat `from` with it.
+    SucceedSeat {
+        pane: HerdrPaneId,
+        from: String,
+        epoch: OpId,
+    },
+    /// The Restore of `epoch` needs no threads command: its seat is not retired. Sets `threads_done`.
+    AckRestore {
+        epoch: OpId,
+    },
+    /// Un-retire `seat`, the reversibly retired seat of the Restore intent of `epoch`.
+    UnretireSeat {
+        seat: String,
+        epoch: OpId,
+    },
+    /// Finalize the retirement of `seat` for its `Finalize` purge tombstone.
+    FinalizeSeat {
+        seat: String,
+    },
+    /// Release `key` for its `ReleaseKey` purge tombstone, or route it to its seat's finalization.
+    ReleaseKey {
+        key: String,
+    },
+    /// Reserve the clone's continuity key (its id) with threads, bound to no seat.
+    ReserveKey,
+    /// Bind the clone's reserved `key` to `seat` (the key-link want).
+    KeyLink {
+        key: String,
+        seat: String,
+    },
 }
 
 struct Want {
@@ -252,8 +327,8 @@ struct Want {
 enum After {
     /// The `EnsureThread` of this teamspace or seat.
     Ensure(AnyId),
-    /// The `ReleaseRequirement` of this clone's invitation to this thread: the old occupant's episode ends
-    /// before the new occupant's begins.
+    /// The `ReleaseRequirement` of this clone's invitation to this thread: the old seat's episode ends
+    /// before the new seat's begins.
     Release(AnyId, String),
 }
 
@@ -348,15 +423,279 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
 }
 
 /// Required and ordinary invitations, requirement release and membership polling for every clone.
-fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
+/// The pane to resolve a threads seat for: the clone is active, has no `threads_seat` and no pending Restore
+/// intent (the succession want owns that case), and its binding is verified (present, in a pane, stamped
+/// with the clone's own token).
+fn resolvable_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
+    if c.threads_seat.is_some() || matches!(c.seat_intent, Some(SeatIntent::Restore { .. })) {
+        return None;
+    }
+    verified_pane(g, c)
+}
+
+/// The key to resolve an unseated clone's seat from: the clone is active, has no `threads_seat` and no pending
+/// Restore intent and holds a recorded key reservation. The key is the evidence, so no pane binding is needed
+/// (spec §2 "Unseated clone after D1").
+fn resolvable_key(g: &Graph, c: &CloneRecord) -> Option<String> {
+    if c.threads_seat.is_some()
+        || !g.clone_active(c)
+        || c.is_tombstone()
+        || matches!(c.seat_intent, Some(SeatIntent::Restore { .. }))
+    {
+        return None;
+    }
+    c.key_reservation.as_ref().map(|r| r.key.clone())
+}
+
+/// An unseated reserved clone with a verified pane (which keeps its pane want) still asks its key once after
+/// each restart: the answer is how the restart trigger learns that threads is reachable.
+fn awaiting_restart_answer(journal: &Journal, c: &CloneRecord) -> bool {
+    let parse = |raw: Option<String>| {
+        chrono::DateTime::parse_from_rfc3339(&raw?)
+            .ok()
+            .map(|t| t.to_utc())
+    };
+    let Some(changed) = parse(journal.meta_get("incarnation:changed_at").ok().flatten()) else {
+        return false;
+    };
+    let answered = parse(
+        journal
+            .meta_get(&threads_answered_key(&c.id))
+            .ok()
+            .flatten(),
+    );
+    answered.is_none_or(|at| at <= changed)
+}
+
+/// The clone's pane when its binding is verified: the clone is active, present, and the pane carries the
+/// clone's own token.
+fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
+    if !g.clone_active(c) || c.runtime.availability != Availability::Present {
+        return None;
+    }
+    let bound = c.runtime.bound.as_ref()?;
+    (bound.token.as_deref() == Some(graph_token(&c.id.to_any()).as_str()))
+        .then(|| bound.pane_id.clone())
+        .flatten()
+}
+
+/// An active clone with no recorded key reservation: the reserve-key want reserves its key, seatless (§16.5).
+fn reservable(g: &Graph, c: &CloneRecord) -> bool {
+    g.clone_active(c) && !c.is_tombstone() && c.key_reservation.is_none()
+}
+
+/// The key-link want's `(key, target seat)` (spec §14.12): the clone is active, its reservation is recorded and
+/// not bound to the target seat. The target is `Restore.seat` while a Restore intent is pending, else
+/// `threads_seat`. A pending Restore whose threads step is not done has a retired seat, which threads refuses a
+/// seat-bearing reserve; the succession or unretire want moves it first.
+pub(crate) fn key_link_target(g: &Graph, c: &CloneRecord) -> Option<(String, String)> {
+    if !g.clone_active(c) || c.is_tombstone() {
+        return None;
+    }
+    let reservation = c.key_reservation.as_ref()?;
+    let target = match &c.seat_intent {
+        Some(SeatIntent::Restore {
+            threads_done: false,
+            ..
+        }) => return None,
+        Some(SeatIntent::Restore { seat, .. }) => seat,
+        _ => c.threads_seat.as_ref()?,
+    };
+    (!reservation.bound_to(target)).then(|| (reservation.key.clone(), target.clone()))
+}
+
+/// What an unacknowledged Restore intent asks of threads (spec §2 succession rule, §8 interim).
+#[derive(Debug, PartialEq, Eq)]
+enum Succession {
+    /// The Restore's seat is final-retired: resolve the reopened pane (`pane`) to a fresh seat.
+    Succeed {
+        pane: HerdrPaneId,
+        from: String,
+        epoch: OpId,
+    },
+    /// Threads reads the Restore's seat on the clone's own verified pane (Resolved there, or Unresolved once the
+    /// pane is bound): nothing to succeed, record `threads_done`.
+    Acknowledge { epoch: OpId },
+}
+
+/// The succession a clone's pending Restore calls for, read from the committed `seat_fact`. No fact (threads
+/// never read, or unreachable since), a key conflict, or a reversible retirement (D2) asks for nothing.
+fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
+    use crate::model::clone::SeatFactState as F;
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: false,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    if !g.clone_active(c) || c.threads_seat.as_ref() != Some(seat) {
+        return None;
+    }
+    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
+    match fact.state {
+        F::Retired { reversible: false } => Some(Succession::Succeed {
+            pane: verified_pane(g, c)?,
+            from: seat.clone(),
+            epoch: epoch.clone(),
+        }),
+        // The acknowledgement lost to a crash (§8 step 2, §16.4) is read on the clone's own reopened pane. A read
+        // taken before threads has caught up with a close (the node manager's Restore is written by the closing
+        // cascade itself) must not stand in for it: wait for Retired (succession/unretire) or for this pane.
+        F::Resolved { ref pane } if verified_pane(g, c).as_ref() == Some(pane) => {
+            Some(Succession::Acknowledge {
+                epoch: epoch.clone(),
+            })
+        }
+        F::Unresolved if verified_pane(g, c).is_some() => Some(Succession::Acknowledge {
+            epoch: epoch.clone(),
+        }),
+        F::Unresolved | F::Resolved { .. } => None,
+        F::Retired { reversible: true } | F::KeyConflict { .. } => None,
+    }
+}
+
+/// The seat and epoch of a pending Restore whose seat the committed `seat_fact` reads reversibly retired: the
+/// unretire want asks threads to bring it back. Only a Restore intent asks (an ordinary pane close is never
+/// reversed), and only against a reversible read; a final one is the succession's.
+fn unretirable(g: &Graph, c: &CloneRecord) -> Option<(String, OpId)> {
+    use crate::model::clone::SeatFactState as F;
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: false,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    if !g.clone_active(c) || c.threads_seat.as_ref() != Some(seat) {
+        return None;
+    }
+    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
+    matches!(fact.state, F::Retired { reversible: true }).then(|| (seat.clone(), epoch.clone()))
+}
+
+/// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
+/// `Resolved` under the Restore's seat, and an agent occupies the pane again (it checked in).
+fn reattached_restore(g: &Graph, c: &CloneRecord) -> Option<OpId> {
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: true,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    let resolved = c.seat_fact.as_ref().is_some_and(|f| {
+        &f.seat == seat && matches!(f.state, crate::model::clone::SeatFactState::Resolved { .. })
+    });
+    (g.clone_active(c) && c.threads_seat.as_ref() == Some(seat) && resolved && c.occupant.is_some())
+        .then(|| epoch.clone())
+}
+
+fn clone_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
     for c in g.clones.values() {
         let object = c.id.to_any();
-        let occupant = g.occupant_of(c);
+        if let Some(pane) = resolvable_pane(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESOLVE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ResolveSeat { pane },
+            ));
+        }
+        if let Some(key) = resolvable_key(g, c)
+            .filter(|_| verified_pane(g, c).is_none() || awaiting_restart_answer(journal, c))
+        {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESOLVE_RESERVED_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ResolveReserved { key },
+            ));
+        }
+        match succession(g, c) {
+            Some(Succession::Succeed { pane, from, epoch }) => out.push(want(
+                g,
+                EffectKind::Custom(SUCCEED_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::SucceedSeat { pane, from, epoch },
+            )),
+            Some(Succession::Acknowledge { epoch }) => out.push(want(
+                g,
+                EffectKind::Custom(ACK_RESTORE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::AckRestore { epoch },
+            )),
+            None => {}
+        }
+        if let Some((seat, epoch)) = unretirable(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(UNRETIRE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::UnretireSeat { seat, epoch },
+            ));
+        }
+        match &c.seat_intent {
+            Some(SeatIntent::Finalize { seat }) => out.push(want(
+                g,
+                EffectKind::Custom(FINALIZE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::FinalizeSeat { seat: seat.clone() },
+            )),
+            Some(SeatIntent::ReleaseKey { key }) => out.push(want(
+                g,
+                EffectKind::Custom(RELEASE_KEY_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ReleaseKey { key: key.clone() },
+            )),
+            _ => {}
+        }
+        if reservable(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESERVE_KEY_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ReserveKey,
+            ));
+        }
+        if let Some((key, seat)) = key_link_target(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(KEY_LINK_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::KeyLink { key, seat },
+            ));
+        }
+        if let Some(epoch) = reattached_restore(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(CLEAR_RESTORE_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ClearRestore { epoch },
+            ));
+        }
+        let threads_seat = g.membership_seat(c);
         let seat = g.seats.get(&c.seat);
 
-        // Desired memberships of the current occupant.
+        // Desired memberships of the clone's threads seat.
         let mut desired: Vec<(String, InviteConstraint, Option<AnyId>)> = Vec::new();
-        if occupant.is_some()
+        if threads_seat.is_some()
             && let Some(seat) = seat
         {
             for owner in [seat.id.to_any(), seat.teamspace.to_any()] {
@@ -378,27 +717,24 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
                 }
             }
         }
-        for (thread, constraint, ensure) in desired {
+        for (thread, constraint, ensure) in desired.iter().cloned() {
             let held = c
                 .invitations
                 .iter()
                 .find(|i| i.thread == thread && i.constraint == constraint);
-            let same_occupant = |i: &Invitation| {
-                i.link.as_ref().and_then(|l| l.occupant.as_ref()) == occupant.as_ref()
-            };
-            let satisfied = match (held, constraint) {
-                // A Required episode is settled for the occupant it was issued for, whatever became of it.
-                (Some(i), InviteConstraint::Required) => same_occupant(i),
-                (Some(i), InviteConstraint::Ordinary) => {
-                    same_occupant(i)
-                        && matches!(
-                            i.state,
-                            InvitationState::Pending | InvitationState::Accepted
-                        )
-                }
-                (None, _) => false,
-            };
-            if !satisfied {
+            let same_seat =
+                |i: &Invitation| i.link.as_ref().map(|l| &l.seat) == threads_seat.as_ref();
+            // Spec §3, every constraint: a link satisfies the want only on the recorded seat and Pending or
+            // Accepted; a Released or Retired row there is unsatisfied, so an active clone's want re-invites it.
+            let satisfied = held.is_some_and(|i| {
+                same_seat(i)
+                    && matches!(
+                        i.state,
+                        InvitationState::Pending | InvitationState::Accepted
+                    )
+            });
+            // Invitations are for an active clone; a retired one keeps what it holds and gains nothing.
+            if !satisfied && g.clone_active(c) {
                 let mut w = want(
                     g,
                     EffectKind::Invite,
@@ -417,15 +753,22 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
 
         for i in &c.invitations {
             let Some(link) = &i.link else { continue };
-            let current = link.occupant == occupant;
-            // Occupancy-keyed cleanup: the requirement belongs to an occupant that is gone (or to a retired or
-            // deactivated clone); release it.
+            // Seat-keyed cleanup: a requirement is released only when the seat it was issued for is no longer
+            // the clone's (succession) or the want is gone (opt-out, channel removed). Occupancy and
+            // retirement release nothing; a purge ends the memberships (threads finalizes the seat).
+            let Some(current_seat) = &threads_seat else {
+                continue;
+            };
+            let current = &link.seat == current_seat;
+            let wanted = desired
+                .iter()
+                .any(|(t, k, _)| *t == i.thread && *k == i.constraint);
             if i.constraint == InviteConstraint::Required
                 && matches!(
                     i.state,
                     InvitationState::Pending | InvitationState::Accepted
                 )
-                && !current
+                && (!current || !wanted)
             {
                 let payload = Payload::Release {
                     thread: i.thread.clone(),
@@ -468,7 +811,7 @@ fn clone_wants(g: &Graph, out: &mut Vec<Want>) {
 fn system_wants(g: &Graph, journal: &Journal) -> Vec<Want> {
     let mut out = Vec::new();
     channel_wants(g, journal, &mut out);
-    clone_wants(g, &mut out);
+    clone_wants(g, journal, &mut out);
     out
 }
 
@@ -1015,8 +1358,29 @@ impl EffectSource for ThreadsSource {
 pub struct ThreadsExecutor {
     threads: Arc<dyn ThreadsPort>,
     mapping: Arc<dyn PaneSeatMap>,
+    /// The finalize acknowledgement read: a refused finalization is done when the seat reads final-retired.
+    seat_view: Arc<dyn ThreadsSeatView>,
     journal: Arc<Journal>,
     cache: Arc<GraphCache>,
+}
+
+/// Remember the threads refusal of a pending Restore's step on the intent, for status (§14.7). Best effort:
+/// a writer error changes nothing, and an unchanged reason is not written again.
+fn record_refusal(cx: &ExecCx<'_>, clone: &CloneRecord, epoch: &OpId, reason: &str) {
+    if matches!(
+        &clone.seat_intent,
+        Some(SeatIntent::Restore { last_refusal: Some(r), .. }) if r == reason
+    ) {
+        return;
+    }
+    let _ = admit_threads_seat(
+        cx.writer,
+        &clone.id,
+        &SeatTransition::RecordRefusal {
+            epoch: epoch.clone(),
+            reason: reason.to_owned(),
+        },
+    );
 }
 
 fn port_outcome(e: ThreadsError) -> ExecOutcome {
@@ -1047,15 +1411,15 @@ fn admit_bookkeeping(cx: &ExecCx<'_>, mut args: serde_json::Value) -> Result<(),
         .map_err(|e| ExecOutcome::Transient(format!("bookkeeping write: {e}")))
 }
 
-/// One invitation write-back. `expect_occupant`: only apply while the stored invitation still belongs to the
-/// occupant the effect acted for, so a late write about a previous occupant never overwrites the new one's.
+/// One invitation write-back. `expect_seat`: only apply while the stored invitation still belongs to the
+/// threads seat the effect acted for, so a late write about a previous seat never overwrites the new one's.
 struct InvWrite<'a> {
     clone: &'a CloneId,
     thread: &'a str,
     constraint: InviteConstraint,
     state: InvitationState,
     link: &'a ThreadsLink,
-    expect_occupant: Option<&'a str>,
+    expect_seat: Option<&'a str>,
 }
 
 fn short(id: &EffectId) -> &str {
@@ -1066,12 +1430,14 @@ impl ThreadsExecutor {
     pub(crate) fn new(
         threads: Arc<dyn ThreadsPort>,
         mapping: Arc<dyn PaneSeatMap>,
+        seat_view: Arc<dyn ThreadsSeatView>,
         journal: Arc<Journal>,
         cache: Arc<GraphCache>,
     ) -> Self {
         Self {
             threads,
             mapping,
+            seat_view,
             journal,
             cache,
         }
@@ -1092,9 +1458,516 @@ impl ThreadsExecutor {
             cx,
             serde_json::json!({
                 "sub": "invitation", "clone": w.clone, "thread": w.thread, "constraint": w.constraint,
-                "state": w.state, "link": w.link, "expect_occupant": w.expect_occupant,
+                "state": w.state, "link": w.link, "expect_seat": w.expect_seat,
             }),
         )
+    }
+
+    /// Resolve the clone's pane to its threads seat and record it write-once. A threads refusal defers (the
+    /// operation key is stable, so a retry replays the same resolution); a rejected assignment is surfaced,
+    /// never retried with another seat.
+    fn clear_restore(&self, cx: &ExecCx<'_>, e: &EffectRecord, epoch: &OpId) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if reattached_restore(&g, clone).as_ref() != Some(epoch) {
+            return ExecOutcome::Obsolete;
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::ClearOnReattach {
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+        }
+    }
+
+    fn ack_restore(&self, cx: &ExecCx<'_>, e: &EffectRecord, epoch: &OpId) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if succession(&g, clone)
+            != Some(Succession::Acknowledge {
+                epoch: epoch.clone(),
+            })
+        {
+            return ExecOutcome::Obsolete;
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Acknowledge {
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+        }
+    }
+
+    /// The clone record of a purge tombstone effect, or None when the effect is no longer implied.
+    fn tombstone<'g>(g: &'g Graph, e: &EffectRecord) -> Option<&'g CloneRecord> {
+        CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+            .filter(|c| c.is_tombstone())
+    }
+
+    fn drop_tombstone(&self, cx: &ExecCx<'_>, clone: &CloneId) -> ExecOutcome {
+        match admit_threads_seat(cx.writer, clone, &SeatTransition::TombstoneDone) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("tombstone delete: {err}")),
+        }
+    }
+
+    /// Ask threads to un-retire the reversibly retired seat of a pending Restore, then record `threads_done`. A
+    /// refusal keeps the intent, remembers why for status and waits: the next read may show the seat final (the
+    /// succession's), or threads may lift the refusal. The operation key is stable per (clone, epoch).
+    async fn unretire_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        seat: &str,
+        epoch: &OpId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if unretirable(&g, clone).as_ref() != Some(&(seat.to_owned(), epoch.clone())) {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("unretire:{}:{epoch}", clone.id),
+        ));
+        match self
+            .threads
+            .unretire_seat(&ThreadsSeatRef(seat.to_owned()), &op)
+            .await
+        {
+            Ok(()) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::Acknowledge {
+                    epoch: epoch.clone(),
+                },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+            },
+            Err(ThreadsError::Rejected(msg)) => {
+                record_refusal(cx, clone, epoch, &msg);
+                ExecOutcome::Deferred(msg)
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Finalize the retirement of the tombstone's seat (threads releases its key with it), then delete the
+    /// tombstone. A refusal is an acknowledgement when the seat reads final-retired anyway, or when threads no
+    /// longer knows the seat (the read omits it); otherwise the tombstone waits and the want is issued again.
+    async fn finalize_seat(&self, cx: &ExecCx<'_>, e: &EffectRecord, seat: &str) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = Self::tombstone(&g, e) else {
+            return ExecOutcome::Obsolete;
+        };
+        if !matches!(&clone.seat_intent, Some(SeatIntent::Finalize { seat: s }) if s == seat) {
+            return ExecOutcome::Obsolete;
+        }
+        let seat_ref = ThreadsSeatRef(seat.to_owned());
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("finalize:{}:{seat}", clone.id),
+        ));
+        match self.threads.finalize_retirement(&seat_ref, &op).await {
+            Ok(()) => self.drop_tombstone(cx, &clone.id),
+            Err(ThreadsError::Rejected(msg)) => {
+                match self
+                    .seat_view
+                    .inspect(std::slice::from_ref(&seat_ref))
+                    .await
+                {
+                    Ok(read)
+                        if matches!(
+                            read.get(&seat_ref),
+                            Some(SeatStatus::Retired {
+                                kind: RetirementKind::Final
+                            })
+                        ) =>
+                    {
+                        self.drop_tombstone(cx, &clone.id)
+                    }
+                    // The read omits a seat only on a seat-scoped refusal (NotFound, mapping.rs SEAT_SCOPED): threads
+                    // no longer knows the seat, so there is nothing left to finalize.
+                    Ok(read) if !read.contains_key(&seat_ref) => self.drop_tombstone(cx, &clone.id),
+                    Ok(_) => ExecOutcome::Deferred(msg),
+                    Err(err) => port_outcome(err),
+                }
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Resolve a `ReleaseKey` tombstone's key to its binding: a key bound to a seat becomes that seat's
+    /// `Finalize` tombstone (finalization releases it); an unbound key is released and the tombstone deleted.
+    async fn release_key_tombstone(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        key: &str,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = Self::tombstone(&g, e) else {
+            return ExecOutcome::Obsolete;
+        };
+        if !matches!(&clone.seat_intent, Some(SeatIntent::ReleaseKey { key: k }) if k == key) {
+            return ExecOutcome::Obsolete;
+        }
+        // A fresh key per attempt: threads replays the stored answer for a repeated key, and the first answer
+        // can predate the keyed check-in (spec §2, the ResolveSeat discipline). `release:{clone}` below is the
+        // mutation and keeps its stable key.
+        let ask = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("release-ask:{}:{}", clone.id, uuid::Uuid::new_v4()),
+        ));
+        match self.threads.reserve_continuity_key(key, None, &ask).await {
+            Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::TombstoneFinalize { seat: seat.0 },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("tombstone rewrite: {err}")),
+            },
+            Ok(ReserveOutcome::Reserved { seat: None }) => {
+                let op = OpKey(super::namespace::salt(
+                    &g.epoch,
+                    &format!("release:{}", clone.id),
+                ));
+                match self.threads.release_continuity_key(key, &op).await {
+                    Ok(()) => self.drop_tombstone(cx, &clone.id),
+                    Err(err) => port_outcome(err),
+                }
+            }
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred("threads reports a continuity key conflict".into())
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Resolve the reopened pane to a fresh seat and succeed the final-retired one with it. The operation key
+    /// is stable per (clone, epoch), so a retry replays the same resolution; a refusal defers and is never
+    /// retried as a fresh allocation.
+    async fn succeed_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        pane: &HerdrPaneId,
+        from: &str,
+        epoch: &OpId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        let wanted = Succession::Succeed {
+            pane: pane.clone(),
+            from: from.to_owned(),
+            epoch: epoch.clone(),
+        };
+        if succession(&g, clone).as_ref() != Some(&wanted) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("succeed:{}:{epoch}", clone.id),
+        ));
+        let seat = match self.mapping.resolve_seat(pane, &key).await {
+            Ok(SeatResolution::Seat(seat)) => seat,
+            Ok(SeatResolution::NotYet(reason)) => {
+                record_refusal(cx, clone, epoch, &reason);
+                return ExecOutcome::Deferred(reason);
+            }
+            Err(err) => {
+                if let ThreadsError::Rejected(msg) = &err {
+                    record_refusal(cx, clone, epoch, msg);
+                }
+                return port_outcome(err);
+            }
+        };
+        if seat.0 == from {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads resolved the retired seat {from} again for {}",
+                clone.id
+            ));
+        }
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Succeed {
+                seat: seat.0,
+                from: from.to_owned(),
+                epoch: epoch.clone(),
+            },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
+    }
+
+    /// Reserve the clone's continuity key (its id) with threads, bound to no seat, and record the answer. The
+    /// operation key is stable per clone, so a retry after an unreachable threads replays the same request; a
+    /// `Conflict` records nothing and waits (the status alert is hg-66u.40's).
+    async fn reserve_key(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if !reservable(&g, clone) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = clone.id.to_string();
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("reserve:{}", clone.id),
+        ));
+        match self.threads.reserve_continuity_key(&key, None, &op).await {
+            Ok(ReserveOutcome::Reserved { seat }) => match admit_threads_seat(
+                cx.writer,
+                &clone.id,
+                &SeatTransition::RecordReservation {
+                    key,
+                    seat: seat.map(|s| s.0),
+                },
+            ) {
+                Ok(()) => ExecOutcome::Done,
+                Err(err) => ExecOutcome::Transient(format!("key reservation write: {err}")),
+            },
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred("threads reports a continuity key conflict".into())
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    /// Bind the clone's reserved key to `seat`. The operation key is stable per (clone, seat), so every retry of
+    /// one binding replays one request. A `Conflict` or another binding records nothing and defers: the
+    /// reconciler re-checks a deferred row with backoff, which is the level-triggered retry; the key-conflict
+    /// alert is SeatObservation's `seat_fact`, not written here.
+    async fn key_link(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        key: &str,
+        seat: &str,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if key_link_target(&g, clone).as_ref() != Some(&(key.to_owned(), seat.to_owned())) {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("key_link:{}:{seat}", clone.id),
+        ));
+        match self
+            .threads
+            .reserve_continuity_key(key, Some(&ThreadsSeatRef(seat.to_owned())), &op)
+            .await
+        {
+            Ok(ReserveOutcome::Reserved { seat: Some(bound) }) if bound.0 == seat => {
+                match admit_threads_seat(
+                    cx.writer,
+                    &clone.id,
+                    &SeatTransition::RecordReservation {
+                        key: key.to_owned(),
+                        seat: Some(seat.to_owned()),
+                    },
+                ) {
+                    Ok(()) => ExecOutcome::Done,
+                    Err(err) => ExecOutcome::Transient(format!("key binding write: {err}")),
+                }
+            }
+            Ok(ReserveOutcome::Reserved { seat: other }) => ExecOutcome::Deferred(format!(
+                "continuity key {key} bound to {:?}, not {seat}",
+                other.map(|s| s.0)
+            )),
+            Ok(ReserveOutcome::Conflict) => {
+                ExecOutcome::Deferred(format!("continuity key conflict on seat {seat}"))
+            }
+            Err(err) => port_outcome(err),
+        }
+    }
+
+    async fn resolve_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        pane: &HerdrPaneId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if resolvable_pane(&g, clone).as_ref() != Some(pane) {
+            return ExecOutcome::Obsolete;
+        }
+        let key = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("resolve:{}:{pane}", clone.id),
+        ));
+        let seat = match self.mapping.resolve_seat(pane, &key).await {
+            Ok(SeatResolution::Seat(seat)) => seat,
+            Ok(SeatResolution::NotYet(reason)) => return ExecOutcome::Deferred(reason),
+            Err(err) => return port_outcome(err),
+        };
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Assign { seat: seat.0 },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
+    }
+
+    /// Resolve an unseated clone's seat from its key reservation: re-ask the reservation and admit the seat the
+    /// answer carries. A key not bound yet, or in conflict, defers. Each attempt is a fresh ask with its own
+    /// operation key, because threads replays a stored answer for a repeated key and the first answer can
+    /// predate the keyed check-in (spec §2, the ResolveSeat discipline). Op keys are stable for mutations,
+    /// where a replay is the intent, and fresh per attempt for read-like asks.
+    async fn resolve_reserved(&self, cx: &ExecCx<'_>, e: &EffectRecord, key: &str) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if resolvable_key(&g, clone).as_deref() != Some(key) {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("reserve:{}:none:{}", clone.id, uuid::Uuid::new_v4()),
+        ));
+        let answer = self.threads.reserve_continuity_key(key, None, &op).await;
+        if matches!(answer, Ok(ReserveOutcome::Reserved { .. })) {
+            let _ = self
+                .journal
+                .meta_set(&threads_answered_key(&clone.id), &cx.now.to_rfc3339());
+        }
+        let seat = match answer {
+            Ok(ReserveOutcome::Reserved { seat: Some(seat) }) => seat,
+            Ok(ReserveOutcome::Reserved { seat: None }) => {
+                return ExecOutcome::Deferred("continuity key not bound to a seat yet".into());
+            }
+            Ok(ReserveOutcome::Conflict) => {
+                return ExecOutcome::Deferred("threads reports a continuity key conflict".into());
+            }
+            Err(err) => return port_outcome(err),
+        };
+        if let Some(holder) = g.clones.values().find(|o| {
+            o.id != clone.id
+                && o.lifecycle != CloneLifecycle::Retired
+                && !o.is_tombstone()
+                && o.threads_seat.as_deref() == Some(seat.0.as_str())
+        }) {
+            return ExecOutcome::NeedsRevision(format!(
+                "threads seat {} resolved for {} is held by live clone {}",
+                seat.0, clone.id, holder.id
+            ));
+        }
+        match admit_threads_seat(
+            cx.writer,
+            &clone.id,
+            &SeatTransition::Assign { seat: seat.0 },
+        ) {
+            Ok(()) => ExecOutcome::Done,
+            Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
+        }
     }
 
     async fn ensure(&self, cx: &ExecCx<'_>, e: &EffectRecord) -> ExecOutcome {
@@ -1184,18 +2057,14 @@ impl ThreadsExecutor {
         else {
             return ExecOutcome::Obsolete;
         };
-        let Some(occupant) = g.occupant_of(clone) else {
+        if clone.threads_seat.is_none() {
+            return ExecOutcome::Deferred("no threads seat yet".into());
+        }
+        if !g.clone_active(clone) {
             return ExecOutcome::Obsolete;
-        };
-        let Some(pane) = clone.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) else {
-            return ExecOutcome::Deferred("clone has no pane binding yet".into());
-        };
-        let seat = match self.mapping.seat_for(&pane).await {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                return ExecOutcome::Deferred(format!("pane {pane} is not a threads seat yet"));
-            }
-            Err(err) => return port_outcome(err),
+        }
+        let Some(seat) = g.membership_seat(clone).map(ThreadsSeatRef) else {
+            return ExecOutcome::Obsolete;
         };
         let thread_ref = ThreadRef(thread.to_owned());
         let key = OpKey(format!(
@@ -1223,7 +2092,10 @@ impl ThreadsExecutor {
             .map_or(InvitationState::Pending, |d| d.state);
         let link = ThreadsLink {
             seat: seat.0.clone(),
-            occupant: Some(occupant),
+            occupant: clone
+                .occupant
+                .as_ref()
+                .map(|o| o.native_session.to_string()),
             invitation: detail.as_ref().and_then(|d| d.invitation.clone()),
             requirement: detail.as_ref().and_then(|d| d.requirement.clone()),
             revision: detail.as_ref().and_then(|d| d.revision),
@@ -1236,7 +2108,7 @@ impl ThreadsExecutor {
                 constraint,
                 state,
                 link: &link,
-                expect_occupant: None,
+                expect_seat: None,
             },
         ) {
             Ok(()) => ExecOutcome::Done,
@@ -1293,7 +2165,7 @@ impl ThreadsExecutor {
                     constraint,
                     state: InvitationState::Released,
                     link: &link,
-                    expect_occupant: link.occupant.as_deref(),
+                    expect_seat: Some(link.seat.as_str()),
                 },
             ) {
                 Ok(()) => ExecOutcome::Done,
@@ -1400,7 +2272,7 @@ impl ThreadsExecutor {
                     constraint,
                     state,
                     link: &fresh,
-                    expect_occupant: link.occupant.as_deref(),
+                    expect_seat: Some(link.seat.as_str()),
                 },
             )
         {
@@ -1428,7 +2300,20 @@ impl EffectExecutor for ThreadsExecutor {
             | EffectKind::ReleaseRequirement
             | EffectKind::Notify
             | EffectKind::SetTopic => true,
-            EffectKind::Custom(k) => k == POLL_KIND,
+            EffectKind::Custom(k) => [
+                POLL_KIND,
+                RESOLVE_KIND,
+                RESOLVE_RESERVED_KIND,
+                CLEAR_RESTORE_KIND,
+                SUCCEED_KIND,
+                ACK_RESTORE_KIND,
+                UNRETIRE_KIND,
+                FINALIZE_KIND,
+                RELEASE_KEY_KIND,
+                RESERVE_KEY_KIND,
+                KEY_LINK_KIND,
+            ]
+            .contains(&k.as_str()),
             _ => false,
         }
     }
@@ -1513,6 +2398,34 @@ impl ThreadsExecutor {
                     ),
                 )
                 .await
+            }
+            (EffectKind::Custom(_), Some(Payload::ResolveSeat { pane })) => {
+                self.resolve_seat(cx, e, &pane).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ResolveReserved { key })) => {
+                self.resolve_reserved(cx, e, &key).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ClearRestore { epoch })) => {
+                self.clear_restore(cx, e, &epoch)
+            }
+            (EffectKind::Custom(_), Some(Payload::AckRestore { epoch })) => {
+                self.ack_restore(cx, e, &epoch)
+            }
+            (EffectKind::Custom(_), Some(Payload::UnretireSeat { seat, epoch })) => {
+                self.unretire_seat(cx, e, &seat, &epoch).await
+            }
+            (EffectKind::Custom(_), Some(Payload::FinalizeSeat { seat })) => {
+                self.finalize_seat(cx, e, &seat).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ReleaseKey { key })) => {
+                self.release_key_tombstone(cx, e, &key).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ReserveKey)) => self.reserve_key(cx, e).await,
+            (EffectKind::Custom(_), Some(Payload::KeyLink { key, seat })) => {
+                self.key_link(cx, e, &key, &seat).await
+            }
+            (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
+                self.succeed_seat(cx, e, &pane, &from, &epoch).await
             }
             (
                 EffectKind::Custom(_),

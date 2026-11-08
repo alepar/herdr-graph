@@ -50,6 +50,7 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(SeatResurrect));
     reg.register(Arc::new(CloneAdd));
     reg.register(Arc::new(CloneRetire));
+    reg.register(Arc::new(ClonePurge));
     reg.register(Arc::new(crate::plan::instructions::InstructionsKind));
     crate::plan::managers::register_kinds(reg);
 }
@@ -94,6 +95,16 @@ pub(crate) fn absent() -> Runtime {
         bound: None,
         observed_at: None,
     }
+}
+
+/// The restore commit for one clone being brought back (resurrection, undo, seat reactivation): the old pane's
+/// occupant and runtime are gone with the closed pane, and a seated clone gets the Restore intent of `op`
+/// (succession pre-D2, un-retire post-D2) so the Retired arm does not retire it. A seatless clone gets no intent
+/// and is started by the ordinary start rule.
+pub(crate) fn restore_commit(c: &mut CloneRecord, op: &crate::model::OpId) {
+    c.occupant = None;
+    c.runtime = absent();
+    crate::threads::assignment::write_restore_intent(c, op);
 }
 
 pub(crate) fn basename(p: &RepoPath) -> &str {
@@ -243,6 +254,11 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR
         opt_outs: vec![],
         invitations: vec![],
         reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
     }
 }
 
@@ -443,6 +459,7 @@ pub(crate) fn do_retire_seat(
         }
         let mut c = c.clone();
         c.lifecycle = CloneLifecycle::Retired;
+        crate::threads::assignment::clear_restore_on_retire(&mut c);
         c.retired = Some(retirement(cx));
         cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         acc.retired.push(c.id.to_any());
@@ -531,6 +548,7 @@ pub(crate) fn do_resurrect_seat(
     let mut clone_ids = Vec::new();
     for (loc, c) in &f.clones {
         if c.lifecycle != CloneLifecycle::Retired
+            || c.is_tombstone()
             || !retired_with(set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
         {
             continue;
@@ -538,8 +556,7 @@ pub(crate) fn do_resurrect_seat(
         let mut c = c.clone();
         c.lifecycle = CloneLifecycle::Active;
         c.retired = None;
-        c.occupant = None;
-        c.runtime = absent();
+        restore_commit(&mut c, &cx.op);
         cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         acc.changed(c.id.to_any(), "retired", "active");
         clone_ids.push(c.id.clone());
@@ -893,6 +910,7 @@ impl OrgKind for TeamspaceResurrect {
             let mut revived = Vec::new();
             for (_, c) in layout::list_clones(cx.tree, &loc.folder)? {
                 if c.lifecycle == CloneLifecycle::Retired
+                    && !c.is_tombstone()
                     && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
                 {
                     effects.push(PlanEffect::new(
@@ -1317,6 +1335,19 @@ impl OrgKind for SeatActivate {
             t.lifecycle = Lifecycle::Active;
             cx.tree.put_record(f.ts.loc.record_path.clone(), &mut t)?;
         }
+        // Reactivating a Dormant seat (and its teamspace) is treated like resurrection: the graph's
+        // deactivation close made threads retire the pane's seat, so a seated clone needs a Restore intent
+        // for succession (pre-D2) or un-retire (post-D2). The old pane's occupant and runtime are cleared as on
+        // resurrection, so a stale occupant can neither block the restore launch nor let the clear-on-reattach
+        // want clear the intent before an agent runs. A seatless clone is left untouched.
+        for (loc, c) in f.active_clones() {
+            if c.is_tombstone() || c.threads_seat.is_none() {
+                continue;
+            }
+            let mut c = c.clone();
+            restore_commit(&mut c, &cx.op);
+            cx.tree.put_record(loc.record_path.clone(), &mut c)?;
+        }
         let mut rec = f.rec.clone();
         rec.lifecycle = Lifecycle::Active;
         rec.activation.last_op = Some(cx.op.clone());
@@ -1641,6 +1672,7 @@ impl OrgKind for SeatResurrect {
         let mut revived: Vec<&CloneRecord> = Vec::new();
         for (_, c) in &f.clones {
             if c.lifecycle == CloneLifecycle::Retired
+                && !c.is_tombstone()
                 && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
             {
                 effects.push(PlanEffect::new(
@@ -1719,6 +1751,7 @@ impl OrgKind for SeatResurrect {
         let set = retired_by(&cx.tree, action.as_ref()).map_err(mm)?;
         let revives_clone = f.clones.iter().any(|(_, c)| {
             c.lifecycle == CloneLifecycle::Retired
+                && !c.is_tombstone()
                 && retired_with(&set, action.as_ref(), &c.id.to_any(), c.retired.as_ref())
         });
         let mut acc = Acc::default();
@@ -1954,6 +1987,7 @@ impl OrgKind for CloneRetire {
         } else {
             let mut c = f.clone.clone();
             c.lifecycle = CloneLifecycle::Retired;
+            crate::threads::assignment::clear_restore_on_retire(&mut c);
             c.retired = Some(Retirement {
                 op: cx.op.clone(),
                 action: Some(act.clone()),
@@ -1975,6 +2009,107 @@ impl OrgKind for CloneRetire {
         Ok(Applied {
             summary: format!("retire clone {}", f.clone.name),
             action: Some(act),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// clone purge (spec §14.1-3): ends a retired clone's undo window
+// ---------------------------------------------------------------------------------------------
+
+struct ClonePurge;
+impl ClonePurge {
+    /// The clone and its location; it must be retired and not already a tombstone.
+    fn facts(
+        tree: &dyn TreeRead,
+        clone_ref: &str,
+    ) -> Result<(CloneRecord, ObjectLocation), PlanError> {
+        let id = match CloneId::parse(clone_ref) {
+            Ok(id) => id,
+            Err(_) => match grammar::resolve_clone(tree, clone_ref, Scope::Retired) {
+                Ok(id) => id,
+                // A live clone of that name gets the "retire it first" refusal below.
+                Err(e) => grammar::resolve_clone(tree, clone_ref, Scope::Live).map_err(|_| e)?,
+            },
+        };
+        let loc = layout::locate(tree, &id.to_any())?
+            .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+        let clone = read_toml::<CloneRecord>(tree, &loc.record_path)?
+            .ok_or_else(|| PlanError::Invalid(format!("no clone {id}")))?;
+        if clone.lifecycle != CloneLifecycle::Retired {
+            return Err(PlanError::Invalid(format!(
+                "clone {id} is not retired; retire it first"
+            )));
+        }
+        if clone.is_tombstone() {
+            return Err(PlanError::Invalid(format!("clone {id} is already purged")));
+        }
+        Ok((clone, loc))
+    }
+}
+impl OrgKind for ClonePurge {
+    fn kind(&self) -> RequestKind {
+        RequestKind::ClonePurge
+    }
+    fn verbs(&self) -> &'static [(&'static str, &'static str)] {
+        &[("clone", "purge")]
+    }
+    fn parse(&self, words: &[String], _: &CallerInfo) -> Result<serde_json::Value, PlanError> {
+        let c =
+            positional(words, 0).ok_or_else(|| PlanError::Usage("clone purge <clone>".into()))?;
+        Ok(json!({ "clone": c }))
+    }
+    fn plan(
+        &self,
+        cx: &PlanCx<'_>,
+        args: &serde_json::Value,
+        _: &mut Reserved,
+    ) -> Result<PlanBody, PlanError> {
+        let a: CloneRef = parse_args(args)?;
+        let (clone, _) = Self::facts(cx.tree, &a.clone)?;
+        let tombstone = match crate::threads::assignment::purge_tombstone(
+            &clone,
+            clone.key_reservation.as_ref().map(|r| r.key.as_str()),
+        ) {
+            Some(t) => match t.seat_intent {
+                Some(crate::model::clone::SeatIntent::ReleaseKey { .. }) => "release_key",
+                _ => "finalize",
+            },
+            None => "none",
+        };
+        Ok(PlanBody {
+            effects: vec![PlanEffect::new(
+                "clone.purge",
+                clone.id.clone(),
+                json!({ "seat": clone.threads_seat, "name": clone.name, "tombstone": tombstone }),
+            )],
+            relied_on: vec![rev_of(clone.id.clone(), clone.rev)],
+            warnings: vec![format!(
+                "purging clone {} ends its undo window; it cannot be restored",
+                clone.name
+            )],
+            repair_required: None,
+            summary: format!("purge clone {}", clone.name),
+        })
+    }
+    fn mutate(
+        &self,
+        cx: &mut MutationCx<'_>,
+        args: &serde_json::Value,
+        _: &Plan,
+    ) -> Result<Applied, MutationError> {
+        let a: CloneRef = parse_args(args).map_err(mm)?;
+        let (clone, loc) = Self::facts(&cx.tree, &a.clone).map_err(mm)?;
+        match crate::threads::assignment::purge_tombstone(
+            &clone,
+            clone.key_reservation.as_ref().map(|r| r.key.as_str()),
+        ) {
+            Some(mut t) => cx.tree.put_record(loc.record_path.clone(), &mut t)?,
+            None => cx.tree.delete_file(&loc.record_path),
+        }
+        Ok(Applied {
+            summary: format!("purge clone {}", clone.name),
+            action: None,
         })
     }
 }

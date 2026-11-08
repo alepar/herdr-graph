@@ -6,6 +6,7 @@
 //! * `mapping` — clone pane -> threads seat;
 //! * this module — registration, bookkeeping mutations, `who` and the pending-invitations query.
 pub mod adapter;
+pub mod assignment;
 pub mod discovery;
 pub mod effects;
 pub mod fake;
@@ -19,7 +20,7 @@ mod tests;
 
 pub use adapter::{Discovered, ServiceThreads, discover};
 pub use effects::{ThreadsExecutor, ThreadsSource};
-pub use fake::FakeThreads;
+pub use fake::{FakeSeatViewError, FakeThreads, FakeThreadsSeatView};
 pub use mapping::{FakePaneSeatMap, PaneSeatMap, ThreadsSeatMap};
 
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};
@@ -28,7 +29,7 @@ use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{AnyId, CloneId, IdKind, SeatId};
 use crate::ports::store::{Store, StoreError};
-use crate::ports::threads::ThreadsPort;
+use crate::ports::threads::{ThreadsPort, ThreadsSeatView};
 use crate::reconcile::Reconciler;
 use crate::store::Record;
 use crate::store::tree::{CommitView, TreeRead};
@@ -46,6 +47,7 @@ pub fn register_with(
     reconciler: &Reconciler,
     threads: Arc<dyn ThreadsPort>,
     mapping: Arc<dyn PaneSeatMap>,
+    seat_view: Arc<dyn ThreadsSeatView>,
 ) {
     let cache = Arc::new(GraphCache::default());
     reconciler.register_source(Arc::new(ThreadsSource::new(
@@ -55,6 +57,7 @@ pub fn register_with(
     reconciler.register_executor(Arc::new(effects::ThreadsExecutor::new(
         threads,
         mapping,
+        seat_view,
         reconciler.journal().clone(),
         cache,
     )));
@@ -133,9 +136,9 @@ struct InvitationArgs {
     state: InvitationState,
     #[serde(default)]
     link: Option<ThreadsLink>,
-    /// Apply only while the stored invitation still belongs to this occupant; absent = unconditional.
+    /// Apply only while the stored invitation still belongs to this threads seat; absent = unconditional.
     #[serde(default)]
-    expect_occupant: Option<String>,
+    expect_seat: Option<String>,
 }
 
 /// `bookkeeping.invitation`: record what threads reported about one invitation of a clone.
@@ -148,8 +151,8 @@ impl Mutation for SetInvitation {
                 .invitations
                 .iter_mut()
                 .find(|i| i.thread == a.thread && i.constraint == a.constraint);
-            if let (Some(expect), Some(i)) = (&a.expect_occupant, &existing)
-                && i.link.as_ref().and_then(|l| l.occupant.as_ref()) != Some(expect)
+            if let (Some(expect), Some(i)) = (&a.expect_seat, &existing)
+                && i.link.as_ref().map(|l| &l.seat) != Some(expect)
             {
                 return Ok(());
             }
@@ -176,10 +179,14 @@ impl Mutation for SetInvitation {
     }
 }
 
-/// Registers `bookkeeping.channel` and `bookkeeping.invitation`.
+/// Registers `bookkeeping.channel`, `bookkeeping.invitation` and `bookkeeping.threads_seat`.
 pub fn register_mutations(reg: &mut MutationRegistry) {
     reg.register(CHANNEL_KEY, Arc::new(SetChannel));
     reg.register(INVITATION_KEY, Arc::new(SetInvitation));
+    reg.register(
+        assignment::THREADS_SEAT_KEY,
+        Arc::new(assignment::ThreadsSeatMutation),
+    );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -190,35 +197,9 @@ pub fn register_mutations(reg: &mut MutationRegistry) {
 pub struct PendingInvitation {
     pub thread: String,
     pub constraint: InviteConstraint,
-    /// The exact command line the clone's agent runs in its own pane.
-    pub accept_command: String,
 }
 
-fn accept_command(
-    thread: &str,
-    constraint: InviteConstraint,
-    link: Option<&ThreadsLink>,
-) -> String {
-    match constraint {
-        InviteConstraint::Ordinary => format!("herdr-threads accept {thread}"),
-        InviteConstraint::Required => match link {
-            Some(ThreadsLink {
-                invitation: Some(inv),
-                requirement: Some(req),
-                revision: Some(rev),
-                ..
-            }) => {
-                format!(
-                    "herdr-threads accept-required {thread} --invitation {inv} --requirement {req} --revision {rev}"
-                )
-            }
-            // The episode ids are not recorded yet: the agent reads them from the thread.
-            _ => format!("herdr-threads thread participants {thread}"),
-        },
-    }
-}
-
-/// The clone's invitations that are still waiting for its agent, with the command that answers each.
+/// The clone's invitations that are still waiting for its agent. Acceptance belongs to herdr-threads.
 /// An unreadable clone has none.
 pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingInvitation> {
     let Ok(Some(loc)) = crate::store::layout::locate(tree, &clone.to_any()) else {
@@ -228,13 +209,16 @@ pub fn pending_invitations(tree: &dyn TreeRead, clone: &CloneId) -> Vec<PendingI
     else {
         return Vec::new();
     };
+    // A purge tombstone is inert: it is never invited (§13).
+    if rec.is_tombstone() {
+        return Vec::new();
+    }
     rec.invitations
         .iter()
         .filter(|i| i.state == InvitationState::Pending)
         .map(|i| PendingInvitation {
             thread: i.thread.clone(),
             constraint: i.constraint,
-            accept_command: accept_command(&i.thread, i.constraint, i.link.as_ref()),
         })
         .collect()
 }
@@ -343,7 +327,12 @@ pub fn who(tree: &dyn TreeRead, target: &str) -> Result<WhoReply, StoreError> {
                     .any(|i| i.link.as_ref().is_some_and(|l| l.seat == target))
             })
         })
-        .or_else(|| CloneId::parse(target).ok().and_then(|id| g.clones.get(&id)))
+        .or_else(|| {
+            CloneId::parse(target)
+                .ok()
+                .and_then(|id| g.clones.get(&id))
+                .filter(|c| !c.is_tombstone())
+        })
         .cloned();
     let seat = match &found {
         Some(c) => g.seats.get(&c.seat),

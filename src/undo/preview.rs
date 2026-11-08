@@ -1,7 +1,6 @@
-//! Pure preview computation for undo (spec §6): what an undo restores, which pane it adopts, which template
+//! Pure preview computation for undo (spec §6): what an undo restores, which template
 //! fields it patches back, and why it cannot run. `UndoKind::plan` assembles these; `UndoKind::mutate`
 //! recomputes the same facts against the writer's overlay.
-use super::adopt::{Adoption, adoption};
 use crate::model::action::{ActionKind, ActionRecord};
 use crate::model::application::ApplicationRecord;
 use crate::model::b64::{b64_decode, b64_encode};
@@ -144,6 +143,15 @@ pub fn compute_restore(
 ) -> Result<Restore, PlanError> {
     let mut r = Restore::default();
     let mut standalone: Vec<CloneId> = Vec::new();
+    // A purged clone's undo window has ended: refuse rather than restore the rest around it.
+    for id in act.retired.iter().filter(|id| id.kind() == IdKind::Clone) {
+        let c = CloneId::parse(id.as_str()).map_err(|e| invalid(e.to_string()))?;
+        if read_clone(tree, &c)?.is_none_or(|rec| rec.is_tombstone()) {
+            return Err(invalid(format!(
+                "clone {c} was purged; its undo window has ended"
+            )));
+        }
+    }
     for id in &act.retired {
         match id.kind() {
             IdKind::Teamspace => {
@@ -311,11 +319,7 @@ pub fn closes_caller(
         }
         let (clone, seat) = (c.id.to_any(), c.seat.to_any());
         let closes = effects.iter().any(|e| {
-            // A clone displaced by the undo's own adoption hands its pane over: that pane is adopted, not closed.
-            let displaced = e.detail["displaced_by_undo"] == json!(true);
-            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane")
-                && e.object == clone
-                && !displaced)
+            (matches!(e.kind.as_str(), "clone.retire" | "runtime.close_pane") && e.object == clone)
                 || (matches!(e.kind.as_str(), "seat.retire" | "runtime.close_tab")
                     && e.object == seat)
         });
@@ -340,12 +344,7 @@ pub fn restore_preview(
     let mut effects = Vec::new();
     let mut relied_on = Vec::new();
     let mut warnings = r.warnings.clone();
-    let runtime = r.runtime_clones(tree)?;
-    let adopt: Option<Adoption> = match caller_pane {
-        Some(p) => adoption(tree, p, &runtime)?,
-        None => None,
-    };
-    let mut repair = r.repair.clone();
+    let repair = r.repair.clone();
 
     for (ts, active) in &r.teamspaces {
         let t = read_ts(tree, ts)?;
@@ -419,7 +418,7 @@ pub fn restore_preview(
                         .map(|(_, c)| c.clone()),
                 )
                 .collect();
-            runtime_effects(tree, &f.rec, &own, adopt.as_ref(), &mut effects)?;
+            runtime_effects(tree, &f.rec, &own, &mut effects)?;
         }
     }
     for c in &r.clones {
@@ -437,13 +436,7 @@ pub fn restore_preview(
         ));
         let f = read_seat(tree, &rec.seat)?;
         if f.rec.lifecycle == Lifecycle::Active {
-            runtime_effects(
-                tree,
-                &f.rec,
-                std::slice::from_ref(c),
-                adopt.as_ref(),
-                &mut effects,
-            )?;
+            runtime_effects(tree, &f.rec, std::slice::from_ref(c), &mut effects)?;
         }
     }
     if let Some(app) = &r.app {
@@ -462,33 +455,6 @@ pub fn restore_preview(
     if let Some((effect, graph)) = &r.assignment {
         effects.push(effect.clone());
         relied_on.push(graph.clone());
-    }
-
-    if let Some(a) = &adopt
-        && let Some((x, _)) = &a.displaced
-    {
-        let xr = read_clone(tree, x)?.ok_or_else(|| invalid(format!("no clone {x}")))?;
-        let xs = read_seat(tree, &xr.seat)?;
-        relied_on.push(rev_of(x.clone(), xr.rev));
-        effects.push(PlanEffect::new(
-            "clone.retire",
-            x.clone(),
-            json!({
-                "seat": xr.seat, "name": xr.name, "mechanism": "undo", "displaced_by_undo": true,
-                "binding": a.displaced_binding,
-            }),
-        ));
-        if xs.rec.lifecycle == Lifecycle::Active && xs.active_clones().all(|(_, c)| &c.id == x) {
-            warnings.push(format!(
-                "clone {} is the last active clone of seat {}; the seat is left with no active clone",
-                xr.name, xs.rec.name
-            ));
-        }
-        if let Some(msg) = a.conflict(&format!("{} of seat {}", xr.name, xs.rec.name))
-            && repair.is_none()
-        {
-            repair = Some(msg);
-        }
     }
     if let Some(pane) = caller_pane
         && let Some(w) = closes_caller(tree, pane, &effects)?
@@ -593,31 +559,18 @@ pub(crate) fn pointer_restores(
     Ok((effects, warnings))
 }
 
-/// Pane effects for the clones `own` of one restored active seat: the caller's pane replaces the adopted
-/// clone's `open_pane`.
+/// Pane effects for the clones `own` of one restored active seat: each reopens in the seat's own tab.
 fn runtime_effects(
     tree: &dyn TreeRead,
     seat: &SeatRecord,
     own: &[CloneId],
-    adopt: Option<&Adoption>,
     effects: &mut Vec<PlanEffect>,
 ) -> Result<(), PlanError> {
     let mut as_active = seat.clone();
     as_active.lifecycle = Lifecycle::Active;
     let cfg = crate::model::effective::resolve_in(tree, &as_active)?;
     for c in own {
-        match adopt {
-            Some(a) if &a.clone == c => effects.push(PlanEffect::new(
-                "undo.adopt_pane",
-                c.clone(),
-                json!({
-                    "pane": a.pane, "seat": seat.id,
-                    "displaced_clone": a.displaced.as_ref().map(|(x, _)| x),
-                    "displaced_binding": a.displaced_binding,
-                }),
-            )),
-            _ => effects.extend(open_clone_effects(c, &seat.id, &cfg)),
-        }
+        effects.extend(open_clone_effects(c, &seat.id, &cfg));
     }
     Ok(())
 }

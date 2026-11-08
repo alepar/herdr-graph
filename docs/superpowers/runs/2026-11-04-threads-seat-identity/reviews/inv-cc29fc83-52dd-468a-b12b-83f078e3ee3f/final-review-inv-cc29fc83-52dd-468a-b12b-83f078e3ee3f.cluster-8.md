@@ -1,0 +1,62 @@
+# Final review, cluster 8 (src-daemon), epic hg-66u
+
+## Source and inputs
+
+- Invocation inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f; base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify`; review source bound in the ledger before this write).
+- Cluster files: src/daemon/clone_status.rs (new, 25 lines), src/daemon/compose.rs (+34/-3), src/daemon/mod.rs (+1). Slices 000034-000036.
+- Spec: docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md, mainly §14.1 ("`status` lists retired-unpurged clones") and §13 "Tombstones are inert"; owning task hg-66u.35 (closed), acceptance item "status lists retired-unpurged clones (test)".
+- Caller checkout observed at HEAD e4984a4, clean status, before and after the review. The caller's third_party/herdr-threads is at cdc8423 (v2.6.4), which matches the head's gitlink; hg-66u.4 (bump to v3.0.0) is still open. Recorded as observation only.
+
+## What the cluster changes
+
+- `clone_status(tree)` builds `{"retired_unpurged": [{clone, name, seat, retired_at}]}` from `layout::all_clones`, keeping clones with `lifecycle == Retired` and `!is_tombstone()`. `seat` is the clone's `threads_seat`.
+- `register_status` gains the store and registers a `clones` status provider that reads `store.head()` and evaluates `clone_status` over a `CommitView` at that head; a head error is reported as `{"error": ...}`.
+- The `test-support`-only `PersistentFakeHerdr` log now records and replays `StartAgent.env`, with `#[serde(default)]` so logs written before the change still replay.
+
+## Trace from the production entry point
+
+- `herdr-graph status` (src/cli/status.rs `status()`) calls the daemon `status` IPC; src/daemon/server.rs answers with `components: reg.status_components()` once the gate is Ready; `register_status` is called from `compose_with` in the production composition (compose.rs:317). The CLI prints every component, so `clones: {"retired_unpurged": [...]}` reaches the operator. Delivered for the running-daemon path.
+- Tombstone exclusion is correct: `purge_tombstone` (src/threads/assignment.rs:77) keeps `lifecycle: Retired` and sets `Finalize`/`ReleaseKey`, which `is_tombstone()` matches, so purged clones are excluded as §13 requires. A retired clone with a `Restore` intent cannot occur (undo commits the clone Active), and a seatless purged clone has no record left.
+- `retired_at` serializes `Retirement.at` (a timestamp, string in JSON); the unit test asserts this.
+
+## Baseline trace
+
+- The spec has a `## Requirement baseline` section (B1-B11, no human scope change rows). This cluster supplies one supporting surface: the operator-visible list of clones still inside their undo window, which serves B7 (undoable retirement) and §14.1. That surface is delivered from a production entry point, as traced above.
+- B1-B11 delivery as a whole (seat-authoritative location, unattended restart and handoff resume, undo onto the same seat, participation keyed to the seat, /seat Option D) runs through src/observe, src/reconcile, src/threads, src/undo, src/plan, src/cli and the many still-open beads (hg-66u.4, .7, .8, .14, .21, .28-.33, .40, .43, .44 and the gates .1-.3). Those paths leave this cluster and belong to the seam reviewer to trace. This review makes no claim about whether they are delivered.
+- §14.7 ("`status` names a restore with launched = true and no reattach as stuck") and §8 ("a threads refusal keeps the intent pending and visible in status") are status duties too. Neither appears in this cluster's `clones` component at the head. Their owning beads (hg-66u.30, .31, .32) are open, so those duties also go to the seam reviewer rather than counting as a defect here.
+
+## Verification run
+
+- In a review-owned detached worktree at the head (since removed), with the target dir reflink-seeded and the submodule initialized at the pinned cdc8423, run in the ht-build toolbox: `cargo test --lib --all-features -- clone_status purge` gave 10 passed, 0 failed, including `plan::tests::clone_status_lists_retired_unpurged_clones`, `purge_of_an_active_clone_is_refused` and the purge tombstone tests.
+- `cargo test --all-features --test daemon_composed` gave 22 passed. A first attempt failed 13 tests with "path must be shorter than SUN_LEN" because I used a long TMPDIR. That was caused by my environment, not the code, and the rerun with a short TMPDIR passed. `cargo test --lib --all-features daemon::` gave 46 passed.
+
+## Assessment
+
+- The change is small and correct for what it claims, and it matches the codebase conventions (status providers are synchronous closures over shared handles, as `writer` and `reconciler` are).
+- `layout::all_clones(tree).unwrap_or_default()` turns any listing error (for example one malformed clone.toml anywhere) into an empty `retired_unpurged` list with no error. The operator then sees "nothing in an undo window" when the truth is unknown. The `head()` arm next to it does surface its error, so the two arms are inconsistent. Swallowing errors this way is common in this file (`reconciler_status` does the same), so it is a minor issue, not a correctness defect against the spec.
+- The JSON key `seat` holds the threads seat id, while `CloneRecord.seat` is the graph seat. An operator reading `status` could confuse the two. The doc comment says what it means; `threads_seat` would be clearer. Naming nit.
+- The provider does a git head read and walks every clone on each `status` call, while it holds the server's gate `borrow()`. This is acceptable at current scale and matches the other providers' synchronous journal reads.
+- The fake-log `env` field is compiled only under `test-support` and is backward-compatible on replay. No issue.
+
+## Findings
+
+- none
+
+## Concerns
+
+- none
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- The production `clones` provider wiring in compose.rs (`store.head()` + `CommitView`, and its `{"error": ...}` arm) is not asserted by any composed-daemon test; tests/daemon_composed.rs checks only the `writer`, `reconciler` and `threads` components, and the unit test calls `clone_status` directly.
+- No test covers a retired clone with no `threads_seat` (pre-upgrade) appearing with `seat: null`, or the behavior when `all_clones` fails.
+
+## Deferred OK
+- src/daemon/clone_status.rs:11 `all_clones(...).unwrap_or_default()` hides listing errors as an empty list; surfacing `{"error": ...}` as the head arm does would be more honest.
+- src/daemon/clone_status.rs:19 JSON key `seat` carries the threads seat id, which can be confused with the graph seat; `threads_seat` would be clearer.
+- `retired_unpurged` appears only in the daemon `status` reply; `direct_status` (daemon not running) does not list it. The spec does not require it there.

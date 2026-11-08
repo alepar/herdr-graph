@@ -385,6 +385,11 @@ fn clone_record_roundtrip() {
             }),
         }],
         reload_required: true,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
     });
     toml_rt(&CloneRecord {
         schema: 1,
@@ -401,7 +406,99 @@ fn clone_record_roundtrip() {
         opt_outs: vec![],
         invitations: vec![],
         reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
     });
+    let epoch = OpId::new();
+    for intent in [
+        SeatIntent::Restore {
+            seat: "seat-b".into(),
+            epoch: epoch.clone(),
+            threads_done: true,
+            launched: Some(LEGACY_LAUNCHED_AT),
+            last_refusal: None,
+        },
+        SeatIntent::Restore {
+            seat: "seat-b".into(),
+            epoch,
+            threads_done: false,
+            launched: None,
+            last_refusal: None,
+        },
+        SeatIntent::Finalize {
+            seat: "seat-b".into(),
+        },
+        SeatIntent::ReleaseKey { key: "k1".into() },
+    ] {
+        let rec = CloneRecord {
+            schema: 1,
+            id: CloneId::new(),
+            rev: 2,
+            seat: SeatId::new(),
+            name: "c".into(),
+            name_history: vec![],
+            lifecycle: CloneLifecycle::Retired,
+            retired: Some(retirement()),
+            runtime: minimal_runtime(),
+            occupant: None,
+            sessions: vec![],
+            opt_outs: vec![],
+            invitations: vec![],
+            reload_required: false,
+            threads_seat: Some("seat-b".into()),
+            threads_seat_history: vec!["seat-a".into()],
+            seat_intent: Some(intent),
+            seat_fact: None,
+            key_reservation: None,
+        };
+        toml_rt(&rec);
+    }
+}
+
+#[test]
+fn clone_record_seat_fact_roundtrip() {
+    use crate::model::clone::{SeatFact, SeatFactState};
+    for state in [
+        SeatFactState::Resolved {
+            pane: HerdrPaneId("p_1".into()),
+        },
+        SeatFactState::Unresolved,
+        SeatFactState::KeyConflict { pane: None },
+        SeatFactState::KeyConflict {
+            pane: Some(HerdrPaneId("p_2".into())),
+        },
+        SeatFactState::Retired { reversible: true },
+        SeatFactState::Retired { reversible: false },
+    ] {
+        toml_rt(&CloneRecord {
+            schema: 1,
+            id: CloneId::new(),
+            rev: 2,
+            seat: SeatId::new(),
+            name: "c".into(),
+            name_history: vec![],
+            lifecycle: CloneLifecycle::Active,
+            retired: None,
+            runtime: minimal_runtime(),
+            occupant: None,
+            sessions: vec![],
+            opt_outs: vec![],
+            invitations: vec![],
+            reload_required: false,
+            threads_seat: Some("seat-b".into()),
+            threads_seat_history: vec![],
+            seat_intent: None,
+            seat_fact: Some(SeatFact {
+                seat: "seat-b".into(),
+                state,
+                read_at: ts(),
+            }),
+            key_reservation: None,
+        });
+    }
 }
 
 fn full_defaults() -> MemberDefaults {
@@ -1099,6 +1196,15 @@ fn launch_env_contract() {
 }
 
 #[test]
+fn agent_env_has_graph_clone_and_the_key_only_when_reserved() {
+    let clone = CloneId::new();
+    let clone_var = (ENV_CLONE.to_string(), clone.to_string());
+    let key_var = (ENV_CONTINUITY_KEY.to_string(), clone.to_string());
+    assert_eq!(agent_env(&clone, false), vec![clone_var.clone()]);
+    assert_eq!(agent_env(&clone, true), vec![clone_var, key_var]);
+}
+
+#[test]
 fn graph_token_roundtrip() {
     let id = SeatId::new();
     assert_eq!(
@@ -1129,6 +1235,86 @@ fn cwd_rule_precedence() {
     let (p, s) = resolve_cwd(None, None, inst, &seat);
     assert_eq!(s, CwdSource::InstanceFallback);
     assert_eq!(p, PathBuf::from(format!("/inst/.graph-local/cwd/{seat}")));
+}
+
+#[test]
+fn restore_launched_reads_legacy_bool() {
+    let parse = |launched: &str| -> SeatIntent {
+        serde_json::from_str(&format!(
+            r#"{{"kind":"restore","seat":"s","epoch":"{}","threads_done":true{launched}}}"#,
+            OpId::new()
+        ))
+        .unwrap()
+    };
+    let launched = |i: SeatIntent| match i {
+        SeatIntent::Restore { launched, .. } => launched,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        launched(parse(r#","launched":true"#)),
+        Some(LEGACY_LAUNCHED_AT)
+    );
+    assert_eq!(launched(parse(r#","launched":false"#)), None);
+    assert_eq!(launched(parse("")), None);
+    let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let rt = launched(parse(&format!(r#","launched":"{}""#, at.to_rfc3339())));
+    assert_eq!(rt, Some(at));
+    let written = serde_json::to_value(SeatIntent::Restore {
+        seat: "s".into(),
+        epoch: OpId::new(),
+        threads_done: true,
+        launched: Some(at),
+        last_refusal: None,
+    })
+    .unwrap();
+    assert_eq!(launched(serde_json::from_value(written).unwrap()), Some(at));
+    assert!(LEGACY_LAUNCHED_AT < at);
+}
+
+#[test]
+fn key_reservation_round_trips_and_defaults_absent() {
+    let mut rec = CloneRecord {
+        schema: 1,
+        id: CloneId::new(),
+        rev: 1,
+        seat: SeatId::new(),
+        name: "c".into(),
+        name_history: vec![],
+        lifecycle: CloneLifecycle::Active,
+        retired: None,
+        runtime: minimal_runtime(),
+        occupant: None,
+        sessions: vec![],
+        opt_outs: vec![],
+        invitations: vec![],
+        reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
+    };
+    // Absent: nothing is written, and a record without the field reads back absent.
+    let text = toml::to_string(&rec).unwrap();
+    assert!(
+        !text.contains("key_reservation"),
+        "absent field written:\n{text}"
+    );
+    assert_eq!(
+        toml::from_str::<CloneRecord>(&text)
+            .unwrap()
+            .key_reservation,
+        None
+    );
+    // Present, unbound and bound.
+    for seat in [None, Some("seat-b".to_owned())] {
+        rec.key_reservation = Some(KeyReservation {
+            key: rec.id.to_string(),
+            seat,
+            at: ts(),
+        });
+        toml_rt(&rec);
+    }
 }
 
 #[test]

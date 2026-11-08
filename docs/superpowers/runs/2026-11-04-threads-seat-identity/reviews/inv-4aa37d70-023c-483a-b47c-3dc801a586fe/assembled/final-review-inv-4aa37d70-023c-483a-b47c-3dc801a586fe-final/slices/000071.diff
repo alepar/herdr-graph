@@ -1,0 +1,38 @@
+diff --git a/src/observe/step.rs b/src/observe/step.rs
+index c4a31ba..60d2f2c 100644
+--- a/src/observe/step.rs
++++ b/src/observe/step.rs
+@@ -19,6 +19,7 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};
+ use crate::ports::clock::Clock;
+ use crate::ports::herdr::{HerdrApi, HerdrSnapshot, ProcessInfo, TabInfo, WorkspaceInfo};
+ use crate::ports::store::Store;
++use crate::ports::threads::ThreadsSeatView;
+ use crate::ports::writer::Writer;
+ use crate::reconcile::desired::DesiredRuntime;
+ use crate::reconcile::planner::TOKEN_KEY;
+@@ -114,6 +115,9 @@ pub struct RuntimeLoop {
+     step_lock: tokio::sync::Mutex<()>,
+     tuning: RwLock<LoopTuning>,
+     claude_root: RwLock<PathBuf>,
++    /// Read-only threads seat inspection; unused until SeatObservation (hg-66u.28).
++    #[allow(dead_code)]
++    seat_view: Arc<dyn ThreadsSeatView>,
+ }
+ 
+ fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
+@@ -339,6 +343,7 @@ impl RuntimeLoop {
+         tick: Duration,
+         op_events: Option<broadcast::Receiver<OpEvent>>,
+         claude_root: PathBuf,
++        seat_view: Arc<dyn ThreadsSeatView>,
+     ) -> Arc<Self> {
+         let (session_ended, _) = broadcast::channel(256);
+         let baseline = baseline::load(&paths.baseline);
+@@ -362,6 +367,7 @@ impl RuntimeLoop {
+             step_lock: tokio::sync::Mutex::new(()),
+             tuning: RwLock::new(LoopTuning::default()),
+             claude_root: RwLock::new(claude_root),
++            seat_view,
+         })
+     }
+ 

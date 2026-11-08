@@ -1,0 +1,13 @@
+diff --git a/src/ports/herdr.rs b/src/ports/herdr.rs
+index d7ca45e..5b65821 100644
+--- a/src/ports/herdr.rs
++++ b/src/ports/herdr.rs
+@@ -107,6 +107,8 @@ pub struct StartAgent {
+     pub pane: HerdrPaneId,
+     pub kind: String,
+     pub args: Vec<String>,
++    /// Delivered by the adapter as a shell export before `agent.start`; callers never see the mechanism.
++    pub env: Vec<(String, String)>,
+ }
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ pub struct ProcessInfo {

@@ -1,12 +1,16 @@
 //! Identity matching between a complete snapshot and committed graph objects (spec §4.2).
 //!
-//! Panes: graph token, else `terminal_id` (same incarnation always; across incarnations only when cwd and, if
-//! both are known, the agent session also match: live handoff), else the clone's current native session id.
-//! Tabs carry no token: within one incarnation a seat's tab is its bound tab id; otherwise the tab holding
-//! its matched panes. Workspaces: token, else bound id (same incarnation), else the workspace holding the
-//! teamspace's matched panes.
+//! Panes. A seatless clone (no `threads_seat`): its graph token, else the pane whose id its committed binding
+//! names, in any incarnation (Herdr preserves pane ids, as for tabs and workspaces), unless that pane carries
+//! another clone's token; an absent id is Unknown. A seated clone: SeatObservation decides; the matcher links
+//! only the pane the committed binding names when that binding is from the snapshot's own incarnation, never by
+//! token, terminal id or native session. No terminal-id, cwd or native-session evidence locates any clone.
+//! Tabs carry no token: a seat's tab is its bound tab id in any incarnation (Herdr preserves tab ids across
+//! restore and handoff; an absent id is Unknown, never voted); a seat with no bound tab id takes the tab
+//! holding its matched panes. Workspaces: token, else bound id (any incarnation, same rule), else, with no
+//! bound id, the workspace holding the teamspace's matched panes.
 use crate::model::clone::CloneRecord;
-use crate::model::common::{CloneLifecycle, Lifecycle};
+use crate::model::common::{CloneLifecycle, Incarnation, Lifecycle};
 use crate::model::{
     AnyId, CloneId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, IdKind, SeatId, TeamspaceId,
 };
@@ -101,11 +105,42 @@ pub fn agent_session_id(p: &PaneInfo) -> Option<String> {
     }
 }
 
+/// The pane the clone's committed binding names, when that is evidence of where the clone is. A seatless
+/// clone's pane id holds in any incarnation (Herdr preserves pane ids across restore, as it does tab and
+/// workspace ids; an absent id is Unknown). A seated clone is located by SeatObservation, so only the binding
+/// SeatObservation last wrote (the snapshot's own incarnation) counts: never one from before a restart.
+fn bound_pane_claim<'a>(c: &'a CloneRecord, inc: &Incarnation) -> Option<&'a HerdrPaneId> {
+    let b = c.runtime.bound.as_ref()?;
+    if c.threads_seat.is_some() && &b.incarnation != inc {
+        return None;
+    }
+    b.pane_id.as_ref()
+}
+
+/// The pane carries the token of a graph object other than `clone` that is not a retired clone (a retired
+/// clone's leftover token does not hold the pane; see pass 1).
+fn carries_other_token(
+    d: &DesiredRuntime,
+    metadata: &BTreeMap<String, String>,
+    clone: &CloneId,
+) -> bool {
+    let Some(t) = token_of(metadata) else {
+        return false;
+    };
+    if t == clone.to_any() {
+        return false;
+    }
+    !CloneId::parse(t.as_str())
+        .ok()
+        .and_then(|c| d.clones.get(&c))
+        .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+}
+
 pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
     let mut m = Matches::default();
     let locs = pane_locs(snap);
 
-    // Panes, pass 1: graph token.
+    // Panes, pass 1: graph token. A seated active clone is never located by token; threads decides.
     for (pid, loc) in &locs {
         let Some(any) = token_of(&loc.pane.metadata) else {
             continue;
@@ -116,89 +151,49 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
         let Ok(c) = CloneId::parse(any.as_str()) else {
             continue;
         };
+        let Some(rec) = d.clones.get(&c) else {
+            continue;
+        };
+        if rec.lifecycle == CloneLifecycle::Active && rec.threads_seat.is_some() {
+            continue;
+        }
         // A retired clone's leftover token must not hold a pane an active clone's committed binding names (an
         // undo adopted it): pass 2 links the pane to that clone, so it is never taken for gone before re-stamping.
-        if d.clones
-            .get(&c)
-            .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
+        if rec.lifecycle == CloneLifecycle::Retired
             && d.clones.values().any(|o| {
                 o.lifecycle == CloneLifecycle::Active
-                    && o.runtime
-                        .bound
-                        .as_ref()
-                        .is_some_and(|b| b.pane_id.as_ref() == Some(pid))
+                    && bound_pane_claim(o, &snap.incarnation) == Some(pid)
             })
         {
             continue;
         }
-        if d.clones.contains_key(&c) && !m.clone_pane.contains_key(&c) {
+        if !m.clone_pane.contains_key(&c) {
             m.link_pane(pid, &c);
         }
     }
-    // Pass 2: terminal id (and, within an incarnation, the bound pane id).
-    for (pid, loc) in &locs {
-        if m.panes.contains_key(pid) {
+    // Pass 2: the pane the committed binding names. Seatless clone: the preserved pane id, unless the pane
+    // carries another clone's token. Seated clone: the binding of this incarnation only.
+    for (cid, c) in &d.clones {
+        if c.lifecycle != CloneLifecycle::Active || m.clone_pane.contains_key(cid) {
             continue;
         }
-        let pane = loc.pane;
-        let pane_session = agent_session_id(pane);
-        for (cid, c) in &d.clones {
-            if c.lifecycle != CloneLifecycle::Active || m.clone_pane.contains_key(cid) {
-                continue;
-            }
-            let Some(b) = c.runtime.bound.as_ref() else {
-                continue;
-            };
-            let term_eq = pane.terminal_id.is_some() && b.terminal_id == pane.terminal_id;
-            // `clone rebind` records the chosen pane with the graph token but no terminal id (the id it had
-            // belongs to a server that may be gone). Until the reconciler stamps the pane, this explicit
-            // adoption is the only evidence, and it holds across a restart.
-            let adopted = b.terminal_id.is_none()
-                && b.token.is_some()
-                && b.pane_id.as_ref() == Some(pid)
-                && token_of(&pane.metadata).is_none();
-            let ok = if b.incarnation == snap.incarnation {
-                term_eq || b.pane_id.as_ref() == Some(pid)
-            } else if adopted {
-                true
-            } else {
-                let cwd_ok = pane.cwd.is_some() && pane.cwd == recorded_cwd(d, c);
-                let session_ok = match (&pane_session, current_native_id(c)) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                };
-                term_eq && cwd_ok && session_ok
-            };
-            if ok {
-                m.link_pane(pid, cid);
-                break;
-            }
-        }
-    }
-    // Pass 3: native session id.
-    for (pid, loc) in &locs {
-        if m.panes.contains_key(pid) {
-            continue;
-        }
-        let Some(sid) = agent_session_id(loc.pane) else {
+        let Some(pid) = bound_pane_claim(c, &snap.incarnation) else {
             continue;
         };
-        let hit = d
-            .clones
-            .iter()
-            .find(|(cid, c)| {
-                c.lifecycle == CloneLifecycle::Active
-                    && !m.clone_pane.contains_key(*cid)
-                    && current_native_id(c) == Some(sid.as_str())
-            })
-            .map(|(cid, _)| cid.clone());
-        if let Some(cid) = hit {
-            m.link_pane(pid, &cid);
+        let Some(loc) = locs.get(pid) else {
+            continue;
+        };
+        if m.panes.contains_key(pid) {
+            continue;
         }
+        if c.threads_seat.is_none() && carries_other_token(d, &loc.pane.metadata, cid) {
+            continue;
+        }
+        m.link_pane(pid, cid);
     }
 
-    // Tabs. Within the bound incarnation the bound tab id decides (and a vanished tab stays vanished);
-    // otherwise the tab holding the seat's matched panes.
+    // Tabs. A bound tab id decides in any incarnation (Herdr preserves it; a vanished id stays vanished, no
+    // vote); only a seat with no bound tab id takes the tab holding its matched panes (first bind).
     let mut need_containment: Vec<&SeatId> = Vec::new();
     for (sid, seat) in &d.seats {
         // A moved-out seat has no tab on purpose; its clones live elsewhere and must not drag a tab back in.
@@ -206,7 +201,9 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
             continue;
         }
         match seat.runtime.bound.as_ref() {
-            Some(b) if b.incarnation == snap.incarnation => {
+            // Herdr preserves tab ids across restore and handoff: a bound id links by equality in any
+            // incarnation. Absent -> no link and no vote (Unknown).
+            Some(b) if b.tab_id.is_some() => {
                 if let Some(tid) = b.tab_id.as_ref()
                     && find_tab(snap, tid).is_some()
                     && !m.tabs.contains_key(tid)
@@ -254,7 +251,8 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {
             continue;
         }
         match ts.runtime.bound.as_ref() {
-            Some(b) if b.incarnation == snap.incarnation => {
+            // As for tabs: a bound workspace id links by equality in any incarnation; absent -> Unknown.
+            Some(b) if b.workspace_id.is_some() => {
                 if let Some(wid) = b.workspace_id.as_ref()
                     && find_ws(snap, wid).is_some()
                     && !m.workspaces.contains_key(wid)

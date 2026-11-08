@@ -414,7 +414,7 @@ impl E2e {
         ];
         self.open_effects()
             .into_iter()
-            .filter(|e| !THREADS.contains(&e.0.as_str()))
+            .filter(|e| !THREADS.contains(&e.0.as_str()) && !e.0.starts_with("threads."))
             .collect()
     }
 
@@ -939,12 +939,16 @@ fn undo_from_new_pane(rig: &E2e) -> String {
 
 /// `herdr-graph undo` run in `caller` (picks the newest action, confirms) until the undo committed. Returns the
 /// text the command printed, preview included.
+///
+/// A graph-created pane's shell carries `HERDR_GRAPH_SEAT`, an agent-harness marker: `undo` there prints the relay
+/// hint instead of the `[y/n]` prompt (spec §3.3). The helper plays the human at the terminal, so it drops the
+/// marker from the typed command; the pane itself, its bound clone and its other env are untouched.
 fn undo_from_pane(rig: &E2e, caller: &str) -> String {
     let log = rig.herdr.root.join("undo-pane.log");
     rig.pane_sh(
         caller,
         &format!(
-            "HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}",
+            "env -u HERDR_GRAPH_SEAT HERDR_GRAPH_INSTANCE={} {BIN} undo 2>&1 | tee {}",
             rig.instance.display(),
             log.display()
         ),
@@ -969,10 +973,10 @@ fn undo_from_pane(rig: &E2e, caller: &str) -> String {
     read()
 }
 
-/// F2 (hg-zmi.54): undo run from a pane bound to another clone A adopts that pane for the restored clone B. A is
-/// retired with its history, and the pane is never closed (no new pane, no closed pane).
+/// F2 (hg-zmi.54), without adoption: undo run from a pane bound to another clone A leaves that pane alone. A
+/// stays active in it, and the restored clone B gets a pane of its own (one pane created, none closed).
 #[test]
-fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {
+fn e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane() {
     let rig = rig!();
     let (_, clones) = seat_with_clones(&rig, "t", "foreman", 1);
     let (a, b) = (&clones[0], &clones[1]);
@@ -987,49 +991,44 @@ fn e2e_undo_from_bound_pane_adopts_and_keeps_it() {
     let panes_before = pane_infos(&rig.snapshot()).len();
 
     let log = undo_from_pane(&rig, &a_pane);
-    rig.wait_until("A's pane to carry the restored clone's token", WAIT, |r| {
-        r.pane_of(&b.id).is_some_and(|p| p.id.0 == a_pane)
+    rig.wait_until("B to get a pane of its own", WAIT, |r| {
+        r.pane_of(&b.id).is_some_and(|p| p.id.0 != a_pane)
     });
     rig.wait_settled();
 
     assert!(
         pane_infos(&rig.snapshot()).iter().any(|p| p.id.0 == a_pane),
-        "the adopted pane survives"
+        "the caller's pane survives"
     );
     assert_eq!(
         pane_infos(&rig.snapshot()).len(),
-        panes_before,
-        "no pane created, none closed"
+        panes_before + 1,
+        "one pane created for B, none closed"
     );
     let (b_now, a_now) = (rig.show(&b.id), rig.show(&a.id));
     assert_eq!(b_now["lifecycle"].as_str(), Some("active"));
-    assert_eq!(
+    assert_ne!(
         tstr(&b_now, "runtime.bound.pane_id"),
         a_pane,
-        "B is bound to the adopted pane"
+        "B is not bound to the caller's pane"
     );
-    assert_eq!(a_now["lifecycle"].as_str(), Some("retired"));
-    assert_eq!(tstr(&a_now, "retired.mechanism"), "undo");
     assert_eq!(
-        a_now.get("sessions").cloned(),
-        sessions_a,
-        "the displaced clone keeps its history"
+        a_now["lifecycle"].as_str(),
+        Some("active"),
+        "A is not displaced"
     );
+    assert_eq!(tstr(&a_now, "runtime.bound.pane_id"), a_pane);
+    assert_eq!(a_now.get("sessions").cloned(), sessions_a);
     assert!(
         !log.contains("closes your pane"),
         "the preview must not warn about closing the pane: {log}"
     );
-    // Later observations do not retire B either.
-    std::thread::sleep(Duration::from_secs(2));
-    rig.wait_settled();
-    assert_eq!(rig.show(&b.id)["lifecycle"].as_str(), Some("active"));
 }
 
-/// D1 regression (hg-zmi.51): undo run from a pane commits with `undo.adopt_pane pane=<caller>` and the undo commit
-/// itself binds the restored clone to that pane, so the reconciler woken by the commit has nothing to create. The
-/// caller's pane becomes the restored clone (spec §6) and no second pane is split.
+/// Undo run from a fresh pane leaves it alone: the restored clone gets a pane of its own in its seat's tab, and
+/// the caller's pane is not bound to anything.
 #[test]
-fn e2e_undo_from_pane_adopts_caller_pane() {
+fn e2e_undo_from_pane_leaves_the_callers_pane_alone() {
     let rig = rig!();
     let (seat, clones) = seat_with_clones(&rig, "t", "foreman", 1);
     let victim = &clones[1];
@@ -1042,45 +1041,47 @@ fn e2e_undo_from_pane_adopts_caller_pane() {
     let panes_before = pane_infos(&rig.snapshot()).len();
 
     let caller = undo_from_new_pane(&rig);
-    rig.wait_until(
-        "the caller pane to carry the restored clone's token",
-        WAIT,
-        |r| r.pane_of(&victim.id).is_some_and(|p| p.id.0 == caller),
-    );
+    rig.wait_until("the clone to get a pane of its own", WAIT, |r| {
+        r.pane_of(&victim.id).is_some_and(|p| p.id.0 != caller)
+    });
+    rig.wait_settled();
     assert_eq!(rig.show(&victim.id)["lifecycle"].as_str(), Some("active"));
     assert_eq!(rig.seat_state(&seat.id), "active");
-    assert_eq!(
-        tstr(&rig.show(&victim.id), "runtime.bound.pane_id"),
-        caller,
-        "bound to the caller's pane"
+    assert_ne!(tstr(&rig.show(&victim.id), "runtime.bound.pane_id"), caller);
+    assert!(
+        pane_infos(&rig.snapshot()).iter().any(|p| p.id.0 == caller),
+        "the caller's pane survives"
     );
-    // The caller's pane was adopted, not joined by a second one: one pane more than before the undo.
     assert_eq!(
         pane_infos(&rig.snapshot()).len(),
-        panes_before + 1,
-        "the caller pane itself (new), nothing else created"
+        panes_before + 2,
+        "the caller's pane, plus one for the restored clone"
     );
     assert_eq!(
         rig.tab_labelled("foreman").unwrap().1.panes.len(),
-        1,
-        "foreman's own tab keeps its surviving clone only"
+        2,
+        "foreman's own tab holds both clones again"
     );
 }
 
-/// D1 regression, tab variant: the undone action closed a whole TAB, so the plan also carries `runtime.open_tab`;
-/// the caller's pane is the restored clone's pane, so no tab is opened for it.
+/// Tab variant: the undone action closed a whole TAB, so the plan carries `runtime.open_tab`; the seat's own
+/// tab is reopened and the caller's pane is left alone.
 #[test]
-fn e2e_undo_tab_close_from_pane_adopts_caller_pane() {
+fn e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab() {
     let rig = rig!();
     rig.create_teamspace_with_seat("t", "foreman");
     let seat = rig.seat("foreman");
     let clone = rig.live_clone(&seat.id);
     close_tab_and_wait(&rig, &seat, std::slice::from_ref(&clone), "foreman");
     let caller = undo_from_new_pane(&rig);
-    rig.wait_until("the caller pane to carry the clone's token", WAIT, |r| {
-        r.pane_of(&clone.id).is_some_and(|p| p.id.0 == caller)
+    rig.wait_until("the clone to get a pane of its own", WAIT, |r| {
+        r.pane_of(&clone.id).is_some_and(|p| p.id.0 != caller)
     });
     assert_eq!(rig.seat_state(&seat.id), "active");
+    assert!(
+        rig.tab_labelled("foreman").is_some(),
+        "the seat's own tab is back"
+    );
 }
 
 /// A template document with the given members, all active shell seats.
@@ -1580,17 +1581,24 @@ fn restarted_rig() -> Option<(E2e, Vec<(Row, String)>)> {
 }
 
 #[test]
-fn e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates() {
+fn e2e_herdr_restart_no_mass_retirement_no_duplicates() {
     let Some((rig, clones)) = restarted_rig() else {
         return;
     };
-    // Herdr keeps labels but not tokens (docs/herdr-spikes.md, spike 3): the daemon cannot match anything
-    // and, per spec §4.3.2, marks the bound objects `unknown` instead of retiring or recreating them.
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
-    });
+    // Herdr keeps labels and pane ids but not tokens (docs/herdr-spikes.md, spike 3). These shell clones have
+    // no threads seat, so the daemon locates each by its preserved pane id (spec §6, S1) instead of retiring or
+    // recreating it, and the reconciler re-stamps the token.
+    rig.wait_until(
+        "every clone to be present on its preserved pane",
+        WAIT,
+        |r| {
+            clones.iter().all(|(c, pane)| {
+                let now = r.show(&c.id);
+                tstr(&now, "runtime.availability") == "present"
+                    && tstr(&now, "runtime.bound.pane_id") == *pane
+            })
+        },
+    );
     rig.wait_settled();
     std::thread::sleep(Duration::from_secs(4));
     assert_eq!(
@@ -1625,51 +1633,6 @@ fn e2e_herdr_restart_rebind_no_mass_retirement_no_duplicates() {
         "nothing was observed as closed:\n{}",
         rig.ops_text()
     );
-
-    // The explicit rebind plan re-adopts each pane: the binding follows the pane and the clone is present again.
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_settled();
-    for (c, pane) in &clones {
-        let s = rig.show(&c.id);
-        assert_eq!(
-            tstr(&s, "runtime.availability"),
-            "present",
-            "clone {}",
-            c.name
-        );
-        assert_eq!(&tstr(&s, "runtime.bound.pane_id"), pane, "clone {}", c.name);
-    }
-    assert_eq!(
-        tab_labels(&rig),
-        ["1", "bar", "foreman"],
-        "rebinding creates nothing"
-    );
-    assert_eq!(pane_infos(&rig.snapshot()).len(), 4);
-    assert_eq!(retired_seat_count(&rig), 0);
-}
-
-/// D2 regression: after a Herdr restart dropped the pane tokens, `clone rebind` binds the pane and the reconciler
-/// re-stamps the Herdr pane metadata token with a fresh effect identity (spec §4.2).
-#[test]
-fn e2e_rebind_restamps_token_after_herdr_restart() {
-    let Some((rig, clones)) = restarted_rig() else {
-        return;
-    };
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
-    });
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_until("every pane to carry its clone's token again", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, p)| r.pane_of(&c.id).is_some_and(|lp| &lp.id.0 == p))
-    });
 }
 
 fn json_of(text: &str) -> Value {
@@ -1714,66 +1677,6 @@ fn e2e_seat_resolution_in_bound_pane() {
     ));
     assert_ne!(r["resolution"]["status"], "bound", "{r}");
     assert!(r["resolution"]["clone"].is_null(), "{r}");
-}
-
-#[test]
-fn e2e_restored_panes_resolve_without_env() {
-    let Some((rig, clones)) = restarted_rig() else {
-        return;
-    };
-    rig.wait_until("every clone to be marked unknown", WAIT, |r| {
-        clones
-            .iter()
-            .all(|(c, _)| tstr(&r.show(&c.id), "runtime.availability") == "unknown")
-    });
-    for (c, pane) in &clones {
-        rig.plan_apply(&["clone", "rebind", &c.id, "--pane", pane]);
-    }
-    rig.wait_settled();
-    let (target, pane) = &clones[0];
-    // The restored shell has no creation-time HERDR_GRAPH* env; it keeps only what Herdr gives every pane.
-    let bare = format!(
-        "env -u HERDR_GRAPH -u HERDR_GRAPH_SEAT -u HERDR_GRAPH_CLONE -u HERDR_GRAPH_INSTANCE {BIN}"
-    );
-    let r = json_of(&pane_capture(
-        &rig,
-        pane,
-        "seat-restored.json",
-        &format!("{bare} seat --json"),
-    ));
-    assert_eq!(r["resolution"]["status"], "bound", "{r}");
-    assert_eq!(
-        r["resolution"]["clone"],
-        target.id.as_str(),
-        "resolved through HERDR_PANE_ID and the binding: {r}"
-    );
-
-    let payload = rig.herdr.root.join("hook-restored.json");
-    std::fs::write(
-        &payload,
-        r#"{"session_id":"restored-1","cwd":"/tmp","source":"resume"}"#,
-    )
-    .unwrap();
-    let out = pane_capture(
-        &rig,
-        pane,
-        "report-restored.txt",
-        &format!(
-            "{bare} session-report --from-hook claude < {}; echo rc=$?",
-            payload.display()
-        ),
-    );
-    assert!(out.contains("rc=0"), "{out}");
-    rig.wait_until(
-        "the session to be recorded on the restored clone",
-        WAIT,
-        |r| {
-            r.show(&target.id)["sessions"].as_array().is_some_and(|s| {
-                s.iter()
-                    .any(|s| s["native_session_id"].as_str() == Some("restored-1"))
-            })
-        },
-    );
 }
 
 #[test]
@@ -1830,7 +1733,12 @@ fn e2e_summary_lands_in_archived_seat_folder() {
             .contains("pending")
     });
     let line = rig.cli_ok(&["request", "list", "--pending"]);
-    let rq = line.split_whitespace().next().unwrap().to_owned();
+    let mut cols = line.split_whitespace();
+    let (rq, tr) = (
+        cols.next().unwrap().to_owned(),
+        cols.nth(1).unwrap().to_owned(),
+    );
+    assert!(rq.starts_with("rq_") && tr.starts_with("tr_"), "{line}");
     assert!(
         line.contains("scribe") && line.contains(&format!("0-{}", body.len())),
         "routed to the summarizer, covering the transcript: {line}"
@@ -1849,39 +1757,30 @@ fn e2e_summary_lands_in_archived_seat_folder() {
         archived.display()
     );
 
-    // No real summarizer runs here: the test plays it through the CLI (ack, write, complete).
+    // No real summarizer runs here: the test plays it through the CLI (ack, then complete with
+    // `--summary-from`, which stores the summary in the seat folder and completes the request).
     assert_eq!(
         rig.cli_ok(&["request", "ack", &rq]).trim(),
         format!("{rq} dispatched")
     );
     let summary = rig.herdr.root.join("summary.md");
     std::fs::write(&summary, "# hello\nthe user said hello\n").unwrap();
-    let out = rig.cli_ok(&[
-        "content",
-        "write",
-        "--object",
-        &seat.id,
-        "--rel",
-        "summaries/sess-1.md",
-        "--from",
-        summary.to_str().unwrap(),
-    ]);
-    assert!(out.contains("committed"), "{out}");
+    let covered = format!("0-{}", body.len());
     assert_eq!(
         rig.cli_ok(&[
             "request",
             "complete",
             &rq,
-            "--output",
-            "summaries/sess-1.md",
+            "--summary-from",
+            summary.to_str().unwrap(),
             "--covered",
-            &format!("0-{}", body.len())
+            &covered
         ])
         .trim(),
         format!("{rq} completed")
     );
 
-    let landed = archived.join("summaries/sess-1.md");
+    let landed = archived.join(format!("summaries/{tr}-{covered}.md"));
     assert_eq!(
         std::fs::read_to_string(&landed).unwrap_or_else(|e| panic!("{}: {e}", landed.display())),
         "# hello\nthe user said hello\n"
@@ -2406,6 +2305,996 @@ fn e2e_plugin_link_status_action_single_daemon() {
     );
 }
 
+// ---- hg-66u.17: configuration smokes for the threads-seat identity (spec §11, pre-D1) ------------------------
+//
+// Each smoke runs the real daemon against a private Herdr server AND a real herdr-threads daemon in the same
+// private root. Clones use harness `shell`: Herdr's agent detection needs real agent binaries and credentials,
+// which a private rig does not have, so the agent-bearing parts of each configuration (idle agents, an exited
+// agent, an auto-resumed agent, a resumable session) are not exercised and are reported as unmet in the task
+// report. What is measured is the identity path: seat assignment, preserved ids, SeatObservation rebind.
+
+/// Everything about a clone that the smokes compare across the event: its seat, bound pane and invitations.
+/// An invitation is `(thread, state, threads invitation id)`: a re-invite would change the id.
+#[derive(Debug, PartialEq, Clone)]
+struct CloneFacts {
+    id: String,
+    threads_seat: String,
+    pane: String,
+    invitations: Vec<(String, String, String)>,
+}
+
+impl E2e {
+    /// A rig whose graph daemon reaches a real herdr-threads daemon (state dir `threads-state` under the private
+    /// root, found through `HERDR_GRAPH_THREADS_STATE_DIR`). The pinned threads binary is built and version-checked first (panics on failure, never skips).
+    /// `daemon_env` is extra environment for the threads daemon (it keeps it for its whole life).
+    fn start_with_threads_env(daemon_env: &[(&str, &str)]) -> Option<Self> {
+        let rig = Self::start_threads_unstarted()?;
+        rig.ensure_threads_daemon(daemon_env);
+        rig.start_daemon();
+        Some(rig)
+    }
+
+    /// A rig that knows where its threads daemon will live but has started neither it nor the graph daemon.
+    fn start_threads_unstarted() -> Option<Self> {
+        Self::start_threads_unstarted_custom(true, &[])
+    }
+
+    /// `start_threads_unstarted` with `start_custom`'s `opt_out` and agent `stubs`.
+    fn start_threads_unstarted_custom(opt_out: bool, stubs: &[(&str, &str)]) -> Option<Self> {
+        support::threads_bin::threads_binary();
+        let mut rig = Self::start_custom(false, opt_out, stubs)?;
+        let state = rig.herdr.root.join("threads-state");
+        rig.herdr
+            .guard()
+            .check(&state)
+            .expect("threads state is inside the private root");
+        rig.herdr.env.push((
+            "HERDR_GRAPH_THREADS_STATE_DIR".into(),
+            state.display().to_string(),
+        ));
+        Some(rig)
+    }
+
+    /// `herdr-threads daemon stop` for the rig's threads state dir.
+    fn stop_threads_daemon(&self) {
+        let bin = support::threads_bin::threads_binary();
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["daemon", "stop"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "threads daemon stop: {}",
+            stderr(&out)
+        );
+    }
+
+    /// `herdr-threads daemon ensure` for the rig's threads state dir.
+    fn ensure_threads_daemon(&self, daemon_env: &[(&str, &str)]) {
+        let bin = support::threads_bin::threads_binary();
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["daemon", "ensure"])
+            .envs(daemon_env.iter().copied())
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "threads daemon ensure: {}",
+            stderr(&out)
+        );
+    }
+
+    fn clone_facts(&self, c: &Row) -> Option<CloneFacts> {
+        let s = self.show(&c.id);
+        let seat = at(&s, "threads_seat")?.as_str()?.to_owned();
+        let pane = self.pane_of(&c.id)?.id.0;
+        let mut invitations: Vec<_> = s
+            .get("invitations")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|i| {
+                (
+                    tstr(i, "thread"),
+                    tstr(i, "state"),
+                    tstr(i, "link.invitation"),
+                )
+            })
+            .collect();
+        invitations.sort();
+        Some(CloneFacts {
+            id: c.id.clone(),
+            threads_seat: seat,
+            pane,
+            invitations,
+        })
+    }
+}
+
+/// foreman (two clones) and bar (one), each seated by threads, plus the facts to compare later.
+fn seated_rig() -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
+    seated_rig_env(&[])
+}
+
+fn seated_rig_env(daemon_env: &[(&str, &str)]) -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
+    let rig = E2e::start_with_threads_env(daemon_env)?;
+    let (foreman, bar) = two_seats(&rig);
+    rig.plan_apply(&["clone", "add", "foreman"]);
+    rig.wait_until("foreman's second pane", WAIT, |r| {
+        r.tab_labelled("foreman")
+            .is_some_and(|t| t.1.panes.len() == 2)
+    });
+    rig.wait_settled();
+    let clones: Vec<Row> = [&foreman, &bar]
+        .iter()
+        .flat_map(|s| rig.clones_of(&s.id))
+        .collect();
+    assert_eq!(clones.len(), 3);
+    rig.wait_until("every clone to hold a threads seat", WAIT, |r| {
+        clones.iter().all(|c| r.clone_facts(c).is_some())
+    });
+    let facts = clones
+        .into_iter()
+        .map(|c| {
+            let f = rig.clone_facts(&c).unwrap();
+            (c, f)
+        })
+        .collect();
+    Some((rig, facts))
+}
+
+/// The incarnation generation a clone is bound under (0 when unbound).
+fn bound_generation(rig: &E2e, clone: &Row) -> i64 {
+    at(&rig.show(&clone.id), "runtime.bound.incarnation.generation")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or(0)
+}
+
+/// After the event (`before_generations`: each clone's generation just before it): every clone is rebound under
+/// the new incarnation and present on the same seat, pane and invitations, with nothing created or retired and
+/// no operator step.
+fn assert_clones_kept_their_seats(
+    rig: &E2e,
+    before: &[(Row, CloneFacts)],
+    before_generations: &[i64],
+) {
+    rig.wait_until("every clone to be rebound and present", WAIT, |r| {
+        before.iter().zip(before_generations).all(|((c, f), g)| {
+            bound_generation(r, c) > *g
+                && tstr(&r.show(&c.id), "runtime.availability") == "present"
+                && r.clone_facts(c).as_ref() == Some(f)
+        })
+    });
+    rig.wait_settled();
+    for (c, f) in before {
+        assert_eq!(
+            rig.clone_facts(c).as_ref(),
+            Some(f),
+            "clone {} kept its threads seat, pane and invitations",
+            c.name
+        );
+        assert_eq!(rig.show(&c.id)["lifecycle"].as_str(), Some("active"));
+    }
+    assert_eq!(retired_seat_count(rig), 0, "nothing was retired");
+    assert_eq!(
+        tab_labels(rig),
+        ["1", "bar", "foreman"],
+        "no tab was recreated or duplicated"
+    );
+    assert_eq!(
+        pane_infos(&rig.snapshot()).len(),
+        4,
+        "no pane was recreated"
+    );
+    let ops = rig.ops_text();
+    assert!(
+        !ops.lines().any(|l| l.contains("rule=")),
+        "nothing was observed as closed:\n{ops}"
+    );
+}
+
+/// Configuration 3: headless cold restart. The server dies and comes back with preserved tab/workspace ids and
+/// new terminal ids; the rig has no client attached.
+#[test]
+fn e2e_cold_restart_headless_resumes_via_the_driver() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+}
+
+/// A real Herdr TUI client attached to the private server through a pseudo-terminal (the rig has no `script`
+/// or terminal emulator). Killed on drop; it is this fixture's own child.
+struct AttachedClient {
+    child: std::process::Child,
+    drain: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AttachedClient {
+    fn attach(rig: &E2e) -> std::io::Result<Self> {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        use std::os::unix::process::CommandExt;
+        let (mut master, mut slave) = (0, 0);
+        let ws = libc::winsize {
+            ws_row: 40,
+            ws_col: 120,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: openpty fills two fresh descriptors that are owned from here on.
+        let rc = unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                &ws,
+            )
+        };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both descriptors were just created by openpty and nothing else owns them.
+        let (master, slave) =
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+        let mut cmd = rig.herdr.command(rig.herdr.herdr_path());
+        cmd.env("TERM", "xterm-256color")
+            .stdin(slave.try_clone()?)
+            .stdout(slave.try_clone()?)
+            .stderr(slave);
+        // SAFETY: setsid and ioctl are async-signal-safe; the child makes the pty its controlling terminal.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                libc::ioctl(0, libc::TIOCSCTTY as _, 0);
+                Ok(())
+            });
+        }
+        let child = cmd.spawn()?;
+        let drain = std::thread::spawn(move || {
+            use std::io::Read;
+            let mut f = std::fs::File::from(master);
+            let mut buf = [0u8; 65536];
+            while f.read(&mut buf).is_ok_and(|n| n > 0) {}
+        });
+        Ok(Self {
+            child,
+            drain: Some(drain),
+        })
+    }
+
+    fn alive(&mut self) -> bool {
+        self.child.try_wait().ok().flatten().is_none()
+    }
+}
+
+impl Drop for AttachedClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(d) = self.drain.take() {
+            let _ = d.join();
+        }
+    }
+}
+
+/// Configuration 2: cold restart with a client attached. The client is a real `herdr` TUI on a pty, up before
+/// the server dies.
+#[test]
+fn e2e_cold_restart_attended_keeps_clones_on_their_seats() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let mut client = match AttachedClient::attach(&rig) {
+        Ok(c) => c,
+        Err(e) => {
+            support::skip(&format!("cannot attach a pty client: {e}"));
+            return;
+        }
+    };
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(
+        client.alive(),
+        "the TUI client stayed attached before the restart"
+    );
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+}
+
+/// Configuration 1: live handoff. Unmet on this Herdr: the only handoff entry point is `herdr update --handoff`,
+/// which downloads the latest release over the network and installs it over the invoking `herdr` binary before
+/// handing the server off. That cannot be pointed at a private rig without replacing a real binary or running an
+/// unpinned download, and Herdr itself is not modified by this work. The graph-side reconnect across a server
+/// swap is covered by the fake-Herdr handoff tests (hg-66u.25, hg-66u.28), not by this real-Herdr smoke.
+#[test]
+fn e2e_live_handoff_keeps_clones_on_their_seats() {
+    support::skip(
+        "no private-rig-safe live handoff: `herdr update --handoff` downloads and installs a release over the herdr binary",
+    );
+}
+
+// ---- hg-66u.18: configuration smokes after the gates (spec §11, herdr-threads v3.1.0: D1, D2, G5) ---------------
+//
+// Same rig as the pre-D1 smokes above (shell clones, a real 3.1.0 herdr-threads daemon in the private root).
+// Herdr's agent detection needs real agent binaries and credentials, which a private rig does not have, so the
+// graph's own agent launches (fresh keyed agent, resumed session) are not exercised here; each test names what it
+// measures and the unmet remainder is recorded in the task report.
+
+impl E2e {
+    /// Every seat id the rig's threads daemon knows, retired ones included, sorted.
+    fn threads_seat_ids(&self) -> Vec<String> {
+        let bin = support::threads_bin::threads_binary();
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["--json", "seat", "list", "--include-retired"])
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "seat list: {}", stderr(&out));
+        let v = json_of(&stdout(&out));
+        let mut ids: Vec<String> = v["result"]["data"]["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no seat items: {v}"))
+            .iter()
+            .map(|s| s["seat"].as_str().expect("seat id").to_owned())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    /// The clone's invitations as `(thread, state, threads invitation id)`, sorted.
+    fn threads_invitations(&self, c: &Row) -> Vec<(String, String, String)> {
+        let s = self.show(&c.id);
+        let mut v: Vec<_> = s
+            .get("invitations")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|i| {
+                (
+                    tstr(i, "thread"),
+                    tstr(i, "state"),
+                    tstr(i, "link.invitation"),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// A fresh agent's keyed check-in in `pane`, through the public `herdr-threads hook claude` with the clone's
+    /// continuity key in its environment. The rig has no agent binary or credentials, so the SessionStart payload
+    /// is synthetic (the same fixture `tests/threads_real.rs` registers sessions with); the daemon, the key and
+    /// the seat resolution it drives are the real ones.
+    fn keyed_check_in(&self, pane: &str, key: &str, session: &str) -> Output {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = support::threads_bin::threads_binary();
+        let fixtures = self.herdr.root.join("fixture-bin");
+        std::fs::create_dir_all(&fixtures).unwrap();
+        let claude = fixtures.join("claude");
+        std::fs::write(&claude, "#!/bin/sh\necho '2.1.283 (Claude Code)'\n").unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let transcript = self.herdr.root.join("fixture-session.jsonl");
+        std::fs::write(&transcript, "").unwrap();
+        let payload = self.herdr.root.join("fixture-hook.json");
+        std::fs::write(
+            &payload,
+            serde_json::to_vec(&json!({
+                "hook_event_name": "SessionStart", "session_id": session,
+                "transcript_path": transcript, "cwd": self.herdr.root.join("home"), "source": "startup"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let path = self
+            .herdr
+            .env
+            .iter()
+            .find(|(k, _)| k == "PATH")
+            .expect("PATH in the private env")
+            .1
+            .clone();
+        self.herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["hook", "claude"])
+            .env("CLAUDE_PID", std::process::id().to_string())
+            .env("CLAUDE_CODE_SESSION_ID", session)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .env("HERDR_ENV", "1")
+            .env("HERDR_PANE_ID", pane)
+            .env("HERDR_SOCKET_PATH", &self.herdr.socket)
+            .env("HERDR_THREADS_CONTINUITY_KEY", key)
+            .env("PATH", format!("{}:{path}", fixtures.display()))
+            .stdin(std::process::Stdio::from(
+                std::fs::File::open(payload).unwrap(),
+            ))
+            .output()
+            .unwrap()
+    }
+
+    /// `herdr-threads seat inspect <seat> --json` against the rig's threads daemon: the `result` object.
+    fn seat_inspection(&self, seat: &str) -> Value {
+        let bin = support::threads_bin::threads_binary();
+        let out = self
+            .herdr
+            .command(&bin)
+            .arg("--state-dir")
+            .arg(self.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&self.herdr.socket)
+            .args(["--json", "seat", "inspect", seat])
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("OPENAI_API_KEY")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "seat inspect: {}", stderr(&out));
+        json_of(&stdout(&out))
+    }
+}
+
+/// Configuration 6 (D2): closing a clone's pane retires its seat reversibly (its key is bound to the seat), and
+/// graph undo brings the clone back on the same threads seat id with its invitations untouched: no succession,
+/// no new seat, no re-invite.
+#[test]
+fn e2e_close_then_undo_keeps_the_seat_and_memberships() {
+    let Some((rig, before)) = seated_rig() else {
+        return;
+    };
+    let (victim, facts) = &before[1];
+    let seat = facts.threads_seat.as_str();
+    assert_eq!(
+        rig.seat_inspection(seat)["result"]["data"]["continuity_key"]["bound_by"],
+        "service_reservation",
+        "the graph bound the clone's key to its seat before the close (key-link want)"
+    );
+    let seats_before = rig.threads_seat_ids();
+    let pane = rig.pane_of(&victim.id).expect("victim pane").id.0;
+    rig.raw_ok("pane.close", json!({ "pane_id": pane }));
+    rig.wait_until("the closed pane's clone to retire", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("retired")
+    });
+    rig.wait_until("threads to retire the seat reversibly", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"] == "reversible"
+    });
+    assert_eq!(
+        rig.threads_invitations(victim),
+        facts.invitations,
+        "reversible retirement keeps the memberships"
+    );
+
+    let act = rig
+        .undo_candidates()
+        .into_iter()
+        .find(|(_, c)| c.contains(&victim.id))
+        .expect("the pane closure is undoable")
+        .0;
+    let (ok, out) = rig.apply_plan(&rig.plan_json(&["undo", &act]));
+    assert!(ok, "undo apply: {out}");
+
+    rig.wait_until("the clone to be active in a new pane", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("active")
+            && r.pane_of(&victim.id).is_some_and(|p| p.id.0 != pane)
+    });
+    rig.wait_settled();
+    let after = rig
+        .clone_facts(victim)
+        .expect("the clone still has its seat");
+    assert_eq!(after.threads_seat, facts.threads_seat, "same seat id");
+    assert_eq!(
+        after.invitations, facts.invitations,
+        "same invitations: no re-invite"
+    );
+    assert_ne!(after.pane, facts.pane, "the clone has a reopened pane");
+    let shown = rig.show(&victim.id);
+    assert!(
+        at(&shown, "threads_seat_history").is_none_or(|h| h.as_array().is_some_and(Vec::is_empty)),
+        "no succession: {shown}"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "undo minted no seat in threads"
+    );
+    rig.wait_until("threads to un-retire the seat", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"].is_null()
+    });
+    let inspected = rig.seat_inspection(seat);
+    assert!(
+        inspected["result"]["data"]["retirement_state"].is_null(),
+        "the seat is no longer retired: {inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["continuity_key"]["key"], victim.id,
+        "the key is still held by the same seat"
+    );
+}
+
+/// The seconds-long form of the 10 minute restored-pane window of herdr-threads G5 (a test hook of the threads
+/// daemon, the one its own qualification uses).
+const G5_GRACE_ENV: (&str, &str) = ("HT_TEST_RESTORED_PANE_GRACE_MS", "3000");
+
+/// Herdr's saved session (written by a graceful `server stop`) in the private root.
+fn saved_session_path(rig: &E2e) -> PathBuf {
+    rig.herdr.root.join("config/herdr/session.json")
+}
+
+/// Edits the saved session so the next start restores no pane `pane` (a number): the pane was closed while
+/// Herdr was down. Its tab keeps the sibling.
+fn drop_saved_pane(rig: &E2e, pane: &str) {
+    let path = saved_session_path(rig);
+    let mut session: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("Herdr saved no session at {}: {e}", path.display())),
+    )
+    .unwrap();
+    let tabs = session["workspaces"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .flat_map(|w| w["tabs"].as_array_mut().unwrap().iter_mut());
+    let mut dropped = false;
+    for tab in tabs {
+        if tab["panes"].get(pane).is_none() {
+            continue;
+        }
+        let split = tab["layout"]["Split"].clone();
+        let (gone, kept) = if split["first"]["Pane"] == pane.parse::<u64>().unwrap() {
+            (&split["first"], &split["second"])
+        } else {
+            (&split["second"], &split["first"])
+        };
+        assert_eq!(
+            gone["Pane"].to_string(),
+            pane,
+            "pane {pane} is a leaf of its tab's split: {split}"
+        );
+        let kept_pane = kept["Pane"].clone();
+        assert!(kept_pane.is_u64(), "the sibling is a single pane: {kept}");
+        tab["layout"] = json!({ "Pane": kept_pane });
+        tab["panes"].as_object_mut().unwrap().remove(pane);
+        tab["focused"] = kept_pane.clone();
+        tab["root_pane"] = kept_pane;
+        dropped = true;
+    }
+    assert!(dropped, "no saved pane {pane}: {session}");
+    std::fs::write(&path, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+}
+
+/// Edits the saved session so the next start restores no tab `tab_label`: the whole tab (its single pane
+/// included) was closed while Herdr was down. A workspace left with no tab goes with it, as Herdr closes an
+/// empty workspace. Returns whether the workspace went too.
+fn drop_saved_tab(rig: &E2e, tab_label: &str) -> bool {
+    let path = saved_session_path(rig);
+    let mut session: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("Herdr saved no session at {}: {e}", path.display())),
+    )
+    .unwrap();
+    let workspaces = session["workspaces"].as_array_mut().unwrap();
+    let mut dropped = false;
+    for ws in workspaces.iter_mut() {
+        let tabs = ws["tabs"].as_array_mut().unwrap();
+        let before = tabs.len();
+        tabs.retain(|t| t["custom_name"].as_str() != Some(tab_label));
+        if tabs.len() == before {
+            continue;
+        }
+        dropped = true;
+        let kept = tabs.len();
+        // Any saved index into the tab list (the active tab) must stay inside it.
+        for (_, v) in ws
+            .as_object_mut()
+            .unwrap()
+            .iter_mut()
+            .filter(|(k, _)| k.contains("active") || k.contains("focus"))
+        {
+            if v.as_u64().is_some_and(|i| i as usize >= kept) {
+                *v = json!(kept.saturating_sub(1));
+            }
+        }
+    }
+    assert!(dropped, "no saved tab labelled {tab_label}: {session}");
+    let before = workspaces.len();
+    workspaces.retain(|w| !w["tabs"].as_array().unwrap().is_empty());
+    let workspace_went = workspaces.len() < before;
+    std::fs::write(&path, serde_json::to_vec_pretty(&session).unwrap()).unwrap();
+    workspace_went
+}
+
+/// The threads daemon environment and the wait for a G5 retirement, or `None` (skipped) without the threads
+/// build G5 needs. The daemon honours the grace override only when built with its `test-support` feature
+/// (HG_THREADS_TEST_SUPPORT=1 says the HG_TEST_THREADS_BINARY is such a build); otherwise the real window (10
+/// observed minutes) applies, which HG_G5_FULL_WINDOW=1 waits out.
+fn g5_window() -> Option<(&'static [(&'static str, &'static str)], Duration)> {
+    let full_window = std::env::var("HG_G5_FULL_WINDOW").as_deref() == Ok("1");
+    if !full_window && std::env::var("HG_THREADS_TEST_SUPPORT").as_deref() != Ok("1") {
+        support::skip(
+            "G5 needs a threads build with the test-support grace override (HG_THREADS_TEST_SUPPORT=1 with HG_TEST_THREADS_BINARY) or HG_G5_FULL_WINDOW=1 for the real 10 minute window",
+        );
+        return None;
+    }
+    Some(if full_window {
+        (&[], Duration::from_secs(14 * 60))
+    } else {
+        (&[G5_GRACE_ENV], WAIT * 2)
+    })
+}
+
+/// Configuration 5 (G5): a pane closed while Herdr was down. Threads reads its seat unresolved through the
+/// window, then retires it (reversibly: the clone's key is bound to it); the clone is retired and undoable, the
+/// other clones are untouched, and nothing is launched or created for it.
+#[test]
+fn e2e_pane_closed_during_downtime_retires_undoably() {
+    let Some((daemon_env, retire_within)) = g5_window() else {
+        return;
+    };
+    let Some((mut rig, before)) = seated_rig_env(daemon_env) else {
+        return;
+    };
+    let victim_pane = "w1:p4";
+    let (victim, victim_facts) = before
+        .iter()
+        .find(|(_, f)| f.pane == victim_pane)
+        .expect("a clone in the second foreman pane");
+    let survivors: Vec<&(Row, CloneFacts)> =
+        before.iter().filter(|(c, _)| c.id != victim.id).collect();
+    let launches_before = rig.effects_of(&victim.id).len();
+
+    let out = rig
+        .herdr
+        .command(rig.herdr.herdr_path())
+        .args(["server", "stop"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "server stop: {}", stderr(&out));
+    rig.wait_until("the server to be down", WAIT, |r| !r.herdr.socket.exists());
+    std::thread::sleep(Duration::from_secs(1));
+    drop_saved_pane(&rig, victim_pane.trim_start_matches("w1:p"));
+    rig.herdr_restart();
+
+    rig.wait_until(
+        "the clone of the vanished pane to retire",
+        retire_within,
+        |r| r.show(&victim.id)["lifecycle"].as_str() == Some("retired"),
+    );
+    rig.wait_until("threads to retire its seat reversibly", WAIT, |r| {
+        r.seat_inspection(&victim_facts.threads_seat)["result"]["data"]["retirement_state"]
+            == "reversible"
+    });
+    rig.wait_settled();
+    let acts = rig.undo_candidates();
+    assert!(
+        acts.iter().any(|(_, c)| c.contains(&victim.id)),
+        "the retirement is undoable: {acts:?}"
+    );
+    for (c, f) in survivors {
+        assert_eq!(tstr(&rig.show(&c.id), "lifecycle"), "active", "{}", c.name);
+        assert_eq!(
+            rig.clone_facts(c).as_ref().map(|x| &x.threads_seat),
+            Some(&f.threads_seat),
+            "clone {} kept its seat",
+            c.name
+        );
+    }
+    let launched: Vec<_> = rig
+        .effects_of(&victim.id)
+        .into_iter()
+        .skip(launches_before)
+        .filter(|(k, _)| {
+            matches!(
+                k.as_str(),
+                "start_agent"
+                    | "relaunch_occupant"
+                    | "replace_session"
+                    | "split_pane"
+                    | "create_tab"
+            )
+        })
+        .collect();
+    assert!(
+        launched.is_empty(),
+        "nothing was launched or created for the retired clone: {launched:?}"
+    );
+    let ids = |v: &[(String, String, String)]| -> Vec<(String, String)> {
+        v.iter().map(|i| (i.0.clone(), i.2.clone())).collect()
+    };
+    assert_eq!(
+        ids(&rig.threads_invitations(victim)),
+        ids(&victim_facts.invitations),
+        "the retired seat keeps its threads invitations (the graph's own bookkeeping state may change)"
+    );
+}
+
+/// Configuration 5 (G5) with the default one-pane-per-tab layout: the victim is the only pane of its tab, and
+/// the tab closed while Herdr was down. After the window its clone retires; undo reopens the tab (spec section 8
+/// step 1) and brings the clone back on the same threads seat, un-retired, with nothing minted.
+#[test]
+fn e2e_single_pane_tab_closed_during_downtime_undo_reopens_it() {
+    let Some((daemon_env, retire_within)) = g5_window() else {
+        return;
+    };
+    let Some((mut rig, before)) = seated_rig_env(daemon_env) else {
+        return;
+    };
+    let (victim, facts) = before
+        .iter()
+        .find(|(c, _)| {
+            rig.pane_of(&c.id).is_some_and(|p| {
+                rig.tab_labelled("bar")
+                    .is_some_and(|(_, t)| t.panes.iter().any(|q| q.id == p.id))
+            })
+        })
+        .expect("bar's clone is the only pane of the bar tab");
+    let seat = facts.threads_seat.as_str();
+    let seats_before = rig.threads_seat_ids();
+
+    let out = rig
+        .herdr
+        .command(rig.herdr.herdr_path())
+        .args(["server", "stop"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "server stop: {}", stderr(&out));
+    rig.wait_until("the server to be down", WAIT, |r| !r.herdr.socket.exists());
+    std::thread::sleep(Duration::from_secs(1));
+    drop_saved_tab(&rig, "bar");
+    rig.herdr_restart();
+
+    rig.wait_until("bar's clone to retire", retire_within, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("retired")
+    });
+    rig.wait_until("threads to retire its seat reversibly", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"] == "reversible"
+    });
+    rig.wait_settled();
+    assert!(
+        rig.tab_labelled("bar").is_none(),
+        "bar's tab did not come back by itself"
+    );
+    let act = rig
+        .undo_candidates()
+        .into_iter()
+        .find(|(_, c)| c.contains(&victim.id))
+        .expect("the retirement is undoable")
+        .0;
+    let (ok, out) = rig.apply_plan(&rig.plan_json(&["undo", &act]));
+    assert!(ok, "undo apply: {out}");
+
+    rig.wait_until("bar's tab to be reopened", WAIT, |r| {
+        r.tab_labelled("bar").is_some()
+    });
+    rig.wait_until("the clone to be active in a new pane", WAIT, |r| {
+        r.show(&victim.id)["lifecycle"].as_str() == Some("active")
+            && r.pane_of(&victim.id).is_some_and(|p| p.id.0 != facts.pane)
+    });
+    rig.wait_until("threads to un-retire the seat", WAIT, |r| {
+        r.seat_inspection(seat)["result"]["data"]["retirement_state"].is_null()
+    });
+    rig.wait_settled();
+    let tabs: Vec<_> = tab_labels(&rig)
+        .into_iter()
+        .filter(|l| l == "bar")
+        .collect();
+    assert_eq!(tabs.len(), 1, "exactly one bar tab: {:?}", tab_labels(&rig));
+    let after = rig
+        .clone_facts(victim)
+        .expect("the clone still has its seat");
+    assert_eq!(after.threads_seat, facts.threads_seat, "same seat id");
+    assert_ne!(after.pane, facts.pane, "the clone has a reopened pane");
+    assert_eq!(
+        after.invitations, facts.invitations,
+        "same invitations: no re-invite"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "undo minted no seat in threads"
+    );
+}
+
+/// Configuration 4 (D1): cold restart, then a fresh agent in a bare pane. After a headless cold restart each
+/// clone is rebound on its seat; a fresh agent that checks in from a clone's bare pane with the clone's key
+/// reattaches that same seat (no new seat, no re-invite, the graph reads it resolved at the pane).
+///
+/// Unmet here: the graph launching that agent itself (the resume driver's keyed fresh launch). Herdr's agent
+/// detection needs real agent binaries and credentials, so the shell clones are never launched into; the launch
+/// is covered by the fake-Herdr driver tests (hg-66u.21, hg-66u.30).
+#[test]
+fn e2e_cold_restart_fresh_agent_reattaches_by_key() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    let seats_before = rig.threads_seat_ids();
+    rig.herdr_restart();
+    assert_clones_kept_their_seats(&rig, &before, &generations);
+
+    let (clone, facts) = &before[0];
+    // Right after the restart the threads daemon still reads the pane's old incarnation as resolved, and a keyed
+    // check-in there is refused as retryable ("pane mapping is not yet confirmed"). Wait for the daemon to
+    // reconcile the new incarnation: the seat's mapping turns unresolved, then the check-in reattaches it.
+    rig.wait_until("threads to reconcile the restarted pane", WAIT, |r| {
+        r.seat_inspection(&facts.threads_seat)["result"]["data"]["mapping"]["state"] == "unresolved"
+    });
+    let out = rig.keyed_check_in(&facts.pane, &clone.id, "fresh-agent-after-restart");
+    assert!(
+        out.status.success() && !stdout(&out).is_empty(),
+        "keyed check-in: {} {}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let inspected = rig.seat_inspection(&facts.threads_seat);
+    assert_eq!(
+        inspected["result"]["data"]["continuity_key"]["key"], clone.id,
+        "{inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["mapping"]["state"], "resolved",
+        "{inspected}"
+    );
+    assert_eq!(
+        inspected["result"]["data"]["mapping"]["target"], facts.pane,
+        "the seat is resolved at the clone's pane: {inspected}"
+    );
+    assert!(
+        inspected["result"]["data"]["continuity_key"]["conflict"].is_null(),
+        "no key conflict: {inspected}"
+    );
+    assert_eq!(
+        rig.threads_seat_ids(),
+        seats_before,
+        "the keyed check-in reattached an existing seat and minted none"
+    );
+    rig.wait_settled();
+    assert_eq!(
+        rig.clone_facts(clone).as_ref(),
+        Some(facts),
+        "the clone kept its seat, pane and invitations"
+    );
+    assert_eq!(
+        tstr(&rig.show(&clone.id), "seat_fact.state"),
+        "resolved",
+        "{}",
+        rig.show(&clone.id)
+    );
+}
+
+/// Configuration 7 (post-D1): a clone with no threads seat goes through a headless cold restart and ends seated
+/// with no operator step. The clone is added while the threads daemon is down (the graph is already bound to
+/// it), so it has no seat when Herdr restarts; once threads is back the graph seats it by itself.
+///
+/// Unmet here: the clone being launched by the graph (the restart trigger's keyed launch). It is a shell clone,
+/// which has no agent to launch, and after a restart threads holds fresh seats back while any seat is
+/// unresolved (the restore baseline hold), so nothing seats a bare pane but its keyed agent: the fixture's
+/// keyed check-in stands in for that agent and the test measures the seating half only. The fake-backed tests
+/// of hg-66u.33 cover the launch.
+#[test]
+fn e2e_unseated_clone_headless_cold_restart_is_launched_and_seated() {
+    let Some((mut rig, before)) = seated_rig() else {
+        return;
+    };
+    rig.stop_threads_daemon();
+    rig.plan_apply(&["clone", "add", "foreman"]);
+    rig.wait_until("foreman's third pane", WAIT, |r| {
+        r.tab_labelled("foreman")
+            .is_some_and(|t| t.1.panes.len() == 3)
+    });
+    rig.wait_settled();
+    let foreman = rig.seat("foreman");
+    let added = rig
+        .clones_of(&foreman.id)
+        .into_iter()
+        .find(|c| !before.iter().any(|(b, _)| b.id == c.id))
+        .expect("the added clone");
+    let shown = rig.show(&added.id);
+    assert!(
+        at(&shown, "threads_seat").is_none() && at(&shown, "key_reservation").is_none(),
+        "added with threads down, the clone has no seat and no reservation: {shown}"
+    );
+    let pane = rig.pane_of(&added.id).expect("clone pane").id.0;
+    let generation = bound_generation(&rig, &added);
+    let generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+
+    rig.herdr_restart();
+    rig.wait_until("the unseated clone to be rebound", WAIT, |r| {
+        bound_generation(r, &added) > generation
+            && tstr(&r.show(&added.id), "runtime.availability") == "present"
+    });
+    rig.ensure_threads_daemon(&[]);
+    rig.wait_until("the clone's key reservation", WAIT, |r| {
+        at(&r.show(&added.id), "key_reservation").is_some()
+    });
+    // After a restart threads holds fresh seats back until no seat is unresolved (the restore baseline hold), so
+    // the seated clones' agents check in first, each with its key, as the resume driver's launches would; then
+    // the unseated clone's agent does. The graph's launch of those agents is the unmet half, the check-ins are
+    // made by the fixture hook.
+    for (i, (c, f)) in before.iter().enumerate() {
+        let out = rig.keyed_check_in(&f.pane, &c.id, &format!("agent-{i}"));
+        assert!(
+            out.status.success() && stdout(&out).contains("hookSpecificOutput"),
+            "keyed check-in of {}: {} {}",
+            c.name,
+            stdout(&out),
+            stderr(&out)
+        );
+    }
+    rig.wait_until("the baseline hold to lift", WAIT, |r| {
+        let out = r.keyed_check_in(&pane, &added.id, "unseated-clone-agent");
+        out.status.success() && !stdout(&out).contains("check-in unavailable")
+    });
+    rig.wait_until("the clone to be seated with no operator step", WAIT, |r| {
+        at(&r.show(&added.id), "threads_seat").is_some()
+    });
+    rig.wait_settled();
+    let facts = rig.clone_facts(&added).expect("seated clone");
+    assert_eq!(facts.pane, pane, "same pane");
+    assert!(
+        rig.threads_seat_ids().contains(&facts.threads_seat),
+        "the seat is a real threads seat"
+    );
+    assert_eq!(rig.show(&added.id)["lifecycle"].as_str(), Some("active"));
+    assert_eq!(retired_seat_count(&rig), 0, "nothing was retired");
+    assert_eq!(
+        pane_infos(&rig.snapshot()).len(),
+        5,
+        "no pane was recreated"
+    );
+    assert_eq!(tab_labels(&rig), ["1", "bar", "foreman"]);
+    for ((c, f), g) in before.iter().zip(&generations) {
+        assert!(bound_generation(&rig, c) > *g, "{} was rebound", c.name);
+        assert_eq!(rig.clone_facts(c).as_ref(), Some(f), "{} unchanged", c.name);
+    }
+    assert!(
+        !rig.ops_text().lines().any(|l| l.contains("rule=")),
+        "nothing was observed as closed:\n{}",
+        rig.ops_text()
+    );
+}
+
 // FLOWS-END
 
 /// Escalation 3 (spec §4.9 reopening): a node manager whose agent exits at once must not crash-loop. Herdr's
@@ -2414,9 +3303,13 @@ fn e2e_plugin_link_status_action_single_daemon() {
 #[test]
 fn e2e_node_manager_failing_agent_does_not_respawn_loop() {
     let stub = "#!/bin/sh\necho start >> \"$(dirname \"$0\")/claude.starts\"\nexit 1\n";
-    let Some(rig) = E2e::start_custom(true, false, &[("claude", stub)]) else {
+    // A keyed launch waits for the clone's recorded key reservation (spec §5, §14.4), which needs a threads
+    // service: without one the node manager's agent never starts (threads-seat-identity spec §16.8).
+    let Some(rig) = E2e::start_threads_unstarted_custom(false, &[("claude", stub)]) else {
         return;
     };
+    rig.ensure_threads_daemon(&[]);
+    rig.start_daemon();
     rig.plan_apply(&["teamspace", "create", "t", "--active"]);
     rig.plan_apply(&[
         "seat",

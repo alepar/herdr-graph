@@ -1,0 +1,24 @@
+GAP · R9 · key-to-seat linkage for clones predating D1
+GAP · R3 · unreachable threads on remaining actuators (.7 .13 .22 .24)
+GAP · R10 · no release on clone retirement untested
+GAP · R20 · parity findings do not block matcher deletion; no post-D1 rerun
+GAP · R15 · D1 pin unowned
+GAP · R14 · older threads service answering Unsupported
+GAP · R7 · interim undo lacks reopen/resume, still adopts caller pane
+GAP · R4 · rig-unmet items on .4 .21 .22 not surfaced at hand-back
+UNOWNED-SEAM · seat-succession policy
+UNOWNED-SEAM · SeatStatus/ThreadsSeatView extensions after the gates
+GAP · R16 · G5 never released: stuck Unknown clone has no remedy
+GAP · R10 · operator-final exception not approved; finalizers unbounded
+GAP · R5 · graph daemon reconnect across live handoff
+GAP · R8 · harness switch: resumable session follows new occupant
+GAP · R9 · new clone's first launch carries the key
+GAP · R9 · fresh launch without reservation
+GAP · R2 · planner clone re-matching not named
+GAP · R12 · graph retire with pane open
+GAP · goal · gates not released reported at hand-back
+UNOWNED-SEAM · resume driver single launch owner
+UNOWNED-SEAM · reservation holder vs seat
+UNOWNED-SEAM · shared matcher code between .11 and .14
+ORPHAN · hg-66u.5
+GAP · R4 · attended cold restart C1 and auto-resume race

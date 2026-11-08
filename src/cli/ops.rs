@@ -1,4 +1,4 @@
-//! `ops`, `op`, `cancel`, `reassign`, `check-instruction`, `rebind` — owned by hg-zmi.17.
+//! `ops`, `op`, `cancel`, `reassign`, `check-instruction` — owned by hg-zmi.17.
 //!
 //! Reads (`ops`, `op`, `check-instruction`) never start a daemon: with none running they exit 5 through
 //! `cli::daemon_error`. `cancel` and `reassign` mutate, so they ensure the daemon.
@@ -32,12 +32,6 @@ pub enum Commands {
         object: String,
         rev: u64,
     },
-    /// Rebind a clone to a pane.
-    Rebind {
-        clone: String,
-        #[arg(long)]
-        pane: String,
-    },
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
@@ -47,16 +41,6 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
         Commands::Cancel { op } => cancel(&op),
         Commands::Reassign { op, to } => reassign(&op, &to),
         Commands::CheckInstruction { op, object, rev } => check_instruction(&op, &object, rev),
-        Commands::Rebind { clone, pane } => crate::cli::plan::plan_flow(
-            vec![
-                "clone".into(),
-                "rebind".into(),
-                clone,
-                "--pane".into(),
-                pane,
-            ],
-            false,
-        ),
     }
 }
 

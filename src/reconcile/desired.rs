@@ -1,5 +1,5 @@
 //! Desired runtime: what Herdr should look like for one committed revision (spec §4.4).
-use crate::model::clone::CloneRecord;
+use crate::model::clone::{CloneRecord, KeyReservation, SeatFact, SeatIntent};
 use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, Occupant};
 use crate::model::effective::{EffectiveSeatConfig, resolve_in};
 use crate::model::harness::{Harness, profile};
@@ -57,6 +57,15 @@ pub struct DesiredPane {
     pub bound: Option<Binding>,
     pub availability: Availability,
     pub rev: u64,
+    /// The clone's threads seat, what threads last said about it and the graph's pending seat intent: the
+    /// inputs of the resume driver (spec §9, §14.4).
+    pub threads_seat: Option<String>,
+    pub seat_fact: Option<SeatFact>,
+    pub seat_intent: Option<SeatIntent>,
+    /// The continuity key reserved for the clone: every agent launch waits for it (spec §5, §14.4).
+    pub key_reservation: Option<KeyReservation>,
+    /// The clone has (or had) an agent: it has a native session on record.
+    pub had_agent: bool,
 }
 
 /// A bound object whose availability is `unknown` gets no create effects (spec §4.3.2).
@@ -201,6 +210,11 @@ impl DesiredRuntime {
                     bound: c.runtime.bound.clone(),
                     availability: c.runtime.availability,
                     rev: c.rev,
+                    threads_seat: c.threads_seat.clone(),
+                    seat_fact: c.seat_fact.clone(),
+                    seat_intent: c.seat_intent.clone(),
+                    key_reservation: c.key_reservation.clone(),
+                    had_agent: !c.sessions.is_empty(),
                 });
             }
         }
@@ -222,6 +236,22 @@ impl DesiredRuntime {
     ) -> impl Iterator<Item = &'a DesiredPane> + use<'a> {
         let seat = seat.clone();
         self.panes.iter().filter(move |p| p.seat == seat)
+    }
+
+    /// A clone of `seat` is being restored (undo, resurrection, the node manager's reopen: spec section 8 step 1): it
+    /// carries a `Restore` intent and has no pane yet. Its tab and workspace are reopened even while they are
+    /// Unknown: a bound id that is absent from the live snapshot vanished (Herdr preserves ids, section 7), and the
+    /// restore must not stall on it.
+    pub fn restoring_seat(&self, seat: &SeatId) -> bool {
+        self.panes_of(seat)
+            .any(|p| p.bound.is_none() && matches!(p.seat_intent, Some(SeatIntent::Restore { .. })))
+    }
+
+    /// A seat of teamspace `ts` is being restored (see `restoring_seat`): its workspace is reopened too.
+    pub fn restoring_teamspace(&self, ts: &TeamspaceId) -> bool {
+        self.tabs
+            .iter()
+            .any(|t| t.ts == *ts && self.restoring_seat(&t.seat))
     }
 
     /// Object revision (any lifecycle), None when the object is not a teamspace, seat or clone here.

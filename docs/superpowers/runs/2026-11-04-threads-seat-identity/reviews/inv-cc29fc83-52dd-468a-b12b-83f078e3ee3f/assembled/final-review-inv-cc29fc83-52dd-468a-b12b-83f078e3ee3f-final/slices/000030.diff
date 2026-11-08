@@ -1,0 +1,21 @@
+diff --git a/src/bootstrap/mod.rs b/src/bootstrap/mod.rs
+index 51ef8ca..cf48869 100644
+--- a/src/bootstrap/mod.rs
++++ b/src/bootstrap/mod.rs
+@@ -457,13 +457,12 @@ pub fn render_seat(reply: &Value) -> String {
+         .as_array()
+         .filter(|i| !i.is_empty())
+     {
+-        out.push_str("pending invitations (run the commands):\n");
++        out.push_str("pending invitations (accept through herdr-threads):\n");
+         for i in inv {
+             out.push_str(&format!(
+-                "  {} [{}]: {}\n",
++                "  {} [{}]\n",
+                 text(&i["thread"]),
+-                text(&i["constraint"]),
+-                text(&i["accept_command"])
++                text(&i["constraint"])
+             ));
+         }
+     }

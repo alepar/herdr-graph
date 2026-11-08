@@ -132,7 +132,9 @@ pub fn resolve_clone(tree: &dyn TreeRead, s: &str, scope: Scope) -> Result<Clone
     let found = layout::all_clones(tree)?
         .into_iter()
         .filter(|(_, c)| {
-            c.name == s && (c.lifecycle == CloneLifecycle::Retired) == (scope == Scope::Retired)
+            !c.is_tombstone()
+                && c.name == s
+                && (c.lifecycle == CloneLifecycle::Retired) == (scope == Scope::Retired)
         })
         .map(|(_, c)| {
             let seat = seats

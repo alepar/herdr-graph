@@ -2,18 +2,20 @@
 //! profile order. The CLI turns the hook payload into an IPC `session.report`; the daemon resolves the clone
 //! and admits `observed.occupancy`, which ends the previous native session on a changed id (`/clear`) and
 //! triggers request creation for the session that just ended.
-use super::{Transcripts, clone_for_pane, internal};
+use super::{Transcripts, clone_for_pane, export_rejected_key, internal};
 use crate::daemon::registry::{CallerInfo, CommandError};
 use crate::ipc::IpcErrorCode;
 use crate::model::change::ChangeRequest;
 use crate::model::common::CloneLifecycle;
 use crate::model::harness::Harness;
+use crate::model::launch::{ENV_CLONE, ENV_CONTINUITY_KEY};
 use crate::model::native_session::NativeSession;
 use crate::model::native_session::SessionEndReason;
 use crate::model::operation::OpState;
 use crate::model::{CloneId, OpId, SeatId, Timestamp};
 use crate::observe::mutations::occupancy_request;
 use crate::observe::{SessionCapture, SessionEnded};
+use crate::reconcile::planner::launch_env_key;
 use crate::threads::effects::Graph;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -84,6 +86,7 @@ pub fn report_args(
     hook: &ClaudeHook,
     graph_clone: Option<&str>,
     pane: Option<&str>,
+    continuity_key: Option<&str>,
     fallback_cwd: PathBuf,
 ) -> Option<serde_json::Value> {
     if graph_clone.is_none() && pane.is_none() {
@@ -95,7 +98,10 @@ pub fn report_args(
         transcript_path: hook.transcript_path.clone(),
         cwd: hook.cwd.clone().unwrap_or(fallback_cwd),
     };
-    Some(json!({ "clone": graph_clone, "pane": pane, "capture": capture, "source": hook.source }))
+    Some(json!({
+        "clone": graph_clone, "pane": pane, "continuity_key": continuity_key,
+        "capture": capture, "source": hook.source,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -104,6 +110,8 @@ struct ReportArgs {
     clone: Option<String>,
     #[serde(default)]
     pane: Option<String>,
+    #[serde(default)]
+    continuity_key: Option<String>,
     capture: SessionCapture,
     #[serde(default)]
     source: Option<String>,
@@ -372,6 +380,7 @@ impl Transcripts {
                 .any(|s| s.native_session_id == a.capture.native_session_id);
             (rec.id.clone(), rec.seat.clone(), previous, known)
         };
+        self.check_export(&clone, &a, caller, at);
         if skip_known && known {
             return Ok(Resolved::Done(
                 json!({ "resolved": true, "clone": clone, "changed": false, "duplicate": true, "source": a.source }),
@@ -395,6 +404,46 @@ impl Transcripts {
             source: a.source,
         };
         Ok(Resolved::Admit(Box::new(pending), Box::new(request)))
+    }
+
+    /// Spec §5: compare what the start exported into this pane with what the check-in carries. A variable the
+    /// shell was told to export but the agent did not see means the shell rejected the export; name it in
+    /// status until a complete report arrives from that pane.
+    fn check_export(&self, clone: &CloneId, a: &ReportArgs, caller: &CallerInfo, at: Timestamp) {
+        let Some(pane) = a.pane.as_deref().or(caller.pane_id.as_deref()) else {
+            return;
+        };
+        let Some(launch) = self
+            .journal
+            .meta_get(&launch_env_key(clone))
+            .ok()
+            .flatten()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .filter(|l| l["pane"] == pane)
+        else {
+            return;
+        };
+        let exported = |name: &str| {
+            launch["vars"]
+                .as_array()
+                .is_some_and(|v| v.iter().any(|x| x == name))
+        };
+        let mut missing = Vec::new();
+        if exported(ENV_CLONE) && a.clone.is_none() && caller.graph_clone.is_none() {
+            missing.push(ENV_CLONE);
+        }
+        if exported(ENV_CONTINUITY_KEY) && a.continuity_key.is_none() {
+            missing.push(ENV_CONTINUITY_KEY);
+        }
+        let key = export_rejected_key(clone);
+        let _ = if missing.is_empty() {
+            self.journal.meta_delete(&key)
+        } else {
+            self.journal.meta_set(
+                &key,
+                &json!({ "pane": pane, "missing": missing, "at": at }).to_string(),
+            )
+        };
     }
 
     /// The occupancy op committed: when it ended the previous session, request that session's transcript.

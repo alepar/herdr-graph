@@ -1,8 +1,9 @@
 //! herdr-threads port (spec §7). Real adapter + FakeThreads implemented by hg-zmi.11.
 //! Graph-local value types keep the port fake-friendly; the adapter maps them to herdr_threads::protocol.
-use crate::model::Timestamp;
 use crate::model::clone::{InvitationState, InviteConstraint};
+use crate::model::{HerdrPaneId, Timestamp};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 macro_rules! str_ref {
     ($name:ident) => {
@@ -86,6 +87,48 @@ pub enum ThreadsError {
     Rejected(String),
 }
 
+/// How a retired seat can come back: `Reversible` can be un-retired (threads D2), `Final` cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetirementKind {
+    Reversible,
+    Final,
+}
+
+/// What threads says about one clone's seat. Owns the closed set of seat states the graph acts on; hides the wire
+/// shapes; carries no graph decision (SeatObservation makes those). Every seat state is a value; only transport
+/// problems are errors (ThreadsSeatView's).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SeatStatus {
+    Resolved { pane: HerdrPaneId },
+    Unresolved,
+    Retired { kind: RetirementKind },
+    KeyConflict { pane: Option<HerdrPaneId> },
+}
+
+/// Read-only view of threads seat state, once per observation step. Never writes to threads, never commits graph
+/// state, never fabricates a state when threads is unreachable.
+#[async_trait::async_trait]
+pub trait ThreadsSeatView: Send + Sync {
+    /// One status per requested seat, or the transport error of the first failing read (no partial map).
+    async fn inspect(
+        &self,
+        seats: &[ThreadsSeatRef],
+    ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError>;
+}
+
+/// What threads answers to a continuity-key reservation. A key bound elsewhere, or a seat holding another key,
+/// is a typed `Conflict`, not an error; a refusal (retired, named or hc seat) is `ThreadsError::Rejected`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReserveOutcome {
+    /// The key is reserved for the graph; `seat` is the seat it is bound to, if any.
+    Reserved {
+        seat: Option<ThreadsSeatRef>,
+    },
+    Conflict,
+}
+
 #[async_trait::async_trait]
 pub trait ThreadsPort: Send + Sync {
     /// Managed public channel; `op_key` derived from the owning object id (spec §7.1).
@@ -157,4 +200,33 @@ pub trait ThreadsPort: Send + Sync {
     ) -> Result<Vec<MessageReceipts>, ThreadsError>;
     /// Which delivery path this connection supports (spec §7.4).
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError>;
+    /// Reserve the continuity key `key` for the graph, binding it to `seat` when one is named (spec §5). Idempotent
+    /// under `op`. Additive to the original trait: the default is `Unsupported`.
+    async fn reserve_continuity_key(
+        &self,
+        _key: &str,
+        _seat: Option<&ThreadsSeatRef>,
+        _op: &OpKey,
+    ) -> Result<ReserveOutcome, ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Undo the reversible retirement of `seat` (`service_session_v3`). Idempotent under `op`. Additive: the
+    /// default is `Unsupported`.
+    async fn unretire_seat(&self, _seat: &ThreadsSeatRef, _op: &OpKey) -> Result<(), ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Make the retirement of `seat` final; threads releases the seat's continuity key (`service_session_v3`).
+    /// Idempotent under `op`. Additive: the default is `Unsupported`.
+    async fn finalize_retirement(
+        &self,
+        _seat: &ThreadsSeatRef,
+        _op: &OpKey,
+    ) -> Result<(), ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
+    /// Release the graph's reservation of `key`, which must be bound to no seat (`service_session_v3`).
+    /// Idempotent under `op`. Additive: the default is `Unsupported`.
+    async fn release_continuity_key(&self, _key: &str, _op: &OpKey) -> Result<(), ThreadsError> {
+        Err(ThreadsError::Unsupported)
+    }
 }

@@ -1,0 +1,20 @@
+GAP · R3 · threads delegation parity before matcher deletion
+GAP · R-new G5 · G5 limbo disposition has no implementing leaf
+GAP · R8 · resume driver may relaunch after a deliberate agent exit
+GAP · R3 · unreachable threads not tested on actuating beads
+GAP · R10 · interim succession survives D2
+GAP · R6 · env delivery without Herdr change unconfirmed; unmet escape hatches
+GAP · R5 · threads v3.0.0 live-handoff continuity unverified
+GAP · R15 · pin bump to D1/D2/G5 releases
+GAP · R1 · threads_seat producer not upstream of the pre-D1 smoke
+GAP · R7 · undo acceptance lacks tab reopen / session resume
+GAP · R17 · pre-upgrade closed clones
+GAP · R18 · operator resolution of key conflicts
+GAP · R16 · pane closed during downtime
+GAP · R9 · keyed launches before reservation
+UNOWNED-SEAM · key-conflict alert · ordering .12 vs .13
+UNOWNED-SEAM · continuity key / key reservation
+UNOWNED-SEAM · unretire want
+UNOWNED-SEAM · PaneSeatMap / resolve-seat want
+ORPHAN · hg-66u.20 · interim succession
+ORPHAN · hg-66u.3 · G5 gate wired to nothing

@@ -7,6 +7,7 @@ use crate::model::clone::CloneRecord;
 use crate::model::common::{Availability, Binding, Lifecycle, Occupant};
 use crate::model::effect::{ContainerKind, EndState};
 use crate::model::harness::{Harness, StartOutcome};
+use crate::model::launch::agent_env;
 use crate::model::native_session::NativeSession;
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
@@ -153,6 +154,44 @@ impl Mutation for TestEndOccupant {
     }
 }
 
+/// Test-only: what threads and the graph recorded about a clone's seat (the real writers are
+/// SeatObservation and ThreadsSeatAssignment), and a pane id rewrite modelling Herdr keeping pane ids.
+struct TestSeatState;
+impl Mutation for TestSeatState {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let clone: CloneId = cx.request.args["clone"].as_str().unwrap().parse().unwrap();
+        let loc = cx.tree.locate(&clone.to_any())?.unwrap();
+        let mut rec: CloneRecord = cx.tree.read_record(&loc.record_path)?.unwrap();
+        let a = &cx.request.args;
+        if let Some(seat) = a.get("threads_seat") {
+            rec.threads_seat = seat.as_str().map(str::to_owned);
+        }
+        if let Some(f) = a.get("fact") {
+            rec.seat_fact = serde_json::from_value(f.clone()).unwrap();
+        }
+        if let Some(i) = a.get("intent") {
+            rec.seat_intent = serde_json::from_value(i.clone()).unwrap();
+        }
+        if let Some(p) = a.get("bound_pane").and_then(|p| p.as_str()) {
+            rec.runtime.bound.as_mut().unwrap().pane_id = Some(HerdrPaneId(p.to_owned()));
+        }
+        if a.get("unknown").is_some() {
+            rec.runtime.availability = crate::model::common::Availability::Unknown;
+        }
+        if a.get("drop_reservation").is_some() {
+            rec.key_reservation = None;
+        }
+        if a.get("drop_token").is_some() {
+            rec.runtime.bound.as_mut().unwrap().token = None;
+        }
+        cx.tree.put_record(loc.record_path, &mut rec)?;
+        Ok(Applied {
+            summary: "set seat state".into(),
+            action: None,
+        })
+    }
+}
+
 struct Fx {
     _tmp: tempfile::TempDir,
     deps: PlanDeps,
@@ -180,15 +219,20 @@ fn fx_with(tune: impl FnOnce(&mut ReconcilerConfig)) -> Fx {
     crate::plan::managers::testing::opt_out(&root);
     let mut kinds = KindRegistry::default();
     register_core_kinds(&mut kinds);
+    crate::templates::register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
+    crate::plan::kinds_extra::register_kinds(&mut kinds);
     let kinds = Arc::new(kinds);
     let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
     let mut reg = crate::writer::MutationRegistry::default();
     kinds.register_mutations(&mut reg, plans.clone());
     register_mutations(&mut reg);
+    crate::threads::register_mutations(&mut reg);
     reg.register("bookkeeping.test_set_model", Arc::new(TestSetModel));
     reg.register("bookkeeping.test_set_occupant", Arc::new(TestSetOccupant));
     reg.register("bookkeeping.test_end_occupant", Arc::new(TestEndOccupant));
     reg.register("bookkeeping.test_set_thread", Arc::new(TestSetThread));
+    reg.register("bookkeeping.test_seat_state", Arc::new(TestSeatState));
     reg.register("bookkeeping.test_node_manager", Arc::new(TestNodeManager));
     let store = Arc::new(GitStore::open(&root).unwrap());
     let journal = Arc::new(Journal::open(&Journal::path_in(&root)).unwrap());
@@ -300,10 +344,48 @@ fn only_clone(fx: &Fx, seat_name: &str) -> CloneRecord {
 }
 
 /// One loop step: reconcile at the current head, then let the writer commit the write-backs.
-async fn step(fx: &Fx) -> StepReport {
+async fn step_unreserved(fx: &Fx) -> StepReport {
     let r = fx.rec.step_fresh().await;
     fx.w.drain().unwrap();
     r
+}
+
+/// What the threads reserve-key and key-link wants have done by the time of a step: every live clone holds its
+/// reservation, bound to the seat of its Restore intent when it has one (a launch waits for that, spec §14.4).
+/// Tests of the launch gate itself use `step_unreserved` and record reservations by hand.
+fn reserve_pending(fx: &Fx) {
+    for (_, c) in layout::all_clones(&view(fx)).unwrap() {
+        let want = match &c.seat_intent {
+            Some(SeatIntent::Restore { seat, .. }) => Some(seat.clone()),
+            Some(_) => continue,
+            None => None,
+        };
+        let held = c.key_reservation.as_ref();
+        if held.is_some() && (want.is_none() || held.and_then(|r| r.seat.clone()) == want) {
+            continue;
+        }
+        record_reservation(fx, &c.id, want.as_deref());
+    }
+}
+
+/// `ThreadsSeatAssignment`'s reservation write-back: the key is the clone id, `seat` what it is bound to.
+fn record_reservation(fx: &Fx, clone: &CloneId, seat: Option<&str>) {
+    admit_threads_seat(
+        &*fx.w,
+        clone,
+        &SeatTransition::RecordReservation {
+            key: clone.to_string(),
+            seat: seat.map(str::to_owned),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+}
+
+/// A step after the reserve-key and key-link wants ran.
+async fn step(fx: &Fx) -> StepReport {
+    reserve_pending(fx);
+    step_unreserved(fx).await
 }
 
 /// A teamspace `alpha` and an active seat `foreman` of the given harness.
@@ -466,6 +548,7 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     };
     assert_eq!(start.kind, "claude");
     assert!(start.args.is_empty());
+    assert_eq!(start.env, agent_env(&c.id, true));
 
     // Binding written back as a bookkeeping mutation.
     let bound = clones_of(&fx, &s.id).remove(0).runtime;
@@ -486,6 +569,34 @@ async fn activate_seat_creates_tab_pane_agent_in_order() {
     assert!(
         again.planned.is_empty() && again.executed.is_empty(),
         "{again:?}"
+    );
+}
+
+#[tokio::test]
+async fn start_records_the_exported_variable_names() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = fx
+        .herdr
+        .calls()
+        .into_iter()
+        .find_map(|call| match call {
+            FakeCall::StartAgent(s) => Some(s.pane),
+            _ => None,
+        })
+        .expect("an agent was started");
+    let raw = fx
+        .journal
+        .meta_get(&planner::launch_env_key(&c.id))
+        .unwrap()
+        .expect("launch_env recorded with the start");
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["pane"], pane.0);
+    assert_eq!(
+        v["vars"],
+        json!(["HERDR_GRAPH_CLONE", "HERDR_THREADS_CONTINUITY_KEY"])
     );
 }
 
@@ -668,6 +779,147 @@ async fn workspace_nonce_recovery_rejects_reused_ids_foreign_tokens_and_ambiguit
             .workspace(&ts)
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn live_index_matches_bound_tab_and_workspace_across_incarnations() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let seat_id = seat(&fx, "foreman").id;
+    let before = fx.herdr.snapshot().await.unwrap();
+    // No tokens survive, so only the bound ids can place the objects.
+    fx.herdr.restart(false, false);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_ne!(snap.incarnation, before.incarnation);
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let ts = desired.workspaces[0].ts.clone();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    let (ws, tab) = idx.tab_for_seat(&seat_id).expect("bound tab id survives");
+    assert_eq!(tab.id, before.workspaces[0].tabs.last().unwrap().id);
+    assert_eq!(ws.id, before.workspaces[0].id);
+    assert_eq!(idx.workspace(&ts).expect("bound workspace id").ws.id, ws.id);
+}
+
+#[tokio::test]
+async fn live_index_does_not_refind_an_absent_bound_tab_or_workspace_by_tokens() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let seat_id = seat(&fx, "foreman").id;
+    // Tokens survive (the seat's clone pane and the workspace stay stamped) but the ids do not.
+    fx.herdr.restart(true, true);
+    fx.herdr.renumber_tabs_and_workspaces();
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.metadata.contains_key("hg")),
+        "a token-stamped clone pane is still live"
+    );
+    assert!(idx.tab_for_seat(&seat_id).is_none());
+}
+
+/// A seated clone is located by its committed binding of this incarnation, which SeatObservation wrote; its
+/// token, and a binding from before a restart, locate nothing. A seatless clone beside it is still found by
+/// its token.
+#[tokio::test]
+async fn planner_uses_the_seat_observation_binding_not_a_rematch() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    let mut cs = clones_of(&fx, &s.id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let pb = pane_of(&fx, &b);
+    admit_threads_seat(
+        &*fx.w,
+        &a.id,
+        &SeatTransition::Assign {
+            seat: "seat-a".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+
+    // SeatObservation bound A to B's pane (threads resolved the seat there); A's own pane still has A's token.
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let mut binding = the_clone(&fx, &a.id).runtime.bound.expect("bound");
+    binding.pane_id = Some(pb.clone());
+    binding.incarnation = snap.incarnation.clone();
+    admit_binding(&*fx.w, &a.id.to_any(), &binding, Availability::Present).unwrap();
+    fx.w.drain().unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert_eq!(
+        idx.pane(&a.id).map(|l| l.pane.id.clone()),
+        Some(pb.clone()),
+        "the binding, not the token"
+    );
+
+    // After a restart that keeps the tokens, the binding is of an older incarnation: with no answer from
+    // threads yet nothing is planned against A's token pane. The seatless clone is still found by its token.
+    fx.herdr.restart(true, true);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    let idx = super::planner::LiveIndex::new(&snap, &desired, &fx.journal);
+    assert!(
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.metadata.get("hg").is_some_and(|v| *v == format!("hg={}", a.id))),
+        "A's token pane is live"
+    );
+    assert!(idx.pane(&a.id).is_none(), "no token re-match for a seated clone");
+    assert!(idx.pane(&b.id).is_some(), "the seatless clone keeps its token");
+}
+
+/// A seatless clone follows its preserved pane id into a new incarnation, but never onto a pane that carries
+/// another clone's token; an id that was not preserved locates nothing.
+#[tokio::test]
+async fn planner_locates_a_seatless_clone_by_its_preserved_pane_id() {
+    let fx = fx();
+    activate(&fx, "shell");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let s = seat(&fx, "foreman");
+    let mut cs = clones_of(&fx, &s.id);
+    let (a, b) = (cs.remove(0), cs.remove(0));
+    let (pa, pb) = (pane_of(&fx, &a), pane_of(&fx, &b));
+    let find = |a: &CloneId, snap: &crate::ports::herdr::HerdrSnapshot| {
+        let desired =
+            super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+        super::planner::LiveIndex::new(snap, &desired, &fx.journal)
+            .pane(a)
+            .map(|l| (l.pane.id.clone(), l.stamped))
+    };
+
+    // Pane ids preserved, tokens gone: found by id, not yet stamped.
+    fx.herdr.cold_restart_keeping_pane_ids(false);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), Some((pa.clone(), false)));
+    assert_eq!(find(&b.id, &snap), Some((pb.clone(), false)));
+
+    // A pane that carries another clone's token is not this clone's.
+    fx.herdr
+        .report_pane_metadata(&pa, "hg", &format!("hg={}", b.id))
+        .await
+        .unwrap();
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), None, "{:?}", find(&a.id, &snap));
+    assert_eq!(find(&b.id, &snap), Some((pa.clone(), true)), "token first");
+
+    // Pane ids renumbered: nothing to find.
+    fx.herdr.restart(false, true);
+    let snap = fx.herdr.snapshot().await.unwrap();
+    assert_eq!(find(&a.id, &snap), None);
+    assert_eq!(find(&b.id, &snap), None);
 }
 
 #[tokio::test]
@@ -1082,6 +1334,7 @@ async fn model_change_on_occupied_clone_replaces_with_resume() {
         })
         .collect();
     assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     assert_eq!(starts[0].pane, pane);
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
     // Exit keys come before the restart.
@@ -1418,6 +1671,7 @@ async fn replacement_resumes_after_occupant_cleared() {
     let starts = start_calls(&fx);
     assert_eq!(starts.len(), 1, "{starts:?}");
     assert_eq!(starts[0].args, ["--resume", "abc", "--model", "opus-x"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
     let launched: serde_json::Value = serde_json::from_str(
         &fx.journal
             .meta_get(&planner::launched_key(&c.id))
@@ -1595,6 +1849,41 @@ async fn close_effects_predict_induced_closures() {
 }
 
 #[tokio::test]
+async fn graph_retire_of_a_clone_with_an_open_pane_closes_it() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = c
+        .runtime
+        .bound
+        .as_ref()
+        .and_then(|b| b.pane_id.clone())
+        .expect("the clone is bound to a live pane");
+    let live = |snap: &crate::ports::herdr::HerdrSnapshot| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| p.id == pane)
+    };
+    assert!(live(&fx.herdr.snapshot().await.unwrap()));
+    commit(&fx, &format!("clone retire {}", c.id));
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::ClosePane(p) if *p == pane)),
+        1,
+        "{:?}",
+        calls(&fx)
+    );
+    assert!(
+        !live(&fx.herdr.snapshot().await.unwrap()),
+        "the pane is gone"
+    );
+}
+
+#[tokio::test]
 async fn deactivated_seat_closes_its_tab() {
     let fx = fx();
     activate(&fx, "claude");
@@ -1664,7 +1953,9 @@ async fn relaunch_hook_enqueues_start_for_unoccupied_active_clone() {
     assert_eq!(
         count_calls(
             &fx,
-            |c| matches!(c, FakeCall::StartAgent(s) if s.pane == pane && s.kind == "claude")
+            |call| matches!(call, FakeCall::StartAgent(s) if s.pane == pane
+                && s.kind == "claude"
+                && s.env == agent_env(&c.id, true))
         ),
         1
     );
@@ -2236,6 +2527,7 @@ async fn dispatched_row_is_recovered_as_unknown() {
 async fn cancelled_start_agent_is_recovered_as_unknown() {
     let fx = fx();
     activate(&fx, "claude");
+    reserve_pending(&fx);
     fx.herdr.fail_next("agent.start", Fault::Hang);
     // The daemon's first-pass timeout cancels the step the same way.
     assert!(
@@ -2486,6 +2778,7 @@ async fn needs_revision_notice_survives_threads_down() {
         ReconcilerConfig::new(fx.deps.instance.clone()),
     );
     let step2 = || async {
+        reserve_pending(&fx);
         let r = rec.step_fresh().await;
         fx.w.drain().unwrap();
         r
@@ -2577,6 +2870,7 @@ async fn seatless_attention_notice_waits_for_affected_seat_channel() {
         "agent.start",
         Fault::StartOutcome(StartOutcome::BlockedNeedsHuman),
     );
+    reserve_pending(&fx);
     rec.step_fresh().await;
     fx.w.drain().unwrap();
     assert_eq!(
@@ -2734,4 +3028,1978 @@ async fn notice_is_voided_when_the_effect_leaves_the_attention_status() {
     fx.rec.deliver_notices().await;
     assert_eq!(fx.journal.get_notice("k").unwrap().unwrap().state, "void");
     assert!(fx.notes.messages().is_empty());
+}
+
+// -------------------------------------------------------------------------------------------------
+// resume driver (hg-66u.30): the restart and restore triggers
+// -------------------------------------------------------------------------------------------------
+
+use crate::model::clone::{SeatFact, SeatFactState, SeatIntent};
+use crate::threads::assignment::{SeatTransition, admit_threads_seat};
+
+fn seat_state(fx: &Fx, c: &CloneId, patch: serde_json::Value) {
+    let mut args = patch;
+    args["sub"] = json!("test_seat_state");
+    args["clone"] = json!(c);
+    admit_bookkeeping(fx, args);
+}
+
+fn fact(seat: &str, state: SeatFactState, read_at: Timestamp) -> serde_json::Value {
+    serde_json::to_value(SeatFact {
+        seat: seat.into(),
+        state,
+        read_at,
+    })
+    .unwrap()
+}
+
+fn restore_intent(
+    seat: &str,
+    epoch: &OpId,
+    threads_done: bool,
+    launched: bool,
+) -> serde_json::Value {
+    serde_json::to_value(SeatIntent::Restore {
+        seat: seat.into(),
+        epoch: epoch.clone(),
+        threads_done,
+        launched: launched.then(restore_launched_at),
+        last_refusal: None,
+    })
+    .unwrap()
+}
+
+/// The intent with a recorded launch mark replaced by `restore_launched_at()` (the mark time is the clock's).
+fn marked_normalized(intent: &Option<SeatIntent>) -> Option<SeatIntent> {
+    let mut i = intent.clone();
+    if let Some(SeatIntent::Restore { launched, .. }) = &mut i {
+        assert!(launched.is_some(), "expected a launch mark: {i:?}");
+        *launched = Some(restore_launched_at());
+    }
+    i
+}
+
+/// What `restore_intent(.., true)` records as the launch time: before any incarnation change a test makes.
+fn restore_launched_at() -> Timestamp {
+    chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+}
+
+fn end_session(fx: &Fx, c: &CloneRecord, native: &str, harness: &str) {
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_set_occupant", "clone": c.id, "native": native, "harness": harness}),
+    );
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_end_occupant", "clone": c.id, "native": native}),
+    );
+}
+
+fn the_clone(fx: &Fx, id: &CloneId) -> CloneRecord {
+    layout::all_clones(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, c)| c)
+        .find(|c| &c.id == id)
+        .unwrap()
+}
+
+/// A launched claude clone whose first session `abc` has ended and whose agent is gone from its pane.
+async fn ended_clone(fx: &Fx) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step(fx).await;
+    let c = only_clone(fx, "foreman");
+    end_session(fx, &c, "abc", "claude");
+    let pane = pane_of(fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    (only_clone(fx, "foreman"), pane)
+}
+
+/// The pane carrying `clone`'s token in the live snapshot.
+async fn token_pane(fx: &Fx, clone: &CloneId) -> HerdrPaneId {
+    let snap = fx.herdr.snapshot().await.unwrap();
+    snap.workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .find(|p| {
+            p.metadata
+                .get("hg")
+                .is_some_and(|v| v == &format!("hg={clone}"))
+        })
+        .expect("token-stamped pane")
+        .id
+        .clone()
+}
+
+/// A cold Herdr restart seen by the reconciler (so `incarnation:changed_at` is recorded), pane ids renumbered
+/// and every agent gone. Returns the clone's pane in the new incarnation.
+async fn cold_restart(fx: &Fx, c: &CloneId) -> HerdrPaneId {
+    fx.herdr.restart(true, true);
+    step(fx).await;
+    let pane = token_pane(fx, c).await;
+    fx.herdr.set_agent(&pane, None);
+    fx.herdr.clear_calls();
+    pane
+}
+
+/// Herdr kept the pane id across the restart: the binding (old incarnation) names the pane that exists now.
+/// SeatObservation (which these reconciler-only tests do not run) has marked the clone Unknown: its seat does
+/// not resolve, so the old binding is held but locates nothing.
+fn keep_pane_id(fx: &Fx, c: &CloneId, pane: &HerdrPaneId) {
+    seat_state(fx, c, json!({ "bound_pane": pane.0, "unknown": true }));
+}
+
+fn unresolved(seat: &str, at: Timestamp) -> serde_json::Value {
+    fact(seat, SeatFactState::Unresolved, at)
+}
+
+fn relaunch_rows(fx: &Fx) -> usize {
+    rows(fx, EffectKind::RelaunchOccupant).len()
+}
+
+#[tokio::test]
+async fn restart_resumes_each_clone_with_a_session_after_grace() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(&fx, "clone add foreman --name second");
+    step(&fx).await;
+    let seat_id = seat(&fx, "foreman").id;
+    let clones = clones_of(&fx, &seat_id);
+    assert_eq!(clones.len(), 2);
+    for (c, native) in clones.iter().zip(["abc", "def"]) {
+        end_session(&fx, c, native, "claude");
+    }
+    fx.herdr.restart(true, true);
+    step(&fx).await;
+    fx.herdr.clear_calls();
+    let mut expect = Vec::new();
+    for (c, native) in clones.iter().zip(["abc", "def"]) {
+        let pane = token_pane(&fx, &c.id).await;
+        fx.herdr.set_agent(&pane, None);
+        keep_pane_id(&fx, &c.id, &pane);
+        seat_state(
+            &fx,
+            &c.id,
+            json!({ "threads_seat": format!("seat-{native}"), "fact": unresolved(&format!("seat-{native}"), fx.clock.now()) }),
+        );
+        expect.push((pane, native, c.id.clone()));
+    }
+    let early = step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 2, "{early:?}");
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    for (pane, native, id) in &expect {
+        let s = starts
+            .iter()
+            .find(|s| &s.pane == pane)
+            .expect("one start per pane");
+        assert_eq!(s.args, ["--resume", native], "{id}");
+        assert_eq!(s.env, agent_env(id, true));
+    }
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "one resume per restart");
+}
+
+#[tokio::test]
+async fn no_resume_when_the_pane_has_an_agent() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Idle));
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn no_resume_without_a_resumable_session() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    // The only session is still open (no ended session to resume), and then another harness's ended one.
+    set_occupant(&fx, &c, "abc");
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_set_occupant", "clone": c.id, "native": "cx", "harness": "codex"}),
+    );
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn no_resume_while_threads_has_not_answered_since_the_restart() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    let before = fx.clock.now() - chrono::Duration::seconds(30);
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", before) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0, "the fact predates the restart");
+    assert!(start_calls(&fx).is_empty());
+    // Threads answers after the restart: now the clone is resumed.
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1);
+}
+
+#[tokio::test]
+async fn agent_exit_without_restart_launches_nothing() {
+    let fx = fx();
+    let (c, pane) = ended_clone(&fx).await;
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(600));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "the seat stays Resolved");
+    // Even an Unresolved read launches nothing while no incarnation change was ever seen.
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn missing_last_pane_launches_nothing_and_is_named_in_status() {
+    let fx = fx();
+    let (c, old_pane) = ended_clone(&fx).await;
+    let new_pane = cold_restart(&fx, &c.id).await;
+    assert_ne!(old_pane, new_pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty());
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    let blocked = st["resume_blocked"].as_array().unwrap();
+    assert_eq!(blocked.len(), 1, "{st}");
+    assert_eq!(blocked[0]["clone"], c.id.to_string());
+    assert_eq!(blocked[0]["pane"], old_pane.0);
+    assert!(
+        blocked[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("retire the clone")
+    );
+    // Once the pane exists again the entry goes away.
+    keep_pane_id(&fx, &c.id, &new_pane);
+    step(&fx).await;
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    assert!(st["resume_blocked"].as_array().unwrap().is_empty(), "{st}");
+}
+
+#[test]
+fn meta_change_writes_only_on_change() {
+    use planner::{MetaChange, meta_change};
+    assert_eq!(meta_change(None, None), MetaChange::Keep);
+    assert_eq!(meta_change(None, Some("v")), MetaChange::Set);
+    assert_eq!(meta_change(Some("v"), Some("v")), MetaChange::Keep);
+    assert_eq!(meta_change(Some("v"), Some("w")), MetaChange::Set);
+    assert_eq!(meta_change(Some("v"), None), MetaChange::Delete);
+}
+
+#[tokio::test]
+async fn resume_blocked_meta_is_stable_across_passes() {
+    let fx = fx();
+    let (c, old_pane) = ended_clone(&fx).await;
+    let new_pane = cold_restart(&fx, &c.id).await;
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()), "unknown": true }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let key = planner::resume_blocked_key(&c.id);
+    let first = fx
+        .journal
+        .meta_get(&key)
+        .unwrap()
+        .expect("blocked meta set");
+    let st_first = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    for _ in 0..3 {
+        step(&fx).await;
+        assert_eq!(
+            fx.journal.meta_get(&key).unwrap().as_deref(),
+            Some(first.as_str())
+        );
+    }
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    assert_eq!(st["resume_blocked"], st_first["resume_blocked"]);
+    assert_eq!(st["resume_blocked"][0]["pane"], old_pane.0);
+    keep_pane_id(&fx, &c.id, &new_pane);
+    step(&fx).await;
+    assert_eq!(fx.journal.meta_get(&key).unwrap(), None);
+}
+
+#[tokio::test]
+async fn relaunch_in_another_harness_resumes_the_new_session() {
+    let fx = fx();
+    activate(&fx, "codex");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    // The clone ran claude first; a relaunch on the same pane put codex there, which ended later.
+    end_session(&fx, &c, "old-claude", "claude");
+    fx.clock.advance(chrono::Duration::seconds(10));
+    end_session(&fx, &c, "new-codex", "codex");
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert_eq!(starts[0].kind, "codex");
+    assert!(
+        starts[0].args.contains(&"new-codex".to_string()),
+        "{:?}",
+        starts[0].args
+    );
+    assert!(!starts[0].args.contains(&"old-claude".to_string()));
+}
+
+#[tokio::test]
+async fn auto_resumed_agent_during_grace_gets_no_launch() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1, "planned, waiting out the grace");
+    // Herdr auto-resumes the agent; it reattaches seat-1 by the same-native-session claim.
+    fx.herdr.set_agent(&pane, agent(AgentStatus::Idle));
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_ne!(
+        rows(&fx, EffectKind::RelaunchOccupant)[0].status,
+        EffectStatus::Done
+    );
+}
+
+/// A restored clone: ended session, acknowledged Restore of `epoch`, bare reopened pane, no restart seen.
+async fn restored_clone(fx: &Fx, epoch: &OpId) -> (CloneRecord, HerdrPaneId) {
+    let (c, pane) = ended_clone(fx).await;
+    seat_state(
+        fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "intent": restore_intent("seat-1", epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    (c, pane)
+}
+
+#[tokio::test]
+async fn restore_trigger_launches_once_without_grace() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    // A restart is on record and its grace still running: the restore launch does not wait.
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert_eq!(
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
+        serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
+        "launched is marked before the dispatch"
+    );
+    assert_eq!(relaunch_rows(&fx), 0);
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "exactly one launch");
+}
+
+#[tokio::test]
+async fn cold_restart_after_restore_launch_relaunches_once_after_grace() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "the restore launch");
+    let marked = match the_clone(&fx, &c.id).seat_intent {
+        Some(SeatIntent::Restore {
+            launched: Some(t), ..
+        }) => t,
+        other => panic!("expected a launch mark, got {other:?}"),
+    };
+    // The daemon and Herdr restart before the agent reattaches: the restore launch is lost with the incarnation.
+    fx.clock.advance(chrono::Duration::seconds(30));
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    let early = step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1, "{early:?}");
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(
+        the_clone(&fx, &c.id).seat_intent.map(|i| match i {
+            SeatIntent::Restore { launched, .. } => launched,
+            other => panic!("{other:?}"),
+        }),
+        Some(Some(marked)),
+        "the relaunch does not touch the launch mark"
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "one relaunch per incarnation");
+    assert_eq!(relaunch_rows(&fx), 1);
+    // The agent reattached: the intent clears.
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::ClearOnReattach {
+            epoch: epoch.clone(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None);
+}
+
+#[tokio::test]
+async fn ordinary_start_rule_skips_a_pending_restore() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    // A fresh pane: no launch on record, so the ordinary rule would start the clone.
+    fx.journal
+        .meta_delete(&planner::launched_key(&c.id))
+        .unwrap();
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "intent": restore_intent("seat-1", &epoch, false, false) }),
+    );
+    step(&fx).await;
+    assert!(
+        start_calls(&fx).is_empty(),
+        "Restore not acknowledged by threads yet"
+    );
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "intent": restore_intent("seat-1", &epoch, true, true) }),
+    );
+    step(&fx).await;
+    assert!(
+        start_calls(&fx).is_empty(),
+        "already launched in this epoch"
+    );
+    // The agent reattached: the intent clears and the ordinary rule covers the clone again.
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::ClearOnReattach {
+            epoch: epoch.clone(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None);
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn restore_launch_is_bounded_and_named_stuck() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, pane) = restored_clone(&fx, &epoch).await;
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1);
+    // The agent exits (or never checks in): the pane is bare again and nothing launches.
+    fx.herdr.set_agent(&pane, None);
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1);
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    let stuck = st["stuck_restores"].as_array().unwrap();
+    assert_eq!(stuck.len(), 1, "{st}");
+    assert_eq!(stuck[0]["clone"], c.id.to_string());
+    assert_eq!(stuck[0]["epoch"], epoch.to_string());
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+    assert!(
+        stuck[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("retire the clone")
+    );
+}
+
+/// Refuses the restore launch mark at admission while `fail` is set; every other request passes through.
+struct MarkRefusingWriter {
+    inner: Arc<WriterCore>,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl crate::ports::writer::Writer for MarkRefusingWriter {
+    fn admit(
+        &self,
+        request: crate::model::change::ChangeRequest,
+    ) -> Result<OpId, crate::ports::writer::WriterError> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst)
+            && request.args["transition"]["action"] == "mark_launched"
+        {
+            return Err(crate::ports::writer::WriterError::Journal(
+                "disk full".into(),
+            ));
+        }
+        self.inner.admit(request)
+    }
+
+    fn status(
+        &self,
+        op: &OpId,
+    ) -> Result<Option<crate::model::operation::OpState>, crate::ports::writer::WriterError> {
+        self.inner.status(op)
+    }
+}
+
+fn stuck_restores(fx: &Fx) -> Vec<serde_json::Value> {
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(fx), &fx.journal);
+    st["stuck_restores"].as_array().unwrap().clone()
+}
+
+#[tokio::test]
+async fn failed_mark_launched_is_retried_without_launching() {
+    let mut fx = fx();
+    let writer = Arc::new(MarkRefusingWriter {
+        inner: fx.w.clone(),
+        fail: std::sync::atomic::AtomicBool::new(true),
+    });
+    let mut cfg = ReconcilerConfig::new(fx._tmp.path().join("inst"));
+    cfg.idle_timeout = Duration::from_millis(100);
+    cfg.exit_timeout = Duration::from_millis(100);
+    cfg.exit_followup = Duration::from_millis(20);
+    fx.rec = Reconciler::new(
+        fx.store.clone(),
+        fx.journal.clone(),
+        writer.clone(),
+        fx.herdr.clone(),
+        fx.clock.clone(),
+        fx.notes.clone(),
+        cfg,
+    );
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    step(&fx).await;
+    let starts = rows(&fx, EffectKind::StartAgent);
+    assert!(
+        starts.iter().any(|r| r.status == EffectStatus::Failed),
+        "{starts:?}"
+    );
+    assert!(
+        starts.iter().all(|r| r.status != EffectStatus::Obsolete),
+        "{starts:?}"
+    );
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["clone"], c.id.to_string());
+    assert_eq!(stuck[0]["reason"], "mark_failed");
+    assert!(stuck[0]["error"].as_str().unwrap().contains("disk full"));
+    // Still failing: retried every pass, never launched.
+    for _ in 0..2 {
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(stuck_restores(&fx).len(), 1);
+    // The fault clears: the next passes mark and launch exactly once.
+    writer
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    assert_eq!(
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
+        serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
+    );
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+}
+
+#[tokio::test]
+async fn restore_without_resumable_session_launches_fresh() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    let epoch = OpId::new();
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "intent": restore_intent("seat-1", &epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].kind, "claude");
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert_eq!(
+        marked_normalized(&the_clone(&fx, &c.id).seat_intent),
+        serde_json::from_value(restore_intent("seat-1", &epoch, true, true)).unwrap(),
+    );
+    // Launched, not stuck as "not launchable": only the post-launch wait for the agent to reattach is named.
+    let stuck = stuck_restores(&fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+    // One launch per epoch.
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn failed_restore_launch_is_not_retried_by_either_trigger() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_clone(&fx, &epoch).await;
+    fx.herdr
+        .fail_next("agent.start", Fault::Rejected("no".into()));
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1);
+    assert!(
+        rows(&fx, EffectKind::StartAgent)
+            .iter()
+            .any(|r| r.status == EffectStatus::Failed),
+        "{:?}",
+        rows(&fx, EffectKind::StartAgent)
+    );
+    // Within this incarnation the restart trigger does not apply either: the Restore intent owns the clone.
+    // (A cold restart after the launch is the separate case of
+    // `cold_restart_after_restore_launch_relaunches_once_after_grace`.)
+    let p = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&p, None);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(300));
+    for _ in 0..2 {
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(relaunch_rows(&fx), 0);
+    let st = crate::daemon::clone_status::clone_status_with_journal(&view(&fx), &fx.journal);
+    assert_eq!(st["stuck_restores"].as_array().unwrap().len(), 1, "{st}");
+}
+
+#[tokio::test]
+async fn restart_arm_needs_an_earlier_agent() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    // Never had an agent session: the resume rule is not its launcher.
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    // Seatless clone with an earlier agent but no key reservation: the unseated arm needs the key (with one it
+    // is covered by `clone_unseated_at_cold_restart_is_launched_then_seated`).
+    end_session(&fx, &c, "abc", "claude");
+    seat_state(&fx, &c.id, json!({ "threads_seat": null, "fact": null }));
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_seat_state", "clone": c.id, "drop_reservation": true}),
+    );
+    step_unreserved(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn new_clone_gets_exactly_one_launch_by_the_ordinary_rule() {
+    let fx = fx();
+    activate(&fx, "claude");
+    for _ in 0..3 {
+        step(&fx).await;
+    }
+    assert_eq!(
+        count_calls(&fx, |c| matches!(c, FakeCall::StartAgent(_))),
+        1
+    );
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert_eq!(rows(&fx, EffectKind::StartAgent).len(), 1);
+    // The keyed half (reservation, post-D1) is covered with hg-66u.13.
+}
+
+#[tokio::test]
+async fn key_conflict_never_launches() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    let conflict = fact(
+        "seat-1",
+        SeatFactState::KeyConflict {
+            pane: Some(pane.clone()),
+        },
+        fx.clock.now(),
+    );
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": conflict }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty());
+    // A Restore trigger on a conflicting seat does not fire either.
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "intent": restore_intent("seat-1", &OpId::new(), true, false) }),
+    );
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+/// The workspace listing `pane` in the live snapshot.
+async fn workspace_of(fx: &Fx, pane: &HerdrPaneId) -> Option<crate::model::HerdrWorkspaceId> {
+    let snap = fx.herdr.snapshot().await.unwrap();
+    snap.workspaces
+        .iter()
+        .find(|w| w.tabs.iter().any(|t| t.panes.iter().any(|x| &x.id == pane)))
+        .map(|w| w.id.clone())
+}
+
+#[tokio::test]
+async fn undo_reopens_the_tab_in_its_original_workspace_with_one_launch() {
+    use crate::model::action::ActionKind;
+    let fx = fx();
+    let (c, pane) = ended_clone(&fx).await;
+    let seat_rec = seat(&fx, "foreman");
+    let workspace = workspace_of(&fx, &pane).await.expect("pane is listed");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-1".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+
+    // Retire the seat (the tab closes), then undo it.
+    commit(&fx, "seat retire foreman");
+    step(&fx).await;
+    assert_eq!(
+        workspace_of(&fx, &pane).await,
+        None,
+        "the retired seat's pane is gone"
+    );
+    let retire_act = layout::list_actions(&view(&fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action");
+    let sp = plan(&fx, &format!("undo {}", retire_act.id));
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit undo: {}", e.message));
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let restored = the_clone(&fx, &c.id);
+    let epoch = row.op.clone();
+    assert_eq!(
+        restored.seat_intent,
+        serde_json::from_value(restore_intent("seat-1", &epoch, false, false)).unwrap()
+    );
+    assert_eq!(restored.runtime, crate::plan::core_kinds::absent());
+
+    // The reconciler reopens the seat's tab and writes the new pane as the binding; threads has not
+    // acknowledged yet, so nothing launches.
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    let reopened = pane_of(&fx, &c);
+    assert_ne!(reopened, pane);
+    assert_eq!(
+        workspace_of(&fx, &reopened).await,
+        Some(workspace),
+        "original workspace"
+    );
+    assert_eq!(seat(&fx, "foreman").id, seat_rec.id);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+
+    // Threads acknowledges the Restore (the succession want's outcome): exactly one resume launch.
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Acknowledge {
+            epoch: epoch.clone(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "exactly one launch");
+}
+
+/// Hands `clone` back as the start rule sees it after a retirement was reversed: one `StartAgent` whose argv
+/// resumes the clone's last session, no resume-driver row, and nothing more on later steps.
+async fn assert_one_ordinary_resume_launch(fx: &Fx) {
+    for _ in 0..2 {
+        step(fx).await;
+    }
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(
+        rows(fx, EffectKind::StartAgent).len(),
+        2,
+        "first launch and the resume"
+    );
+    assert_eq!(relaunch_rows(fx), 0, "the resume driver plans nothing");
+    fx.herdr.clear_calls();
+    for _ in 0..2 {
+        step(fx).await;
+    }
+    assert!(start_calls(fx).is_empty(), "exactly one launch");
+    assert_eq!(relaunch_rows(fx), 0);
+}
+
+/// A seatless claude clone that had an agent, retired by closing its seat (the tab closes). Returns the clone
+/// and the retire action's id.
+async fn retired_seatless(fx: &Fx) -> (CloneRecord, crate::model::ActionId) {
+    use crate::model::action::ActionKind;
+    let (c, pane) = ended_clone(fx).await;
+    assert_eq!(c.threads_seat, None);
+    commit(fx, "seat retire foreman");
+    step(fx).await;
+    assert_eq!(workspace_of(fx, &pane).await, None, "the pane is gone");
+    let act = layout::list_actions(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action");
+    (c, act.id)
+}
+
+#[tokio::test]
+async fn seatless_undo_launches_once_through_the_ordinary_start_rule() {
+    let fx = fx();
+    let (c, act) = retired_seatless(&fx).await;
+    commit(&fx, &format!("undo {act}"));
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None, "no Restore intent");
+    fx.herdr.clear_calls();
+    assert_one_ordinary_resume_launch(&fx).await;
+}
+
+#[tokio::test]
+async fn seatless_resurrection_launches_once_through_the_ordinary_start_rule() {
+    let fx = fx();
+    let (c, _) = retired_seatless(&fx).await;
+    let id = seat(&fx, "foreman").id;
+    commit(&fx, &format!("seat resurrect {id} --active"));
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, None, "no Restore intent");
+    fx.herdr.clear_calls();
+    assert_one_ordinary_resume_launch(&fx).await;
+}
+
+#[tokio::test]
+async fn seatless_restored_pane_is_not_the_resume_drivers() {
+    let fx = fx();
+    let (c, _) = ended_clone(&fx).await;
+    // A fresh pane has no `launched:<clone>` record (the executor's clear-on-new-pane rule).
+    let _ = fx
+        .journal
+        .meta_delete(&crate::reconcile::planner::launched_key(&c.id));
+    let fresh = the_clone(&fx, &c.id);
+    assert_eq!(
+        (fresh.seat_intent.as_ref(), fresh.threads_seat.as_ref()),
+        (None, None)
+    );
+    fx.herdr.clear_calls();
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(relaunch_rows(&fx), 0);
+}
+
+/// The fixture's reconciler with the threads effect source on fakes: channels, invites, succession.
+fn with_threads(
+    fx: &Fx,
+) -> (
+    Arc<crate::threads::fake::FakeThreads>,
+    Arc<crate::threads::mapping::FakePaneSeatMap>,
+) {
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    crate::threads::register_with(
+        &fx.rec,
+        threads.clone(),
+        map.clone(),
+        std::sync::Arc::new(crate::threads::FakeThreadsSeatView::new()),
+    );
+    (threads, map)
+}
+
+async fn steps(fx: &Fx, n: usize) {
+    for _ in 0..n {
+        step(fx).await;
+    }
+}
+
+/// A seated claude clone with accepted memberships on seat-A and an ended session `abc`, whose live occupant
+/// survives the deactivation close (the observer never saw it end); the seat is then reactivated with
+/// `harness`. Drives the reactivation through the succession onto seat-B, the restore launch and the
+/// re-invite, and checks the end state: `resumes` says whether the launch resumes `abc` or starts fresh.
+async fn reactivate_seated(harness: &str, resumes: bool) {
+    use crate::model::clone::{InvitationState, InviteConstraint};
+    use crate::ports::threads::{ThreadRef, ThreadsSeatRef};
+    let fx = fx();
+    let (threads, map) = with_threads(&fx);
+    let a = ThreadsSeatRef("seat-A".into());
+    let b = ThreadsSeatRef("seat-B".into());
+    activate(&fx, "claude");
+    steps(&fx, 3).await;
+    let c = only_clone(&fx, "foreman");
+    map.set(&pane_of(&fx, &c), "seat-A");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-A".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    end_session(&fx, &c, "abc", "claude");
+    // The surviving occupant: the live session the observer never saw end.
+    admit_bookkeeping(
+        &fx,
+        json!({"sub": "test_set_occupant", "clone": c.id, "native": "live", "harness": "claude"}),
+    );
+    assert!(the_clone(&fx, &c.id).occupant.is_some());
+
+    // Channels exist and the clone's Required invitations are accepted on seat-A.
+    steps(&fx, 2).await;
+    let st = ThreadRef(
+        seat(&fx, "foreman")
+            .channel
+            .thread_id
+            .expect("seat channel"),
+    );
+    let ts = ThreadRef(
+        layout::list_teamspaces(&view(&fx))
+            .unwrap()
+            .remove(0)
+            .1
+            .channel
+            .thread_id
+            .expect("teamspace channel"),
+    );
+    threads.accept(&st, &a);
+    threads.accept(&ts, &a);
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step(&fx).await;
+
+    commit(&fx, "seat deactivate foreman");
+    steps(&fx, 2).await; // the tab closes
+    if harness != "claude" {
+        commit(&fx, &format!("seat override foreman --harness {harness}"));
+    }
+    commit(&fx, "seat activate foreman");
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(after.occupant, None, "the helper cleared the survivor");
+    assert_eq!(after.runtime, crate::plan::core_kinds::absent());
+    let Some(SeatIntent::Restore {
+        seat: ref s,
+        threads_done: false,
+        launched: None,
+        ref epoch,
+        ..
+    }) = after.seat_intent
+    else {
+        panic!(
+            "activation writes a Restore intent: {:?}",
+            after.seat_intent
+        );
+    };
+    assert_eq!(s, "seat-A");
+    let epoch = epoch.clone();
+
+    fx.herdr.clear_calls();
+    steps(&fx, 3).await; // the tab and pane are recreated and bound
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Observer stand-in: the closed pane's seat reads final-retired; threads maps the reopened pane to seat-B.
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false }, fx.clock.now()) }),
+    );
+    map.set(&pane_of(&fx, &c), "seat-B");
+    for _ in 0..5 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+
+    let c = the_clone(&fx, &c.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(c.threads_seat_history, vec!["seat-A".to_owned()]);
+    assert_eq!(c.lifecycle, crate::model::common::CloneLifecycle::Active);
+    let succeeded = rows(
+        &fx,
+        EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into()),
+    );
+    assert_eq!(succeeded.len(), 1, "{succeeded:?}");
+    assert_eq!(succeeded[0].status, EffectStatus::Done);
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].kind, harness);
+    if resumes {
+        assert_eq!(starts[0].args, ["--resume", "abc"]);
+    } else {
+        assert!(
+            !starts[0].args.iter().any(|a| a == "--resume"),
+            "{:?}",
+            starts[0].args
+        );
+    }
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert!(
+        matches!(
+            c.seat_intent,
+            Some(SeatIntent::Restore { ref seat, epoch: ref e, threads_done: true, launched: Some(_), .. })
+                if seat == "seat-B" && *e == epoch
+        ),
+        "{:?}",
+        c.seat_intent
+    );
+    // The launch is awaiting its reattach; it is not "not launchable".
+    assert!(
+        stuck_restores(&fx)
+            .iter()
+            .all(|s| s["reason"] != "not_launchable"),
+        "{:?}",
+        stuck_restores(&fx)
+    );
+    for t in [&st, &ts] {
+        let ma = threads.member(t, &a).unwrap();
+        let mb = threads.member(t, &b).unwrap();
+        assert_eq!(ma.state, InvitationState::Released, "{}", t.0);
+        assert_eq!(
+            (mb.constraint, mb.state),
+            (InviteConstraint::Required, InvitationState::Pending),
+            "{}",
+            t.0
+        );
+        let link = c
+            .invitations
+            .iter()
+            .find(|i| i.thread == t.0)
+            .and_then(|i| i.link.as_ref())
+            .unwrap_or_else(|| panic!("no invitation link to {}: {:?}", t.0, c.invitations));
+        assert_eq!(link.seat, "seat-B");
+    }
+    let invites = threads.call_count("invite");
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    assert_eq!(threads.call_count("invite"), invites, "invited once");
+    assert_eq!(
+        rows(
+            &fx,
+            EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into())
+        )
+        .len(),
+        1,
+        "no second succession"
+    );
+    assert_eq!(start_calls(&fx).len(), 1, "one launch per epoch");
+}
+
+#[tokio::test]
+async fn seat_reactivation_succeeds_resumes_and_reinvites() {
+    reactivate_seated("claude", true).await;
+}
+
+#[tokio::test]
+async fn seat_reactivation_after_a_harness_change_launches_fresh() {
+    reactivate_seated("codex", false).await;
+}
+
+// -------------------------------------------------------------------------------------------------
+// keyed launches (hg-66u.44): launch gating on the recorded reservation and the keyed env (spec §5, §14.4)
+// -------------------------------------------------------------------------------------------------
+
+use crate::model::launch::ENV_CONTINUITY_KEY;
+
+fn has_key(env: &[(String, String)]) -> bool {
+    env.iter().any(|(k, _)| k == ENV_CONTINUITY_KEY)
+}
+
+#[tokio::test]
+async fn reserve_before_first_keyed_launch() {
+    let fx = fx();
+    activate(&fx, "claude");
+    // The pane is created, but no reservation is recorded: no agent starts, however many passes run.
+    for _ in 0..3 {
+        step_unreserved(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(only_clone(&fx, "foreman").key_reservation.is_none());
+    assert!(rows(&fx, EffectKind::StartAgent).is_empty());
+    // The reserve-key pass records the reservation; the next pass starts the agent, once.
+    reserve_pending(&fx);
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one launch");
+}
+
+#[test]
+fn the_key_env_is_emitted_only_for_a_reserved_clone() {
+    let id = CloneId::new();
+    assert!(!has_key(&agent_env(&id, false)));
+    assert_eq!(
+        agent_env(&id, true).last(),
+        Some(&(ENV_CONTINUITY_KEY.to_owned(), id.to_string()))
+    );
+}
+
+#[tokio::test]
+async fn env_builder_emits_the_key_once_reserved() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert!(start_calls(&fx).is_empty(), "nothing launches unkeyed");
+    assert!(
+        fx.journal
+            .meta_get(&planner::launch_env_key(&c.id))
+            .unwrap()
+            .is_none(),
+        "no launch env before the reservation"
+    );
+    reserve_pending(&fx);
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1);
+    assert!(has_key(&starts[0].env), "{:?}", starts[0].env);
+    assert!(
+        starts[0]
+            .env
+            .contains(&(ENV_CONTINUITY_KEY.to_owned(), c.id.to_string())),
+        "the key's value is the clone id: {:?}",
+        starts[0].env
+    );
+    let raw = fx
+        .journal
+        .meta_get(&planner::launch_env_key(&c.id))
+        .unwrap()
+        .expect("launch env recorded");
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert!(
+        v["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n == ENV_CONTINUITY_KEY),
+        "{v}"
+    );
+}
+
+#[tokio::test]
+async fn new_clone_after_d1_launch_carries_the_key() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    assert!(c.key_reservation.is_some(), "reserved before its launch");
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    // Later passes by the ordinary start rule launch nothing more.
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1);
+}
+
+#[tokio::test]
+async fn pre_d1_clone_survives_headless_cold_restart_on_its_seat() {
+    let fx = fx();
+    activate(&fx, "claude");
+    // A clone launched by a pre-D1 build: a session on record, a threads seat, no reservation.
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    fx.herdr.restart(true, true);
+    step_unreserved(&fx).await;
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step_unreserved(&fx).await;
+    assert!(
+        start_calls(&fx).is_empty() && relaunch_rows(&fx) == 0,
+        "no key yet: nothing resumes {:?}",
+        calls(&fx)
+    );
+    // The backfill reserves the key linked to the clone's recorded seat.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane, "into its last pane");
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(
+        after.threads_seat.as_deref(),
+        Some("seat-1"),
+        "seat unchanged"
+    );
+    assert_eq!(
+        after.key_reservation.map(|r| (r.key, r.seat)),
+        Some((c.id.to_string(), Some("seat-1".to_owned())))
+    );
+}
+
+/// An unseated clone (reserved key, no `threads_seat`, no matcher evidence) whose agent is gone at a cold
+/// restart is launched into its bare pane by the restart trigger, keyed; the keyed check-in binds the key to a
+/// seat in threads, and the next pass admits it from the reservation answer.
+#[tokio::test]
+async fn clone_unseated_at_cold_restart_is_launched_then_seated() {
+    let fx = fx();
+    let (threads, map) = with_threads(&fx);
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    // No token evidence: the pane-based resolve does not apply, only the key can seat the clone.
+    seat_state(&fx, &c.id, json!({ "drop_token": true }));
+    let before = the_clone(&fx, &c.id);
+    assert_eq!(before.threads_seat, None);
+    assert_eq!(
+        before.key_reservation.as_ref().map(|r| r.key.clone()),
+        Some(c.id.to_string())
+    );
+    // Inside the grace nothing launches; after it the restart trigger resumes the session once, as soon as a
+    // threads answer taken after the restart is on record (the first pass stamps it, the next launches).
+    step(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane);
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert_eq!(the_clone(&fx, &c.id).threads_seat, None, "not seated yet");
+    // The keyed agent checks in: threads binds the key to a seat. The pane map knows nothing (no matcher).
+    let resolves = map.resolve_ops().len();
+    threads.set_key_binding(&c.id.to_string(), "seat-K");
+    fx.herdr.clear_calls();
+    for _ in 0..4 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    let after = the_clone(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-K"));
+    assert_eq!(map.resolve_ops().len(), resolves, "no pane resolution");
+    assert!(start_calls(&fx).is_empty(), "one launch: {:?}", calls(&fx));
+}
+
+/// With threads unreachable at a cold restart an unseated reserved clone is not launched, whatever the grace;
+/// once threads answers, the restart trigger launches it.
+#[tokio::test]
+async fn unseated_clone_waits_for_threads_before_the_restart_launch() {
+    let fx = fx();
+    let (threads, _map) = with_threads(&fx);
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "abc", "claude");
+    threads.set_reserve_error(Some(crate::threads::fake::FakeSeatViewError::Disconnected));
+    let pane = cold_restart(&fx, &c.id).await;
+    keep_pane_id(&fx, &c.id, &pane);
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(91));
+        step(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert_eq!(the_clone(&fx, &c.id).threads_seat, None);
+    threads.set_reserve_error(None);
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+/// A restored clone with an acknowledged Restore of `epoch` for `seat-1`, its pane bare, whose key reservation
+/// the test sets: `None` records none, `Some(seat)` records the key bound to `seat` (`Some(None)`: unbound).
+async fn restored_unreserved(
+    fx: &Fx,
+    epoch: &OpId,
+    reservation: Option<Option<&str>>,
+) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step_unreserved(fx).await;
+    let c = only_clone(fx, "foreman");
+    if let Some(seat) = reservation {
+        record_reservation(fx, &c.id, seat);
+    }
+    end_session(fx, &c, "abc", "claude");
+    let pane = pane_of(fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    seat_state(
+        fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "intent": restore_intent("seat-1", epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    (only_clone(fx, "foreman"), pane)
+}
+
+fn restore_marked(fx: &Fx, c: &CloneId) -> bool {
+    matches!(
+        the_clone(fx, c).seat_intent,
+        Some(SeatIntent::Restore {
+            launched: Some(_),
+            ..
+        })
+    )
+}
+
+#[tokio::test]
+async fn restore_launch_waits_for_the_key_bound_to_restore_seat() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, _) = restored_unreserved(&fx, &epoch, None).await;
+    // No reservation at all: the reserve-key want comes first.
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Reserved but unbound: the key-link want comes next.
+    record_reservation(&fx, &c.id, None);
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    // Bound to a seat other than Restore.seat (the predecessor): still held back.
+    record_reservation(&fx, &c.id, Some("seat-0"));
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(
+        !restore_marked(&fx, &c.id),
+        "a held-back launch spends no attempt"
+    );
+    // Bound to Restore.seat: exactly one keyed launch.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    assert!(restore_marked(&fx, &c.id));
+    fx.clock.advance(chrono::Duration::seconds(300));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one launch");
+}
+
+#[tokio::test]
+async fn restore_right_after_succession_plans_nothing_until_the_key_is_linked() {
+    let fx = fx();
+    let epoch = OpId::new();
+    // The succession commit: Restore acknowledged, not launched, the reservation still bound to the predecessor.
+    let (c, _) = restored_unreserved(&fx, &epoch, Some(Some("seat-0"))).await;
+    for _ in 0..2 {
+        step_unreserved(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert!(rows(&fx, EffectKind::StartAgent).is_empty());
+    // The key-link want records the successor binding.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one keyed launch");
+}
+
+#[tokio::test]
+async fn unretired_restore_with_its_key_already_bound_launches_at_once() {
+    let fx = fx();
+    let epoch = OpId::new();
+    let (c, pane) = restored_unreserved(&fx, &epoch, Some(Some("seat-1"))).await;
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane);
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+}
+
+// -------------------------------------------------------------------------------------------------
+// D2 restore end to end (hg-66u.32): undo and resurrection un-retire the same seat, one keyed launch
+// -------------------------------------------------------------------------------------------------
+
+struct D2World {
+    fx: Fx,
+    threads: Arc<crate::threads::fake::FakeThreads>,
+    seats: Arc<crate::threads::FakeThreadsSeatView>,
+    clone: CloneRecord,
+    old_pane: HerdrPaneId,
+    workspace: crate::model::HerdrWorkspaceId,
+    memberships: [crate::ports::threads::ThreadRef; 2],
+}
+
+/// A seated claude clone on seat-A with (when `resumable`) an ended session `abc`, accepted memberships and its key bound to
+/// seat-A, whose seat is then retired through the graph (the tab closes) and read reversibly retired.
+async fn d2_retired_world(resumable: bool) -> D2World {
+    use crate::ports::threads::{ThreadRef, ThreadsSeatRef};
+    let fx = fx();
+    let threads = Arc::new(crate::threads::fake::FakeThreads::new());
+    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
+    let seats = Arc::new(crate::threads::FakeThreadsSeatView::new());
+    crate::threads::register_with(&fx.rec, threads.clone(), map.clone(), seats.clone());
+    let a = ThreadsSeatRef("seat-A".into());
+    activate(&fx, "claude");
+    steps(&fx, 3).await;
+    let c = only_clone(&fx, "foreman");
+    let old_pane = pane_of(&fx, &c);
+    map.set(&old_pane, "seat-A");
+    admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::Assign {
+            seat: "seat-A".into(),
+        },
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    if resumable {
+        end_session(&fx, &c, "abc", "claude");
+    }
+    fx.herdr.set_agent(&old_pane, None);
+    let workspace = workspace_of(&fx, &old_pane).await.expect("pane is listed");
+    // Channels, invitations and the key link settle; the agent accepts both memberships.
+    steps(&fx, 4).await;
+    let st = ThreadRef(
+        seat(&fx, "foreman")
+            .channel
+            .thread_id
+            .expect("seat channel"),
+    );
+    let ts = ThreadRef(
+        layout::list_teamspaces(&view(&fx))
+            .unwrap()
+            .remove(0)
+            .1
+            .channel
+            .thread_id
+            .expect("teamspace channel"),
+    );
+    threads.accept(&st, &a);
+    threads.accept(&ts, &a);
+    fx.clock.advance(chrono::Duration::minutes(10));
+    step(&fx).await;
+    let key = c.id.to_string();
+    assert_eq!(threads.key_binding(&key).as_deref(), Some("seat-A"));
+    // The pane closes: threads retires the keyed seat reversibly.
+    commit(&fx, "seat retire foreman");
+    step(&fx).await;
+    assert_eq!(workspace_of(&fx, &old_pane).await, None, "the pane is gone");
+    assert_eq!(
+        threads.close_pane(&seats, &a),
+        crate::ports::threads::RetirementKind::Reversible
+    );
+    D2World {
+        fx,
+        threads,
+        seats,
+        clone: c,
+        old_pane,
+        workspace,
+        memberships: [st, ts],
+    }
+}
+
+fn retire_action_id(fx: &Fx) -> crate::model::ActionId {
+    use crate::model::action::ActionKind;
+    layout::list_actions(&view(fx))
+        .unwrap()
+        .into_iter()
+        .map(|(_, a)| a)
+        .find(|a| a.kind == ActionKind::Retire)
+        .expect("the retirement is an action")
+        .id
+}
+
+/// Commits `change` (an undo or a resurrection) and returns the Restore epoch it wrote.
+fn commit_restore(fx: &Fx, clone: &CloneId, change: &str) -> OpId {
+    let sp = plan(fx, change);
+    let op = admit_apply(
+        &fx.deps,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap_or_else(|e| panic!("admit {change}: {}", e.message));
+    fx.w.drain().unwrap();
+    let row = fx.w.journal().get(&op).unwrap().unwrap();
+    assert_eq!(row.state, OpState::Committed, "{:?}", row.rejection);
+    let epoch = row.op.clone();
+    assert_eq!(
+        the_clone(fx, clone).seat_intent,
+        serde_json::from_value(restore_intent("seat-A", &epoch, false, false)).unwrap(),
+        "the commit writes the Restore intent for the same seat"
+    );
+    epoch
+}
+
+/// The observation after the commit: the closed seat reads reversibly retired.
+fn observe_reversible(w: &D2World) {
+    seat_state(
+        &w.fx,
+        &w.clone.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true }, w.fx.clock.now()) }),
+    );
+}
+
+/// Steps with the backoff expiring between passes.
+async fn settle(fx: &Fx, n: usize) {
+    for _ in 0..n {
+        fx.clock.advance(chrono::Duration::minutes(10));
+        step(fx).await;
+    }
+}
+
+/// The restore, driven to the end state: same seat, memberships kept, the tab reopened in its workspace and
+/// exactly one keyed resume launch by the resume driver.
+async fn assert_d2_restore(w: &D2World, epoch: &OpId) {
+    let (fx, threads) = (&w.fx, &w.threads);
+    let id = &w.clone.id;
+    let invites = threads.call_count("invite");
+    fx.herdr.clear_calls();
+    observe_reversible(w);
+    settle(fx, 6).await;
+
+    let c = the_clone(fx, id);
+    assert_eq!(
+        c.threads_seat.as_deref(),
+        Some("seat-A"),
+        "the same seat id"
+    );
+    assert!(c.threads_seat_history.is_empty(), "no succession");
+    assert_eq!(threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert!(
+        rows(
+            fx,
+            EffectKind::Custom(crate::threads::effects::SUCCEED_KIND.into())
+        )
+        .is_empty()
+    );
+    assert!(matches!(
+        c.seat_intent,
+        Some(SeatIntent::Restore { ref seat, epoch: ref e, threads_done: true, launched: Some(_), .. })
+            if seat == "seat-A" && e == epoch
+    ));
+    for t in &w.memberships {
+        let m = threads
+            .member(t, &crate::ports::threads::ThreadsSeatRef("seat-A".into()))
+            .unwrap();
+        assert_eq!(
+            m.state,
+            crate::model::clone::InvitationState::Accepted,
+            "{}",
+            t.0
+        );
+    }
+    assert_eq!(threads.call_count("invite"), invites, "no re-acceptance");
+    // Reopened in the original workspace, on a new pane.
+    let reopened = pane_of(fx, &c);
+    assert_ne!(reopened, w.old_pane);
+    assert_eq!(workspace_of(fx, &reopened).await, Some(w.workspace.clone()));
+    // Exactly one launch: the resume driver's, resuming the last session with the continuity key.
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(id, true));
+    assert!(has_key(&starts[0].env));
+    settle(fx, 3).await;
+    assert_eq!(start_calls(fx).len(), 1, "exactly one launch");
+}
+
+#[tokio::test]
+async fn undo_reopens_the_tab_and_resumes_with_the_key_in_one_launch() {
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    assert_d2_restore(&w, &epoch).await;
+}
+
+#[tokio::test]
+async fn resurrection_unretires_the_same_seat() {
+    let w = d2_retired_world(true).await;
+    let id = seat(&w.fx, "foreman").id;
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("seat resurrect {id} --active"));
+    assert_d2_restore(&w, &epoch).await;
+}
+
+#[tokio::test]
+async fn undo_with_threads_unreachable_commits_no_seat_change_and_launches_nothing() {
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    let fx = &w.fx;
+    w.threads.disconnect();
+    w.seats
+        .set_error(Some(crate::threads::FakeSeatViewError::Disconnected));
+    fx.herdr.clear_calls();
+    observe_reversible(&w);
+    settle(fx, 6).await;
+    let c = the_clone(fx, &w.clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert_eq!(
+        c.seat_intent,
+        serde_json::from_value(restore_intent("seat-A", &epoch, false, false)).unwrap()
+    );
+    assert_eq!(w.threads.call_count("unretire_seat"), 0);
+    assert!(start_calls(fx).is_empty(), "{:?}", calls(fx));
+    // Threads answers again: the restore completes with its one launch.
+    w.threads.reconnect();
+    w.seats.set_error(None);
+    settle(fx, 6).await;
+    assert_eq!(start_calls(fx).len(), 1, "{:?}", calls(fx));
+}
+
+#[tokio::test]
+async fn export_rejected_clone_with_a_resumable_session_reattaches_the_unretired_seat() {
+    // The shell rejected the key export, so the resumed agent presents no key; threads reattaches it to the
+    // unretired seat by its native session (C1). The graph sees the seat Resolved under Restore.seat.
+    let w = d2_retired_world(true).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    assert_d2_restore(&w, &epoch).await;
+    let fx = &w.fx;
+    let reopened = pane_of(fx, &the_clone(fx, &w.clone.id));
+    fx.herdr.set_agent(&reopened, agent(AgentStatus::Idle));
+    // The observer records the resumed session as the occupant (the same native session as before).
+    admit_bookkeeping(
+        fx,
+        json!({"sub": "test_set_occupant", "clone": w.clone.id, "native": "abc", "harness": "claude"}),
+    );
+    seat_state(
+        fx,
+        &w.clone.id,
+        json!({ "fact": fact("seat-A", SeatFactState::Resolved { pane: reopened.clone() }, fx.clock.now()) }),
+    );
+    settle(fx, 4).await;
+    let c = the_clone(fx, &w.clone.id);
+    assert_eq!(c.seat_intent, None, "the reattach clears the Restore");
+    assert_eq!(
+        c.threads_seat.as_deref(),
+        Some("seat-A"),
+        "same seat, no re-acceptance"
+    );
+    assert!(stuck_restores(fx).is_empty(), "{:?}", stuck_restores(fx));
+    assert_eq!(start_calls(fx).len(), 1, "no second launch");
+}
+
+#[tokio::test]
+async fn export_rejected_clone_without_a_resumable_session_is_named_in_stuck_restores() {
+    let w = d2_retired_world(false).await;
+    let act = retire_action_id(&w.fx);
+    let epoch = commit_restore(&w.fx, &w.clone.id, &format!("undo {act}"));
+    let fx = &w.fx;
+    fx.herdr.clear_calls();
+    observe_reversible(&w);
+    settle(fx, 6).await;
+    let starts = start_calls(fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(fx));
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    // The agent never presents the key and has no session to reattach by: the restore is named, once.
+    let stuck = stuck_restores(fx);
+    assert_eq!(stuck.len(), 1, "{stuck:?}");
+    assert_eq!(stuck[0]["clone"], w.clone.id.to_string());
+    assert_eq!(stuck[0]["epoch"], epoch.to_string());
+    assert_eq!(stuck[0]["reason"], "launched_no_reattach");
+    assert!(
+        stuck[0]["remedy"]
+            .as_str()
+            .unwrap()
+            .contains("fix the pane shell")
+    );
+    settle(fx, 3).await;
+    assert_eq!(start_calls(fx).len(), 1, "one launch per epoch");
+}
+
+// -------------------------------------------------------------------------------------------------
+// fresh-agent path after a cold restart (hg-66u.21): a reserved clone with no resumable session
+// -------------------------------------------------------------------------------------------------
+
+/// A reserved claude clone that had an agent but has no session to resume (its only ended session is another
+/// harness's), after a headless cold restart: its pane is bare and kept its id, its seat reads Unresolved.
+async fn non_resumable_after_cold_restart(fx: &Fx) -> (CloneRecord, HerdrPaneId) {
+    activate(fx, "claude");
+    step(fx).await;
+    let c = only_clone(fx, "foreman");
+    assert!(c.key_reservation.is_some(), "reserved before its launch");
+    end_session(fx, &c, "cx", "codex");
+    let pane = cold_restart(fx, &c.id).await;
+    keep_pane_id(fx, &c.id, &pane);
+    assert!(
+        crate::reconcile::desired::DesiredRuntime::load(&view(fx), &fx.deps.instance)
+            .map(|d| d.panes.iter().all(|p| p.resume.is_none()))
+            .unwrap_or(false),
+        "the fixture has no resumable session"
+    );
+    (c, pane)
+}
+
+#[tokio::test]
+async fn cold_restart_fresh_launches_a_non_resumable_reserved_clone_after_grace() {
+    let fx = fx();
+    let (c, pane) = non_resumable_after_cold_restart(&fx).await;
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    let early = step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 1, "{early:?}");
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].pane, pane, "into its last pane");
+    assert!(
+        !starts[0].args.iter().any(|a| a == "--resume"),
+        "{:?}",
+        starts[0].args
+    );
+    assert_eq!(starts[0].env, agent_env(&c.id, true));
+    // Once per incarnation change.
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_needs_a_recorded_reservation() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step_unreserved(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "cx", "codex");
+    fx.herdr.restart(true, true);
+    step_unreserved(&fx).await;
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    keep_pane_id(&fx, &c.id, &pane);
+    // A clone without a recorded reservation (the pre-D1 shape).
+    assert!(the_clone(&fx, &c.id).key_reservation.is_none());
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(relaunch_rows(&fx), 0);
+    // With the reservation recorded the fresh launch follows.
+    record_reservation(&fx, &c.id, Some("seat-1"));
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_unreachable_threads_launches_nothing() {
+    let fx = fx();
+    let (c, _) = non_resumable_after_cold_restart(&fx).await;
+    // Threads did not answer since the restart (Disconnected / ServiceBusy): the fact is absent or stale.
+    for fact_json in [
+        serde_json::Value::Null,
+        unresolved("seat-1", fx.clock.now() - chrono::Duration::seconds(30)),
+    ] {
+        seat_state(
+            &fx,
+            &c.id,
+            json!({ "threads_seat": "seat-1", "fact": fact_json }),
+        );
+        fx.clock.advance(chrono::Duration::seconds(91));
+        step(&fx).await;
+        step(&fx).await;
+        assert_eq!(relaunch_rows(&fx), 0);
+        assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    }
+}
+
+#[tokio::test]
+async fn fresh_path_agent_exit_without_restart_launches_nothing() {
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let c = only_clone(&fx, "foreman");
+    end_session(&fx, &c, "cx", "codex");
+    let pane = pane_of(&fx, &c);
+    fx.herdr.set_agent(&pane, None);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": unresolved("seat-1", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    for _ in 0..3 {
+        fx.clock.advance(chrono::Duration::seconds(300));
+        step(&fx).await;
+    }
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn fresh_path_key_conflict_never_launches() {
+    let fx = fx();
+    let (c, pane) = non_resumable_after_cold_restart(&fx).await;
+    let conflict = fact(
+        "seat-1",
+        SeatFactState::KeyConflict { pane: Some(pane) },
+        fx.clock.now(),
+    );
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-1", "fact": conflict }),
+    );
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step(&fx).await;
+    step(&fx).await;
+    assert_eq!(relaunch_rows(&fx), 0);
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
 }

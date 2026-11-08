@@ -22,6 +22,9 @@ pub enum RequestKind {
     NodeManagerSet,
     CloneAdd,
     CloneRetire,
+    ClonePurge,
+    /// Legacy: the removed `clone rebind --pane` kind (hg-66u.15). Nothing creates it; the variant stays so old
+    /// journal rows still deserialize.
     CloneRebind,
     ParticipationJoin,
     ParticipationLeave,

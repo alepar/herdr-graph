@@ -113,6 +113,13 @@ fn caller_object(g: &Graph, caller: &CallerInfo) -> Option<AnyId> {
         .map(|c| c.to_any())
 }
 
+/// Journal meta: the launch export a check-in from `clone`'s pane lacked (spec §5).
+pub(crate) fn export_rejected_key(clone: &CloneId) -> String {
+    format!("export_rejected:{clone}")
+}
+
+const EXPORT_REMEDY: &str = "the pane's shell did not apply the graph's launch export; relaunch the agent from a shell that accepts \"export K=V\" (bash, zsh, sh or fish)";
+
 /// The clone bound to a Herdr pane (active clones first, then the newest).
 pub(crate) fn clone_for_pane(g: &Graph, pane: &str) -> Option<CloneId> {
     g.clones
@@ -683,6 +690,23 @@ impl Transcripts {
         Ok(json!({ "request": rq, "status": "completed" }))
     }
 
+    /// Each clone whose last check-in lacked a variable the launch exported, with the remedy.
+    fn export_rejections(&self, view: &CommitView) -> Vec<serde_json::Value> {
+        let Ok(g) = Graph::load(view) else {
+            return Vec::new();
+        };
+        g.clones
+            .keys()
+            .filter_map(|id| {
+                let raw = self.journal.meta_get(&export_rejected_key(id)).ok().flatten()?;
+                let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+                Some(json!({
+                    "clone": id, "pane": v["pane"], "missing": v["missing"], "remedy": EXPORT_REMEDY,
+                }))
+            })
+            .collect()
+    }
+
     fn status_json(&self) -> serde_json::Value {
         let Ok(view) = self.view() else {
             return json!({ "error": "no committed head" });
@@ -704,7 +728,9 @@ impl Transcripts {
                 undeliverable.push(json!({ "request": r.id, "reason": why }));
             }
         }
+        let export_rejected = self.export_rejections(&view);
         json!({
+            "export_rejected": export_rejected,
             "delivery": "fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)",
             "pending": pending, "dispatched": dispatched, "unresolved": unresolved, "completed": completed,
             "undeliverable": undeliverable,

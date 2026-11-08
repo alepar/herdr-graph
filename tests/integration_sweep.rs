@@ -203,7 +203,11 @@ mod golden {
             j.effects_with_status(&[Pending, Unknown, NeedsRevision])
                 .expect("effects")
                 .into_iter()
-                .filter(|e| !THREADS.contains(&e.kind.as_str()))
+                // The seat-identity effects (`threads.reserve_key`, `threads.resolve_seat`, ...) are custom
+                // kinds named `threads.*`; they also stay pending without a threads service.
+                .filter(|e| {
+                    !THREADS.contains(&e.kind.as_str()) && !e.kind.as_str().starts_with("threads.")
+                })
                 .map(|e| (e.kind.as_str().to_owned(), e.object.to_string()))
                 .collect()
         }
@@ -671,7 +675,7 @@ mod wiring {
     use herdr_graph::store::init::init_instance;
     use herdr_graph::store::layout;
     use herdr_graph::store::tree::CommitView;
-    use herdr_graph::threads::{FakePaneSeatMap, FakeThreads};
+    use herdr_graph::threads::{FakePaneSeatMap, FakeThreads, FakeThreadsSeatView};
     use serde_json::{Value, json};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -778,6 +782,7 @@ mod wiring {
         herdr: Arc<FakeHerdr>,
         threads: Arc<FakeThreads>,
         panes: Arc<FakePaneSeatMap>,
+        seat_view: Arc<FakeThreadsSeatView>,
         clock: Arc<ManualClock>,
     }
 
@@ -787,6 +792,7 @@ mod wiring {
                 herdr: FakeHerdr::new(),
                 threads: Arc::new(FakeThreads::new()),
                 panes: Arc::new(FakePaneSeatMap::new()),
+                seat_view: Arc::new(FakeThreadsSeatView::new()),
                 clock: Arc::new(ManualClock::new(chrono::Utc::now())),
             }
         }
@@ -799,6 +805,7 @@ mod wiring {
                 self.clock.clone(),
             );
             s.reminder_period = Duration::from_millis(40);
+            s.seat_view = self.seat_view.clone();
             s
         }
     }
@@ -1530,7 +1537,7 @@ mod wiring {
             K::NodeManagerSet,
             K::CloneAdd,
             K::CloneRetire,
-            K::CloneRebind,
+            K::ClonePurge,
             K::ParticipationJoin,
             K::ParticipationLeave,
             K::TemplateCreate,
@@ -1562,7 +1569,7 @@ mod wiring {
                 | K::NodeManagerSet => {}
                 K::CloneAdd
                 | K::CloneRetire
-                | K::CloneRebind
+                | K::ClonePurge
                 | K::ParticipationJoin
                 | K::ParticipationLeave => {}
                 K::TemplateCreate
@@ -1573,8 +1580,8 @@ mod wiring {
                 | K::InstructionsEdit
                 | K::ThreadsReconnect
                 | K::Undo => {}
-                // Legacy since H1 (journal deserialization only): no mutation by design, so not in `all`.
-                K::ContentWrite => continue,
+                // Legacy (journal deserialization only; `CloneRebind` since hg-66u.15): no mutation by design, so not in `all`.
+                K::ContentWrite | K::CloneRebind => continue,
                 K::Observed | K::Bookkeeping => {}
             }
             let name = kind_name(k);
@@ -1957,9 +1964,12 @@ mod wiring {
         // action on a settled Herdr, so wait until the creation effects (tokens, names) are all done.
         let settled = || {
             let j = Journal::open(&InstancePaths::new(&root).journal).unwrap();
+            // `threads.*` effects wait on herdr-threads (a clone's seat resolves once threads answers), not
+            // on Herdr: only the creation effects (tokens, names) have to be done.
             j.effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
                 .unwrap()
-                .is_empty()
+                .iter()
+                .all(|e| matches!(e.kind, herdr_graph::model::effect::EffectKind::Custom(_)))
         };
         eventually("the creation effects to settle", settled).await;
         let pane = d.pane("foreman").unwrap();
@@ -2220,6 +2230,17 @@ mod wiring {
             d.seat("boss").channel.thread_id.is_some()
         })
         .await;
+        // Launches wait for the key reservation: let both graph launches land before the agents are set by hand.
+        eventually("both agents launched", || {
+            d.fakes
+                .herdr
+                .calls()
+                .iter()
+                .filter(|c| matches!(c, FakeCall::StartAgent(_)))
+                .count()
+                >= 2
+        })
+        .await;
         let (boss_pane, worker_pane) = (d.pane("boss").unwrap(), d.pane("worker").unwrap());
         d.fakes.herdr.set_agent(
             &boss_pane,
@@ -2316,6 +2337,703 @@ mod wiring {
         .await;
         assert_eq!(d.request_count(), 1);
         d.stop().await;
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // threads seat as the clone identity (hg-66u.26): the composed daemon, fake Herdr and fake threads
+    // -----------------------------------------------------------------------------------------
+
+    mod seat_identity {
+        use super::*;
+        use herdr_graph::model::clone::{SeatFactState, SeatIntent};
+        use herdr_graph::model::common::{Availability, CloneLifecycle};
+        use herdr_graph::ports::clock::Clock;
+
+        fn tseat(s: &str) -> ThreadsSeatRef {
+            ThreadsSeatRef(s.to_owned())
+        }
+
+        /// Team space `t` and an active seat `name` with one clone; returns the clone's bound pane.
+        async fn start_seat(d: &Daemon, name: &str, harness: &str) -> HerdrPaneId {
+            d.committed(&["teamspace", "create", "t", "--active"]).await;
+            d.committed(&[
+                "seat",
+                "create",
+                name,
+                "--teamspace",
+                "t",
+                "--active",
+                "--harness",
+                harness,
+            ])
+            .await;
+            eventually("the clone's pane", || d.pane(name).is_some()).await;
+            d.pane(name).unwrap()
+        }
+
+        /// herdr-threads resolves `pane` to `seat` (what `resolve_seat` answers) and reports that seat
+        /// `Resolved` on the pane (what the observation step reads).
+        fn threads_resolves(d: &Daemon, pane: &HerdrPaneId, seat: &str) {
+            d.fakes.panes.set(pane, seat);
+            d.fakes
+                .seat_view
+                .set(&tseat(seat), SeatStatus::Resolved { pane: pane.clone() });
+        }
+
+        /// Every fake-threads thread the seat is a member of, with its state.
+        fn memberships(
+            d: &Daemon,
+            seat: &str,
+        ) -> Vec<(String, herdr_graph::model::clone::InvitationState)> {
+            d.fakes
+                .threads
+                .threads()
+                .into_iter()
+                .filter_map(|t| {
+                    d.fakes
+                        .threads
+                        .member(&t, &tseat(seat))
+                        .map(|m| (t.0, m.state))
+                })
+                .collect()
+        }
+
+        fn seat_of(d: &Daemon, name: &str) -> Option<String> {
+            d.clone_of(name).threads_seat
+        }
+
+        async fn seated_and_invited(
+            d: &Daemon,
+            name: &str,
+            harness: &str,
+            seat: &str,
+        ) -> HerdrPaneId {
+            let pane = start_seat(d, name, harness).await;
+            threads_resolves(d, &pane, seat);
+            eventually("the clone records its threads seat", || {
+                seat_of(d, name).as_deref() == Some(seat)
+            })
+            .await;
+            eventually("the clone is invited under that seat", || {
+                let c = d.clone_of(name);
+                !c.invitations.is_empty()
+                    && c.invitations
+                        .iter()
+                        .all(|i| i.link.as_ref().is_some_and(|l| l.seat == seat))
+                    && !memberships(d, seat).is_empty()
+            })
+            .await;
+            pane
+        }
+
+        /// The seat-identity bookkeeping mutations are registered with the writer: without them every
+        /// `bookkeeping.threads_seat` / `bookkeeping.seat_fact` write the tree produces would be rejected.
+        #[test]
+        fn sweep_seat_identity_mutations_are_registered() {
+            use herdr_graph::daemon::compose::mutation_registry;
+            use herdr_graph::plan::store::PlanStore;
+            let dir = tempfile::tempdir().unwrap();
+            let (_kinds, muts) =
+                mutation_registry(Arc::new(PlanStore::new(dir.path().join("plans"))));
+            let keys = muts.keys();
+            for key in [
+                "bookkeeping.threads_seat",
+                "bookkeeping.seat_fact",
+                "bookkeeping.channel",
+                "bookkeeping.invitation",
+            ] {
+                assert!(
+                    keys.iter().any(|k| k == key),
+                    "{key} not registered: {keys:?}"
+                );
+            }
+        }
+
+        /// Flow 1: a clone gets a threads seat from the seat map, is invited under it and nowhere else, and
+        /// the composed daemon reads that seat back through the seat view.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_clone_is_seated_and_invited_by_seat() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let pane = start_seat(&d, "foreman", "shell").await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(seat_of(&d, "foreman"), None, "threads has not answered");
+            assert!(
+                d.clone_of("foreman").invitations.is_empty(),
+                "no invitation without a threads seat"
+            );
+
+            threads_resolves(&d, &pane, "th-1");
+            eventually("the threads seat", || {
+                seat_of(&d, "foreman").as_deref() == Some("th-1")
+            })
+            .await;
+            eventually("invitations keyed on the seat", || {
+                let c = d.clone_of("foreman");
+                !c.invitations.is_empty()
+                    && c.invitations
+                        .iter()
+                        .all(|i| i.link.as_ref().is_some_and(|l| l.seat == "th-1"))
+            })
+            .await;
+            let held = memberships(&d, "th-1");
+            assert!(!held.is_empty(), "th-1 is a member of the clone's threads");
+            assert!(
+                d.fakes.panes.resolve_ops().len() >= 1,
+                "the seat came from the pane resolution"
+            );
+            // The seat view is read by the composed observation step and its answer is committed.
+            eventually("the committed seat fact", || {
+                d.clone_of("foreman").seat_fact.is_some_and(|f| {
+                    f.seat == "th-1" && f.state == SeatFactState::Resolved { pane: pane.clone() }
+                })
+            })
+            .await;
+            assert!(d.fakes.seat_view.reads() > 0);
+            // The `clones` status component is registered.
+            let status = d.call("status", json!({})).await.unwrap();
+            let clones = &status["components"]["clones"];
+            for list in ["retired_unpurged", "stuck_restores", "resume_blocked"] {
+                assert!(
+                    clones[list].is_array(),
+                    "the clones status component lacks {list}: {status}"
+                );
+            }
+            d.stop().await;
+        }
+
+        fn clone_by_id(d: &Daemon, seat: &str, id: &herdr_graph::model::CloneId) -> CloneRecord {
+            d.clones_of(seat)
+                .into_iter()
+                .find(|c| &c.id == id)
+                .unwrap_or_else(|| panic!("no clone {id} of {seat}"))
+        }
+
+        fn start_calls(d: &Daemon) -> Vec<herdr_graph::ports::herdr::StartAgent> {
+            d.fakes
+                .herdr
+                .calls()
+                .into_iter()
+                .filter_map(|c| match c {
+                    FakeCall::StartAgent(s) => Some(s),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// Calls that would build, launch into or tear down Herdr state.
+        fn herdr_churn(d: &Daemon) -> Vec<FakeCall> {
+            d.fakes
+                .herdr
+                .calls()
+                .into_iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        FakeCall::CreateWorkspace(_)
+                            | FakeCall::CreateTab(_)
+                            | FakeCall::SplitPane(_)
+                            | FakeCall::StartAgent(_)
+                            | FakeCall::CloseWorkspace(_)
+                            | FakeCall::CloseTab(_)
+                            | FakeCall::ClosePane(_)
+                    )
+                })
+                .collect()
+        }
+
+        /// A claude session starts on `pane` and the observer records it as the clone's occupant.
+        async fn session_starts(d: &Daemon, seat: &str, pane: &HerdrPaneId, id: &str) {
+            let before = d.clone_of(seat).occupant.map(|o| o.native_session);
+            d.fakes
+                .herdr
+                .set_agent(pane, agent("claude", AgentSession::Id(id.into())));
+            eventually("the session is the clone's occupant", || {
+                d.clone_of(seat)
+                    .occupant
+                    .is_some_and(|o| Some(o.native_session) != before)
+            })
+            .await;
+        }
+
+        async fn session_ends(d: &Daemon, seat: &str, pane: &HerdrPaneId) {
+            d.fakes.herdr.set_agent(pane, None);
+            eventually("the occupant is gone", || {
+                d.clone_of(seat).occupant.is_none()
+            })
+            .await;
+        }
+
+        /// Herdr restarts as `restart(keep_metadata, keep_terminal_ids)` does and the daemon records the new
+        /// incarnation (the resume grace runs from that record, so the clock moves only after it).
+        async fn herdr_restarts(
+            d: &Daemon,
+            root: &Path,
+            keep: bool,
+            old: &HerdrPaneId,
+        ) -> HerdrPaneId {
+            let new = herdr_restart_with(d, root, old, |h| h.restart(keep, keep)).await;
+            assert_ne!(&new, old, "the restart renumbered the pane");
+            new
+        }
+
+        /// The same, for a restart that keeps the pane ids (Herdr's session restore, as in spike 3):
+        /// returns the pane, which has the id it had.
+        async fn herdr_restarts_keeping_pane_ids(
+            d: &Daemon,
+            root: &Path,
+            keep: bool,
+            old: &HerdrPaneId,
+        ) -> HerdrPaneId {
+            let new =
+                herdr_restart_with(d, root, old, |h| h.cold_restart_keeping_pane_ids(keep)).await;
+            assert_eq!(&new, old, "the restart preserved the pane id");
+            new
+        }
+
+        async fn herdr_restart_with(
+            d: &Daemon,
+            root: &Path,
+            old: &HerdrPaneId,
+            restart: impl FnOnce(&FakeHerdr),
+        ) -> HerdrPaneId {
+            let journal = Journal::open(&Journal::path_in(root)).unwrap();
+            let before = journal.meta_get("incarnation:changed_at").unwrap();
+            let at = all_panes(d).await.iter().position(|p| p == old).unwrap();
+            // The manual clock stamps the record: move it so the new stamp differs from the old one.
+            d.fakes.clock.advance(chrono::Duration::seconds(5));
+            restart(&d.fakes.herdr);
+            let new = all_panes(d).await[at].clone();
+            // The fake bumps its generation on every (re)subscription: wait for the observation loop to
+            // resubscribe and for the journal to hold the incarnation Herdr reports now.
+            let deadline = Instant::now() + WAIT;
+            loop {
+                let now =
+                    serde_json::to_string(&d.fakes.herdr.snapshot().await.unwrap().incarnation)
+                        .unwrap();
+                if journal.meta_get("incarnation:changed_at").unwrap() != before
+                    && journal.meta_get("incarnation:last").unwrap().as_deref()
+                        == Some(now.as_str())
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "the new incarnation was never recorded"
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            // Let the step that recorded it finish before the clock moves again.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            new
+        }
+
+        /// Any Herdr event makes the observation loop take another step (the manual clock does not).
+        fn poke(d: &Daemon, tab: &herdr_graph::model::HerdrTabId) {
+            d.fakes.herdr.add_user_pane(tab, "poke");
+        }
+
+        async fn only_tab(d: &Daemon) -> herdr_graph::model::HerdrTabId {
+            let snap = d.fakes.herdr.snapshot().await.unwrap();
+            snap.workspaces[0].tabs[0].id.clone()
+        }
+
+        async fn all_panes(d: &Daemon) -> Vec<HerdrPaneId> {
+            d.fakes
+                .herdr
+                .snapshot()
+                .await
+                .unwrap()
+                .workspaces
+                .iter()
+                .flat_map(|w| w.tabs.iter())
+                .flat_map(|t| t.panes.iter())
+                .map(|p| p.id.clone())
+                .collect()
+        }
+
+        /// Flow 2: participation belongs to the seat, not the session. `/clear` (a new session on the same
+        /// pane), the agent exiting and a new agent starting change no membership, release nothing and
+        /// resolve no second seat.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_clear_and_agent_exit_keep_memberships() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let pane = seated_and_invited(&d, "worker", "claude", "th-1").await;
+            session_starts(&d, "worker", &pane, "s1").await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let members = memberships(&d, "th-1");
+            let invitations = d.clone_of("worker").invitations;
+            let resolves = d.fakes.panes.resolve_ops().len();
+            assert!(!members.is_empty() && !invitations.is_empty());
+
+            // `/clear`: the same pane, a new session id.
+            session_starts(&d, "worker", &pane, "s2").await;
+            // The agent exits, and later a new one starts.
+            session_ends(&d, "worker", &pane).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            session_starts(&d, "worker", &pane, "s3").await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            let now = d.clone_of("worker");
+            assert_eq!(now.threads_seat.as_deref(), Some("th-1"));
+            assert_eq!(now.lifecycle, CloneLifecycle::Active);
+            assert_eq!(
+                now.invitations, invitations,
+                "the invitations are untouched"
+            );
+            assert_eq!(
+                memberships(&d, "th-1"),
+                members,
+                "memberships are untouched"
+            );
+            assert_eq!(d.fakes.threads.call_count("release_requirement"), 0);
+            assert_eq!(
+                d.fakes.panes.resolve_ops().len(),
+                resolves,
+                "no second resolution"
+            );
+            d.stop().await;
+        }
+
+        /// Flow 3: a live Herdr handoff (same ids, tokens dropped) leaves the seated clone bound to its pane;
+        /// nothing is created, launched or closed and no operator step is needed.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_live_handoff_recovers_without_operator() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let pane = seated_and_invited(&d, "foreman", "shell", "th-1").await;
+            eventually("the committed seat fact", || {
+                d.clone_of("foreman").seat_fact.is_some()
+            })
+            .await;
+            let journal = Journal::open(&Journal::path_in(&root)).unwrap();
+            let before = journal.meta_get("incarnation:changed_at").unwrap();
+            d.fakes.clock.advance(chrono::Duration::seconds(5));
+            let resolves = d.fakes.panes.resolve_ops().len();
+            d.fakes.herdr.clear_calls();
+
+            d.fakes.herdr.live_handoff();
+            eventually("the new incarnation is seen", || {
+                journal.meta_get("incarnation:changed_at").unwrap() != before
+            })
+            .await;
+            eventually("the seat fact is read again after the handoff", || {
+                d.clone_of("foreman")
+                    .seat_fact
+                    .is_some_and(|f| f.read_at >= d.fakes.clock.now())
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            let now = d.clone_of("foreman");
+            assert_eq!(now.lifecycle, CloneLifecycle::Active);
+            assert_eq!(now.runtime.availability, Availability::Present);
+            assert_eq!(
+                now.runtime.bound.and_then(|b| b.pane_id),
+                Some(pane.clone())
+            );
+            assert_eq!(now.threads_seat.as_deref(), Some("th-1"));
+            assert_eq!(d.fakes.panes.resolve_ops().len(), resolves);
+            assert_eq!(herdr_churn(&d).len(), 0, "{:?}", d.fakes.herdr.calls());
+            assert_eq!(d.fakes.threads.call_count("release_requirement"), 0);
+            d.stop().await;
+        }
+
+        /// A claude clone whose first session ended, seated as `th-1`; returns its pane and the tab to poke.
+        async fn resumable_clone(d: &Daemon) -> (HerdrPaneId, herdr_graph::model::HerdrTabId) {
+            let pane = seated_and_invited(d, "worker", "claude", "th-1").await;
+            session_starts(d, "worker", &pane, "sess-1").await;
+            session_ends(d, "worker", &pane).await;
+            eventually("the committed seat fact", || {
+                d.clone_of("worker").seat_fact.is_some()
+            })
+            .await;
+            let tab = only_tab(d).await;
+            (pane, tab)
+        }
+
+        /// Flow 4a: headless cold restart that keeps the pane ids and the graph tokens, with threads unable to
+        /// place the seat yet (the agent has not checked in again). A seated clone is located only by threads,
+        /// so it is Unknown, never recreated; after the incarnation grace its agent is resumed with its last
+        /// session into the pane it had, keyed; the keyed check-in resolves the seat and the clone is Present.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_headless_cold_restart_resumes() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let (old, tab) = resumable_clone(&d).await;
+            d.fakes
+                .seat_view
+                .set(&tseat("th-1"), SeatStatus::Unresolved);
+            d.fakes.herdr.clear_calls();
+
+            let pane = herdr_restarts_keeping_pane_ids(&d, &root, true, &old).await;
+            eventually("the clone is Unknown while threads cannot place it", || {
+                d.clone_of("worker").runtime.availability == Availability::Unknown
+            })
+            .await;
+            assert!(start_calls(&d).is_empty(), "inside the incarnation grace");
+
+            d.fakes.clock.advance(chrono::Duration::seconds(91));
+            poke(&d, &tab);
+            eventually("the agent is resumed", || !start_calls(&d).is_empty()).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let starts = start_calls(&d);
+            assert_eq!(starts.len(), 1, "{starts:?}");
+            assert_eq!(starts[0].pane, pane);
+            assert_eq!(starts[0].args, ["--resume", "sess-1"]);
+            assert_eq!(
+                starts[0].env,
+                herdr_graph::model::launch::agent_env(&d.clone_of("worker").id, true)
+            );
+            assert_eq!(
+                herdr_churn(&d).len(),
+                1,
+                "only the resume: {:?}",
+                d.fakes.herdr.calls()
+            );
+
+            // The keyed check-in reattaches the seat: threads resolves it to the pane.
+            d.fakes
+                .seat_view
+                .set(&tseat("th-1"), SeatStatus::Resolved { pane: pane.clone() });
+            eventually("the clone is present on its pane", || {
+                let c = d.clone_of("worker");
+                c.runtime.availability == Availability::Present
+                    && c.runtime.bound.and_then(|b| b.pane_id) == Some(pane.clone())
+            })
+            .await;
+            assert_eq!(d.clone_of("worker").threads_seat.as_deref(), Some("th-1"));
+            d.stop().await;
+        }
+
+        /// Flow 4b: headless cold restart that dropped the graph tokens, with Herdr resuming the agent in the
+        /// renumbered pane. With no token and no operator, threads' Resolved answer for the seat is what binds
+        /// the clone to that pane; the resumed session is adopted and graph launches nothing.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_headless_cold_restart_without_tokens_follows_the_seat() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let (old, tab) = resumable_clone(&d).await;
+            d.fakes.herdr.clear_calls();
+
+            let new = herdr_restarts(&d, &root, false, &old).await;
+            threads_resolves(&d, &new, "th-1");
+            d.fakes
+                .herdr
+                .set_agent(&new, agent("claude", AgentSession::Id("sess-1".into())));
+            eventually("the clone follows its seat to the renumbered pane", || {
+                let c = d.clone_of("worker");
+                c.runtime.availability == Availability::Present
+                    && c.runtime.bound.and_then(|b| b.pane_id) == Some(new.clone())
+            })
+            .await;
+            eventually("the resumed session is the clone's occupant", || {
+                d.clone_of("worker").occupant.is_some()
+            })
+            .await;
+            d.fakes.clock.advance(chrono::Duration::seconds(91));
+            poke(&d, &tab);
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let now = d.clone_of("worker");
+            assert_eq!(now.lifecycle, CloneLifecycle::Active);
+            assert_eq!(now.threads_seat.as_deref(), Some("th-1"));
+            assert!(start_calls(&d).is_empty(), "{:?}", d.fakes.herdr.calls());
+            assert_eq!(
+                herdr_churn(&d).len(),
+                0,
+                "nothing created or closed: {:?}",
+                d.fakes.herdr.calls()
+            );
+            d.stop().await;
+        }
+
+        /// Flow 5: a clone closed with its pane and brought back by `undo` succeeds onto the seat of its
+        /// reopened pane: `threads_seat` moves once (the old seat kept as history), the invitations are
+        /// re-keyed to the new seat and the clone is active again.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_undo_restores_onto_a_succeeded_seat() {
+            let (_dir, root) = new_instance();
+            // `foreman` would be the node manager, whose observed closure is kept for a Restore instead of
+            // retiring (manager-seats spec §4.9); this flow is about a retired clone, so opt out.
+            crate::support::node_manager_opt_out(&root);
+            let d = Daemon::start(&root).await;
+            d.committed(&["teamspace", "create", "t", "--active"]).await;
+            d.committed(&[
+                "seat",
+                "create",
+                "foreman",
+                "--teamspace",
+                "t",
+                "--active",
+                "--harness",
+                "shell",
+            ])
+            .await;
+            eventually("the first pane", || d.pane("foreman").is_some()).await;
+            d.committed(&["clone", "add", "foreman"]).await;
+            eventually("both clones' panes", || {
+                let cs = d.clones_of("foreman");
+                cs.len() == 2 && cs.iter().all(|c| c.runtime.bound.is_some())
+            })
+            .await;
+            let victim = d
+                .clones_of("foreman")
+                .into_iter()
+                .find(|c| {
+                    c.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()) != d.pane("foreman")
+                })
+                .unwrap();
+            let vpane = victim
+                .runtime
+                .bound
+                .as_ref()
+                .and_then(|b| b.pane_id.clone())
+                .unwrap();
+            threads_resolves(&d, &vpane, "th-A");
+            eventually("the victim is seated and invited", || {
+                let c = clone_by_id(&d, "foreman", &victim.id);
+                c.threads_seat.as_deref() == Some("th-A")
+                    && !c.invitations.is_empty()
+                    && !memberships(&d, "th-A").is_empty()
+            })
+            .await;
+
+            // Closing the pane retires the clone; threads retires its seat for good.
+            d.fakes.herdr.user_close_pane(&vpane);
+            d.fakes.seat_view.set(
+                &tseat("th-A"),
+                SeatStatus::Retired {
+                    kind: RetirementKind::Final,
+                },
+            );
+            eventually("the clone retires", || {
+                clone_by_id(&d, "foreman", &victim.id).lifecycle == CloneLifecycle::Retired
+            })
+            .await;
+            let act = {
+                let list = d.call("undo.list", json!({})).await.unwrap();
+                list["candidates"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| c["summary"].as_str().is_some_and(|s| s.contains("closure")))
+                    .unwrap_or_else(|| panic!("no closure to undo: {list}"))["act"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            };
+            let plan = d
+                .call("plan.create", json!({ "words": ["undo", act] }))
+                .await
+                .unwrap();
+            let r = d
+                .call(
+                    "undo.apply",
+                    json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay" }),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r["state"], "admitted", "{r}");
+
+            // The clone comes back with a Restore intent in a reopened pane; threads gives that pane a new seat.
+            eventually("the clone is active in a reopened pane", || {
+                let c = clone_by_id(&d, "foreman", &victim.id);
+                c.lifecycle == CloneLifecycle::Active
+                    && c.runtime
+                        .bound
+                        .as_ref()
+                        .and_then(|b| b.pane_id.clone())
+                        .is_some()
+            })
+            .await;
+            let reopened = clone_by_id(&d, "foreman", &victim.id)
+                .runtime
+                .bound
+                .and_then(|b| b.pane_id)
+                .unwrap();
+            assert_ne!(reopened, vpane);
+            threads_resolves(&d, &reopened, "th-B");
+            eventually("the seat succeeds to th-B", || {
+                clone_by_id(&d, "foreman", &victim.id)
+                    .threads_seat
+                    .as_deref()
+                    == Some("th-B")
+            })
+            .await;
+            eventually("the invitations follow the new seat", || {
+                let c = clone_by_id(&d, "foreman", &victim.id);
+                !c.invitations.is_empty()
+                    && c.invitations
+                        .iter()
+                        .all(|i| i.link.as_ref().is_some_and(|l| l.seat == "th-B"))
+                    && !memberships(&d, "th-B").is_empty()
+            })
+            .await;
+            let now = clone_by_id(&d, "foreman", &victim.id);
+            assert_eq!(now.threads_seat_history, vec!["th-A".to_owned()]);
+            assert_eq!(now.lifecycle, CloneLifecycle::Active);
+            assert!(
+                matches!(now.seat_intent, Some(SeatIntent::Restore { ref seat, threads_done: true, .. }) if seat == "th-B"),
+                "{:?}",
+                now.seat_intent
+            );
+            d.stop().await;
+        }
+
+        /// Flow 6: `/seat` reports pending invitations as thread and constraint only, never an acceptance
+        /// command; acceptance belongs to herdr-threads.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn sweep_seat_reply_has_no_accept_command() {
+            let (_dir, root) = new_instance();
+            let d = Daemon::start(&root).await;
+            let pane = seated_and_invited(&d, "worker", "claude", "th-1").await;
+            session_starts(&d, "worker", &pane, "s1").await;
+            let caller = serde_json::to_value(herdr_graph::daemon::registry::CallerInfo {
+                pane_id: Some(pane.0.clone()),
+                ..Default::default()
+            })
+            .unwrap();
+            let deadline = Instant::now() + WAIT;
+            let reply = loop {
+                let r = d
+                    .call("seat.resolve", json!({ "_caller": caller }))
+                    .await
+                    .unwrap();
+                if r["pending_invitations"]
+                    .as_array()
+                    .is_some_and(|a| !a.is_empty())
+                {
+                    break r;
+                }
+                assert!(Instant::now() < deadline, "no pending invitation in {r}");
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            };
+            assert_eq!(reply["resolution"]["status"], "bound", "{reply}");
+            for inv in reply["pending_invitations"].as_array().unwrap() {
+                let mut keys: Vec<_> = inv.as_object().unwrap().keys().cloned().collect();
+                keys.sort();
+                assert_eq!(keys, ["constraint", "thread"], "{inv}");
+            }
+            let text = herdr_graph::bootstrap::render_seat(&reply);
+            assert!(
+                text.contains("pending invitations (accept through herdr-threads):"),
+                "{text}"
+            );
+            for forbidden in [
+                "accept-required",
+                "accept_command",
+                "herdr-threads accept",
+                "--requirement",
+            ] {
+                assert!(!text.contains(forbidden), "{forbidden:?} in:\n{text}");
+            }
+            assert!(
+                !text.lines().any(|l| l.trim_start().starts_with("run ")),
+                "no command for the agent to run:\n{text}"
+            );
+            d.stop().await;
+        }
     }
 }
 
@@ -2614,7 +3332,6 @@ mod cli_sweep {
                 &body,
             ],
             payload_free.to_vec(),
-            vec!["rebind", &clone, "--pane", "p-none"],
             vec!["ops"],
             vec!["ops", "--unresolved"],
             vec!["op", &op],

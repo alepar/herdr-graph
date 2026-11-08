@@ -1,0 +1,12 @@
+diff --git a/src/observe/mutations.rs b/src/observe/mutations.rs
+index 8c7b3cb..f2d1bc8 100644
+--- a/src/observe/mutations.rs
++++ b/src/observe/mutations.rs
+@@ -249,6 +249,7 @@ impl CascadeMutation {
+         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
+         rec.runtime = absent();
+         rec.lifecycle = CloneLifecycle::Retired;
++        crate::threads::assignment::clear_restore_on_retire(&mut rec);
+         rec.retired = Some(Retirement {
+             op: cx.op.clone(),
+             action: Some(act.clone()),

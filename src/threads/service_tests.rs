@@ -10,10 +10,11 @@ use herdr_threads::protocol::ids::{
 };
 use herdr_threads::protocol::results::{ApiError, ErrorCode};
 use herdr_threads::protocol::service::{
-    ManagedThread, RequiredMembership, RequirementState, ServiceInvitation, ServiceMembership,
-    ServiceOperation, ServiceRegistration, ServiceRequest, ServiceResult, ServiceWireRequest,
-    ServiceWireResponse, VoluntaryMembershipState,
+    ContinuityKeyReservation, ManagedThread, RequiredMembership, RequirementState,
+    ServiceInvitation, ServiceMembership, ServiceOperation, ServiceRegistration, ServiceRequest,
+    ServiceResult, ServiceWireRequest, ServiceWireResponse, VoluntaryMembershipState,
 };
+use herdr_threads::protocol::time::UtcMillis;
 use herdr_threads::protocol::wire::PROTOCOL_VERSION;
 use serde_json::json;
 use std::path::PathBuf;
@@ -37,6 +38,10 @@ struct Service {
     sent: Mutex<Vec<(String, Vec<String>)>>,
     /// Seats whose receipt for the sent message is acknowledged (others stay pending).
     acked: Mutex<Vec<String>>,
+    /// Answer every `ReserveContinuityKey` with this error code instead of a reservation.
+    reserve_error: Mutex<Option<ErrorCode>>,
+    /// `(key, seat)` of every `ReserveContinuityKey` received.
+    reserved: Mutex<Vec<(String, Option<String>)>>,
 }
 
 fn api_error(code: ErrorCode) -> ApiError {
@@ -145,6 +150,28 @@ impl Service {
                         .unwrap()
                     }
                     ServiceOperation::History(_) => return Some(Err(api_error(ErrorCode::Unsupported))),
+                    ServiceOperation::ReserveContinuityKey(r) => {
+                        self.reserved
+                            .lock()
+                            .unwrap()
+                            .push((r.key.as_str().to_owned(), r.seat.as_ref().map(|s| s.as_str().to_owned())));
+                        let code = self.reserve_error.lock().unwrap().clone();
+                        if let Some(code) = code {
+                            return Some(Err(api_error(code)));
+                        }
+                        ServiceResult::ContinuityKeyReserved(ContinuityKeyReservation {
+                            key: r.key.clone(),
+                            owner: author,
+                            seat: r.seat.clone(),
+                            reserved_at: UtcMillis(1),
+                        })
+                    }
+                    ServiceOperation::ReleaseContinuityKey(_)
+                    | ServiceOperation::UnretireSeat(_)
+                    | ServiceOperation::FinalizeRetirement(_)
+                    | ServiceOperation::ContinuityAlerts(_) => {
+                        return Some(Err(api_error(ErrorCode::Unsupported)));
+                    }
                     ServiceOperation::Receipts(q) => {
                         let acked = self.acked.lock().unwrap().clone();
                         let seats: Vec<String> =
@@ -779,6 +806,80 @@ async fn pane_resolution_uses_host_guard_and_never_claimless_seats() {
     peer.await.unwrap();
 }
 
+#[tokio::test]
+async fn seat_view_reads_resolved_and_reports_transport_errors() {
+    use crate::model::HerdrPaneId;
+    use crate::threads::ThreadsSeatMap;
+    use herdr_threads::protocol::commands::Command;
+    use herdr_threads::protocol::results::{CommandResult, SeatInspection};
+    use herdr_threads::protocol::wire::{WireRequest, WireResponse};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("view.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let inspection: SeatInspection = serde_json::from_value(json!({
+        "summary": { "seat": "seat-a", "continuity": "resolved", "target": "w1:p1",
+                     "generation": 1, "created_at": 1, "retired_at": null },
+        "mapping": { "state": "resolved", "target": "w1:p1", "detail_argv": null },
+        "hold": null, "retirement": null,
+        "history": { "items": [], "next_cursor": null, "next_argv": null, "high_water_ordinal": 0,
+                     "scope_revision": null, "has_more": false, "stop_reason": "complete",
+                     "consistency": "bounded_live" },
+    }))
+    .unwrap();
+    let peer = tokio::spawn(async move {
+        // Reads: resolved ok; then a refusal (unsupported); then the service goes away.
+        for call in 0..2 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request: WireRequest =
+                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+            let result = match request.command {
+                Command::SeatInspect(q) => {
+                    assert_eq!(q.seat.as_str(), "seat-a");
+                    if call == 0 {
+                        Ok(CommandResult::SeatInspect(inspection.clone()))
+                    } else {
+                        Err(api_error(ErrorCode::Unsupported))
+                    }
+                }
+                _ => Err(api_error(ErrorCode::InvalidRequest)),
+            };
+            let response = WireResponse {
+                version: PROTOCOL_VERSION,
+                request_id: request.request_id,
+                instance: request.expected_instance,
+                daemon_boot: BOOT.into(),
+                result,
+            };
+            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                .await
+                .unwrap();
+        }
+        drop(listener);
+    });
+    let map = ThreadsSeatMap::new(
+        socket,
+        herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+        Arc::new(herdr_threads::app::SystemClock::new()),
+        herdr_threads::protocol::ids::HostLocator::parse("/host-a.sock").unwrap(),
+    );
+    let read = map.inspect(&[seat("seat-a")]).await.unwrap();
+    assert_eq!(
+        read[&seat("seat-a")],
+        SeatStatus::Resolved {
+            pane: HerdrPaneId("w1:p1".into())
+        }
+    );
+    assert!(matches!(
+        map.inspect(&[seat("seat-a")]).await,
+        Err(ThreadsError::Unsupported)
+    ));
+    peer.await.unwrap();
+    assert!(matches!(
+        map.inspect(&[seat("seat-a")]).await,
+        Err(ThreadsError::Disconnected(_))
+    ));
+}
+
 #[cfg(feature = "threads-service-ack")]
 #[tokio::test]
 async fn send_time_receipt_capability_absence_falls_back_but_disconnect_does_not() {
@@ -794,4 +895,134 @@ async fn send_time_receipt_capability_absence_falls_back_but_disconnect_does_not
         g.threads.delivery_capability().await,
         Err(ThreadsError::Disconnected(_))
     ));
+}
+
+#[tokio::test]
+async fn reserve_outcome_maps_reserved_conflict_and_refusal() {
+    let fx = fx().await;
+    // Seatless: reserved, bound to nothing; the wire request carries no seat.
+    assert_eq!(
+        fx.threads
+            .reserve_continuity_key("cl_1", None, &OpKey("reserve:cl_1".into()))
+            .await
+            .unwrap(),
+        ReserveOutcome::Reserved { seat: None }
+    );
+    // Seat-bearing: the answer's binding comes back.
+    assert_eq!(
+        fx.threads
+            .reserve_continuity_key(
+                "cl_1",
+                Some(&seat("seat-A")),
+                &OpKey("reserve:cl_1:A".into())
+            )
+            .await
+            .unwrap(),
+        ReserveOutcome::Reserved {
+            seat: Some(seat("seat-A"))
+        }
+    );
+    assert_eq!(
+        *fx.svc.reserved.lock().unwrap(),
+        vec![
+            ("cl_1".to_owned(), None),
+            ("cl_1".to_owned(), Some("seat-A".to_owned()))
+        ]
+    );
+    // Conflict is a value, not an error.
+    *fx.svc.reserve_error.lock().unwrap() = Some(ErrorCode::Conflict);
+    assert_eq!(
+        fx.threads
+            .reserve_continuity_key("cl_2", None, &OpKey("reserve:cl_2".into()))
+            .await
+            .unwrap(),
+        ReserveOutcome::Conflict
+    );
+    // A refusal (retired, named or hc seat) stays an error.
+    *fx.svc.reserve_error.lock().unwrap() = Some(ErrorCode::InvalidRequest);
+    let refusal = fx
+        .threads
+        .reserve_continuity_key("cl_3", Some(&seat("seat-B")), &OpKey("reserve:cl_3".into()))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refusal, ThreadsError::Rejected(m) if m.starts_with("InvalidRequest")),
+        "{refusal:?}"
+    );
+    // A busy service is retryable, never a Conflict.
+    *fx.svc.reserve_error.lock().unwrap() = Some(ErrorCode::ServiceBusy);
+    assert!(matches!(
+        fx.threads
+            .reserve_continuity_key("cl_4", None, &OpKey("reserve:cl_4".into()))
+            .await,
+        Err(ThreadsError::ServiceBusy)
+    ));
+}
+
+#[tokio::test]
+async fn resolve_maps_continuity_key_pending_to_not_yet() {
+    use crate::model::HerdrPaneId;
+    use crate::threads::mapping::SeatResolution;
+    use crate::threads::{PaneSeatMap, ThreadsSeatMap};
+    use herdr_threads::protocol::commands::Command;
+    use herdr_threads::protocol::results::CommandResult;
+    use herdr_threads::protocol::wire::{WireRequest, WireResponse};
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("map.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let peer = tokio::spawn(async move {
+        for call in 0..3 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request: WireRequest =
+                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
+            let result = match request.command {
+                Command::ResolveSeat(q) => {
+                    assert_eq!(q.continuity_key, None, "resolve passes no key (hg-66u.44)");
+                    match call {
+                        0 => Err(api_error(ErrorCode::ContinuityKeyPending)),
+                        1 => Err(api_error(ErrorCode::InvalidRequest)),
+                        _ => Ok(CommandResult::SeatResolved(SeatId::new("seat-late"))),
+                    }
+                }
+                _ => Err(api_error(ErrorCode::InvalidRequest)),
+            };
+            let response = WireResponse {
+                version: PROTOCOL_VERSION,
+                request_id: request.request_id,
+                instance: request.expected_instance,
+                daemon_boot: BOOT.into(),
+                result,
+            };
+            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
+                .await
+                .unwrap();
+        }
+    });
+    let map = ThreadsSeatMap::new(
+        socket,
+        herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+        Arc::new(herdr_threads::app::SystemClock::new()),
+        herdr_threads::protocol::ids::HostLocator::parse("/host-a.sock").unwrap(),
+    );
+    let pane = HerdrPaneId("w1:p1".into());
+    let op = OpKey("resolve:cl_1:w1:p1".into());
+    assert!(
+        matches!(
+            map.resolve_seat(&pane, &op).await.unwrap(),
+            SeatResolution::NotYet(_)
+        ),
+        "a key bound to an unresolved seat defers; it is not an error"
+    );
+    assert!(
+        matches!(
+            map.resolve_seat(&pane, &op).await,
+            Err(ThreadsError::Rejected(_))
+        ),
+        "any other refusal stays an error"
+    );
+    assert_eq!(
+        map.resolve_seat(&pane, &op).await.unwrap(),
+        SeatResolution::Seat(seat("seat-late"))
+    );
+    peer.await.unwrap();
 }

@@ -89,7 +89,11 @@ pub fn list(tree: &dyn TreeRead, root: &Path, kind: Option<&str>) -> Result<Vec<
                 }
             }
             "clones" => {
-                for (loc, r) in layout::all_clones(tree)? {
+                // Purge tombstones are inert records, not clones (§13).
+                for (loc, r) in layout::all_clones(tree)?
+                    .into_iter()
+                    .filter(|(_, r)| !r.is_tombstone())
+                {
                     rows.push(row(root, &loc, &r.name, lc(&r.lifecycle)));
                 }
             }

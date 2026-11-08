@@ -1,0 +1,18 @@
+{"findings":[
+{"key":"[Nit] src/plan/core_kinds.rs:1187","disposition":"in-scope","reason":"Incorrect behavior in a goal-named path: reactivation of a seated clone can fail to launch, defeating hands-off recovery and undo restore."},
+{"key":"[Nit] src/observe/seat_observation.rs:189","disposition":"punch-list","reason":"Missing negative-guard tests on a branch whose behavior is not shown incorrect; test hardening, not a goal-named defect."},
+{"key":"[Nit] CURRENT-DESIGN.md:65","disposition":"punch-list","reason":"Doc drift only about purge/tombstone behavior, which the goal does not name."},
+{"key":"[Must-fix] Baseline B1 not delivered","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Baseline B3 not delivered","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Baseline B4 not delivered for fresh agents and unseated clones","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Baseline B7 not delivered as requested","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Baseline B9 not delivered","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Baseline B10 not delivered","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Known product defect hg-66u.80 (open)","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Misgraded minors naming failing tests","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Requirement baseline B3, B7, B9, B10 (and B4/B5 fresh-agent path) are undelivered at 333ba07","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] hg-66u.80 acceptance item 2 is unproven","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Verify SeatActivate's Restore path when an occupant survives deactivation","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] tests/e2e_private_herdr.rs adoption tests rewritten in hg-66u.29 were compile-checked only","disposition":"in-scope","reason":"Blocking - always in-scope."},
+{"key":"[Must-fix] Whole-range final review remains outstanding","disposition":"in-scope","reason":"Blocking - always in-scope."}
+]}

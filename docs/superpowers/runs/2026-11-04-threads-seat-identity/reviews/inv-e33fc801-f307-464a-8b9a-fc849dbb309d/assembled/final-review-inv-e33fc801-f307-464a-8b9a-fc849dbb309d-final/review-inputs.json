@@ -1,0 +1,2128 @@
+{
+  "base": "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784",
+  "head": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+  "sourceAvailable": true,
+  "wholeRangeReady": false,
+  "status": "unavailable",
+  "changed": [
+    "CURRENT-DESIGN.md",
+    "Cargo.lock",
+    "DESIGN-NOTES.md",
+    "GRAPH_STATE.md",
+    "README.md",
+    "docs/reviews/2026-10-29-seat-review-H2-identity-design.md",
+    "docs/superpowers/runs/2026-10-02-herdr-graph-implementation/2026-10-02-herdr-graph-mvp-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-roast-design-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2-format-repair.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-design-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-1-final-review-keys.refmap.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-1-final-review-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-1-step-back.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-final-review-keys.refmap.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-final-review-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-punch-list.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-scope-filter.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-scope-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2-step-back.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-05-threads-seat-identity-roast-pr-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-final-review-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-punch-list.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-scope-filter.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-scope-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3-step-back.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-06-threads-seat-identity-roast-pr-4.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/amend-code-1-roast.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/amend-code-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/amend-design-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-ledger.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-requirements.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/coverage-round-2-review-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-ledger.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/findings-overrides.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/friction.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/parity.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-923e6061-9c30-416c-b723-ff6afdf3fb78.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-923e6061-9c30-416c-b723-ff6afdf3fb78.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-cc29fc83.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-f287b835-cd58-4645-92cd-5020cf8ae56c.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/profile-inv-f287b835-cd58-4645-92cd-5020cf8ae56c.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/hg-66u.67-review.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/clusters.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/digest.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000001.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000002.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000003.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000004.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000005.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000006.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000007.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000008.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000009.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000010.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000011.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000012.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000013.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000014.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000015.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000016.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000017.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000018.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000019.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000020.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000021.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000022.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000023.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000024.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000025.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000026.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000027.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000028.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000029.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000030.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000031.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000032.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000033.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000034.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000035.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000036.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000037.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000038.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000039.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000040.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000041.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000042.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000043.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000044.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000045.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000046.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000047.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000048.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000049.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000050.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000051.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000052.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000053.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000054.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000055.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000056.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000057.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000058.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000059.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000060.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000061.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000062.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000063.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000064.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000065.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000066.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000067.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000068.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000069.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000070.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000071.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000072.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000073.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000074.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000075.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000076.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000077.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000078.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000079.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000080.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000081.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000082.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000083.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000084.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000085.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000086.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000087.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000088.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000089.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000090.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000091.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000092.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000093.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000094.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000095.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000096.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000097.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000098.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000099.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000100.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-10.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-11.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-12.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-13.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-14.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-15.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-16.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-17.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-18.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-19.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-20.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-21.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-5.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-6.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-7.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-8.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-9.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/clusters.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/digest.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000001.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000002.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000003.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000004.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000005.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000006.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000007.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000008.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000009.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000010.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000011.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000012.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000013.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000014.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000015.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000016.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000017.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000018.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000019.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000020.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000021.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000022.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000023.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000024.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000025.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000026.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000027.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000028.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000029.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000030.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000031.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000032.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000033.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000034.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000035.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000036.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000037.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000038.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000039.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000040.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000041.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000042.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000043.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000044.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000045.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000046.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000047.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000048.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000049.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000050.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000051.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000052.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000053.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000054.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000055.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000056.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000057.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000058.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000059.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000060.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000061.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000062.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000063.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000064.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000065.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000066.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000067.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000068.diff",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-10.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-11.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-12.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-13.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-14.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-15.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-17.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-19.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-4.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-6.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-7.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-8.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-9.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/bounded-coverage.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/bounded-draft.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/diffstat.txt",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/generated-input-provenance.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/review-inputs.json",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-1.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-2.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/settled-tree-roast-3.md",
+    "docs/superpowers/runs/2026-11-04-threads-seat-identity/threads-ht-ma6i-protocol-shapes.md",
+    "docs/superpowers/specs/INDEX.md",
+    "evidence/hg-66u.23/observe-tests.log",
+    "skills/graph/SKILL.md",
+    "skills/seat/SKILL.md",
+    "src/bootstrap/mod.rs",
+    "src/bootstrap/tests.rs",
+    "src/cli/session.rs",
+    "src/config.rs",
+    "src/daemon/clone_status.rs",
+    "src/daemon/compose.rs",
+    "src/daemon/mod.rs",
+    "src/herdr/client.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/tests.rs",
+    "src/model/change.rs",
+    "src/model/clone.rs",
+    "src/model/launch.rs",
+    "src/model/tests.rs",
+    "src/observe/matcher.rs",
+    "src/observe/mod.rs",
+    "src/observe/mutations.rs",
+    "src/observe/seat_observation.rs",
+    "src/observe/step.rs",
+    "src/observe/tests.rs",
+    "src/plan/core_kinds.rs",
+    "src/plan/tests.rs",
+    "src/ports/herdr.rs",
+    "src/ports/threads.rs",
+    "src/reconcile/desired.rs",
+    "src/reconcile/herdr_exec.rs",
+    "src/reconcile/planner.rs",
+    "src/reconcile/session.rs",
+    "src/reconcile/tests.rs",
+    "src/store/tests.rs",
+    "src/threads/assignment.rs",
+    "src/threads/effects.rs",
+    "src/threads/fake.rs",
+    "src/threads/mapping.rs",
+    "src/threads/mod.rs",
+    "src/threads/service_tests.rs",
+    "src/threads/tests.rs",
+    "src/transcripts/capture.rs",
+    "src/transcripts/mod.rs",
+    "src/transcripts/tests.rs",
+    "src/undo/adopt.rs",
+    "src/undo/commands.rs",
+    "src/undo/compensate.rs",
+    "src/undo/mod.rs",
+    "src/undo/preview.rs",
+    "src/undo/tests.rs",
+    "tests/daemon_composed.rs",
+    "tests/e2e_private_herdr.rs",
+    "tests/herdr_client.rs",
+    "tests/herdr_spikes.rs",
+    "tests/instruction_writers.rs",
+    "tests/integration_sweep.rs",
+    "third_party/herdr-threads"
+  ],
+  "slices": [],
+  "archives": [
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 67,
+      "invocationId": "inv-p3-20261031T215045",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3-20261031T215045",
+      "report": null,
+      "files": []
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 86,
+      "invocationId": "inv-p3b-20261031T222244",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3b-20261031T222244",
+      "report": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3b-20261031T222244/final-review-inv-p3b-20261031T222244.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/clusters.json",
+          "sha256": "20c7d290c6cce88660ce0e64075b4b8c55e9d9d8e2a8dd8388ced6d6942c3bb9"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/diffstat.txt",
+          "sha256": "1229491c136c46ac4a3b349b05cd61e821df12a4c6ffd2fd29b8c09aa53c8293"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/digest.md",
+          "sha256": "93741af01fd0403f382f5328993dfb7c19a23e0d696317ac19527b72d026e561"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/generated-input-provenance.md",
+          "sha256": "c2a5fad3c45f032c2e311fe9557cd8163a1a9e83f309ee5dafb9753b30d343be"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/review-inputs.json",
+          "sha256": "af595d61c5d06816451fe529eb96343a8814ce97204eb00c47194fe890b45b0a"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000001.diff",
+          "sha256": "cdd913e8de5c2a64b9f5eb3496be408ee781b41fed701ec7b69b2f84a6b50591"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000002.diff",
+          "sha256": "613bc5dfbb7bcda61869dcde8e31c5b8228f5e02fe534a80fd0f861d98674e39"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000003.diff",
+          "sha256": "2777626140cf210320d17755952e1d5c78ec70e10dcd92b17650272b3ff92ea0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000004.diff",
+          "sha256": "f0e2d6b518fa6ab389b323e93bd98112341e2af35223a089e2eac7eca6c47387"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000005.diff",
+          "sha256": "f144052abc765d5bf451c858dd2870a783dcc525459eefff127434ab10cb0302"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000006.diff",
+          "sha256": "1c9f66cd295aecb8133197bf237da180cf5fc7558ecc3de1fd8f4c6dc196b041"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000007.diff",
+          "sha256": "86238670cdce85cfb28116aec35a6f28c93979e1a74d25d77b8a5c25a11a54fd"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000008.diff",
+          "sha256": "d939e66d73a765897af68ba9a4d314340b58edd46a5d8f930b1e6a0a881880f4"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000009.diff",
+          "sha256": "83eb489aedb7146654b74737889012151e35becf2bdbe8853c1396ca31f911f8"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000010.diff",
+          "sha256": "4ae6cac6cb3710ff2d5c04f819a3876031a213bc7bd64807005f29ec3bf475f7"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000011.diff",
+          "sha256": "d7212efd4691e6f40b4b18a5964e11df2dfd9169907b69e0be211b39f70f1d3d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000012.diff",
+          "sha256": "cf149cf1456e79d65b43e0faad07fc97380c8b37503b4c988102d0200aafbb9d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000013.diff",
+          "sha256": "8c76974448af81d7733ebf036f4e4bddaf73bb7526622e6b823638be3660f1fc"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000014.diff",
+          "sha256": "a6ab0050cb62432dbf00e1a952afaa11fbc633f342ff7e313a2d708d1b6caf13"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000015.diff",
+          "sha256": "83306710739a5ab93c38d72054a43a7f8bf7070e84117eec6e99de87a0f02801"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000016.diff",
+          "sha256": "69fd0df4bafa0efdaf563619acc9a3d99eeaddd7561f759659a1e5cc009819da"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000017.diff",
+          "sha256": "7f99a84f71fb3d106c5831e0095e60a23adac5752f7385d671f2a1ddb69ea325"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000018.diff",
+          "sha256": "7a4ca3ff54d6a54e63a255eca30e65786ae99545c3e740ce01ed23ea107f41f2"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000019.diff",
+          "sha256": "9aa110166a576ee769394ab177c1860e730979070b7c822dafb2340353f85b4c"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000020.diff",
+          "sha256": "eb25beab208e6843397a5cafbc8b747502f462f3391fe1bf68ba495c4aecf191"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000021.diff",
+          "sha256": "071140a2efef30320a8931ee9e3469d75b12484e3f57ce7e3fd1107cf53c1610"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000022.diff",
+          "sha256": "970f95fd4c769ef5c058ac80a2695b6461e4b773e5717fbe44e4ed54a500c77d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000023.diff",
+          "sha256": "2944f16eb8ac6d4103dc61c73d207735740c7bf0f2a48201c9243d853b6b86da"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000024.diff",
+          "sha256": "3e99f9c08b73297eb099efea667ef0239ef2b7315f95fc84864da63c157824a7"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000025.diff",
+          "sha256": "6ea538dcc8920be31d872fb38948beb2288f9103ac7876555bc0a74fabe2f575"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000026.diff",
+          "sha256": "e452dfb17e10450827f477b3ab10f546333e20169ab569ca250eeac725583b9d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000027.diff",
+          "sha256": "7cf9c09e34e6e7e21d2c80dd42194060c2d0864fd2ded19071d6f7795f46e1e1"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000028.diff",
+          "sha256": "76f103001c62ab07f44df01e44576156a54ae7e8141f0b73f77180f0d9e51d63"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000029.diff",
+          "sha256": "913f1eae0bcf6c28847ef5c08e332c1421ee81f6cc7d72bf7e1f3d215eab549f"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000030.diff",
+          "sha256": "455219b9cb3f653ac9f3f058c282b018c68b745dccf7e82f6cb08f3c480684a2"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000031.diff",
+          "sha256": "097d9bb278be83011a351ee1a5c438dc1f651c218fea2a0711a5f344d6aea476"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000032.diff",
+          "sha256": "982faad29331885eeb094d13af58f96beeea3325ec93f5f47e1f7af5a12177bd"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000033.diff",
+          "sha256": "93bac21556f48d943ad97b8b127cba0338d9516e344659c5ba0feb8eb2917b25"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000034.diff",
+          "sha256": "dc75b8904bfbdbf5a2fa390b70d3457153dfa9ea3f2c8e9bbbc8c1bb9866ac43"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000035.diff",
+          "sha256": "9e974bec9b8bf32367b1e30057eeb4a76b0c105192311a324e05b04e02babd81"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000036.diff",
+          "sha256": "c3d382b83adb04e4abba6540696c621acacd0ca6de16c7c32b98426d6d621de1"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000037.diff",
+          "sha256": "a2ae756b20c44a9e477310a4cee14295ffe7d548cb55cf532fd3492f4850709e"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000038.diff",
+          "sha256": "32447eff5d5c34246f0de140713f43136b129745fd9f3a56cbdae02d0d856461"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000039.diff",
+          "sha256": "e20da587536dde79e1f32263da7a820c5f6e3fe79b43673f9c027b219f282a5e"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000040.diff",
+          "sha256": "39311531e323c7a5737cf6181b38d9ad8235eb811fd26f8f54b6c9c578322942"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000041.diff",
+          "sha256": "b9fccbcacc51cb4ea6c9401c052e528054dcb0505a3a2d4298d19d350df9e127"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000042.diff",
+          "sha256": "3b5f3b951379c1543f8467eece606653d457a27929457ef10ba39bfa187ec2f6"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000043.diff",
+          "sha256": "88b7d581183a2aed8e1f450d6a5c462ead28644a4b62e6a8f9ed18801f3c3f11"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000044.diff",
+          "sha256": "26a9c141152d5f4cc5ba4a504750009f6382a91949840489413036a224d8e787"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000045.diff",
+          "sha256": "b0d2807d5a2ccf0ce6538eaa4994296c740ba9faa14fe81266ea3c2eaf88666c"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000046.diff",
+          "sha256": "8c330e9502e40634c248f45e6a33f9343c264df9088ae6ebe281f2c0c355d487"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000047.diff",
+          "sha256": "5a22242fa690d9e6782d5dcf78034a5e40ce317c87c07de8dcc2f23ada817cc1"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000048.diff",
+          "sha256": "30684d05effe620bf0f7582394b6dea691329ac763c9d4d3a92b719618bcec66"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000049.diff",
+          "sha256": "1e74993a119d0ccb7e704f022fcd24dbaff96f5ebbb93cc0b5346951b098aef0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000050.diff",
+          "sha256": "17f022c9583447aa4a14222fa4d8d2a7c8d8d64aeea3b5ac4687c0b8de6457fa"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000051.diff",
+          "sha256": "8f6462d73ee17b8d22f27ac1b8bd38cd313fe020e88e8a45dfe01ddce58c3138"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000052.diff",
+          "sha256": "94a28d1cf5079297b473f10529a95574c9d7c6189e59db0fb5ce95f63bc2ce5b"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000053.diff",
+          "sha256": "a1a5aa4ad0cf30227f111d9caafcfac9ffc76e4dadc6b652a6eb4c234ee2e791"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000054.diff",
+          "sha256": "98a667ed0c2501596c3ecb6f77fa109ab1480394ceba18282cdb107f2169c3b0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000055.diff",
+          "sha256": "4b97e3bc0ea074120d40306c04df7a7cc070abec0603c005cf1b1cf4fbdee8e2"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000056.diff",
+          "sha256": "7dd89b3ea79390e8dd62b6bbae3be7390511a943913c47e2508a44212b1d4bc5"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000057.diff",
+          "sha256": "ebdf47d27b68242f5b3332273ebf1bffda00b1f730e45145ab77ca4a4506e2e3"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000058.diff",
+          "sha256": "62c30f94abb6b6170b605a1034f0c233bea0dc23b43b8d960162d188b8464995"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000059.diff",
+          "sha256": "c3081b037a916b0706f9b2c98c1c14eae00e952acc6a3166770d9629442baf07"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000060.diff",
+          "sha256": "ab7787641e2e0b07e493e01df3b51f4dbab28afb0c9f64f65bb40c405522b53f"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000061.diff",
+          "sha256": "66035d2626ce95dc96b02333b9109491510250ca15b8166fffb95051f7b37129"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000062.diff",
+          "sha256": "fea916216db07649a2855120911ad2c6f2c0f023e7f8b47598bcc779cb4b62e8"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000063.diff",
+          "sha256": "cb4e344509ff42ea40c8c86d16f1a325ac39a9d3a87eb95654e137f55ab215c0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000064.diff",
+          "sha256": "95d57d9688c6d65de73542ae1f75f4856a92d18301a4a8bc591e2d03bae1b7d1"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000065.diff",
+          "sha256": "993011a0033fd82bc31adb1b2bd10dac8464a3f3fab314b36b27df5829a04028"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000066.diff",
+          "sha256": "99b692a40c99ee8cef65cefd6df5b6f0ffcb3c94c7307d125713cebe0878e064"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000067.diff",
+          "sha256": "dadc193626fc1f18e65667bf65b7eed4d96a8757d3df483cbf5653f8cc6ba9ca"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000068.diff",
+          "sha256": "c9f96fc60f0bc3fe67e5e86bd640d85cfa46ff9c6ed40c3e24ea111742a2d321"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000069.diff",
+          "sha256": "898c818fd7d1deb7694318661b16e77ee34e8b58a3053ecd148d7558c393c634"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000070.diff",
+          "sha256": "76a3eb284fcf0921c5af2b0c8d8292d7d66618dc4c7531e32337f16ce2e452a0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000071.diff",
+          "sha256": "00461f8091fb0a009b60b9b22dbdb1eefaeab9692ee1022b0d921ffb7b83036e"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000072.diff",
+          "sha256": "43db899d4bc20af1908d4e9e00f629cbe3b57a495c9f12e5fc6bff20cd43a8a3"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000073.diff",
+          "sha256": "f2088c132e68de4ea4f99bd81fe96fcc16c2f025757ede7f87e8bcbcd0d047cd"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000074.diff",
+          "sha256": "59916a7e589223c8c1de3eebeea1c0a8ae79bd79aadef4b6a98e4cf18a44c74d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000075.diff",
+          "sha256": "9c6fc332acd4de484ffde14c59d4648e2067a4f3e32c6bb3595c8c2730973553"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000076.diff",
+          "sha256": "a856dbcb2cd35392fd01a0c6658b72f4b80c15f6846e327a64f1743f27bed204"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000077.diff",
+          "sha256": "7cc945e3389e197ab4326485ec0b4ca16842b0925a35a413547f1f8d5939e75b"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000078.diff",
+          "sha256": "6072a617dc09525bca62e269dc02290a005e8b94d58334e55a461807e00af73b"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000079.diff",
+          "sha256": "6d07c19e3dee1d03ae08e9469b615ca479d0d916cb8c5d863bf044566774e347"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000080.diff",
+          "sha256": "2feec1c09b44296cc16b971bbba55219eea6d741b9a230ba537a0bf66cc7deb2"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000081.diff",
+          "sha256": "5f9e76303adeca3dcfff96b0a01bdf33f6a9c12ac2a4346bef863adcd0b48557"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000082.diff",
+          "sha256": "4bec79bb51ad07f5dc840c9be89802ad86baccdbd728f1c04ff5d32717c74e19"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000083.diff",
+          "sha256": "11e9ccf661d3c08cf646a51716ae87f34429c0b9e74049d634ce772e0ed5af2c"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000084.diff",
+          "sha256": "d509880a7128f6248c6a3e81e7e64c50d7e14d97e64329a245a77bd0b748769d"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000085.diff",
+          "sha256": "cc652bd182718ba33656ee152f4a8e41621fa15465f0219b0ba2dd37a291055e"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000086.diff",
+          "sha256": "7078e8de9819fcc854368df1a195a83a12baf743ef31b67f9073e87041c90630"
+        },
+        {
+          "path": "assembled/final-review-inv-p3b-20261031T222244-final/slices/000087.diff",
+          "sha256": "9b0032664db5f9c41475bd5a8a3a9724565dc6c8a58a326f6a67c416f0d301ae"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-1.md",
+          "sha256": "09b074a06f939e95311cc647f8bc9b936af5df382c24e9205b4c82ee031ad5a2"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-10.md",
+          "sha256": "1819fb03c31c7faa4504d34d928bf3fc2211ed41d465a663711d9f98933d9702"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-11.md",
+          "sha256": "c4e7922d5c59ab0d9c438c1d4bf7da517aedf9726229644bd720aff59e1855e0"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-12.md",
+          "sha256": "d39a69ef9c94d03d1f0c243f1a6d516c56535bfbd8ef976dc8868c593c65f596"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-13.md",
+          "sha256": "75509698c735c5761def2d3b09a9087a91f21369094eb15eb6f58f19cbfc482e"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-14.md",
+          "sha256": "5748f4c19fb49e3566b9ac37577ba8b11ea08bf72a3ea5c77fac82a138e6c2eb"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-15.md",
+          "sha256": "8136b44ef287cbe3e506c66a0898fe1b4499b097c33341146da9ee743082b0df"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-16.md",
+          "sha256": "f4af9f662b58ba4e73d9e98b82d6208589e5c1fce6bdea929b523b61f39de3b5"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-17.md",
+          "sha256": "dff42049862407b2564cecf0333b5f79ea56738a47af889b857bc44a6d8a2889"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-2.md",
+          "sha256": "94d1b7c18fd794708f9edc113aae8df07c444c28aa084bdd6c02dfb8dea544fb"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-3.md",
+          "sha256": "359a67da555e5cd046f199c4f8d56ced92802299f4418735bc0ee6b334cb11ef"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-4.md",
+          "sha256": "57d5d2fe892104a31b763f8a9a8e79aded409b1d71fbc2ddad01fc1eef22911e"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-5.md",
+          "sha256": "7df5b0b596c61a7cf1083065847c647d39cc134da08eb9a5dfd4bd44cf90eda1"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-6.md",
+          "sha256": "4380e455da9be98c5fb8a30e3656b55b72a3d72dab1af7f25ac7b7c208c8703d"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-7.md",
+          "sha256": "19867ae858dc30d552f4286add37026977939b5525c360399058558b872547ad"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-8.md",
+          "sha256": "d246553a821b7ddd90ff88ef54c30ec54202c3a230b1848d2ab39434477e845e"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.cluster-9.md",
+          "sha256": "7d8bdf70e339d2350b8aeaf7a4e1774e1eb4f04c41abcd43ceb9219a3e86cf8d"
+        },
+        {
+          "path": "final-review-inv-p3b-20261031T222244.md",
+          "sha256": "60127783ccbd47304d079aff1a2cda1093805b151440cec7d8fc92deac9a2ddf"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 91,
+      "invocationId": "inv-p3c-20261031T232503",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3c-20261031T232503",
+      "report": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p3c-20261031T232503/final-review-inv-p3c-20261031T232503.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-p3c-20261031T232503-final/bounded-coverage.json",
+          "sha256": "c6d20d533b1ceb9c255575ee899c0e18d63affff39e1a8a4a5220ca052a2ccf8"
+        },
+        {
+          "path": "assembled/final-review-inv-p3c-20261031T232503-final/bounded-draft.md",
+          "sha256": "5fb3d06e330ab0514a676de2ca05540dd0a0ec766f448058fe0e20719b7a3b17"
+        },
+        {
+          "path": "assembled/final-review-inv-p3c-20261031T232503-final/diffstat.txt",
+          "sha256": "c90767db0f2287cc049ccada54e4931f900af08ae736a99a06cbc18c01faefa0"
+        },
+        {
+          "path": "assembled/final-review-inv-p3c-20261031T232503-final/generated-input-provenance.md",
+          "sha256": "6415bc35cf2d9eb13a714cbcde53cac22223e93440b71de5e5c4f312e02f6c00"
+        },
+        {
+          "path": "assembled/final-review-inv-p3c-20261031T232503-final/review-inputs.json",
+          "sha256": "d9f454567b94599e2c8f7b8ce65ce02df05cc32fd9bcdc84e16d6d336a2982fb"
+        },
+        {
+          "path": "final-review-inv-p3c-20261031T232503.md",
+          "sha256": "9f9ed742d2936f252866c930369129aa3957f4ec8fbf115a2767c3a50c71ded5"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 95,
+      "invocationId": "inv-p5r1-20261101T001157",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p5r1-20261101T001157",
+      "report": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p5r1-20261101T001157/final-review-inv-p5r1-20261101T001157.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-p5r1-20261101T001157-final/bounded-coverage.json",
+          "sha256": "55f8a9b139de057a157a60cc644722760e02893999fe1c10d1ad15dbb46e0466"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r1-20261101T001157-final/bounded-draft.md",
+          "sha256": "85122ec4241e4d813cacfe30f6d7f70919dc4b89ea6e446f6e3c684fbea2a30b"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r1-20261101T001157-final/diffstat.txt",
+          "sha256": "018981b29deb4e63c37ea746d2821655d7ff950e4a9c62e7526bd0a56d13fa46"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r1-20261101T001157-final/generated-input-provenance.md",
+          "sha256": "6d423448abd915044f3afbd2fedf54d0e2ac4bd9b607f364e6686e9419445fce"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r1-20261101T001157-final/review-inputs.json",
+          "sha256": "693c53fe1a9e96acee6469ab2747c66de7ba2cbc265520bbcde7631277893dcb"
+        },
+        {
+          "path": "final-review-inv-p5r1-20261101T001157.md",
+          "sha256": "36d5c55067b8adb0f0cf29017d78d934fd679f884b89a3dedb4244c8a69ca124"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 99,
+      "invocationId": "inv-p5r2-20261101T010931",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p5r2-20261101T010931",
+      "report": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p5r2-20261101T010931/final-review-inv-p5r2-20261101T010931.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-p5r2-20261101T010931-final/bounded-coverage.json",
+          "sha256": "80498849f1169ad2616d8dc1ce796a228c9ee05bda2921efa1b18f87640eed65"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r2-20261101T010931-final/bounded-draft.md",
+          "sha256": "1d7eefd4595b4ce01e471da51942b9e36ab2b291e84f33d68cde1f3a92810a22"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r2-20261101T010931-final/diffstat.txt",
+          "sha256": "7c7b3f425a4aac573046694f695621d9e7f468a29ebe8ce84dc0f99bfdd7c435"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r2-20261101T010931-final/generated-input-provenance.md",
+          "sha256": "fa319583c0266ff01555686b48897ec198b0a9e9bc980eed85d1149fd627dbc8"
+        },
+        {
+          "path": "assembled/final-review-inv-p5r2-20261101T010931-final/review-inputs.json",
+          "sha256": "032a306b1f61fc89f4586880ae98f1072c4e002cb82559ecccb8b5806ef86daa"
+        },
+        {
+          "path": "final-review-inv-p5r2-20261101T010931.md",
+          "sha256": "900e08ddaca3fe4cfcda71cb8ba448b09241c4c49e39cab72947895415334e76"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md",
+      "recordLine": 103,
+      "invocationId": "inv-p6fr-20261101T020246",
+      "archive": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p6fr-20261101T020246",
+      "report": "docs/superpowers/runs/2026-10-31-h1-instruction-gate/reviews/inv-p6fr-20261101T020246/final-review-inv-p6fr-20261101T020246.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-p6fr-20261101T020246-final/bounded-coverage.json",
+          "sha256": "824fe109147ff0c1b8acf9f44d42e918bbe4155e68be0dc94f815e7ed65da5ea"
+        },
+        {
+          "path": "assembled/final-review-inv-p6fr-20261101T020246-final/bounded-draft.md",
+          "sha256": "80729004582d14d9f48a448db8b2048bc849939c797dbc773167d31a8f32db64"
+        },
+        {
+          "path": "assembled/final-review-inv-p6fr-20261101T020246-final/diffstat.txt",
+          "sha256": "16335d454a7c7210841b7127987b16ad681e6d9e39016d3e30a8ca1cdf5cb356"
+        },
+        {
+          "path": "assembled/final-review-inv-p6fr-20261101T020246-final/generated-input-provenance.md",
+          "sha256": "3b245d3c5b31a15f306ce2ded7b7b865fe8e8b9d1b8ab434e22be9af5a93a32b"
+        },
+        {
+          "path": "assembled/final-review-inv-p6fr-20261101T020246-final/review-inputs.json",
+          "sha256": "e785fbbe84e1ec6d638654a4dfc07da709a7f8b906be6553142d77afa3ecc1b4"
+        },
+        {
+          "path": "final-review-inv-p6fr-20261101T020246.md",
+          "sha256": "31d664d888f1b2567d2cd9cf94702338f4316138bbba3931b00b013ebdeb0645"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 98,
+      "invocationId": "inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/bounded-coverage.json",
+          "sha256": "7a8fa1b0bd71557fcdac916a9b756d30252e49330fe1fa1b1084fc7afae675e7"
+        },
+        {
+          "path": "assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/bounded-draft.md",
+          "sha256": "50ee50716d3f72180b7b19422bd947aa35bf0059be09131509d6329dfc26748b"
+        },
+        {
+          "path": "assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/diffstat.txt",
+          "sha256": "18a9a2c3c0d0e431e251aeb3fe126f1bff3c81961dcfc3f174b8b99baba21510"
+        },
+        {
+          "path": "assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/generated-input-provenance.md",
+          "sha256": "4785f651530c4f34c5f28e165145e81afc211bd0fba7bf02f3b5d8d9151b3a7c"
+        },
+        {
+          "path": "assembled/final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca-final/review-inputs.json",
+          "sha256": "9301ac595853d71fc21206d33518429f8b8a86540374e78f3e4f70d0571a998f"
+        },
+        {
+          "path": "final-review-inv-4daa8441-9a36-4c1c-b79b-6915ec7c18ca.md",
+          "sha256": "41089e2cd28370e96e836ae1a4ad5044391600bae9db9e4f5a5995703e0dd9f7"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 95,
+      "invocationId": "inv-aae6b25f-837c-4f99-9ad9-1e5797bab329",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-aae6b25f-837c-4f99-9ad9-1e5797bab329/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/bounded-coverage.json",
+          "sha256": "8bd787aba9eae48eb762b05c1c760ad45ef22ebceefd6bc9cc99110ab2aca19e"
+        },
+        {
+          "path": "assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/bounded-draft.md",
+          "sha256": "bb698e8fe2461e9302016ab984939a005847e6eca7d3c29e101cf1fe0f986d1a"
+        },
+        {
+          "path": "assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/diffstat.txt",
+          "sha256": "3af505430df31944b31b073363e2c19bc3fd6ec7f9adcf77f1d09dbe309c7f20"
+        },
+        {
+          "path": "assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/generated-input-provenance.md",
+          "sha256": "c31519283f2d00f2ec1ed3be15fd7d6cb07fa20ebe60a39ac479c5e9ad684d8a"
+        },
+        {
+          "path": "assembled/final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329-final/review-inputs.json",
+          "sha256": "a7281a142e9753e8245acb13b9e855a88b94890e048e7134b56c4997f2bef5b6"
+        },
+        {
+          "path": "final-review-inv-aae6b25f-837c-4f99-9ad9-1e5797bab329.md",
+          "sha256": "15dc25a2953a237b2d58c46651b86e6500c12a0d229959e328f47850f4e9e60b"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 92,
+      "invocationId": "inv-923e6061-9c30-416c-b723-ff6afdf3fb78",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-923e6061-9c30-416c-b723-ff6afdf3fb78/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/bounded-coverage.json",
+          "sha256": "385289215a337f99a5715bb98df437cbdcf2b3d8be8f15af2f94c9f676e73902"
+        },
+        {
+          "path": "assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/bounded-draft.md",
+          "sha256": "285a04a82977bf62c022c48478271550b0dc1576b99987fec961645cdfae30ef"
+        },
+        {
+          "path": "assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/diffstat.txt",
+          "sha256": "539626e60f4a8f7a14b358b6eff82aeb4b0e3f720961d464666c22fef66af444"
+        },
+        {
+          "path": "assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/generated-input-provenance.md",
+          "sha256": "042c400e439b0c8f9b5c31acc596e2fa791630f60305c6268b6f3bec2f80112d"
+        },
+        {
+          "path": "assembled/final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78-final/review-inputs.json",
+          "sha256": "ec22ed765568ba384de2f6eb9f9f98b321d4963208b8efb86f2a355f6242e5eb"
+        },
+        {
+          "path": "final-review-inv-923e6061-9c30-416c-b723-ff6afdf3fb78.md",
+          "sha256": "19d48519c7317b9de7236d66654767581806b7fd094b8ae6bdba88334f5cf730"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 89,
+      "invocationId": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/bounded-coverage.json",
+          "sha256": "7a52b38ed090762f95b0b7c76d724bf2e9969d645096e04000127b513af53d01"
+        },
+        {
+          "path": "assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/bounded-draft.md",
+          "sha256": "ada89318b36c8cfa1bc7905f6183fca2b54eccdb5367db0f2cafcaeb7ac99020"
+        },
+        {
+          "path": "assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/diffstat.txt",
+          "sha256": "fcca3b78f6c7aa175fab87ad85e9b51aab094d321578e1f2349356d5985effeb"
+        },
+        {
+          "path": "assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/generated-input-provenance.md",
+          "sha256": "a9d1a5c5f53de3b4b245380e3abf6ff392c77c94d28abe2d44ea9e8196a2b4a1"
+        },
+        {
+          "path": "assembled/final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a-final/review-inputs.json",
+          "sha256": "1db593411d4cc8eede25c2f72ace4357cb7ef5f7e180f9bcfdf76fd531222f13"
+        },
+        {
+          "path": "final-review-inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a.md",
+          "sha256": "711a070c870769b3c6d50c32fa87233eac0b60bc95818e627712f9a0380c2585"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 86,
+      "invocationId": "inv-f287b835-cd58-4645-92cd-5020cf8ae56c",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-f287b835-cd58-4645-92cd-5020cf8ae56c/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/bounded-coverage.json",
+          "sha256": "c46dea8657796e177481d1afd4eaa791a3be66e78211445ac79410389424ad8f"
+        },
+        {
+          "path": "assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/bounded-draft.md",
+          "sha256": "c4a0202187d99bed1475fb36087ae68cbd31c4669f70125a93f3822c00c57bfd"
+        },
+        {
+          "path": "assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/diffstat.txt",
+          "sha256": "542dcddf43d424e4dd26408c5c4986971621aac37c97bc8ef8e4cb84b6bde04d"
+        },
+        {
+          "path": "assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/generated-input-provenance.md",
+          "sha256": "a35c264a38f887bde59b3be08267ff66630f4999fe69e1e82efa2820d633a17a"
+        },
+        {
+          "path": "assembled/final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c-final/review-inputs.json",
+          "sha256": "d7009009a09c610c4ffc059cb11c57b5e48194b24a5f182215ce607236fcd6b3"
+        },
+        {
+          "path": "final-review-inv-f287b835-cd58-4645-92cd-5020cf8ae56c.md",
+          "sha256": "bdccdcb0fc8ca264e955fce88ab00aa639c6ab5195316cfac40d5bf82aab6aea"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 83,
+      "invocationId": "inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/bounded-coverage.json",
+          "sha256": "918ae1ea65668deca3dc557d682a48576a1b87338bbc1c902990513afb2bf396"
+        },
+        {
+          "path": "assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/bounded-draft.md",
+          "sha256": "b0457775bb2f4e82268a59f830695f8c2c6cfb7024bc6fdc7c2630e7654cc4ef"
+        },
+        {
+          "path": "assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/diffstat.txt",
+          "sha256": "c1aa803e877d7b11afcbf541e9713a6b94063a4244f2d2fce791ab99d881292a"
+        },
+        {
+          "path": "assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/generated-input-provenance.md",
+          "sha256": "0c03c40923c2f0bb008f24115dd7d30d6326fabfbb504425a4d0e6c7b4e7fd1c"
+        },
+        {
+          "path": "assembled/final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2-final/review-inputs.json",
+          "sha256": "19abe564d7fd04435266f5c3800dfa30d6d23d06ee7682efab4960fd5d182731"
+        },
+        {
+          "path": "final-review-inv-c9eda770-1c6e-4c3e-8abf-ce9786392bc2.md",
+          "sha256": "ce9b8051dced3b9b8e24c845d9decef225a823ddd20d5ecf830336d99d7cbe10"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 80,
+      "invocationId": "inv-4aa37d70-023c-483a-b47c-3dc801a586fe",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-4aa37d70-023c-483a-b47c-3dc801a586fe/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/clusters.json",
+          "sha256": "75a986ea9425be4572e93eb4558d8fe0bb24ac4f268b3bff0d5b24374c5015ac"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/diffstat.txt",
+          "sha256": "2c0053174ab593d5d8669b2f6b14164dad02e9428bccf3ff935dc81d90cbffb6"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/digest.md",
+          "sha256": "254af5a032b4da96c16c083c0dfee8b875584de03cc7ad427a67762552c84c0b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/generated-input-provenance.md",
+          "sha256": "5ead071e6679a8be72dea1a7175311f0ede46ba71cf97d6b813942240fc8eee7"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/review-inputs.json",
+          "sha256": "6e6232203ccb7b90b21127082f6169516fd69f5ff6398d2c59c18ee06178f138"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000001.diff",
+          "sha256": "e0914257250be7fba0c1c87c309c36fc27e5bda16611be1b4aa5f1055652f633"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000002.diff",
+          "sha256": "185dbb7b601e49119452fa76677302a8091e59a819a0b62e5795f25ff6cded51"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000003.diff",
+          "sha256": "6f9f3f17e219f20e43c510c9bfee6c0fea2a2ec7a6eba93cc7ff3ed07b9edd8e"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000004.diff",
+          "sha256": "678416a58d6016105764db4757522e4c8f5e0909baa6ca34caf76be481b73507"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000005.diff",
+          "sha256": "a653c6a29c5cbdc14df6cdcee834aed2a10819d14d9609792ec33062716821cc"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000006.diff",
+          "sha256": "5ba97ed342716bd884c00a9058f17f451f89ae535c580f4eadf781e68668a023"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000007.diff",
+          "sha256": "1a884bec1b29bac8765c7f30d3aa92a6f1bacd17b8d1a51df0ac6c3bd58f7db1"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000008.diff",
+          "sha256": "1c953945bd059707ead546c819bc5f5db0b011bb7e8edf405fcbe300ba333ba0"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000009.diff",
+          "sha256": "dacc369e8da10cb857ce39fd3539076f1dd8fb1fd701188c21b4e3a09a76c5b3"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000010.diff",
+          "sha256": "0d8490f3085673b750ec439de60fb1abb109b69c93386c2d954cdc69fd3f564c"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000011.diff",
+          "sha256": "df4e196bfe6fd97047c098d9dc07ccf3a1a6fc80a69f5c5e0e8cfec8fa767180"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000012.diff",
+          "sha256": "a2c7d872837c7652bbb81280f486aaf3fda9cfa6b1929838fc96febfd101fa9a"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000013.diff",
+          "sha256": "046de550cf1a688921af1679c0aecb6b11afbdcdf84a39370cc3e5450aee5d53"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000014.diff",
+          "sha256": "efbf5b4002c40b88a33fbf8f5e0d252dab03809518b32f3cbd0147e9c2cbc2dc"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000015.diff",
+          "sha256": "ef453093b83c671319edb9bedd029fbfc0b680fe3003dacd27fd3188a375d7a1"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000016.diff",
+          "sha256": "65a1330e18c3861b764d72043c9b0f2b681010deada8ec89200b15e480df726f"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000017.diff",
+          "sha256": "aea6d921632c4a8f1c95690844e454d8433dc75fdf9c6317107da26d3a6e0e3b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000018.diff",
+          "sha256": "471b5b1068295736d887ce9ced219a76ad319e0c534f8a7def0ebcce1f25734a"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000019.diff",
+          "sha256": "88c30fd8c5459d3c2fd79e335c7da075ffac593fc28b9596a30724a4d50837b4"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000020.diff",
+          "sha256": "8cae4c117294c8b156a6f1fea404e7b581a4c689c3063aabdff81a46d50dbbb4"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000021.diff",
+          "sha256": "db3e8c78c7c8a850d78eab72b05f3d8e612d119f535ddd9ce34e79b5e924d025"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000022.diff",
+          "sha256": "9805630045acc59f4a5f79bffc703e324568064d6b849a25e548824d9be7b4ed"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000023.diff",
+          "sha256": "dc7f5d899df421a09263b5e362c203051126e92d2bfdd48fa248c00d13acf8e6"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000024.diff",
+          "sha256": "caf72b95ad6f84424283c95a2d85b4073b9643815d16a21048ebdbf64456360e"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000025.diff",
+          "sha256": "5f2c7a6e4a77c642a29f49dd9ba25ac43e73d003d2e04880794bc6b32829098f"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000026.diff",
+          "sha256": "2c47c9d9a36ddbd1a4da897a6accb6d29342e8f4d930e714c40952ec495054bd"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000027.diff",
+          "sha256": "5f172188d7579a38c52eb7d1ca77764f8d909f00b3e6c5a716fa9f5963a13007"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000028.diff",
+          "sha256": "4db56baa0a6f8c89aaa4d8edfa15bbbf91da6d8ee0825fbf8b5c16b63a2eae84"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000029.diff",
+          "sha256": "03459315a28f61915cea0a9bca66ffc66767c178928873a0e2269170fea34408"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000030.diff",
+          "sha256": "f8fbaea2fa0077fb9e29beea8acef5e997906d9d27921fc91578ea1457830ae1"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000031.diff",
+          "sha256": "f62d84e2893039155594913f7ee12375b14f5d7941962448f8215c7f0c5a77d7"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000032.diff",
+          "sha256": "bb2944cd819ae0ab06bf300b5419b9aa848a2137565a698dd303f0de2353409e"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000033.diff",
+          "sha256": "419a141417e8b9d3b633016b00209630e018a55d81eb4b8f8febbc3e99a189ec"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000034.diff",
+          "sha256": "05f8fb01ab087ba78f67807dc02309a8ca4f01ba11d35cb1845a0940a47f321b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000035.diff",
+          "sha256": "7eec25148d3fb3f46607a47858bf5566e3e846ef19e5a9673c51df02e94a9036"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000036.diff",
+          "sha256": "d98129c680527a0eb14338a091efc06a740f01083077033b425d1f299ef71e15"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000037.diff",
+          "sha256": "5a3423712a847d9d1cfbed505aac7d419f74e17f8e340363b63a4e38287119ad"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000038.diff",
+          "sha256": "08f04ccd5e5cf8afedea485bb38ed7a302ef41746f2e3075bd8868ae258b9949"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000039.diff",
+          "sha256": "079d5ab97c0124fba2b6aa15ab0d4dba2de12d29643cf2b635a201e460873046"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000040.diff",
+          "sha256": "9d0ab0578aa7c0ed5dd20b3b6d46c44d7c033a3bc2b46bc0e194842eaabdecb9"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000041.diff",
+          "sha256": "d3226de330e6b443afba7a8712b8dfc82c3bee0e2e98031a626315dcb5bef26b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000042.diff",
+          "sha256": "174848a6005a5f4ddade51a8bf6bd72b6e13ba20298884e5af77d86aaee9fe88"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000043.diff",
+          "sha256": "b74accdad2b5a688c1523486685ec581a2a85dacc15c1d08ae180d8455cf35ea"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000044.diff",
+          "sha256": "3d7a807b04264b23d297838c76c29a53943b08d58f7f1f0950bdf84aae87fd1c"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000045.diff",
+          "sha256": "3f7ae5407a12e4f0d022e1295d9d7957d2fe3f2b8621ea8506bd94a3cf6239eb"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000046.diff",
+          "sha256": "a15f79a9dd59488c95d253030b8959142a2ef45056e0fd18239cb1b70cf1044b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000047.diff",
+          "sha256": "f970744bc13821a1a90dfce2ce95a64477056b01dce61050a0382b370d72fa8a"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000048.diff",
+          "sha256": "8122b27b4cc3b402e48b8743a42624103d714e2d7fd617ab946fa8645f3d81d0"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000049.diff",
+          "sha256": "f07902cceb37960b5c6b65cf30964c745ed2075fb96a79e59a8892567b9794e2"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000050.diff",
+          "sha256": "bf1ee35f5b02198e4d64bc57b95fe9cdb4ea21a6192e7e45ac110e857f433024"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000051.diff",
+          "sha256": "60f3260ef6027d8d12ddff3e617ddc335aeb8439da09bb2978a4bd724777dea4"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000052.diff",
+          "sha256": "0ca4752b9913bcb83b953d3355e2c7485078838511521fee92ab56ec35eb9627"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000053.diff",
+          "sha256": "1e17fadd7f4b6823f5d56380fb8f5120805331a30492cad6eedf7de86038d107"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000054.diff",
+          "sha256": "07b1ab6f491dfa666da91738592b5d99095a4d7f37f85ec3ebe8e80598d29529"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000055.diff",
+          "sha256": "357233de9f8762143c0f43e3ca607263ab310902d9c2766210625744eeab8187"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000056.diff",
+          "sha256": "8923e93b9f55c90e6b14539b359c55519007a1202d5fca7a6eb0d91cf60422c8"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000057.diff",
+          "sha256": "a91cbe2bce395de2eda954b2f15777595484bfa565d4f5f78f01b0688235411b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000058.diff",
+          "sha256": "3cbd38e10b134cc2c121593cecf8f406d0ab0ebb4fcb0bb11db34ffabc7b7c41"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000059.diff",
+          "sha256": "8a483716362857a40dbd56b62947ad0f01a0248d81d1c67c8feb59a73ffddd8c"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000060.diff",
+          "sha256": "bcd36c86531589f32425acb669760c76b84b4e866de979032b49e1034e77cae8"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000061.diff",
+          "sha256": "b8fb35759f54413a330fe0363f002b1e16a0de2205f53177a6e85658a528c4d5"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000062.diff",
+          "sha256": "0faf37389f6957a24a92b896fbf4a28136f41d4978517aabaad86fa3da4b5bbf"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000063.diff",
+          "sha256": "22bb807bc611df2763a75bc378d5ba29f9a0a8ea224bba46b1e9cf7ba36902b2"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000064.diff",
+          "sha256": "e9dc56de920be3264abe50bad6ea0be574cd700d45200426e35438d7b104f7bd"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000065.diff",
+          "sha256": "c77a475ee3692012191a3d7baf05e05ba05fe0d23d11a3564a704d15aa4640c8"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000066.diff",
+          "sha256": "029966f410f728ec0adade89252fff23e2c07ce49c4ef315915b52f63b293bdf"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000067.diff",
+          "sha256": "0a8838a09aa24831a711280748ff4eac9880d80d09909feee28906d69b80165f"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000068.diff",
+          "sha256": "800656cea3283c80dd5c8cc6ac37a8e0de31cd7cbdbb485ddd421d6876e5d5ae"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000069.diff",
+          "sha256": "e1c872521a3d5520a6b6e9a62527d56c7b0898fd2c186746a1ffe981a4099c8b"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000070.diff",
+          "sha256": "0713b0b75caa8646f1717cea372e1554bd94e92ca2f028ebd6bf1aeca177fc7f"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000071.diff",
+          "sha256": "5c213d19a99c36aa1fe356ced55b5cd926a5d9213d70341cb953682550924389"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000072.diff",
+          "sha256": "6bbd91875fe1edd31c20c8178a9d53e84cce19287d9c5bfedd2008278f412220"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000073.diff",
+          "sha256": "10a653111c220f27f8bd409704906b86a69433b91e8517a7b929f9868f6da70d"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000074.diff",
+          "sha256": "206475bce3bfec01eb0bef356b305151db943036ffa4a29fbc3bcd51b94fda8d"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000075.diff",
+          "sha256": "65d5ecbcc064edab1a4c47e69c91d4b8ab77febe8fc87e09401093e65133346f"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000076.diff",
+          "sha256": "654ee4a1de5c8a6ca69acf739d262ebec163f09c7ddb9e5c3e460fd64aec51bd"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000077.diff",
+          "sha256": "8b1e13e2d19ed2349b84f17dead3fcd867a4a29f196ef46902c0e9cf0977393a"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000078.diff",
+          "sha256": "38026c3ab9d4a27753e2823ce02cdc90800297358651df77e59636b1e4394911"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000079.diff",
+          "sha256": "6e27cd6a3f431d5b4f64dc3546cc9dcbcb83aa1888f2f50c1677750ff73a21c1"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000080.diff",
+          "sha256": "121c5877725559067da6260379813910b33bedabefaa77ff394bafe12ff0a6c8"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000081.diff",
+          "sha256": "6966aa9bf76c2ad2eec1bde061dd255108935acad63521e98debee809d499dc0"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000082.diff",
+          "sha256": "3c84a1db7bcd96f746ba4141df4140bf323c7a09a1d5c1a82e9017a7b113d725"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000083.diff",
+          "sha256": "9196f186bf94975f7669e88427b9678a7ae98e12c25dadf0ddd5a4a68d5fe894"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000084.diff",
+          "sha256": "3ae8f6184efe8486362cf2b7a4eb2f92db6d2a861ea82c1e4325307096f6a9fe"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000085.diff",
+          "sha256": "cd3a9cdec6d249630a1503cc6f03627212333f895c5c745ab41e16ef370ce166"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000086.diff",
+          "sha256": "c6eda010d08e88896305395de5bd4291d24166bdfb5bf8e8a01f85a9077e6225"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000087.diff",
+          "sha256": "45e4c73a9d22403e8cd51353e2eccd4fe4ef7993120c80a25b3d980bfd7cd80c"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000088.diff",
+          "sha256": "dfaf7383c45bc01a4faa74a2d2085649c75a8815b8f2837aec7486f2a3f965ac"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000089.diff",
+          "sha256": "baf88b59fa600cfa6cd514ff598188f6b6466bff8731a7025e3589d29d207715"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000090.diff",
+          "sha256": "948f477bae7223493acf65bc3fa4cf179609a90b517cf0509f3ee4391ea6c7d9"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000091.diff",
+          "sha256": "d963d96f91354b46a28a1bfe8c0c57c0b4ba2327147efc7f0ad668c28c8c15aa"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000092.diff",
+          "sha256": "21305980e0feac63701b0265d9ffd02aa97a561cf4a57f094c49235b3db0b394"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000093.diff",
+          "sha256": "8cf35e03a24f245ad6287ce12bc7d4c85d13e7f32e75b1a87605552eef133488"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000094.diff",
+          "sha256": "ee1fa07fbe1882f527371ecd1f08ea896018c6d470866dabe563948b635d8a6d"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000095.diff",
+          "sha256": "8af2e34b30061a595046e5fea9df842f5499c07778ad38e04cfcebfbcbe1fb42"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000096.diff",
+          "sha256": "beb637006f11f2b111caf721c2e8db36cd7b7fa4527935b962b8f1de4722225c"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000097.diff",
+          "sha256": "dbf8fdec8ccd33dd012df2814e84b87ae896611707a5b1821854476df70e7d5a"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000098.diff",
+          "sha256": "2d6160a51e10bfa725c25fca02a6d72fb2ac3f7b7d41009fb2e9db6fc29e8492"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000099.diff",
+          "sha256": "878447d8e9f3d0b12059cb8bc5c49d38500a73a191aad5e5ad2f72de6dda76df"
+        },
+        {
+          "path": "assembled/final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe-final/slices/000100.diff",
+          "sha256": "e7116afc101ba4d3fe4a603ff38d3f5e02bf9c2ca5cd315f9b1f34f8342938af"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-1.md",
+          "sha256": "3511575b5792df2345602801b2f64b74eab362e46c739919d891b44033253278"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-10.md",
+          "sha256": "3e66d9eec2cd42ba39cca156864ee351b7bc1cc34f7a82762e85cb47371861a9"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-11.md",
+          "sha256": "65af1db48821b3ecaccab541a69f7e7ffa1b2b91f9b2f0a303aa866b3860fe1f"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-12.md",
+          "sha256": "6a3c2d7cf16a7e6f5841a5ccfdce9591fa8b8400ed583d87243bb1f526e65056"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-13.md",
+          "sha256": "e40919df9e1e01bbe570f763d81134cd48559f2bcf43c68b0de13928822b8988"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-14.md",
+          "sha256": "5038f7ca9903e039114783b79cdb702a959afe7b2a8e26b8467922394888202d"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-15.md",
+          "sha256": "bf62bd416b0e8e517303d32af7f5bd8e8d284f5bbcd00beadc5713d28cffe7b8"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-16.md",
+          "sha256": "87def1ddbe4328e826eb4c1295fde6a8ce4e5d828ac1c2e168d130f6b3a9acc5"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-17.md",
+          "sha256": "c0adb973548147cc80ddf982f01314318c9af5da91b78773f247932541871bce"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-18.md",
+          "sha256": "48c111070da58ce01aaaf247db72f76b24decbd67b637ac0081ffaa3df021f02"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-19.md",
+          "sha256": "0c02188978fa10c30b49eb4a235bd5a9e3cac7006d8bdf893e875beeea2bf2ee"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-2.md",
+          "sha256": "87a1a471ed53b20a40ac86c27dea2401f37c237fbab6cda146046f4b76f13050"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-20.md",
+          "sha256": "097c44a846011139cf3b2e9201f2dbe7ec7088ef102129e6dbb48004c552f56d"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-21.md",
+          "sha256": "9e73b98b692546f4efd7c06eceb2d1bc5bc8bcac7020cffb357266dfe63ddc09"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-3.md",
+          "sha256": "eed44fcb6d820136df144c1b4b00579815e2e6bcaaea12a5134c6dc369057a85"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-5.md",
+          "sha256": "3b9610392db95809c5a113b65a3572310468c47c1fbdb5fa889af133757d0df9"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-6.md",
+          "sha256": "a5c318c02a6b8cbffec97f21d85bea597edb8012e0206ad2264dc26239c89703"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-7.md",
+          "sha256": "d88f66e6f9d936e71c95f7e69bc34ce4a7fc8a724c694be379078138c6dfd0b9"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-8.md",
+          "sha256": "9ebbde4285fad8ed5a628838ef07dd22447af5833d4f56e3548f07c93a573cdc"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.cluster-9.md",
+          "sha256": "576f5d625db0e9dbc4cb854ff752174094e71f773bc558d2603c19742d9c183a"
+        },
+        {
+          "path": "final-review-inv-4aa37d70-023c-483a-b47c-3dc801a586fe.md",
+          "sha256": "1f9686be6a190a94a5dcfc069fe768d6b026dd0de0abfacef4bc90440b68bf2a"
+        }
+      ]
+    },
+    {
+      "revision": "e4bf390519a0daf410f90769098c3a9acbba3bcf",
+      "run": "docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md",
+      "recordLine": 57,
+      "invocationId": "inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f",
+      "archive": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f",
+      "report": "docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md",
+      "files": [
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/clusters.json",
+          "sha256": "9a41a4462d846b281f729031ae0619aa2b08378918709532497a4c02df99b87a"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/diffstat.txt",
+          "sha256": "9a89e2d5f0108cb6a7636ca01d564925475666b9f89295e49a68af59c10f08c3"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/digest.md",
+          "sha256": "06c8fe9027eb12825863af269a7c05408f79b20f7ddb91d9f3b27538626085b3"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/generated-input-provenance.md",
+          "sha256": "122325e631ef66c24f36d3bef860e0ecd4c494f7e18ab58d1ab8b16d0edb78a5"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/review-inputs.json",
+          "sha256": "289890e540703ced3d37b47fd8df2370ccd4c4576b0e8d58aa3fcbc5b1c1bab3"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000001.diff",
+          "sha256": "d1f0ccbb60b737ec965aee682ec013a0248a594570c2358dcfee5719f2804b6f"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000002.diff",
+          "sha256": "678416a58d6016105764db4757522e4c8f5e0909baa6ca34caf76be481b73507"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000003.diff",
+          "sha256": "a653c6a29c5cbdc14df6cdcee834aed2a10819d14d9609792ec33062716821cc"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000004.diff",
+          "sha256": "1a884bec1b29bac8765c7f30d3aa92a6f1bacd17b8d1a51df0ac6c3bd58f7db1"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000005.diff",
+          "sha256": "1c953945bd059707ead546c819bc5f5db0b011bb7e8edf405fcbe300ba333ba0"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000006.diff",
+          "sha256": "dacc369e8da10cb857ce39fd3539076f1dd8fb1fd701188c21b4e3a09a76c5b3"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000007.diff",
+          "sha256": "0d8490f3085673b750ec439de60fb1abb109b69c93386c2d954cdc69fd3f564c"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000008.diff",
+          "sha256": "df4e196bfe6fd97047c098d9dc07ccf3a1a6fc80a69f5c5e0e8cfec8fa767180"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000009.diff",
+          "sha256": "a2c7d872837c7652bbb81280f486aaf3fda9cfa6b1929838fc96febfd101fa9a"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000010.diff",
+          "sha256": "046de550cf1a688921af1679c0aecb6b11afbdcdf84a39370cc3e5450aee5d53"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000011.diff",
+          "sha256": "efbf5b4002c40b88a33fbf8f5e0d252dab03809518b32f3cbd0147e9c2cbc2dc"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000012.diff",
+          "sha256": "ef453093b83c671319edb9bedd029fbfc0b680fe3003dacd27fd3188a375d7a1"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000013.diff",
+          "sha256": "65a1330e18c3861b764d72043c9b0f2b681010deada8ec89200b15e480df726f"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000014.diff",
+          "sha256": "aea6d921632c4a8f1c95690844e454d8433dc75fdf9c6317107da26d3a6e0e3b"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000015.diff",
+          "sha256": "471b5b1068295736d887ce9ced219a76ad319e0c534f8a7def0ebcce1f25734a"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000016.diff",
+          "sha256": "88c30fd8c5459d3c2fd79e335c7da075ffac593fc28b9596a30724a4d50837b4"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000017.diff",
+          "sha256": "8cae4c117294c8b156a6f1fea404e7b581a4c689c3063aabdff81a46d50dbbb4"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000018.diff",
+          "sha256": "db3e8c78c7c8a850d78eab72b05f3d8e612d119f535ddd9ce34e79b5e924d025"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000019.diff",
+          "sha256": "9805630045acc59f4a5f79bffc703e324568064d6b849a25e548824d9be7b4ed"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000020.diff",
+          "sha256": "dc7f5d899df421a09263b5e362c203051126e92d2bfdd48fa248c00d13acf8e6"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000021.diff",
+          "sha256": "caf72b95ad6f84424283c95a2d85b4073b9643815d16a21048ebdbf64456360e"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000022.diff",
+          "sha256": "8ef3d868bfe67a3f098e63696d94eee6aa6333486e5b217481360f714ddce434"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000023.diff",
+          "sha256": "60be953399f7b4e1ac13df953fb10f321632884aa2063cf43ba8f17082529c02"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000024.diff",
+          "sha256": "f07902cceb37960b5c6b65cf30964c745ed2075fb96a79e59a8892567b9794e2"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000025.diff",
+          "sha256": "bf1ee35f5b02198e4d64bc57b95fe9cdb4ea21a6192e7e45ac110e857f433024"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000026.diff",
+          "sha256": "60f3260ef6027d8d12ddff3e617ddc335aeb8439da09bb2978a4bd724777dea4"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000027.diff",
+          "sha256": "0ca4752b9913bcb83b953d3355e2c7485078838511521fee92ab56ec35eb9627"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000028.diff",
+          "sha256": "1e17fadd7f4b6823f5d56380fb8f5120805331a30492cad6eedf7de86038d107"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000029.diff",
+          "sha256": "07b1ab6f491dfa666da91738592b5d99095a4d7f37f85ec3ebe8e80598d29529"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000030.diff",
+          "sha256": "357233de9f8762143c0f43e3ca607263ab310902d9c2766210625744eeab8187"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000031.diff",
+          "sha256": "8923e93b9f55c90e6b14539b359c55519007a1202d5fca7a6eb0d91cf60422c8"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000032.diff",
+          "sha256": "a91cbe2bce395de2eda954b2f15777595484bfa565d4f5f78f01b0688235411b"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000033.diff",
+          "sha256": "3cbd38e10b134cc2c121593cecf8f406d0ab0ebb4fcb0bb11db34ffabc7b7c41"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000034.diff",
+          "sha256": "8a483716362857a40dbd56b62947ad0f01a0248d81d1c67c8feb59a73ffddd8c"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000035.diff",
+          "sha256": "6abd62db1f044450cfaa59255c182e4c979c76652b267d31797add6578e474d6"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000036.diff",
+          "sha256": "b8fb35759f54413a330fe0363f002b1e16a0de2205f53177a6e85658a528c4d5"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000037.diff",
+          "sha256": "0faf37389f6957a24a92b896fbf4a28136f41d4978517aabaad86fa3da4b5bbf"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000038.diff",
+          "sha256": "22bb807bc611df2763a75bc378d5ba29f9a0a8ea224bba46b1e9cf7ba36902b2"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000039.diff",
+          "sha256": "e9dc56de920be3264abe50bad6ea0be574cd700d45200426e35438d7b104f7bd"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000040.diff",
+          "sha256": "c77a475ee3692012191a3d7baf05e05ba05fe0d23d11a3564a704d15aa4640c8"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000041.diff",
+          "sha256": "6e1c52d866805654353ae08560e5a1bedf137fc2bb53f768511f1c2729e31c04"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000042.diff",
+          "sha256": "0a8838a09aa24831a711280748ff4eac9880d80d09909feee28906d69b80165f"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000043.diff",
+          "sha256": "800656cea3283c80dd5c8cc6ac37a8e0de31cd7cbdbb485ddd421d6876e5d5ae"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000044.diff",
+          "sha256": "e1c872521a3d5520a6b6e9a62527d56c7b0898fd2c186746a1ffe981a4099c8b"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000045.diff",
+          "sha256": "0713b0b75caa8646f1717cea372e1554bd94e92ca2f028ebd6bf1aeca177fc7f"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000046.diff",
+          "sha256": "115ea5f6ba7d1a8ff82ac264ca94df24da753b417bd6216cb9abb5adf9e0c4e7"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000047.diff",
+          "sha256": "10a653111c220f27f8bd409704906b86a69433b91e8517a7b929f9868f6da70d"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000048.diff",
+          "sha256": "206475bce3bfec01eb0bef356b305151db943036ffa4a29fbc3bcd51b94fda8d"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000049.diff",
+          "sha256": "65d5ecbcc064edab1a4c47e69c91d4b8ab77febe8fc87e09401093e65133346f"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000050.diff",
+          "sha256": "8b1e13e2d19ed2349b84f17dead3fcd867a4a29f196ef46902c0e9cf0977393a"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000051.diff",
+          "sha256": "38026c3ab9d4a27753e2823ce02cdc90800297358651df77e59636b1e4394911"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000052.diff",
+          "sha256": "6e27cd6a3f431d5b4f64dc3546cc9dcbcb83aa1888f2f50c1677750ff73a21c1"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000053.diff",
+          "sha256": "a46bab30871214eb5c440cdf55fdbb9ff733a2bd8544529a3a53846d809cda8d"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000054.diff",
+          "sha256": "6966aa9bf76c2ad2eec1bde061dd255108935acad63521e98debee809d499dc0"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000055.diff",
+          "sha256": "3c84a1db7bcd96f746ba4141df4140bf323c7a09a1d5c1a82e9017a7b113d725"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000056.diff",
+          "sha256": "4535454045498ebd24ce630e6dcaf53f5e59479df39ac0a10498e606ba93afdf"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000057.diff",
+          "sha256": "5f420da683fc40d1766326ccad79b1b6d4f5e470472f83d84e2752626a4f9e90"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000058.diff",
+          "sha256": "baf88b59fa600cfa6cd514ff598188f6b6466bff8731a7025e3589d29d207715"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000059.diff",
+          "sha256": "948f477bae7223493acf65bc3fa4cf179609a90b517cf0509f3ee4391ea6c7d9"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000060.diff",
+          "sha256": "d963d96f91354b46a28a1bfe8c0c57c0b4ba2327147efc7f0ad668c28c8c15aa"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000061.diff",
+          "sha256": "21305980e0feac63701b0265d9ffd02aa97a561cf4a57f094c49235b3db0b394"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000062.diff",
+          "sha256": "8cf35e03a24f245ad6287ce12bc7d4c85d13e7f32e75b1a87605552eef133488"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000063.diff",
+          "sha256": "ee1fa07fbe1882f527371ecd1f08ea896018c6d470866dabe563948b635d8a6d"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000064.diff",
+          "sha256": "8af2e34b30061a595046e5fea9df842f5499c07778ad38e04cfcebfbcbe1fb42"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000065.diff",
+          "sha256": "beb637006f11f2b111caf721c2e8db36cd7b7fa4527935b962b8f1de4722225c"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000066.diff",
+          "sha256": "dbf8fdec8ccd33dd012df2814e84b87ae896611707a5b1821854476df70e7d5a"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000067.diff",
+          "sha256": "2d6160a51e10bfa725c25fca02a6d72fb2ac3f7b7d41009fb2e9db6fc29e8492"
+        },
+        {
+          "path": "assembled/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f-final/slices/000068.diff",
+          "sha256": "878447d8e9f3d0b12059cb8bc5c49d38500a73a191aad5e5ad2f72de6dda76df"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-1.md",
+          "sha256": "50956d19414fd478780fa69212988438a2ab271f532317267d8a75e168c69736"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-10.md",
+          "sha256": "f69fe5373c325ea631fe4146b325531c180127b8e7c59086b8cdfb0bde4075d2"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-11.md",
+          "sha256": "b581113ebd55313297848bae9d28fcf93db535bd44cf2f70b2e88b29e7e0d422"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-12.md",
+          "sha256": "ecbc67b84b8a4ee8ece10628b9338a24052c9e855d23fd4cb61fe1fbf76e4243"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-13.md",
+          "sha256": "4d6cca203b5a1d45effd60aeee380357bd717c9c8a10370b28dfac501f16c080"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-14.md",
+          "sha256": "8cea8ccc8013df8091a8014c23e17d1b62ebc192666f4b5d15472ba61ff3d8eb"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-15.md",
+          "sha256": "cf021472fe1f1113a7f1dd571c9a51c20cc6953e6036a978e92c37df9092c3e1"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-16.md",
+          "sha256": "bb186d387ede0549e0265a82a6f9eee1b14b1f773573a7097a11188f98af9a09"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-17.md",
+          "sha256": "e270e133450d3ce8c984092170cb5e5b0be1be8563a8c3b892783e4bc761b81d"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md",
+          "sha256": "7c377c766664acf6e88a65d62f37013ae19a0dee1400c06a6fb3ce5b20022d82"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-19.md",
+          "sha256": "8b813a562d27e80387fc69018588a9728dc0f08a0f3a6196db131e4ca7e2ec58"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-2.md",
+          "sha256": "0e508d204c03fb7d8c55a98e621eea25e266c02576a0c94ba1792078082336d9"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-3.md",
+          "sha256": "ad988c6d1b9f5688ee14eda7001be82822857f294fca391af2971d08c3b2b2e4"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-4.md",
+          "sha256": "48058b157c2db6be80210e16c116c3b8f4f8aeb968468618d65d01c306eda76c"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-5.md",
+          "sha256": "4abd9c1bd3f49356c149890ea62e6af9bbafbd68f050dd0b2492a380d856629a"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-6.md",
+          "sha256": "c5717e3558ecf804b9d2e6a6ae187d35921e4f7606a9f57ec0ed727f9dbe1f48"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-7.md",
+          "sha256": "f30f7da9da622e7a18e64c4b0dc79b36ec5f3ae4af97e7e7f43f1978cd2726e2"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-8.md",
+          "sha256": "4bc3c7554fccf4bebb27149ecdbeb32ee3b7aa766091249c8b1e3a46bba2149e"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-9.md",
+          "sha256": "7d786c49d026a911de93fbf2962e793f5735f92da441e1b9c6249c4ed5841a7a"
+        },
+        {
+          "path": "final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.md",
+          "sha256": "b446d8203e2bddd42c8bbf4f839000d1ef044c43a71dab4b2e8071c296c66286"
+        }
+      ]
+    }
+  ],
+  "collectionOrigins": [],
+  "omitted": [],
+  "gaps": [
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:80 inv-4aa37d70-023c-483a-b47c-3dc801a586fe: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:80 inv-4aa37d70-023c-483a-b47c-3dc801a586fe: incomplete split bundle: missing cluster report or slices"
+  ],
+  "outOfRange": [
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:86 inv-p3b-20261031T222244: incomplete claimed collection",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete claimed collection",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete assembled bundle: digest.md",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete claimed collection",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete assembled bundle: digest.md",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete claimed collection",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete assembled bundle: digest.md",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete claimed collection",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "0dbe4772f4cd541e6b5ecaa1dd55b9a72f62c784:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete assembled bundle: digest.md",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:86 inv-p3b-20261031T222244: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete assembled bundle: digest.md",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete assembled bundle: digest.md",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete assembled bundle: digest.md",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete claimed collection",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: invalid failed assembly archive: bounded report identity or verdict mismatch",
+    "e4bf390519a0daf410f90769098c3a9acbba3bcf:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete assembled bundle: digest.md"
+  ]
+}

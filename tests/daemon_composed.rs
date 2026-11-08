@@ -27,7 +27,8 @@ use herdr_graph::store::instruction_source::{ScopeKind, resolve_scope};
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
 use herdr_graph::threads::discovery::DiscoveryInputs;
-use herdr_graph::threads::{FakePaneSeatMap, FakeThreads};
+use herdr_graph::ports::threads::{SeatStatus, ThreadsSeatRef};
+use herdr_graph::threads::{FakePaneSeatMap, FakeThreads, FakeThreadsSeatView};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,6 +59,8 @@ fn ctx_for(root: &Path) -> DaemonCtx {
 struct Fakes {
     herdr: Arc<FakeHerdr>,
     threads: Arc<FakeThreads>,
+    panes: Arc<FakePaneSeatMap>,
+    seat_view: Arc<FakeThreadsSeatView>,
     clock: Arc<ManualClock>,
 }
 
@@ -65,14 +68,17 @@ fn fakes() -> (Fakes, Services) {
     let f = Fakes {
         herdr: FakeHerdr::new(),
         threads: Arc::new(FakeThreads::new()),
+        panes: Arc::new(FakePaneSeatMap::new()),
+        seat_view: Arc::new(FakeThreadsSeatView::new()),
         clock: Arc::new(ManualClock::new(chrono::Utc::now())),
     };
     let mut s = Services::new(
         f.herdr.clone(),
         f.threads.clone(),
-        Arc::new(FakePaneSeatMap::new()),
+        f.panes.clone(),
         f.clock.clone(),
     );
+    s.seat_view = f.seat_view.clone();
     s.reminder_period = Duration::from_millis(40);
     (f, s)
 }
@@ -303,7 +309,7 @@ async fn writer_resume_not_halted() {
     d.stop().await;
 }
 
-const ORG_KINDS: [&str; 24] = [
+const ORG_KINDS: [&str; 23] = [
     "teamspace_create",
     "teamspace_rename",
     "teamspace_retire",
@@ -318,7 +324,6 @@ const ORG_KINDS: [&str; 24] = [
     "node_manager_set",
     "clone_add",
     "clone_retire",
-    "clone_rebind",
     "participation_join",
     "participation_leave",
     "template_create",
@@ -398,6 +403,11 @@ async fn every_kind_and_command_registered() {
     assert!(
         !keys.iter().any(|k| k.starts_with("content_write")),
         "content_write must not be registered; have {keys:?}"
+    );
+    // `clone rebind` was removed (hg-66u.15): no mutation is registered for it.
+    assert!(
+        !keys.iter().any(|k| k == "clone_rebind"),
+        "clone_rebind must not be registered; have {keys:?}"
     );
     // The composed daemon's writer admits only registered kinds: its registry is this same function's output.
     d.stop().await;
@@ -753,7 +763,7 @@ async fn session_end_flows_to_transcripts() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// undo adopts the caller's pane (spec §6; D1)
+// undo from a pane leaves the caller's pane alone and reopens the clone's own (spec §6, §8)
 // ---------------------------------------------------------------------------------------------
 
 fn clones_of_seat(d: &Daemon, seat: &str) -> Vec<herdr_graph::model::clone::CloneRecord> {
@@ -813,8 +823,8 @@ async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::Herd
     assert!(
         plan["plan"]["effects"]
             .as_array()
-            .is_some_and(|e| e.iter().any(|e| e["kind"] == "undo.adopt_pane")),
-        "the preview names the adoption: {plan}"
+            .is_some_and(|e| e.iter().all(|e| e["kind"] != "undo.adopt_pane")),
+        "the preview adopts nothing: {plan}"
     );
     let r = d.call("undo.apply", json!({ "plan": plan["plan_id"], "confirm": plan["hash"], "mode": "relay", "_caller": caller })).await.unwrap();
     assert_eq!(r["state"], "admitted", "{r}");
@@ -835,7 +845,7 @@ async fn undo_from(d: &Daemon, act: &str, caller_pane: &herdr_graph::model::Herd
     }
 }
 
-/// plan.create `["undo", act]` then `undo.apply`, polled to `committed`; no pane adoption expected.
+/// plan.create `["undo", act]` then `undo.apply`, polled to `committed`.
 async fn undo_plain(d: &Daemon, act: &str) {
     let plan = d
         .call("plan.create", json!({ "words": ["undo", act] }))
@@ -1059,8 +1069,19 @@ fn seat_lifecycle(d: &Daemon, name: &str) -> herdr_graph::model::common::Lifecyc
     .unwrap_or_else(|| panic!("no seat {name}"))
 }
 
+/// The metadata value of `pane`'s `hg` token in the live snapshot, if the pane is listed.
+async fn pane_token(d: &Daemon, pane: &herdr_graph::model::HerdrPaneId) -> Option<Option<String>> {
+    let snap = d.fakes.herdr.snapshot().await.unwrap();
+    snap.workspaces
+        .iter()
+        .flat_map(|w| w.tabs.iter())
+        .flat_map(|t| t.panes.iter())
+        .find(|p| &p.id == pane)
+        .map(|p| p.metadata.get("hg").cloned())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
+async fn undo_from_pane_leaves_the_callers_pane_alone_and_reopens_the_clones_own_pane() {
     use herdr_graph::model::common::{Availability, CloneLifecycle};
     let (_dir, root) = new_instance();
     support::node_manager_opt_out(&root);
@@ -1093,53 +1114,47 @@ async fn undo_from_pane_adopts_caller_pane_without_creating_one() {
     d.fakes.herdr.clear_calls();
 
     undo_from(&d, &act, &caller).await;
-    eventually("the victim to be active again", || {
-        clones_of_seat(&d, "foreman")
-            .iter()
-            .any(|c| c.id == victim.id && c.retired.is_none())
+    eventually("the victim to be reopened in its own pane", || {
+        clones_of_seat(&d, "foreman").iter().any(|c| {
+            c.id == victim.id
+                && c.retired.is_none()
+                && c.runtime.availability == Availability::Present
+        })
     })
     .await;
     settle(&d).await;
 
-    assert_eq!(
-        herdr_creates(&d),
-        0,
-        "no pane or tab is created for the adopted clone: {:?}",
-        d.fakes.herdr.calls()
-    );
     let now = clones_of_seat(&d, "foreman")
         .into_iter()
         .find(|c| c.id == victim.id)
         .unwrap();
     assert_eq!(now.lifecycle, CloneLifecycle::Active);
-    assert_eq!(now.runtime.availability, Availability::Present);
+    let own = now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone());
+    assert!(own.is_some() && own != Some(caller.clone()), "{own:?}");
     assert_eq!(
-        now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()),
-        Some(caller.clone())
+        herdr_creates(&d),
+        1,
+        "exactly one pane is created, for the restored clone: {:?}",
+        d.fakes.herdr.calls()
     );
-    let snap = d.fakes.herdr.snapshot().await.unwrap();
-    let pane = snap
-        .workspaces
-        .iter()
-        .flat_map(|w| w.tabs.iter())
-        .flat_map(|t| t.panes.iter())
-        .find(|p| p.id == caller)
-        .unwrap();
-    assert!(
-        pane.metadata
-            .values()
-            .any(|v| v.contains(&victim.id.to_string())),
-        "the caller pane carries hg=<clone>: {:?}",
-        pane.metadata
+    assert_eq!(
+        pane_token(&d, &caller).await,
+        Some(None),
+        "the caller's pane is untouched and never stamped"
+    );
+    assert_eq!(
+        pane_token(&d, &own.unwrap()).await,
+        Some(Some(format!("hg={}", victim.id))),
+        "the new pane carries the clone's token"
     );
     d.stop().await;
 }
 
-/// F2 (hg-zmi.54): the caller pane is bound to another clone A. The undo adopts it for the restored clone B,
-/// retires A, and nothing ever closes the pane: not the leftover `hg=<A>` token, not A's journal live ref.
+/// F2 (hg-zmi.54), now without adoption: the caller pane is bound to another clone A. The undo restores B in
+/// a pane of its own; A stays active in its pane and nothing ever closes it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
-    use herdr_graph::model::common::{Availability, CloneLifecycle, RetireMechanism};
+    use herdr_graph::model::common::{Availability, CloneLifecycle};
     let (_dir, root) = new_instance();
     support::node_manager_opt_out(&root);
     let d = Daemon::start(&root).await;
@@ -1154,13 +1169,6 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     let cs = clones_of_seat(&d, "foreman");
     let (a, b) = (cs[0].clone(), cs[1].clone());
     let (pa, pb) = (pane_of_clone(&a), pane_of_clone(&b));
-    let panes_before = |s: &herdr_graph::ports::herdr::HerdrSnapshot| {
-        s.workspaces
-            .iter()
-            .flat_map(|w| w.tabs.iter())
-            .map(|t| t.panes.len())
-            .sum::<usize>()
-    };
 
     d.fakes.herdr.user_close_pane(&pb);
     eventually("B to retire", || {
@@ -1171,43 +1179,16 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
     .await;
     settle(&d).await;
     let act = undo_act(&d, "closure").await;
-    let panes_n = panes_before(&d.fakes.herdr.snapshot().await.unwrap());
-    let sessions_a = clones_of_seat(&d, "foreman")
-        .into_iter()
-        .find(|c| c.id == a.id)
-        .unwrap()
-        .sessions;
     d.fakes.herdr.clear_calls();
 
     // The caller is A's own pane, bound to A.
     undo_from(&d, &act, &pa).await;
-    eventually("B to be active again", || {
-        clones_of_seat(&d, "foreman")
-            .iter()
-            .any(|c| c.id == b.id && c.retired.is_none())
+    eventually("B to be reopened", || {
+        clones_of_seat(&d, "foreman").iter().any(|c| {
+            c.id == b.id && c.retired.is_none() && c.runtime.availability == Availability::Present
+        })
     })
     .await;
-    // Undo commits the adoption before the shared loop re-stamps the pane. A quiet
-    // call log can mean that loop is still writing bookkeeping, especially under load.
-    let expected_token = format!("hg={}", b.id);
-    let deadline = Instant::now() + WAIT;
-    loop {
-        let snap = d.fakes.herdr.snapshot().await.unwrap();
-        if snap
-            .workspaces
-            .iter()
-            .flat_map(|w| &w.tabs)
-            .flat_map(|t| &t.panes)
-            .any(|p| p.id == pa && p.metadata.get("hg") == Some(&expected_token))
-        {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "adopted pane was never re-stamped"
-        );
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
     settle(&d).await;
 
     let calls = d.fakes.herdr.calls();
@@ -1218,59 +1199,38 @@ async fn undo_from_pane_bound_to_other_clone_keeps_that_pane() {
                 || matches!(c, FakeCall::CloseTab(_))),
         "{calls:?}"
     );
-    assert_eq!(herdr_creates(&d), 0, "{calls:?}");
-    let snap = d.fakes.herdr.snapshot().await.unwrap();
-    assert_eq!(panes_before(&snap), panes_n, "no pane created or closed");
-    let pane = snap
-        .workspaces
-        .iter()
-        .flat_map(|w| w.tabs.iter())
-        .flat_map(|t| t.panes.iter())
-        .find(|p| p.id == pa)
-        .expect("the adopted pane survives");
-    assert_eq!(
-        pane.metadata.get("hg"),
-        Some(&format!("hg={}", b.id)),
-        "re-stamped for the restored clone: {:?}",
-        pane.metadata
-    );
+    assert_eq!(herdr_creates(&d), 1, "{calls:?}");
     let now = clones_of_seat(&d, "foreman");
     let (b_now, a_now) = (
         now.iter().find(|c| c.id == b.id).unwrap(),
         now.iter().find(|c| c.id == a.id).unwrap(),
     );
     assert_eq!(
-        (b_now.lifecycle, b_now.runtime.availability),
-        (CloneLifecycle::Active, Availability::Present)
+        (
+            a_now.lifecycle,
+            a_now.retired.is_none(),
+            pane_of_clone(a_now)
+        ),
+        (CloneLifecycle::Active, true, pa.clone()),
+        "A is not displaced"
+    );
+    assert_eq!(b_now.lifecycle, CloneLifecycle::Active);
+    let pb_new = pane_of_clone(b_now);
+    assert!(pb_new != pa, "B has a pane of its own");
+    assert_eq!(
+        pane_token(&d, &pa).await,
+        Some(Some(format!("hg={}", a.id))),
+        "A's pane keeps A's token"
     );
     assert_eq!(
-        b_now.runtime.bound.as_ref().and_then(|x| x.pane_id.clone()),
-        Some(pa.clone())
-    );
-    assert_eq!(
-        a_now.retired.as_ref().map(|r| r.mechanism),
-        Some(RetireMechanism::Undo)
-    );
-    assert_eq!(
-        a_now.sessions, sessions_a,
-        "the displaced clone keeps its history"
-    );
-
-    // The observer does not take the adopted pane for gone later either.
-    settle(&d).await;
-    let after = clones_of_seat(&d, "foreman")
-        .into_iter()
-        .find(|c| c.id == b.id)
-        .unwrap();
-    assert_eq!(
-        (after.lifecycle, after.retired.is_none()),
-        (CloneLifecycle::Active, true)
+        pane_token(&d, &pb_new).await,
+        Some(Some(format!("hg={}", b.id)))
     );
     d.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn undo_tab_close_from_pane_adopts_caller_pane() {
+async fn undo_tab_close_from_pane_reopens_the_seats_own_tab() {
     use herdr_graph::model::common::Lifecycle;
     let (_dir, root) = new_instance();
     support::node_manager_opt_out(&root);
@@ -1318,42 +1278,36 @@ async fn undo_tab_close_from_pane_adopts_caller_pane() {
     d.fakes.herdr.clear_calls();
 
     undo_from(&d, &act, &caller).await;
-    eventually("the seat to be active again", || {
+    eventually("the seat to be active again with its own pane", || {
         seat_lifecycle(&d, "foreman") == Lifecycle::Active
+            && clone_of(&d, "foreman").runtime.availability
+                == herdr_graph::model::common::Availability::Present
     })
     .await;
     settle(&d).await;
 
-    assert_eq!(
-        herdr_creates(&d),
-        0,
-        "no tab is created for the adopted clone: {:?}",
+    assert!(
+        herdr_creates(&d) >= 1,
+        "the seat's own tab is reopened: {:?}",
         d.fakes.herdr.calls()
     );
     let now = clone_of(&d, "foreman");
     assert_eq!(now.id, clone.id);
+    let own = now
+        .runtime
+        .bound
+        .as_ref()
+        .and_then(|b| b.pane_id.clone())
+        .expect("a pane of its own");
+    assert_ne!(own, caller);
     assert_eq!(
-        now.runtime.bound.as_ref().and_then(|b| b.pane_id.clone()),
-        Some(caller.clone())
+        pane_token(&d, &caller).await,
+        Some(None),
+        "the caller's pane is untouched and never stamped"
     );
     assert_eq!(
-        now.runtime.availability,
-        herdr_graph::model::common::Availability::Present
-    );
-    let snap = d.fakes.herdr.snapshot().await.unwrap();
-    let pane = snap
-        .workspaces
-        .iter()
-        .flat_map(|w| w.tabs.iter())
-        .flat_map(|t| t.panes.iter())
-        .find(|p| p.id == caller)
-        .unwrap();
-    assert!(
-        pane.metadata
-            .values()
-            .any(|v| v.contains(&clone.id.to_string())),
-        "the caller pane carries hg=<clone>: {:?}",
-        pane.metadata
+        pane_token(&d, &own).await,
+        Some(Some(format!("hg={}", clone.id)))
     );
     d.stop().await;
 }
@@ -1498,6 +1452,19 @@ mod subprocess {
             ])
         }
 
+        /// No Herdr-facing effect is pending or unknown. `threads.*` effects are left out: with the fake services
+        /// a clone's seat is never resolved (the fake pane map has no entries), so its `threads.resolve_seat`
+        /// effect waits for threads for as long as the daemon runs.
+        fn herdr_effects_settled(&self) -> bool {
+            use herdr_graph::model::effect::{EffectKind, EffectStatus};
+            let journal = Journal::open(&self.paths().journal).unwrap();
+            journal
+                .effects_with_status(&[EffectStatus::Pending, EffectStatus::Unknown])
+                .unwrap()
+                .iter()
+                .all(|e| matches!(e.kind, EffectKind::Custom(_)))
+        }
+
         fn fake_log(&self) -> Vec<Value> {
             std::fs::read(self.paths().local.join("fake-herdr.json"))
                 .ok()
@@ -1634,9 +1601,8 @@ mod subprocess {
         let mut last = (usize::MAX, 0);
         loop {
             let status = f.client().call("status", json!({})).unwrap();
-            let r = &status["components"]["reconciler"];
             let calls = f.fake_log().len();
-            if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+            if f.herdr_effects_settled() {
                 // Quiet for two polls in a row: the effects planned by the last command have all run.
                 if last.0 == calls {
                     last.1 += 1;
@@ -1701,7 +1667,7 @@ mod subprocess {
         loop {
             let status = f.client().call("status", json!({})).unwrap();
             let r = &status["components"]["reconciler"];
-            if r["pending_effects"] == 0 && r["unknown_effects"] == 0 {
+            if f.herdr_effects_settled() {
                 assert_eq!(
                     r["needs_revision_effects"], 0,
                     "a lost outcome must be adopted, not sent for revision: {status}"
@@ -1898,6 +1864,217 @@ async fn composed_daemon_status_shows_threads_discovery_error() {
         err.contains("state directory not found") && err.contains("threads_state_dir"),
         "{shown}"
     );
+    d.stop().await;
+}
+
+// ---------------------------------------------------------------------------------------------
+// live handoff (`herdr update --handoff`): same ids, new incarnation, no operator step (hg-66u.25)
+// ---------------------------------------------------------------------------------------------
+
+/// Waits until the step that marked the clones Present has finished, reconcile and its effects included: two
+/// more seat observations (the loop reads the seats once per step while seated clones exist, so read `r0 + 1`
+/// starts after the Present step ended and `r0 + 2` after the next one did), no unknown effects, and no threads
+/// or Herdr call for 8 polls 50 ms apart. Pending effects are not waited on: a membership effect stays pending
+/// ("still pending") until the invitee accepts, which the fake never does.
+async fn settle_after_step(d: &Daemon) {
+    let r0 = d.fakes.seat_view.reads();
+    eventually("two more observation steps", || {
+        d.fakes.seat_view.reads() >= r0 + 2
+    })
+    .await;
+    let mut last = (
+        d.fakes.threads.calls().len(),
+        d.fakes.herdr.calls().len(),
+    );
+    let mut stable = 0;
+    let mut status = Value::Null;
+    for _ in 0..200 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        status = d.call("status", json!({})).await.unwrap();
+        let r = &status["components"]["reconciler"];
+        let now = (
+            d.fakes.threads.calls().len(),
+            d.fakes.herdr.calls().len(),
+        );
+        if r["unknown_effects"] == 0 && now == last {
+            stable += 1;
+            if stable >= 8 {
+                return;
+            }
+        } else {
+            stable = 0;
+            last = now;
+        }
+    }
+    panic!("the daemon never settled after the step: {status}");
+}
+
+/// After a live handoff every seated clone is Present again on its preserved pane id, with no operator command
+/// and no new invitation or membership release (B5). `before` is the (invite, release_requirement) call count
+/// from before the handoff.
+async fn assert_clones_recover(
+    d: &Daemon,
+    seated: &[(&str, &str, herdr_graph::model::HerdrPaneId)],
+    before: (usize, usize),
+) {
+    use herdr_graph::model::common::Availability;
+    eventually("every seated clone Present on its preserved pane", || {
+        seated.iter().all(|(n, _, pane)| {
+            let c = clone_of(d, n);
+            c.runtime.availability == Availability::Present
+                && c.runtime.bound.and_then(|b| b.pane_id).as_ref() == Some(pane)
+        })
+    })
+    .await;
+    settle_after_step(d).await;
+    assert_eq!(
+        d.fakes.threads.call_count("invite"),
+        before.0,
+        "no re-invite after the handoff"
+    );
+    assert_eq!(
+        d.fakes.threads.call_count("release_requirement"),
+        before.1,
+        "no membership release after the handoff"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_handoff_under_a_running_loop_reconnects_and_creates_nothing() {
+    use herdr_graph::model::common::{Availability, CloneLifecycle, Lifecycle};
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    for (name, harness) in [("sh", "shell"), ("cl", "claude")] {
+        d.committed(&[
+            "seat",
+            "create",
+            name,
+            "--teamspace",
+            "t",
+            "--active",
+            "--harness",
+            harness,
+        ])
+        .await;
+    }
+    eventually("both panes bound and the claude agent started", || {
+        bound_pane(&d, "sh").is_some()
+            && bound_pane(&d, "cl").is_some()
+            && d.fakes
+                .herdr
+                .calls()
+                .iter()
+                .any(|c| matches!(c, FakeCall::StartAgent(_)))
+    })
+    .await;
+    // Seat both clones: threads maps each pane to its seat and reports the seat Resolved on that pane.
+    let mut seated = Vec::new();
+    for (name, seat) in [("sh", "seat-sh"), ("cl", "seat-cl")] {
+        let pane = bound_pane(&d, name).unwrap();
+        d.fakes.panes.set(&pane, seat);
+        d.fakes.seat_view.set(
+            &ThreadsSeatRef(seat.to_owned()),
+            SeatStatus::Resolved { pane: pane.clone() },
+        );
+        seated.push((name, seat, pane));
+    }
+    eventually("both clones record their threads seat", || {
+        seated
+            .iter()
+            .all(|(n, seat, _)| clone_of(&d, n).threads_seat.as_deref() == Some(*seat))
+    })
+    .await;
+    eventually("both clones Present before the handoff", || {
+        seated
+            .iter()
+            .all(|(n, _, _)| clone_of(&d, n).runtime.availability == Availability::Present)
+    })
+    .await;
+    settle(&d).await;
+    let invites_before = (
+        d.fakes.threads.call_count("invite"),
+        d.fakes.threads.call_count("release_requirement"),
+    );
+
+    let journal = Journal::open(&Journal::path_in(&root)).unwrap();
+    let before = journal.meta_get("incarnation:changed_at").unwrap();
+    let last_before = journal.meta_get("incarnation:last").unwrap();
+    // The manual clock stamps `changed_at`: move it so a new stamp is distinguishable from the old one.
+    d.fakes.clock.advance(chrono::Duration::seconds(5));
+    d.fakes.herdr.clear_calls();
+
+    d.fakes.herdr.live_handoff();
+
+    eventually("the loop to see the new incarnation", || {
+        journal.meta_get("incarnation:changed_at").unwrap() != before
+            && journal.meta_get("incarnation:last").unwrap() != last_before
+    })
+    .await;
+    assert_clones_recover(&d, &seated, invites_before).await;
+    // The loop continues: it resubscribed to the new server, so a second swap is seen and recorded too.
+    let second = journal.meta_get("incarnation:changed_at").unwrap();
+    let last_after_first = journal.meta_get("incarnation:last").unwrap();
+    d.fakes.clock.advance(chrono::Duration::seconds(5));
+    d.fakes.herdr.live_handoff();
+    eventually("the second swap", || {
+        journal.meta_get("incarnation:changed_at").unwrap() != second
+            && journal.meta_get("incarnation:last").unwrap() != last_after_first
+    })
+    .await;
+    assert_clones_recover(&d, &seated, invites_before).await;
+    // A change committed after the swaps is admitted and does not re-create anything that already exists.
+    // (Whether its pane is created is hg-66u.28's rebind: tokens are dropped, so the workspace and the seat's
+    // tab are `unknown` and get no create effects, spec §4.3.2.)
+    d.committed(&["clone", "add", "sh"]).await;
+    settle(&d).await;
+
+    let calls = d.fakes.herdr.calls();
+    let count = |f: fn(&FakeCall) -> bool| calls.iter().filter(|c| f(c)).count();
+    assert!(
+        count(|c| matches!(c, FakeCall::SplitPane(_))) <= 1,
+        "at most the new clone's pane: {calls:?}"
+    );
+    assert_eq!(
+        count(|c| matches!(
+            c,
+            FakeCall::CreateWorkspace(_) | FakeCall::CreateTab(_) | FakeCall::StartAgent(_)
+        )),
+        0,
+        "nothing pre-existing is launched again: {calls:?}"
+    );
+    assert_eq!(
+        count(|c| matches!(
+            c,
+            FakeCall::CloseWorkspace(_) | FakeCall::CloseTab(_) | FakeCall::ClosePane(_)
+        )),
+        0,
+        "nothing is closed: {calls:?}"
+    );
+    d.with_view(|v| {
+        assert!(
+            layout::list_actions(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, a)| a.kind != herdr_graph::model::action::ActionKind::ClosureCascade),
+            "no closure cascade recorded"
+        );
+        assert!(
+            layout::list_teamspaces(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, t)| t.lifecycle != Lifecycle::Retired)
+        );
+        assert!(
+            layout::all_clones(v)
+                .unwrap()
+                .into_iter()
+                .all(|(_, c)| c.lifecycle != CloneLifecycle::Retired)
+        );
+    });
+    for seat in ["sh", "cl"] {
+        assert_ne!(seat_lifecycle(&d, seat), Lifecycle::Retired);
+    }
     d.stop().await;
 }
 

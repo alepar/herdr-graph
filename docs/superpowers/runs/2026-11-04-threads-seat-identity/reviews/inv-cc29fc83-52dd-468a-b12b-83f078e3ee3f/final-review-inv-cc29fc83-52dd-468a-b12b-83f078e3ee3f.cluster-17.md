@@ -1,0 +1,73 @@
+# Final review: cluster 17 (src-transcripts), epic hg-66u
+
+Invocation: inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f
+Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify <sha>^{commit}`).
+Inputs: slices/000058.diff (src/transcripts/capture.rs), slices/000059.diff (src/transcripts/mod.rs), slices/000060.diff (src/transcripts/tests.rs), digest.md; spec docs/superpowers/runs/2026-11-04-threads-seat-identity/2026-11-04-threads-seat-identity-design.md at head (§5, §13 "Shell export failure is visible", §14.10, §14.12); task bead hg-66u.38.
+
+## Scope of the cluster
+
+The cluster implements hg-66u.38: detecting at check-in that a pane shell rejected the launch export, and naming it in `status` with a remedy.
+
+- `capture::report_args` gains `continuity_key`, which `src/cli/session.rs` fills from `Env.continuity_key` (`HERDR_THREADS_CONTINUITY_KEY`, src/config.rs). `ReportArgs` deserialises it with `#[serde(default)]`, so older spooled reports still parse.
+- `Transcripts::check_export` runs in `resolve_report` for every resolved, active clone, before the duplicate and unchanged-session early returns. It reads the `launch_env:<clone>` journal meta written by `HerdrExecutor::record_launch_env` (src/reconcile/herdr_exec.rs, outside this cluster). It applies only when the recorded pane equals the reporting pane. It sets `export_rejected:<clone>` naming the missing variables, or deletes it when nothing is missing.
+- `status_json` (provider "transcripts") gains `export_rejected`: one entry per clone with a stored record, carrying clone, pane, missing and the fixed remedy text.
+
+## Tracing from production entry points
+
+- Producer: the Claude `SessionStart` hook command (`src/bootstrap/setup_claude.rs` `hook_command`) runs `herdr-graph session-report --from-hook claude`. `cli/session.rs::report` builds the args from env, including the key, and sends `session.report` over IPC, or spools it. The daemon's `session_report_live`, or `ingest_spool`, then goes `resolve_report` → `check_export`. So the path is reachable in production for Claude agents.
+- Launch-side record: `record_launch_env` is called on the start, unknown-start recovery and relaunch paths, with `agent_env(&clone, false)`. A reconcile test asserts that it is written (src/reconcile/tests.rs:491). The pairing between this record and the report's pane id is the seam reviewer's to trace.
+- Consumer: `status_provider("transcripts", …)` exposes `status_json`, so `herdr-graph status` shows the new field.
+- Baseline: no Requirement baseline row is exactly this feature. B9 (continuity key) touches this cluster only through forwarding the key at check-in, and that forwarding is in place. Emitting the key is gated on D1 (gate hg-66u.1 is still open; hg-66u.39/.40 carry the work) and lies outside this cluster. That makes it a gate/seam item, not a defect here.
+
+## Verification run
+
+- In a review-owned detached worktree at head (reflinked target and submodule; removed afterwards), `toolbox run -c ht-build … cargo test --lib transcripts::` gave 70 passed, 0 failed. That includes `session_report_missing_exported_vars_is_named_in_status`, `a_report_from_another_pane_is_not_judged_by_this_launch` and `a_later_complete_report_clears_the_export_alert`.
+- Caller checkout observed before and after: HEAD e4984a492e2d3ce8344b9be83d56a3471049fd60, clean status, unchanged.
+
+## Analysis of behaviour
+
+- Correctness of the core rule: `HERDR_GRAPH_CLONE` counts as missing only when neither the report arg nor the caller's env carries it. The key counts as missing when the report lacks it. Both checks happen only for variables the launch actually exported. The pane equality filter keeps an old launch record from judging a report sent from a different pane. The test of the status text checks the remedy wording that the bead's acceptance criterion requires.
+- Pre-D1 effect: `agent_env(.., false)` exports only `HERDR_GRAPH_CLONE`. Graph-created panes already carry `HERDR_GRAPH_CLONE` from pane-creation env (`model::launch::launch_env`), so a rejected export cannot show up there until the key is exported after D1. The digest already lists this as a deferred minor of hg-66u.38. It is acceptable because the gate is open and the spec says the fallback (C1 evidence) is not an error.
+- Harness coverage: Codex agents get no `session-report` hook (`codex_hook_command` prints only the `/seat` prompt, and the comment says "there is no session report"). For a Codex clone, `check_export` never runs. So the §13 promise that a pane shell rejecting the export is named in status holds only for Claude. After D1 and §14.12, a Codex clone whose shell rejected the export would then close final on pane close without any status signal. The spec does not limit the promise to Claude.
+- Ordering: `check_export` ignores the report's `at` and the stored `at`. A spooled report ingested after a newer live report, or a stale report from an agent that ran in the same pane before the recorded launch, can raise or clear the alert out of order. The next complete check-in fixes it. The impact is a transient wrong status line.
+- Stale entries: `export_rejections` lists every clone in `g.clones`, retired and tombstoned ones included. Only a later complete report from the same pane clears an entry. A clone retired with an alert standing (§14.10: retire closes its pane) keeps a permanent entry whose remedy says to relaunch the agent. `launch_env:<clone>` and `export_rejected:<clone>` are never removed at retire or purge.
+- Relaunch in another harness (B8): if the operator fixes the shell and relaunches the pane with Codex, no report arrives to clear the alert, so it stays even though the export now works.
+- Write load: every resolved check-in does a `meta_set` or `meta_delete` on the journal, even when nothing changed. This is cheap and bounded by hook frequency. Noted only.
+
+## Must fix before landing
+
+- none
+
+## Untested scope
+
+- No test covers a spooled report going through `ingest_spool` → `check_export` (only live `session_report` is exercised), including out-of-order spooled and live reports.
+- No test covers status for a retired or tombstoned clone that has a stored `export_rejected` record.
+- No end-to-end test runs a real launch through `HerdrExecutor::record_launch_env` and then the hook report. The cluster tests write `launch_env` by hand (`record_launch_env` helper in src/transcripts/tests.rs), so agreement on pane-id format between the executor record and `HERDR_PANE_ID` is unverified here (seam reviewer).
+- No test covers a Codex or other non-Claude harness clone, which by construction never reaches the detector.
+
+## Deferred OK
+
+- Pre-D1 the detector can name only `HERDR_GRAPH_CLONE`, which pane-creation env already supplies for graph-created panes, so in practice it is inert until hg-66u.39/.40 export the key behind gate hg-66u.1. Already recorded as a deferred minor of hg-66u.38.
+- Codex clones have no graph check-in, so a rejected export in a Codex pane is never named in status, against spec §13. Follow-up: detect from the threads check-in or a shell probe for harnesses without a session-report hook, before D1/§14.12 makes keyless seats close final.
+- `export_rejections` lists retired and tombstoned clones, and the `launch_env:`/`export_rejected:` meta is never cleaned at retire or purge. A retired clone can show a permanent alert with a misleading relaunch remedy. Follow-up: filter to active clones and delete both keys at retire or purge.
+- `check_export` ignores report time, so out-of-order spooled or stale reports can set or clear the alert transiently until the next complete check-in.
+- After a fixed-shell relaunch into a harness without a session report (B8), the alert is not cleared.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- No test covers the spooled-report path (`ingest_spool` → `check_export`), including out-of-order spooled and live reports.
+- No test covers status listing for a retired or tombstoned clone that has a stored `export_rejected` record.
+- No end-to-end test from `HerdrExecutor::record_launch_env` to the hook report; cluster tests write `launch_env` by hand, so pane-id format agreement is unverified here (seam reviewer).
+- No test covers a non-Claude (Codex) clone, which by construction never reaches the detector.
+
+## Deferred OK
+- Pre-D1 only `HERDR_GRAPH_CLONE` is checked and pane-creation env already supplies it, so the detector is inert until hg-66u.39/.40 export the key behind gate hg-66u.1.
+- Codex clones have no graph check-in, so a rejected export in a Codex pane is never named in status (spec §13); follow-up should detect via threads check-in or shell probe before §14.12 makes keyless seats close final.
+- Retired and tombstoned clones stay listed in `export_rejected`, and the `launch_env:`/`export_rejected:` meta is never cleaned at retire or purge, leaving a stale relaunch remedy.
+- `check_export` ignores report time, so out-of-order spooled or stale reports can set or clear the alert transiently.
+- A fixed-shell relaunch into a harness without a session report (B8) does not clear the alert.

@@ -54,6 +54,7 @@ fn report(from_hook: &str) -> anyhow::Result<()> {
         &hook,
         env.graph_clone.as_deref(),
         env.pane_id.as_deref(),
+        env.continuity_key.as_deref(),
         cwd,
     ) else {
         return Ok(());

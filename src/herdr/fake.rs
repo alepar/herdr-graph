@@ -574,6 +574,67 @@ impl FakeHerdr {
         self.disconnect_subscribers();
     }
 
+    /// Simulate a Herdr cold restart that restores its session with the pane ids preserved (as it preserves
+    /// tab and workspace ids): new generation and server pid, terminal ids regenerated, pane/workspace metadata
+    /// kept or dropped, subscribers disconnected; every pane keeps its id, env and process. `restart` models
+    /// the case where pane ids are not preserved.
+    pub fn cold_restart_keeping_pane_ids(&self, keep_metadata: bool) {
+        {
+            let mut st = self.state.lock().unwrap();
+            st.generation += 1;
+            st.restarts += 1;
+            let mut workspaces = std::mem::take(&mut st.workspaces);
+            for ws in &mut workspaces {
+                if !keep_metadata {
+                    ws.metadata.clear();
+                }
+                for pane in ws.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+                    if !keep_metadata {
+                        pane.metadata.clear();
+                    }
+                    pane.terminal_id = Some(st.term_id());
+                }
+            }
+            st.workspaces = workspaces;
+        }
+        self.disconnect_subscribers();
+    }
+
+    /// Simulate `herdr update --handoff`: new generation and server pid, but every workspace, tab and pane id,
+    /// agent, env and process survives; terminal ids are reallocated, pane/workspace metadata tokens are dropped,
+    /// and subscribers disconnect. `restart` models a cold restart (new pane ids) and is not this.
+    pub fn live_handoff(&self) {
+        {
+            let mut st = self.state.lock().unwrap();
+            st.generation += 1;
+            st.restarts += 1;
+            let mut workspaces = std::mem::take(&mut st.workspaces);
+            for ws in &mut workspaces {
+                ws.metadata.clear();
+                for pane in ws.tabs.iter_mut().flat_map(|t| t.panes.iter_mut()) {
+                    pane.metadata.clear();
+                    pane.terminal_id = Some(st.term_id());
+                }
+            }
+            st.workspaces = workspaces;
+        }
+        self.disconnect_subscribers();
+    }
+
+    /// Test-only: every workspace and tab gets a fresh id (panes, labels and metadata kept), modelling ids that
+    /// do not survive a restart. `restart` itself keeps tab and workspace ids, as Herdr does.
+    pub fn renumber_tabs_and_workspaces(&self) {
+        let mut st = self.state.lock().unwrap();
+        let mut workspaces = std::mem::take(&mut st.workspaces);
+        for ws in &mut workspaces {
+            ws.id = st.ws_id();
+            for tab in &mut ws.tabs {
+                tab.id = st.tab_id();
+            }
+        }
+        st.workspaces = workspaces;
+    }
+
     /// Subscribers' streams end (reconnect test).
     pub fn disconnect_subscribers(&self) {
         self.events.lock().unwrap().clear();

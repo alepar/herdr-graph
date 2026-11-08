@@ -13,7 +13,7 @@ Organizational changes are never made directly. They go plan, user confirmation,
    `herdr-graph plan --json seat create reviewer --teamspace alpha --active`.
    Other changes: `teamspace create|rename|retire|resurrect`,
    `seat create|activate|deactivate|rename|retire|resurrect|override`,
-   `clone add|retire|rebind`, `participation join|leave`, `template create|edit|copy`,
+   `clone add|retire|purge`, `participation join|leave`, `template create|edit|copy`,
    `application apply|retire`, `manager set|clear <seat|teamspace> [<manager-seat>]`,
    `node-manager set <seat>`, `undo`.
    The node manager cannot be retired or deactivated, and its teamspace cannot be retired;

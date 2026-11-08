@@ -73,6 +73,11 @@ fn clone_rec(name: &str, seat: &SeatId) -> CloneRecord {
         opt_outs: vec![],
         invitations: vec![],
         reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
     }
 }
 

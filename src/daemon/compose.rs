@@ -47,11 +47,24 @@ pub const STARTUP_STEPS: [&str; 6] = [
     "loops",
 ];
 
+/// The last Rejected/Unsupported answer to a seat read, kept until the next successful read so `status` can show
+/// that threads refuses the seat contract (an older service) instead of the graph silently recording nothing.
+pub type SeatViewError = Arc<Mutex<Option<String>>>;
+
+/// Seats the last seat read refused one by one (seat -> message), shown by `status` as `seat_refusals`.
+pub use crate::threads::mapping::SeatRefusals;
+
 /// Services the composition needs; production builds them from the environment, tests inject fakes.
 pub struct Services {
     pub herdr: Arc<dyn HerdrApi>,
     pub threads: Arc<dyn ThreadsPort>,
     pub pane_seat_map: Arc<dyn crate::threads::mapping::PaneSeatMap>,
+    /// Read-only seat inspection for the observer; unused until SeatObservation.
+    pub seat_view: Arc<dyn ThreadsSeatView>,
+    /// Last Rejected/Unsupported seat-view message, shown by the `threads` status component.
+    pub seat_view_error: SeatViewError,
+    /// Seats the last seat read omitted as refused, shown by the `threads` status component.
+    pub seat_refusals: SeatRefusals,
     pub clock: Arc<dyn Clock>,
     /// Period of the reminder loop (`REMINDER_PERIOD` in the daemon; tests shrink it).
     pub reminder_period: Duration,
@@ -68,6 +81,9 @@ impl Services {
             herdr,
             threads,
             pane_seat_map,
+            seat_view: Arc::new(crate::threads::FakeThreadsSeatView::new()),
+            seat_view_error: SeatViewError::default(),
+            seat_refusals: SeatRefusals::default(),
             clock,
             reminder_period: REMINDER_PERIOD,
         }
@@ -89,14 +105,13 @@ impl Services {
             &env,
             &crate::config::plugin_config_dir_via_herdr,
         );
-        let (threads, pane_seat_map) =
-            production_threads(ctx, DiscoveryInputs::from_process(configured));
-        Ok(Self::new(
-            herdr,
-            threads,
-            pane_seat_map,
-            Arc::new(SystemClock),
-        ))
+        let (threads, pane_seat_map, seat_view, seat_view_error, seat_refusals) =
+            production_ports(ctx, DiscoveryInputs::from_process(configured));
+        let mut services = Self::new(herdr, threads, pane_seat_map, Arc::new(SystemClock));
+        services.seat_view = seat_view;
+        services.seat_view_error = seat_view_error;
+        services.seat_refusals = seat_refusals;
+        Ok(services)
     }
 }
 
@@ -106,13 +121,33 @@ pub fn production_threads(
     ctx: &DaemonCtx,
     inputs: DiscoveryInputs,
 ) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
+    let (threads, map, _, _, _) = production_ports(ctx, inputs);
+    (threads, map)
+}
+
+type ProductionPorts = (
+    Arc<dyn ThreadsPort>,
+    Arc<dyn PaneSeatMap>,
+    Arc<dyn ThreadsSeatView>,
+    SeatViewError,
+    SeatRefusals,
+);
+
+/// `production_threads` plus the seat view over the same lazily located endpoint and its rejection slot.
+pub fn production_ports(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> ProductionPorts {
     let endpoint = Arc::new(lazy::Endpoint::from_env(ctx, inputs));
     // Bind a genuinely unused graph before its first writer commit. Discovery failure remains
     // a visible per-call error, not a startup failure or permission to adopt legacy records.
     let _ = endpoint.locate();
+    let map = Arc::new(lazy::LazyMap::new(endpoint.clone()));
+    let seat_view_error = map.seat_view_error();
+    let seat_refusals = map.seat_refusals();
     (
-        Arc::new(lazy::LazyThreads::new(endpoint.clone())),
-        Arc::new(lazy::LazyMap::new(endpoint)),
+        Arc::new(lazy::LazyThreads::new(endpoint)),
+        map.clone(),
+        map,
+        seat_view_error,
+        seat_refusals,
     )
 }
 
@@ -181,6 +216,9 @@ pub async fn compose_with(
         herdr,
         threads,
         pane_seat_map,
+        seat_view,
+        seat_view_error,
+        seat_refusals,
         clock,
         reminder_period,
     } = services;
@@ -217,7 +255,12 @@ pub async fn compose_with(
         }),
         ReconcilerConfig::new(paths.root.clone()),
     );
-    crate::threads::register_with(&reconciler, threads.clone(), pane_seat_map.clone());
+    crate::threads::register_with(
+        &reconciler,
+        threads.clone(),
+        pane_seat_map.clone(),
+        seat_view.clone(),
+    );
     let runtime = RuntimeLoop::new(
         herdr.clone(),
         store.clone(),
@@ -229,7 +272,9 @@ pub async fn compose_with(
         Duration::from_secs(60),
         Some(writer.subscribe()),
         ctx.claude_root.clone(),
+        seat_view,
     );
+    runtime.set_seat_refusals(seat_refusals.clone());
     let transcripts = Transcripts::new(
         store.clone(),
         writer_port.clone(),
@@ -313,8 +358,17 @@ pub async fn compose_with(
         clock: clock.clone(),
     });
     crate::plan::reminders::register_loop(reg, sched, reminder_period);
-    register_threads_connection(reg, threads.clone(), paths.root.clone());
-    register_status(reg, &journal);
+    register_threads_connection_with(
+        reg,
+        threads.clone(),
+        paths.root.clone(),
+        SeatSlots {
+            error: seat_view_error,
+            refusals: seat_refusals,
+            lost: runtime.seat_lost(),
+        },
+    );
+    register_status(reg, &journal, &store);
     startup.step("loops")?;
     Ok(())
 }
@@ -379,13 +433,61 @@ pub fn register_threads_connection(
     threads: Arc<dyn ThreadsPort>,
     root: PathBuf,
 ) {
+    register_threads_connection_with(reg, threads, root, SeatSlots::default());
+}
+
+/// The seat-read slots the `threads` status component shows.
+#[derive(Default, Clone)]
+pub struct SeatSlots {
+    /// The whole read's last Rejected/Unsupported answer, shown as `seat_view_error`.
+    pub error: SeatViewError,
+    /// Per-seat refusals of the last read, shown as `seat_refusals` (seat -> message).
+    pub refusals: SeatRefusals,
+    /// Seats refused beyond the staleness window, shown as `seat_lost`; filled by the observe step.
+    pub lost: crate::observe::step::SeatLost,
+}
+
+/// `register_threads_connection` that also shows the seat read's refusals: `seat_view_error` (the whole read),
+/// `seat_refusals` (per seat) and `seat_lost` (per seat, past the staleness window).
+pub fn register_threads_connection_with(
+    reg: &mut Registry,
+    threads: Arc<dyn ThreadsPort>,
+    root: PathBuf,
+    slots: SeatSlots,
+) {
     let state = Arc::new(Mutex::new(
         json!({ "connected": false, "note": "not probed yet" }),
     ));
     let shown = state.clone();
     reg.status_provider(
         "threads",
-        Arc::new(move || shown.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+        Arc::new(move || {
+            let mut v = shown.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let Some(map) = v.as_object_mut() else {
+                return v;
+            };
+            if let Some(message) = slots
+                .error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+            {
+                map.insert("seat_view_error".into(), json!(message));
+            }
+            let refusals = slots.refusals.lock().unwrap_or_else(|e| e.into_inner());
+            if !refusals.is_empty() {
+                let shown: serde_json::Map<String, serde_json::Value> = refusals
+                    .iter()
+                    .map(|(seat, message)| (seat.0.clone(), json!(message)))
+                    .collect();
+                map.insert("seat_refusals".into(), shown.into());
+            }
+            let lost = slots.lost.lock().unwrap_or_else(|e| e.into_inner());
+            if !lost.is_empty() {
+                map.insert("seat_lost".into(), json!(*lost));
+            }
+            v
+        }),
     );
     reg.background("threads.connection", move |mut sd| async move {
         loop {
@@ -440,9 +542,9 @@ fn register_writer_commands(reg: &mut Registry, writer: &Arc<WriterCore>) {
     );
 }
 
-/// Status components owned by the composition: `writer` and `reconciler` (`transcripts` and `threads` come
+/// Status components owned by the composition: `writer`, `reconciler` and `clones` (`transcripts` and `threads` come
 /// from their own registrations).
-fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
+fn register_status(reg: &mut Registry, journal: &Arc<Journal>, store: &Arc<dyn Store>) {
     let j = journal.clone();
     reg.status_provider(
         "writer",
@@ -455,6 +557,18 @@ fn register_status(reg: &mut Registry, journal: &Arc<Journal>) {
     );
     let j = journal.clone();
     reg.status_provider("reconciler", Arc::new(move || reconciler_status(&j)));
+    let store = store.clone();
+    let j = journal.clone();
+    reg.status_provider(
+        "clones",
+        Arc::new(move || match store.head() {
+            Ok(at) => super::clone_status::clone_status_with_journal(
+                &crate::store::tree::CommitView { store: &*store, at },
+                &j,
+            ),
+            Err(e) => json!({ "error": e.to_string() }),
+        }),
+    );
 }
 
 /// The `reconciler` status component: open effects, and every effect that needs a human with its last error.
@@ -824,15 +938,59 @@ mod lazy {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.receipt_state(messages).await
         }
+        async fn reserve_continuity_key(
+            &self,
+            key: &str,
+            seat: Option<&ThreadsSeatRef>,
+            op: &OpKey,
+        ) -> Result<ReserveOutcome, ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .reserve_continuity_key(key, seat, op)
+                .await
+        }
+        async fn unretire_seat(
+            &self,
+            seat: &ThreadsSeatRef,
+            op: &OpKey,
+        ) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.unretire_seat(seat, op).await
+        }
+        async fn finalize_retirement(
+            &self,
+            seat: &ThreadsSeatRef,
+            op: &OpKey,
+        ) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async().await?.finalize_retirement(seat, op).await
+        }
+        async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+            let _guard = self.endpoint.guard().await?;
+            self.get_async()
+                .await?
+                .release_continuity_key(key, op)
+                .await
+        }
         async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.delivery_capability().await
         }
     }
 
+    /// A seat map together with the shared `threads-calls.lock` guard taken before it was located; keep it
+    /// alive until the delegated threads call returns so a ThreadsReconnect cannot commit mid-call.
+    struct Guarded {
+        _guard: std::fs::File,
+        map: Arc<ThreadsSeatMap>,
+    }
+
     pub struct LazyMap {
         endpoint: Arc<Endpoint>,
         inner: Arc<Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>>,
+        seat_view_error: SeatViewError,
+        seat_refusals: SeatRefusals,
     }
 
     impl LazyMap {
@@ -840,20 +998,29 @@ mod lazy {
             Self {
                 endpoint,
                 inner: Arc::new(Mutex::new(None)),
+                seat_view_error: SeatViewError::default(),
+                seat_refusals: SeatRefusals::default(),
             }
         }
-    }
 
-    #[async_trait::async_trait]
-    impl PaneSeatMap for LazyMap {
-        async fn seat_for(
-            &self,
-            pane: &HerdrPaneId,
-        ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
-            let _guard = self.endpoint.guard().await?;
+        /// The slot holding the seats the last read refused one by one, for the `threads` status component.
+        pub fn seat_refusals(&self) -> SeatRefusals {
+            self.seat_refusals.clone()
+        }
+
+        /// The slot holding the last Rejected/Unsupported seat read, for the `threads` status component.
+        pub fn seat_view_error(&self) -> SeatViewError {
+            self.seat_view_error.clone()
+        }
+
+        /// The seat map for the currently located endpoint, rebuilt when discovery points elsewhere.
+        async fn map(&self) -> Result<Guarded, ThreadsError> {
+            let guard = self.endpoint.guard().await?;
             let me = Self {
                 endpoint: self.endpoint.clone(),
                 inner: self.inner.clone(),
+                seat_view_error: self.seat_view_error.clone(),
+                seat_refusals: self.seat_refusals.clone(),
             };
             let map = tokio::task::spawn_blocking(move || {
                 let mut slot = me.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -884,7 +1051,63 @@ mod lazy {
             })
             .await
             .map_err(|e| ThreadsError::Disconnected(e.to_string()))??;
-            map.seat_for(pane).await
+            Ok(Guarded { _guard: guard, map })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PaneSeatMap for LazyMap {
+        async fn seat_for(
+            &self,
+            pane: &HerdrPaneId,
+        ) -> Result<Option<ThreadsSeatRef>, ThreadsError> {
+            let g = self.map().await?;
+            g.map.seat_for(pane).await
+        }
+
+        async fn resolve_seat(
+            &self,
+            pane: &HerdrPaneId,
+            op: &crate::ports::threads::OpKey,
+        ) -> Result<crate::threads::mapping::SeatResolution, ThreadsError> {
+            let g = self.map().await?;
+            g.map.resolve_seat(pane, op).await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ThreadsSeatView for LazyMap {
+        async fn inspect(
+            &self,
+            seats: &[ThreadsSeatRef],
+        ) -> Result<std::collections::BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
+            let read = async {
+                let g = self.map().await?;
+                let read = g.map.inspect(seats).await;
+                if read.is_ok() {
+                    *self.seat_refusals.lock().unwrap_or_else(|e| e.into_inner()) = g
+                        .map
+                        .refusals()
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
+                }
+                read
+            }
+            .await;
+            // A refusal is remembered for `status`; transient transport errors leave it as it was.
+            let mut slot = self
+                .seat_view_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match &read {
+                Ok(_) => *slot = None,
+                Err(e @ (ThreadsError::Rejected(_) | ThreadsError::Unsupported)) => {
+                    *slot = Some(e.to_string())
+                }
+                Err(_) => {}
+            }
+            read
         }
     }
     #[cfg(test)]
@@ -947,6 +1170,111 @@ mod lazy {
             stop.send(true).unwrap();
             handle.await.unwrap().unwrap();
             assert_eq!(component["connected"], true, "{component}");
+        }
+
+        #[tokio::test]
+        async fn seat_view_rejection_is_visible_in_threads_status_and_records_nothing() {
+            use crate::ports::store::Store;
+            let dir = tempfile::tempdir().unwrap();
+            let endpoint = Arc::new(Endpoint {
+                inputs: DiscoveryInputs::default(),
+                // A service this graph cannot use: every located call is refused, as by one older than the pin.
+                explicit: Err("threads service does not support SeatInspect".into()),
+                herdr_socket: dir.path().join("host.sock"),
+                intents: dir.path().join("graph/.graph-local/threads-intents"),
+                graph_root: dir.path().join("graph"),
+            });
+            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
+            let store = crate::store::GitStore::open(&endpoint.graph_root).unwrap();
+            let head = store.head().unwrap();
+            let view = LazyMap::new(endpoint.clone());
+            let mut registry = Registry::default();
+            register_threads_connection_with(
+                &mut registry,
+                Arc::new(crate::threads::FakeThreads::new()),
+                endpoint.graph_root.clone(),
+                SeatSlots {
+                    error: view.seat_view_error(),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                registry.status_components()["threads"]
+                    .get("seat_view_error")
+                    .is_none(),
+                "no read yet, nothing to show"
+            );
+            let err = view
+                .inspect(&[ThreadsSeatRef("seat-a".into())])
+                .await
+                .unwrap_err();
+            assert!(matches!(err, ThreadsError::Rejected(_)), "{err:?}");
+            let component = registry.status_components()["threads"].clone();
+            assert_eq!(
+                component["seat_view_error"],
+                json!(err.to_string()),
+                "{component}"
+            );
+            assert_eq!(
+                store.head().unwrap(),
+                head,
+                "a refused read commits nothing"
+            );
+        }
+
+        #[tokio::test]
+        async fn delegated_seat_call_holds_the_threads_calls_guard() {
+            let dir = tempfile::tempdir().unwrap();
+            let socket = dir.path().join("t.sock");
+            // Accepts connections and never answers: the delegated call stays in flight.
+            let _idle = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+            let endpoint = Arc::new(Endpoint {
+                inputs: DiscoveryInputs::default(),
+                explicit: Ok(Some(Discovered {
+                    socket,
+                    instance: herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+                })),
+                herdr_socket: dir.path().join("host.sock"),
+                intents: dir.path().join("graph/.graph-local/threads-intents"),
+                graph_root: dir.path().join("graph"),
+            });
+            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
+            let root = endpoint.graph_root.clone();
+            // What a ThreadsReconnect needs: the calls lock exclusively, without waiting.
+            let reconnect_can_commit = move || {
+                use std::os::fd::AsRawFd;
+                let f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .read(true)
+                    .write(true)
+                    .open(root.join(".graph-local").join("threads-calls.lock"))
+                    .unwrap();
+                let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+                (rc == 0, std::io::Error::last_os_error().raw_os_error())
+            };
+            assert!(reconnect_can_commit().0, "idle: nothing holds the lock");
+            let lazy_map = Arc::new(LazyMap::new(endpoint));
+            let call = {
+                let lazy_map = lazy_map.clone();
+                tokio::spawn(async move { lazy_map.seat_for(&HerdrPaneId("w1:p1".into())).await })
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            assert!(
+                !call.is_finished(),
+                "the delegated call must still be in flight"
+            );
+            let (acquired, errno) = reconnect_can_commit();
+            assert!(
+                !acquired && errno == Some(libc::EWOULDBLOCK),
+                "a reconnect must not commit while a delegated call is in flight ({errno:?})"
+            );
+            call.abort();
+            let _ = call.await;
+            assert!(
+                reconnect_can_commit().0,
+                "the guard is released with the call"
+            );
         }
 
         #[tokio::test]
@@ -1187,6 +1515,8 @@ mod fakes {
             pane: HerdrPaneId,
             kind: String,
             args: Vec<String>,
+            #[serde(default)]
+            env: Vec<(String, String)>,
         },
     }
 
@@ -1279,8 +1609,18 @@ mod fakes {
                 Logged::WorkspaceMetadata { id, key, value } => {
                     h.report_workspace_metadata(&id, &key, &value).await
                 }
-                Logged::StartAgent { pane, kind, args } => h
-                    .start_agent(StartAgent { pane, kind, args })
+                Logged::StartAgent {
+                    pane,
+                    kind,
+                    args,
+                    env,
+                } => h
+                    .start_agent(StartAgent {
+                        pane,
+                        kind,
+                        args,
+                        env,
+                    })
                     .await
                     .map(drop),
             }
@@ -1434,6 +1774,7 @@ mod fakes {
                 pane: req.pane.clone(),
                 kind: req.kind.clone(),
                 args: req.args.clone(),
+                env: req.env.clone(),
             };
             self.record(e, self.inner.start_agent(req).await)
         }

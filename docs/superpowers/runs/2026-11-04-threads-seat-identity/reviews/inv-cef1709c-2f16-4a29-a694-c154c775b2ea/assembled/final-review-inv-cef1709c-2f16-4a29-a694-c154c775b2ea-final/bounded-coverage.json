@@ -1,0 +1,15 @@
+{"inspected":[
+{"path":"src/daemon/compose.rs","hunks":["@@ -824,15 +938,59 @@ mod lazy {"]},
+{"path":"src/observe/matcher.rs","hunks":["@@ -1,12 +1,16 @@","@@ -101,11 +105,42 @@ pub fn agent_session_id(p: &PaneInfo) -> Option<String> {","@@ -116,89 +151,49 @@ pub fn match_snapshot(snap: &HerdrSnapshot, d: &DesiredRuntime) -> Matches {"]},
+{"path":"src/observe/seat_observation.rs","hunks":["@@ -0,0 +1,211 @@"]},
+{"path":"src/reconcile/planner.rs","hunks":["@@ -144,6 +221,24 @@ impl<'a> LiveIndex<'a> {","@@ -212,47 +312,44 @@ impl<'a> LiveIndex<'a> {","@@ -267,11 +364,23 @@ impl<'a> LiveIndex<'a> {","@@ -487,9 +616,43 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {","@@ -786,6 +950,140 @@ pub fn plan_effects("]},
+{"path":"src/herdr/fake.rs","hunks":["@@ -509,6 +509,67 @@ impl FakeHerdr {"]},
+{"path":"src/model/common.rs","hunks":["@@ -105,6 +105,7 @@ pub struct Binding {"]},
+{"path":"CURRENT-DESIGN.md","hunks":["@@ -91,8 +95,12 @@ Threads 0.2.9 integration is verified at `223b61a88625d7f442d22d9b8728dc4b2282b1"]},
+{"path":"docs/verification-matrix.md","hunks":["@@ -161,8 +161,7 @@ Spikes 1–4 retain their historical private-server evidence from 2026-10-02; th","@@ -244,7 +243,7 @@ This is upstream service evidence, not graph's real-agent summarizer flow."]},
+{"path":"README.md","hunks":["@@ -86,7 +86,7 @@ The daemon answers every CLI request within `CALL_TIMEOUT − REPLY_MARGIN` (27","@@ -127,7 +127,7 @@ Ordinary undo refuses reconnect actions and actions predating the current namesp"]},
+{"path":"evidence/hg-66u.18/e2e-plain-threads.log","hunks":["@@ -0,0 +1,29 @@"]},
+{"path":"evidence/hg-66u.18/e2e-g5-real-window.log","hunks":["@@ -0,0 +1,10 @@"]},
+{"path":"evidence/hg-66u.18/e2e-g5-test-support-threads.log","hunks":["@@ -0,0 +1,10 @@"]},
+{"path":"evidence/hg-66u.18/cargo-check.log","hunks":["@@ -0,0 +1,8 @@"]}
+]}

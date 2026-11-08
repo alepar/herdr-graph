@@ -1,0 +1,10 @@
+r1 [Blocking] design.md §6 Retired mapping; §8 "Undo commits the clone active"; Key abstractions SeatObservation + ThreadsSource unretire want
+r1 [Should-fix] design.md §9 resume driver trigger ("threads_seat is Unresolved and last bound pane id exists"); §8 Before D2 (interim)
+r1 [Should-fix] design.md §2 seat succession rule; §8 interim; Key abstractions ThreadsSource want list
+r1 [Should-fix] design.md §8 "When the graph's retirement becomes final (purge), the graph releases the key / finalizes retirement"; Key abstractions ThreadsSource "finalize retirement: on purge"
+r1 [Should-fix] design.md §5 "argv prefix `env K=V …` or the existing pane-creation env, whichever the installed Herdr API supports"; Key abstractions StartAgent/HerdrApi adapter
+r1 [Should-fix] design.md §6 "run alongside the old matcher (threads wins when both speak)"; Key abstractions SeatObservation "before D1, threads wins whenever it and the old matcher both claim a clone"
+r1 [Should-fix] design.md Key abstractions ThreadsSource "unretire seat: for an active clone whose seat threads reports as reversibly retired"; §6 Retired mapping; §8 pane close
+r1 [Nit] design.md §3 "there is no separate 'retired-final' clone state"; §6 "Retired (reversible or final) → clone retired through the existing undoable retirement"; Key abstractions SeatObservation "final Retired retires it finally"
+r1 [Nit] design.md §2 resolve want precondition ("verified pane binding"); §6 "adopted only through the first bind of an unseated clone"; §9 driver trigger
+r1 [Nit] design.md §6 "key-conflict field → Unknown plus a recorded alert in `status`"; Key abstractions SeatObservation "The key-conflict alert is a journal entry"; Reconcile planner "skips clones that carry a key-conflict alert"

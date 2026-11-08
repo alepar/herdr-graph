@@ -1,0 +1,85 @@
+diff --git a/src/threads/service_tests.rs b/src/threads/service_tests.rs
+index f661a34..5c4a867 100644
+--- a/src/threads/service_tests.rs
++++ b/src/threads/service_tests.rs
+@@ -779,6 +779,80 @@ async fn pane_resolution_uses_host_guard_and_never_claimless_seats() {
+     peer.await.unwrap();
+ }
+ 
++#[tokio::test]
++async fn seat_view_reads_resolved_and_reports_transport_errors() {
++    use crate::model::HerdrPaneId;
++    use crate::threads::ThreadsSeatMap;
++    use herdr_threads::protocol::commands::Command;
++    use herdr_threads::protocol::results::{CommandResult, SeatInspection};
++    use herdr_threads::protocol::wire::{WireRequest, WireResponse};
++    let dir = tempfile::tempdir().unwrap();
++    let socket = dir.path().join("view.sock");
++    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
++    let inspection: SeatInspection = serde_json::from_value(json!({
++        "summary": { "seat": "seat-a", "continuity": "resolved", "target": "w1:p1",
++                     "generation": 1, "created_at": 1, "retired_at": null },
++        "mapping": { "state": "resolved", "target": "w1:p1", "detail_argv": null },
++        "hold": null, "retirement": null,
++        "history": { "items": [], "next_cursor": null, "next_argv": null, "high_water_ordinal": 0,
++                     "scope_revision": null, "has_more": false, "stop_reason": "complete",
++                     "consistency": "bounded_live" },
++    }))
++    .unwrap();
++    let peer = tokio::spawn(async move {
++        // Reads: resolved ok; then a refusal (unsupported); then the service goes away.
++        for call in 0..2 {
++            let (mut stream, _) = listener.accept().await.unwrap();
++            let request: WireRequest =
++                serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
++            let result = match request.command {
++                Command::SeatInspect(q) => {
++                    assert_eq!(q.seat.as_str(), "seat-a");
++                    if call == 0 {
++                        Ok(CommandResult::SeatInspect(inspection.clone()))
++                    } else {
++                        Err(api_error(ErrorCode::Unsupported))
++                    }
++                }
++                _ => Err(api_error(ErrorCode::InvalidRequest)),
++            };
++            let response = WireResponse {
++                version: PROTOCOL_VERSION,
++                request_id: request.request_id,
++                instance: request.expected_instance,
++                daemon_boot: BOOT.into(),
++                result,
++            };
++            write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
++                .await
++                .unwrap();
++        }
++        drop(listener);
++    });
++    let map = ThreadsSeatMap::new(
++        socket,
++        herdr_threads::node::NodeUuid::from_bytes([1; 16]),
++        Arc::new(herdr_threads::app::SystemClock::new()),
++        herdr_threads::protocol::ids::HostLocator::parse("/host-a.sock").unwrap(),
++    );
++    let read = map.inspect(&[seat("seat-a")]).await.unwrap();
++    assert_eq!(
++        read[&seat("seat-a")],
++        SeatStatus::Resolved {
++            pane: HerdrPaneId("w1:p1".into())
++        }
++    );
++    assert!(matches!(
++        map.inspect(&[seat("seat-a")]).await,
++        Err(ThreadsError::Unsupported)
++    ));
++    peer.await.unwrap();
++    assert!(matches!(
++        map.inspect(&[seat("seat-a")]).await,
++        Err(ThreadsError::Disconnected(_))
++    ));
++}
++
+ #[cfg(feature = "threads-service-ack")]
+ #[tokio::test]
+ async fn send_time_receipt_capability_absence_falls_back_but_disconnect_does_not() {

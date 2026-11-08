@@ -1,0 +1,48 @@
+diff --git a/docs/reviews/2026-10-29-seat-review-H2-identity-design.md b/docs/reviews/2026-10-29-seat-review-H2-identity-design.md
+index 8bb8f40..15eb376 100644
+--- a/docs/reviews/2026-10-29-seat-review-H2-identity-design.md
++++ b/docs/reviews/2026-10-29-seat-review-H2-identity-design.md
+@@ -1,6 +1,6 @@
+ # Design — Threads-authoritative 1:1 identity for graph clones, with unattended restart and live handoff
+ 
+-Status: proposal, revised 2026-11-04 with the user's decisions (§4). Restored from the review session
++Status: approved direction, revised 2026-11-04 with the user's decisions (§4); implementation via super-auto (herdr-graph) and the herdr-threads coordinator (threads side). Restored from the review session
+ after the /tmp wipe; the 2026-10-31 revision is the base. Read-only review. Sources:
+ - herdr-graph `main` @ c77d9ad;
+ - herdr-threads vendored v2.6.4, and main @ b86202243 ("Prepare v2.8.2": ht-hsyg merged);
+@@ -158,16 +158,14 @@ Neither occurs in an ordinary restart.
+ - Threads contract: `UnretireSeat{seat}` by the registered service, allowed only for seats whose
+   recorded key was presented by that service's launches. It returns the seat to **unresolved with
+   no pane**; it never places it. Reattachment stays evidence-based (D1 or C1).
+-- Required memberships were released at retire; the graph re-invites after reattachment, so the
+-  resumed agent accepts once (its hook prints the live `accept-required`). Flagged: if undo must
+-  be fully hands-off, threads would instead restore the released requirement episodes on
+-  un-retire, which is a larger change.
+-- Implementation choice for threads (same external behaviour):
+-  - **true un-retire:** relax the `seats_retirement_terminal` trigger, add a replicated
+-    `seat.unretired` fact, receipts stay terminal, memberships re-materialized as new intervals;
+-  - **reversible retired state:** a seat state that reads as retired to every peer but is not
+-    terminal until finalized. Roughly half the cost; no schema-fact change.
+-  The review recommends the second; either satisfies D2.
++- **Undo is fully hands-off (user, 2026-11-04):** un-retire restores the requirement episodes and
++  memberships the seat held at retirement, so the resumed agent does not re-accept anything.
++- **Mechanism (user, 2026-11-04): a reversible retired state**, not a true un-retire. The seat reads
++  as retired to every peer, but stays reversible until it is finalized; no change to the
++  `seats_retirement_terminal` trigger or replicated facts. Not present in vendored v2.6.4; threads
++  checks its main branch and implements it if missing.
++- Finalization: when the graph's own retirement becomes final (purge or policy), or by the existing
++  operator retire.
+ - Graph cross-pane moves compose from these: close the old pane, un-retire, launch with the key in
+   the new pane. No separate move operation; `clone rebind --pane` goes away.
+ 
+@@ -225,8 +223,8 @@ acceptance criteria, not a formality.
+   with native session ids. Consistent with threads' current trust model.
+ - **A clone whose agent never checked in has no recorded key**, so its first agent after a restart
+   gets a new seat. Nothing was accepted on it yet, so little is lost.
+-- **Undo needs one re-acceptance** of required memberships unless threads restores requirement
+-  episodes on un-retire (D2 flag).
++- **Restoring requirement episodes on un-retire** must not resurrect a requirement the graph has
++  since released (graph re-checks wants after reattachment and releases stale ones).
+ - **Many unresolved seats must not stall reconciliation**; ht-kaw9 (in progress) touches exactly
+   that.
+ - Ambiguity stays operator-resolved by design.

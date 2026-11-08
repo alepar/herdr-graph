@@ -1,0 +1,56 @@
+[
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 1
+  },
+  "key": "B3 undelivered (and B1 partial): the graph's clone re-matching is not delegated to threads at head; observe/matcher.rs clone passes and the planner LiveIndex rebind and live_ref re-matching still run; hg-66u.14 and hg-66u.15 are open behind gate hg-66u.1 (D1); no human scope change row covers this.",
+  "line": "[Must-fix] B3 undelivered (and B1 partial): the graph's clone re-matching is not delegated to threads at head; observe/matcher.rs clone passes and the planner LiveIndex rebind and live_ref re-matching still run; hg-66u.14 and hg-66u.15 are open behind gate hg-66u.1 (D1); no human scope change row covers this."
+ },
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 2
+  },
+  "key": "B9 undelivered: no continuity-key reservation or keyed launch exists; every agent start calls agent_env(&clone, false) in src/reconcile/herdr_exec.rs, so HERDR_THREADS_CONTINUITY_KEY is never exported; hg-66u.43, hg-66u.44, hg-66u.68, hg-66u.33 and hg-66u.40 are open behind D1.",
+  "line": "[Must-fix] B9 undelivered: no continuity-key reservation or keyed launch exists; every agent start calls agent_env(&clone, false) in src/reconcile/herdr_exec.rs, so HERDR_THREADS_CONTINUITY_KEY is never exported; hg-66u.43, hg-66u.44, hg-66u.68, hg-66u.33 and hg-66u.40 are open behind D1."
+ },
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 3
+  },
+  "key": "B7 and B10 undelivered: graph undo does not un-retire the seat or restore memberships hands-off; the pre-D2 interim (src/threads/effects.rs succeed_seat) allocates a successor seat and needs one re-acceptance; hg-66u.31 and hg-66u.32 are open behind gate hg-66u.2 (D2).",
+  "line": "[Must-fix] B7 and B10 undelivered: graph undo does not un-retire the seat or restore memberships hands-off; the pre-D2 interim (src/threads/effects.rs succeed_seat) allocates a successor seat and needs one re-acceptance; hg-66u.31 and hg-66u.32 are open behind gate hg-66u.2 (D2)."
+ },
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 4
+  },
+  "key": "B4 partial: the fresh-agent restart path (hg-66u.21) is open behind D1, so a clone with no resumable session is not relaunched unattended after a cold restart.",
+  "line": "[Must-fix] B4 partial: the fresh-agent restart path (hg-66u.21) is open behind D1, so a clone with no resumable session is not relaunched unattended after a cold restart."
+ },
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 5
+  },
+  "key": "B4 seam, PLAUSIBLE (src/reconcile/planner.rs plan_resume and restart_covered): the restart arm requires occupant None and an ended session. After a real headless cold restart in which Herdr drops metadata tokens and reallocates terminal ids (spec Problem description), the matcher does not match the clone, SeatObservation stays silent on Unresolved before D1, and diff::occupancy never ends the stale occupant. The arm then never fires and the agent is not resumed. All resume tests end the session via test_end_occupant and restart with keep_metadata=true. Verify on a private rig, or end the occupant once an Unresolved seat fact is read after an incarnation change.",
+  "line": "[Must-fix] B4 seam, PLAUSIBLE (src/reconcile/planner.rs plan_resume and restart_covered): the restart arm requires occupant None and an ended session. After a real headless cold restart in which Herdr drops metadata tokens and reallocates terminal ids (spec Problem description), the matcher does not match the clone, SeatObservation stays silent on Unresolved before D1, and diff::occupancy never ends the stale occupant. The arm then never fires and the agent is not resumed. All resume tests end the session via test_end_occupant and restart with keep_metadata=true. Verify on a private rig, or end the occupant once an Unresolved seat fact is read after an incarnation change."
+ },
+ {
+  "ref": {
+   "source": "inv-ef2aebda-da0c-4690-ad00-4dd74f48ba6a/final",
+   "section": "Must fix before landing",
+   "position": 6
+  },
+  "key": "Seam, PLAUSIBLE (src/observe/seat_observation.rs seated_clones and observe): Active clones of a deactivated (Dormant) seat or teamspace are still inspected. plan_closes closes their tab or workspace as a predicted induced close, and threads retires those pane seats (spec \u00a78). The Retired arm then emits an observed pane-close cascade that retires the clones, without checking seat lifecycle or predictions, so reactivation finds them retired instead of recreating them. No test covers deactivation with a seated clone.",
+  "line": "[Must-fix] Seam, PLAUSIBLE (src/observe/seat_observation.rs seated_clones and observe): Active clones of a deactivated (Dormant) seat or teamspace are still inspected. plan_closes closes their tab or workspace as a predicted induced close, and threads retires those pane seats (spec \u00a78). The Retired arm then emits an observed pane-close cascade that retires the clones, without checking seat lifecycle or predictions, so reactivation finds them retired instead of recreating them. No test covers deactivation with a seated clone."
+ }
+]

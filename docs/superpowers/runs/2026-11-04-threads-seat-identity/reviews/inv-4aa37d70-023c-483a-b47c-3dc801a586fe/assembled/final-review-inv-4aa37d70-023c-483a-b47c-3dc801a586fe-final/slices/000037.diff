@@ -1,0 +1,63 @@
+diff --git a/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md
+new file mode 100644
+index 0000000..3e1201f
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-04-threads-seat-identity/reviews/inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f/final-review-inv-cc29fc83-52dd-468a-b12b-83f078e3ee3f.cluster-18.md
+@@ -0,0 +1,57 @@
++# Final review: cluster 18 (src-undo), epic hg-66u
++
++Source: base 0a84c67554aa3fc8e8caf20db4163683ab30af61, head e4984a492e2d3ce8344b9be83d56a3471049fd60 (both verified with `git rev-parse --verify`). Caller checkout observed at the head commit with a clean status before and after the review; nothing in it was switched or restored.
++
++Cluster files: src/undo/compensate.rs, src/undo/preview.rs, src/undo/tests.rs (slices 000061-000063).
++
++## What the cluster changes
++
++- `compute_restore` (src/undo/preview.rs:136-144) now refuses the whole undo when any clone in `act.retired` is missing (the record was deleted by a seatless purge) or is a Finalize/ReleaseKey tombstone. The error reads "clone <id> was purged; its undo window has ended". `compute_restore` runs at plan time (preview.rs:316) and again against the writer's overlay at commit time (compensate.rs:323), so a purge that lands between plan and confirm is caught too.
++- `displace` (src/undo/compensate.rs:494) now calls `clear_restore_on_retire` when an undo retires the clone that was bound to the caller's pane. This follows spec §14.6, which says every retire commit clears a Restore intent.
++- The tests register the threads mutations in the undo fixture and add `undo_of_a_purged_clones_retirement_is_refused`, which covers both purge outcomes: the seatless clone's record is deleted and the seated clone becomes a Finalize tombstone. The test also checks that the same undo plans fine before the purge.
++
++## How I checked it
++
++- I read the spec sections that govern this cluster: §8 (undo/resurrection and the seat intent), §13 ("Tombstones are inert": a tombstone is never undone), and §14.1/§14.2/§14.6 (purge ends the undo window, purge writes a tombstone, and who may write the intent).
++- Clone records are deleted only by `ClonePurge::mutate` (plan/core_kinds.rs:1925) and by the removal of a tombstone after finalize (threads/assignment.rs:267). So a missing clone record really does mean the clone was purged, and the new message is accurate.
++- I ran `cargo test --lib -- undo::` in the ht-build toolbox, in a review-owned detached worktree at the head commit (target seeded by reflink from the run worktree; submodule at the pinned cdc8423). Result: 31 passed, 0 failed, including the new test. The review worktree has been removed.
++
++## Requirement baseline trace (B7, B10) through the undo entry point
++
++- From the production entry point (`graph undo` -> UndoKind plan/mutate -> `compute_restore` / compensate.rs), undo at the head commit still adopts the caller's pane (src/undo/adopt.rs; compensate.rs uses `Adoption` and `displace`). It writes no Restore intent: `write_restore_intent` (threads/assignment.rs:56) has no production caller; its only caller is src/threads/tests.rs:114. Spec §8 step 1 needs the undo commit to write `Restore{seat, epoch}`, reopen the clone's tab in its original workspace and stop adopting the caller's pane. None of that is present in src/undo.
++- So at this head, undo of a pane-close retirement does not reopen the tab, does not resume the session through the resume driver, and does not succeed or un-retire the seat. The open beads are hg-66u.29 (pre-D2 interim succession, ungated), hg-66u.30, hg-66u.32 and the D2 gate hg-66u.2. The Human scope changes section is "none", so this gap is not covered.
++- The threads-side halves (the succession, unretire and finalize wants in the threads executor, and the resume-driver restore trigger) leave this cluster. Tracing them is the seam reviewer's job. The undelivered part named here is the undo commit itself, which lives in this cluster.
++
++## Must fix
++
++- B7 is not delivered: `graph undo` at the head commit still adopts the caller's pane (src/undo/adopt.rs, compensate.rs `displace`) and writes no Restore intent (`write_restore_intent` has no production caller). Undo therefore does not reopen the tab, resume the session or unretire/succeed the seat. The pre-D2 interim path (hg-66u.29) is ungated and still open, and no human scope change row covers the gap.
++- B10 is not delivered through undo: no Restore intent is ever written, so no unretire want can be derived and memberships cannot be restored hands-off on undo (D2 path hg-66u.32 is open behind gate hg-66u.2, and no human scope change row covers it).
++
++## Concerns
++
++- The purge guard refuses the whole action, not just the purged clone (preview.rs:136-144). Undo of a tab-close cascade or seat retirement in which one clone was later purged now can no longer restore the seat or its other clones. The brief asked for this and the spec does not contradict it, but the only way back for the rest is seat resurrection, and the refusal message does not say so.
++- `list_candidates` (src/undo/candidates.rs:169) still lists actions whose retired clones have since been purged, unmarked. The operator learns that the undo window has ended only when the plan fails. Spec §13 says tombstones are never "listed"; this reads closer to the clone listings than to undo candidates, so this is a usability gap rather than a spec breach.
++- The standalone-clone branch's "clone {c} no longer exists; left alone" warning (preview.rs, standalone loop) can no longer fire, because the new guard has already refused every missing clone in `act.retired`. Harmless dead code.
++
++## Untested scope
++
++- The `clear_restore_on_retire` call in `displace` (compensate.rs:494) has no undo test with a clone that carries a Restore intent. No production path writes a Restore intent yet, so the change cannot be observed end to end.
++- No test covers the purge guard on a multi-object action (a seat retirement or closure cascade in which one of several clones was purged). The new test covers only single-clone Retire actions.
++- No test covers a purge that lands between the undo plan and its confirm (the commit-time recompute in compensate.rs:323). The code path is shared with the plan, but it is not asserted.
++
++## Verdict
++not ready (B7/B10 undo restore not delivered: undo adopts the caller pane and never writes a Restore intent)
++
++## Must fix before landing
++- B7 not delivered: `graph undo` still adopts the caller's pane (src/undo/adopt.rs, compensate.rs displace) and writes no Restore intent (write_restore_intent has only a test caller), so undo neither reopens the tab, resumes the session nor unretires/succeeds the seat; ungated interim hg-66u.29 open; no human scope change row.
++- B10 not delivered: with no Restore intent written by undo, no unretire want exists and memberships are not restored hands-off on undo (hg-66u.32 open behind gate hg-66u.2); no human scope change row.
++
++## Untested scope
++- displace's clear_restore_on_retire (src/undo/compensate.rs:494) has no test with a clone carrying a Restore intent.
++- Purge guard on multi-object actions (seat retirement or closure cascade with one purged clone) is not tested.
++- A purge landing between undo plan and confirm (commit-time compute_restore at compensate.rs:323) is not asserted.
++
++## Deferred OK
++- Whole-action refusal when one clone in act.retired is purged blocks restoring the seat and sibling clones; the refusal could point to seat resurrection.
++- Undo candidate listing (src/undo/candidates.rs:169) does not mark actions whose clones were purged.
++- The standalone "clone no longer exists; left alone" warning in compute_restore is now unreachable.

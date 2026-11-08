@@ -41,6 +41,43 @@ struct State {
     disconnected: bool,
     capability: Option<DeliveryCapability>,
     next_id: u64,
+    /// Reserved continuity keys and the seat each is bound to.
+    keys: BTreeMap<String, Option<String>>,
+    /// Keys whose reservation answers `Conflict`.
+    reserve_conflicts: BTreeSet<String>,
+    reserve_error: Option<FakeSeatViewError>,
+    /// Every `reserve_continuity_key` call that reached the service: (key, seat).
+    reserves: Vec<(String, Option<String>)>,
+    /// The operation key of each of those calls.
+    reserve_ops: Vec<OpKey>,
+    unretire_error: Option<FakeSeatViewError>,
+    finalize_error: Option<FakeSeatViewError>,
+    /// (call name, subject, operation key) of every unretire/finalize/release that reached the service.
+    lifecycle: Vec<(String, String, OpKey)>,
+    /// Successful D1/D2 answers by operation key, with the payload each answered. Threads v3.1.0 stores the
+    /// first successful result per (actor scope, operation key) and replays it for the same payload
+    /// (store/service_controls.rs); a refusal is not stored. The key/seat state is not recomputed on replay.
+    stored: BTreeMap<String, (String, StoredAnswer)>,
+    release_error: Option<FakeSeatViewError>,
+}
+
+#[derive(Clone)]
+enum StoredAnswer {
+    Reserved(Option<String>),
+    Done,
+}
+
+/// The stored answer for `op`, if any: `Err` when the key was used with another payload.
+fn replay(st: &State, op: &OpKey, payload: &str) -> Option<Result<StoredAnswer, ThreadsError>> {
+    st.stored.get(&op.0).map(|(p, a)| {
+        if p == payload {
+            Ok(a.clone())
+        } else {
+            Err(ThreadsError::Rejected(
+                "OperationPayloadMismatch: operation key reused with different payload".into(),
+            ))
+        }
+    })
 }
 
 /// The thread id the fake (and the real adapter) derive from an `ensure:<object>` operation key.
@@ -155,6 +192,109 @@ impl FakeThreads {
     /// Names of the mutating calls that reached the service (`ensure_thread`, `invite`, ...), in order.
     pub fn calls(&self) -> Vec<String> {
         self.lock().calls.clone()
+    }
+
+    /// The seat the reserved continuity `key` is bound to (`None`: unbound or never reserved).
+    pub fn key_binding(&self, key: &str) -> Option<String> {
+        self.lock().keys.get(key).cloned().flatten()
+    }
+
+    /// Whether `key` is reserved (bound or not).
+    pub fn key_reserved(&self, key: &str) -> bool {
+        self.lock().keys.contains_key(key)
+    }
+
+    /// Pre-bind `key` to `seat`, as if the key had been reserved and linked earlier.
+    pub fn set_key_binding(&self, key: &str, seat: &str) {
+        self.lock()
+            .keys
+            .insert(key.to_owned(), Some(seat.to_owned()));
+    }
+
+    /// Model closing `seat`'s pane (spec §14.12): the retirement is reversible only while a continuity key is
+    /// bound to the seat, final otherwise. Returns the kind `view` now reports for the seat.
+    pub fn close_pane(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) -> RetirementKind {
+        let keyed = self
+            .lock()
+            .keys
+            .values()
+            .any(|bound| bound.as_ref() == Some(&seat.0));
+        let kind = if keyed {
+            RetirementKind::Reversible
+        } else {
+            RetirementKind::Final
+        };
+        view.set(seat, SeatStatus::Retired { kind });
+        kind
+    }
+
+    /// Model an explicit operator final retire: the seat reads final and threads deletes its key, like
+    /// `finalize_retirement` does at purge.
+    pub fn operator_final_retire(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) {
+        self.lock()
+            .keys
+            .retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        view.set(
+            seat,
+            SeatStatus::Retired {
+                kind: RetirementKind::Final,
+            },
+        );
+    }
+
+    /// Reserving `key` answers `Conflict` while set.
+    pub fn set_reserve_conflict(&self, key: &str) {
+        self.lock().reserve_conflicts.insert(key.to_owned());
+    }
+
+    /// While set, `reserve_continuity_key` fails with this error.
+    pub fn set_reserve_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().reserve_error = error;
+    }
+
+    /// The operation key of every `reserve_continuity_key` call, in order.
+    pub fn reserve_ops(&self) -> Vec<OpKey> {
+        self.lock().reserve_ops.clone()
+    }
+
+    /// Every `reserve_continuity_key` (key, seat) that reached the service, in order, failed ones included.
+    pub fn reserve_calls(&self) -> Vec<(String, Option<String>)> {
+        self.lock().reserves.clone()
+    }
+
+    /// While set, `unretire_seat` fails with this error.
+    pub fn set_unretire_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().unretire_error = error;
+    }
+
+    /// While set, `finalize_retirement` fails with this error.
+    pub fn set_finalize_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().finalize_error = error;
+    }
+
+    /// While set, `release_continuity_key` fails with this error.
+    pub fn set_release_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().release_error = error;
+    }
+
+    /// The subjects (seat or key) of the lifecycle calls named `name` that reached the service, in order.
+    pub fn lifecycle_calls(&self, name: &str) -> Vec<String> {
+        self.lock()
+            .lifecycle
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, subject, _)| subject.clone())
+            .collect()
+    }
+
+    /// The operation keys of the lifecycle calls named `name`, in order.
+    pub fn lifecycle_ops(&self, name: &str) -> Vec<OpKey> {
+        self.lock()
+            .lifecycle
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, _, op)| op.clone())
+            .collect()
     }
 
     pub fn call_count(&self, name: &str) -> usize {
@@ -374,10 +514,219 @@ impl ThreadsPort for FakeThreads {
         Err(ThreadsError::Unsupported)
     }
 
+    async fn reserve_continuity_key(
+        &self,
+        key: &str,
+        seat: Option<&ThreadsSeatRef>,
+        op: &OpKey,
+    ) -> Result<ReserveOutcome, ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("reserve_continuity_key".into());
+        st.reserves
+            .push((key.to_owned(), seat.map(|s| s.0.clone())));
+        st.reserve_ops.push(op.clone());
+        let payload = format!("reserve|{key}|{:?}", seat.map(|s| &s.0));
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|a| match a {
+                StoredAnswer::Reserved(b) => ReserveOutcome::Reserved {
+                    seat: b.map(ThreadsSeatRef),
+                },
+                StoredAnswer::Done => ReserveOutcome::Reserved { seat: None },
+            });
+        }
+        if let Some(e) = st.reserve_error {
+            return Err(e.to_error());
+        }
+        let wanted = seat.map(|s| s.0.clone());
+        let bound = st.keys.get(key).cloned().flatten();
+        let other_key_on_seat = wanted.as_ref().is_some_and(|w| {
+            st.keys
+                .iter()
+                .any(|(k, b)| k != key && b.as_ref() == Some(w))
+        });
+        let bound_elsewhere = matches!((&bound, &wanted), (Some(b), Some(w)) if b != w);
+        if st.reserve_conflicts.contains(key) || other_key_on_seat || bound_elsewhere {
+            return Ok(ReserveOutcome::Conflict);
+        }
+        let binding = wanted.or(bound);
+        st.keys.insert(key.to_owned(), binding.clone());
+        st.stored.insert(
+            op.0.clone(),
+            (payload, StoredAnswer::Reserved(binding.clone())),
+        );
+        Ok(ReserveOutcome::Reserved {
+            seat: binding.map(ThreadsSeatRef),
+        })
+    }
+
+    async fn unretire_seat(&self, seat: &ThreadsSeatRef, op: &OpKey) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("unretire_seat".into());
+        st.lifecycle
+            .push(("unretire_seat".into(), seat.0.clone(), op.clone()));
+        let payload = format!("unretire|{}", seat.0);
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
+        match st.unretire_error {
+            Some(e) => Err(e.to_error()),
+            None => {
+                st.stored
+                    .insert(op.0.clone(), (payload, StoredAnswer::Done));
+                Ok(())
+            }
+        }
+    }
+
+    async fn finalize_retirement(
+        &self,
+        seat: &ThreadsSeatRef,
+        op: &OpKey,
+    ) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("finalize_retirement".into());
+        st.lifecycle
+            .push(("finalize_retirement".into(), seat.0.clone(), op.clone()));
+        let payload = format!("finalize|{}", seat.0);
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
+        if let Some(e) = st.finalize_error {
+            return Err(e.to_error());
+        }
+        // Threads releases the seat's key when its retirement becomes final.
+        st.keys.retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        st.stored
+            .insert(op.0.clone(), (payload, StoredAnswer::Done));
+        Ok(())
+    }
+
+    async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+        let _guard = self.namespace_guard().await?;
+        let mut st = self.lock();
+        Self::gate(&st)?;
+        st.calls.push("release_continuity_key".into());
+        st.lifecycle
+            .push(("release_continuity_key".into(), key.to_owned(), op.clone()));
+        let payload = format!("release|{key}");
+        if let Some(r) = replay(&st, op, &payload) {
+            return r.map(|_| ());
+        }
+        if let Some(e) = st.release_error {
+            return Err(e.to_error());
+        }
+        match st.keys.get(key) {
+            None => Err(ThreadsError::Rejected(
+                "NotFound: continuity key is not reserved".into(),
+            )),
+            Some(Some(_)) => Err(ThreadsError::Rejected(
+                "Conflict: continuity key is bound to a seat".into(),
+            )),
+            Some(None) => {
+                st.keys.remove(key);
+                st.stored
+                    .insert(op.0.clone(), (payload, StoredAnswer::Done));
+                Ok(())
+            }
+        }
+    }
+
     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
         let _guard = self.namespace_guard().await?;
         let st = self.lock();
         Self::gate(&st)?;
         Ok(st.capability.unwrap_or(DeliveryCapability::NotifyFallback))
+    }
+}
+
+/// Transport failure a `FakeThreadsSeatView` (or `FakeThreads`' key reservation) can be told to report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FakeSeatViewError {
+    Disconnected,
+    Busy,
+    Rejected,
+    Unsupported,
+}
+
+impl FakeSeatViewError {
+    fn to_error(self) -> ThreadsError {
+        match self {
+            Self::Disconnected => ThreadsError::Disconnected("fake seat view unavailable".into()),
+            Self::Busy => ThreadsError::ServiceBusy,
+            Self::Rejected => ThreadsError::Rejected("fake seat view rejected".into()),
+            Self::Unsupported => ThreadsError::Unsupported,
+        }
+    }
+}
+
+#[derive(Default)]
+struct SeatViewState {
+    seats: BTreeMap<ThreadsSeatRef, SeatStatus>,
+    error: Option<FakeSeatViewError>,
+    refused: BTreeMap<ThreadsSeatRef, String>,
+    reads: usize,
+}
+
+/// In-memory `ThreadsSeatView`. A seat never `set` reads `Unresolved`, so an unconfigured fake never makes
+/// threads speak; an injected error fails the whole read like the real view, while a refused seat is only
+/// omitted from the map (a per-seat refusal).
+#[derive(Default)]
+pub struct FakeThreadsSeatView {
+    state: Mutex<SeatViewState>,
+}
+
+impl FakeThreadsSeatView {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn set(&self, seat: &ThreadsSeatRef, status: SeatStatus) {
+        self.lock().seats.insert(seat.clone(), status);
+    }
+    pub fn set_error(&self, error: Option<FakeSeatViewError>) {
+        self.lock().error = error;
+    }
+    /// `inspect` omits `seat` from its map, as the real view does for a per-seat refusal.
+    pub fn refuse(&self, seat: &ThreadsSeatRef, message: &str) {
+        self.lock().refused.insert(seat.clone(), message.to_owned());
+    }
+    pub fn clear_refusal(&self, seat: &ThreadsSeatRef) {
+        self.lock().refused.remove(seat);
+    }
+    /// Number of `inspect` calls so far, failed ones included.
+    pub fn reads(&self) -> usize {
+        self.lock().reads
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, SeatViewState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+#[async_trait::async_trait]
+impl ThreadsSeatView for FakeThreadsSeatView {
+    async fn inspect(
+        &self,
+        seats: &[ThreadsSeatRef],
+    ) -> Result<BTreeMap<ThreadsSeatRef, SeatStatus>, ThreadsError> {
+        let mut st = self.lock();
+        st.reads += 1;
+        if let Some(e) = st.error {
+            return Err(e.to_error());
+        }
+        Ok(seats
+            .iter()
+            .filter(|s| !st.refused.contains_key(s))
+            .map(|s| {
+                (
+                    s.clone(),
+                    st.seats.get(s).cloned().unwrap_or(SeatStatus::Unresolved),
+                )
+            })
+            .collect())
     }
 }

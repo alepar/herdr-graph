@@ -1,6 +1,9 @@
 //! Clone record (spec §2.4): a seat's live incarnation(s) and their session history.
-use crate::model::common::{CloneLifecycle, NameChange, Occupant, Retirement, Runtime, is_false};
-use crate::model::ids::{CloneId, SeatId};
+use crate::model::HerdrPaneId;
+use crate::model::common::{
+    CloneLifecycle, NameChange, Occupant, Retirement, Runtime, Timestamp, is_false,
+};
+use crate::model::ids::{CloneId, OpId, SeatId};
 use crate::model::native_session::NativeSession;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +31,119 @@ pub struct CloneRecord {
     pub invitations: Vec<Invitation>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub reload_required: bool,
+    /// The herdr-threads seat this clone is bound to (spec §2). Written only by ThreadsSeatAssignment
+    /// (`bookkeeping.threads_seat`): write-once, except seat succession against a matching Restore intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threads_seat: Option<String>,
+    /// Seats this clone held before a succession, oldest first (history only).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads_seat_history: Vec<String>,
+    /// Graph-initiated threads lifecycle intent (spec §8, §14). Written only by ThreadsSeatAssignment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_intent: Option<SeatIntent>,
+    /// What threads last said about `threads_seat` (spec §14.9). Written only by SeatObservation
+    /// (`bookkeeping.seat_fact`); the key-conflict alert level is `state == KeyConflict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_fact: Option<SeatFact>,
+    /// The continuity key the graph reserved with threads for this clone (spec §5, §14). Written only by
+    /// ThreadsSeatAssignment (`RecordReservation`); a succession leaves it in place (§16.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_reservation: Option<KeyReservation>,
+}
+
+/// A continuity key reserved for a clone. `seat` is the reservation's recorded binding: the seat threads last
+/// answered the key is bound to (`None`: reserved, unbound). The key-link want (spec §14.12) compares it with
+/// the clone's target seat, and the restore launch is gated on it (spec §14.4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyReservation {
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<String>,
+    pub at: Timestamp,
+}
+
+impl KeyReservation {
+    /// Whether the recorded binding names `seat`.
+    pub fn bound_to(&self, seat: &str) -> bool {
+        self.seat.as_deref() == Some(seat)
+    }
+}
+
+/// One successful threads read of a clone's seat, with its read time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeatFact {
+    pub seat: String,
+    #[serde(flatten)]
+    pub state: SeatFactState,
+    pub read_at: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SeatFactState {
+    Resolved { pane: HerdrPaneId },
+    Unresolved,
+    KeyConflict { pane: Option<HerdrPaneId> },
+    Retired { reversible: bool },
+}
+
+/// A `Restore` launch mark written as `launched = true` by older code: launched at an unknown time, earlier
+/// than any incarnation change.
+pub const LEGACY_LAUNCHED_AT: Timestamp = chrono::DateTime::UNIX_EPOCH;
+
+/// Reads `launched` as the legacy bool (`true` is `LEGACY_LAUNCHED_AT`, `false` is unlaunched) or a timestamp.
+fn launched_compat<'de, D>(d: D) -> Result<Option<Timestamp>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Wire {
+        Legacy(bool),
+        At(Option<Timestamp>),
+    }
+    Ok(match Wire::deserialize(d)? {
+        Wire::Legacy(true) => Some(LEGACY_LAUNCHED_AT),
+        Wire::Legacy(false) => None,
+        Wire::At(at) => at,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SeatIntent {
+    /// Written by an undo/resurrection commit; `epoch` is that commit's operation id.
+    Restore {
+        seat: String,
+        epoch: OpId,
+        #[serde(default)]
+        threads_done: bool,
+        /// When the launch mark was written; `None` until the epoch's one launch is marked. Records written as
+        /// `launched = true` by older code read as `LEGACY_LAUNCHED_AT`.
+        #[serde(
+            default,
+            deserialize_with = "launched_compat",
+            skip_serializing_if = "Option::is_none"
+        )]
+        launched: Option<Timestamp>,
+        /// The last threads refusal of this epoch's threads step, for status (§14.7).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_refusal: Option<String>,
+    },
+    /// Purge tombstone of a clone that holds a seat (§14.2).
+    Finalize { seat: String },
+    /// Purge tombstone of a seatless clone with a recorded key reservation (§14.3).
+    ReleaseKey { key: String },
+}
+
+impl CloneRecord {
+    /// A purged clone kept only to drive a finalize/release want (§13 "Tombstones are inert").
+    pub fn is_tombstone(&self) -> bool {
+        matches!(
+            self.seat_intent,
+            Some(SeatIntent::Finalize { .. } | SeatIntent::ReleaseKey { .. })
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +151,7 @@ pub struct Invitation {
     pub thread: String,
     pub constraint: InviteConstraint,
     pub state: InvitationState,
-    /// Which threads seat was invited, for which occupant, and the ids threads reported (hg-zmi.11).
+    /// Which threads seat was invited (attributed to which occupant), and the ids threads reported (hg-zmi.11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<ThreadsLink>,
 }
@@ -46,7 +162,8 @@ pub struct Invitation {
 pub struct ThreadsLink {
     /// The threads seat (mapped from the clone's pane) that was invited.
     pub seat: String,
-    /// Native session record of the occupant the invitation was issued for.
+    /// Native session record of the occupant at the time of the invitation: attribution only. Nothing
+    /// branches on it; the invitation belongs to the clone's `threads_seat` (`seat` above).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occupant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

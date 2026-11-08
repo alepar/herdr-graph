@@ -1,0 +1,13 @@
+{"inspected":[
+{"path":"src/observe/seat_observation.rs","hunks":["@@ -0,0 +1,207 @@"]},
+{"path":"src/threads/assignment.rs","hunks":["@@ -0,0 +1,308 @@"]},
+{"path":"src/observe/step.rs","hunks":["@@ -1,12 +1,16 @@","@@ -19,11 +23,13 @@ use crate::model::{AnyId, CloneId, Incarnation, NsId, OpId, SeatId, Timestamp};","@@ -114,8 +120,20 @@ pub struct RuntimeLoop {","@@ -339,6 +357,7 @@ impl RuntimeLoop {","@@ -362,9 +381,24 @@ impl RuntimeLoop {","@@ -482,6 +516,152 @@ impl RuntimeLoop {","@@ -508,7 +688,8 @@ impl RuntimeLoop {","@@ -530,7 +711,14 @@ impl RuntimeLoop {","@@ -538,6 +726,19 @@ impl RuntimeLoop {","@@ -549,7 +750,8 @@ impl RuntimeLoop {"]},
+{"path":"src/reconcile/desired.rs","hunks":["@@ -1,5 +1,5 @@","@@ -57,6 +57,13 @@ pub struct DesiredPane {","@@ -198,6 +205,10 @@ impl DesiredRuntime {"]},
+{"path":"src/herdr/client.rs","hunks":["@@ -47,6 +47,29 @@ fn lines_of(v: &[(String, String)]) -> Value {","@@ -539,6 +562,9 @@ impl HerdrApi for HerdrClient {","@@ -562,6 +588,16 @@ impl HerdrApi for HerdrClient {"]},
+{"path":"src/ports/herdr.rs","hunks":["@@ -107,6 +107,8 @@ pub struct StartAgent {"]},
+{"path":"src/model/launch.rs","hunks":["@@ -6,6 +6,17 @@ pub const ENV_GRAPH: &str = \"HERDR_GRAPH\";"]},
+{"path":"src/reconcile/herdr_exec.rs","hunks":["@@ -5,21 +5,24 @@ use super::bookkeeping::admit_binding;","@@ -124,6 +127,16 @@ impl HerdrExecutor {","@@ -519,7 +532,8 @@ impl HerdrExecutor {","@@ -536,6 +550,7 @@ impl HerdrExecutor {","@@ -545,19 +560,70 @@ impl HerdrExecutor {","@@ -640,9 +706,12 @@ impl HerdrExecutor {","@@ -657,6 +726,9 @@ impl HerdrExecutor {"]},
+{"path":"src/plan/core_kinds.rs","hunks":["@@ -505,6 +511,7 @@ pub(crate) fn do_resurrect_seat(","@@ -514,6 +521,7 @@ pub(crate) fn do_resurrect_seat(","@@ -1176,6 +1184,17 @@ impl OrgKind for SeatActivate {"]},
+{"path":"src/threads/effects.rs","hunks":["@@ -88,12 +106,16 @@ impl Graph {","@@ -348,15 +390,143 @@ fn channel_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {"]},
+{"path":"src/reconcile/planner.rs","hunks":["@@ -487,9 +589,32 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {","@@ -786,6 +912,144 @@ pub fn plan_effects("]}
+]}

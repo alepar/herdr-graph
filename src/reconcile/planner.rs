@@ -4,14 +4,15 @@ use super::desired::{DesiredPane, DesiredRuntime, DesiredTab};
 use super::executor::PlannedEffect;
 use crate::journal::Journal;
 use crate::model::Timestamp;
+use crate::model::clone::{SeatFactState, SeatIntent};
 use crate::model::common::{
-    Availability, CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
+    CloneLifecycle, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation,
 };
 use crate::model::effect::{
     ContainerKind, EffectKind, EffectRecord, EffectStatus, EndState, PredictedEnd,
 };
 use crate::model::launch::{nonce_label, parse_graph_token};
-use crate::model::{AnyId, CloneId, EffectId, SeatId, TeamspaceId};
+use crate::model::{AnyId, CloneId, EffectId, OpId, SeatId, TeamspaceId};
 use crate::ports::herdr::{HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,6 +50,81 @@ pub fn delete_live_ref(journal: &Journal, object: &AnyId) {
 
 pub fn launched_key(clone: &CloneId) -> String {
     format!("launched:{clone}")
+}
+
+/// Journal meta: the pane and variable names the last start exported for `clone` (spec §5).
+pub fn launch_env_key(clone: &CloneId) -> String {
+    format!("launch_env:{clone}")
+}
+
+/// Journal meta: set while a clone's last pane is gone after an incarnation change, so `status` can name it.
+pub fn resume_blocked_key(clone: &CloneId) -> String {
+    format!("resume_blocked:{clone}")
+}
+
+/// Journal meta: `{"epoch","error","failures"}` while the launch mark of a pending Restore keeps failing, so
+/// `status` can name it and the planner can give each retry a fresh effect identity.
+pub fn restore_mark_failed_key(clone: &CloneId) -> String {
+    format!("restore_mark_failed:{clone}")
+}
+
+/// Journal meta: `{"reason":"not_launchable"}`. No longer written: before D1 every acknowledged Restore of an
+/// agent clone is launchable (resume, else a fresh agent), so the planner only clears a key an earlier build
+/// left behind. `status` still reads it.
+pub fn restore_stuck_key(clone: &CloneId) -> String {
+    format!("restore_stuck:{clone}")
+}
+
+/// Write `want` under `key`, or delete the key when None; only when the stored value differs.
+fn sync_meta(journal: &Journal, key: &str, want: Option<&str>) {
+    let have = journal.meta_get(key).ok().flatten();
+    if have.as_deref() == want {
+        return;
+    }
+    let _ = match want {
+        Some(v) => journal.meta_set(key, v),
+        None => journal.meta_delete(key),
+    };
+}
+
+/// Mark failures recorded for the Restore of `epoch` on `clone`.
+pub fn restore_mark_failures(journal: &Journal, clone: &CloneId, epoch: &OpId) -> u64 {
+    journal
+        .meta_get(&restore_mark_failed_key(clone))
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter(|m| m["epoch"] == epoch.to_string())
+        .and_then(|m| m["failures"].as_u64())
+        .unwrap_or(0)
+}
+
+/// Journal meta: the `incarnation:changed_at` a restart relaunch of `clone` already ran for (one per change).
+pub fn resumed_key(clone: &CloneId) -> String {
+    format!("resumed_at:{clone}")
+}
+
+/// Journal meta key of the time threads last answered the key resolution of an unseated clone: the restart
+/// trigger of an unseated clone waits for an answer taken after the restart (written by the threads executor).
+pub fn threads_answered_key(clone: &CloneId) -> String {
+    format!("threads_answered_at:{clone}")
+}
+
+fn threads_answered_at(journal: &Journal, clone: &CloneId) -> Option<Timestamp> {
+    let raw = journal
+        .meta_get(&threads_answered_key(clone))
+        .ok()
+        .flatten()?;
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|t| t.to_utc())
+}
+
+pub fn incarnation_changed_at(journal: &Journal) -> Option<Timestamp> {
+    let raw = journal.meta_get("incarnation:changed_at").ok().flatten()?;
+    chrono::DateTime::parse_from_rfc3339(&raw)
+        .ok()
+        .map(|t| t.to_utc())
 }
 
 pub struct LivePane<'a> {
@@ -100,9 +176,10 @@ impl Surplus<'_> {
     }
 }
 
-/// Matches graph objects to live Herdr objects: by token, else by binding in the same incarnation, else by
-/// the journal's live refs. Tabs have no tokens (Herdr 0.9.1): a seat's tab is its bound tab id, else the tab
-/// holding its token-matched panes.
+/// Matches graph objects to live Herdr objects: by token, else by bound Herdr id (tabs and workspaces in any
+/// incarnation, as Herdr preserves their ids; panes in the same incarnation only), else by the journal's live
+/// refs. Tabs have no tokens (Herdr 0.9.1): a seat's tab is its bound tab id (absent in a newer incarnation:
+/// none), else the tab holding its token-matched panes.
 pub struct LiveIndex<'a> {
     pub snap: &'a HerdrSnapshot,
     desired: &'a DesiredRuntime,
@@ -144,6 +221,24 @@ impl<'a> LiveIndex<'a> {
         })
     }
 
+    /// The pane the clone's committed binding names, when this snapshot has a pane of that id (any
+    /// incarnation: Herdr may keep pane ids across a restart). Tokens and live refs are not consulted.
+    pub fn bound_pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
+        let id = self
+            .desired
+            .clones
+            .get(clone)?
+            .runtime
+            .bound
+            .as_ref()?
+            .pane_id
+            .as_ref()?;
+        self.pane_by_id(id).map(|lp| LivePane {
+            stamped: false,
+            ..lp
+        })
+    }
+
     /// The live workspace belongs to a teamspace other than `ts`: its graph token names another teamspace, or
     /// another desired teamspace's committed binding (this incarnation) names it. Such a workspace never places
     /// `ts`'s workspace nor holds its tabs (spec §4.9 Workspace placement).
@@ -178,12 +273,19 @@ impl<'a> LiveIndex<'a> {
             .teamspaces
             .get(ts)
             .and_then(|t| t.runtime.bound.as_ref());
+        // Herdr preserves workspace ids across restore and handoff: a bound id matches in any incarnation, and
+        // one bound in an older incarnation that is now absent leaves the workspace unplaced (no fallback).
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.workspace_id
-            && let Some(ws) = self.ws_by_id(id)
         {
-            return Some(LiveWorkspace { ws, stamped: false });
+            if let Some(ws) = self.ws_by_id(id) {
+                return Some(LiveWorkspace { ws, stamped: false });
+            }
+            // A restoring teamspace (spec §8 step 1) is the one exception: the workspace its own create made in
+            // this incarnation is found by the journal live ref, below, so the create can be stamped and bound.
+            if b.incarnation != self.snap.incarnation && !self.desired.restoring_teamspace(ts) {
+                return None;
+            }
         }
         let live = live_ref(self.journal, &any).filter(|l| l.incarnation == self.snap.incarnation);
         if let Some(ws) = live
@@ -233,47 +335,44 @@ impl<'a> LiveIndex<'a> {
             })
     }
 
+    /// Where the clone's pane is, by the one rule per clone kind (the matcher's). A seated clone
+    /// (`threads_seat`): the pane its committed binding names, when that binding is of this snapshot's
+    /// incarnation (SeatObservation wrote it); never its token or an older binding. A seatless clone: its token,
+    /// else the pane id its committed binding names in any incarnation (Herdr preserves pane ids) unless the pane
+    /// carries another clone's token. For both, last, the pane this incarnation's own create produced (the
+    /// journal live ref): that is create correlation, not re-matching, and a seated clone needs it when the
+    /// graph re-creates its pane (reactivation, undo) before its seat resolves.
     pub fn pane(&self, clone: &CloneId) -> Option<LivePane<'a>> {
         let any = clone.to_any();
-        for w in &self.snap.workspaces {
-            for t in &w.tabs {
-                if let Some(p) = t
-                    .panes
-                    .iter()
-                    .find(|p| token_of(&p.metadata).as_ref() == Some(&any))
-                {
-                    return Some(LivePane {
-                        ws: w,
-                        tab: t,
-                        pane: p,
-                        stamped: true,
-                    });
+        let rec = self.desired.clones.get(clone);
+        let bound = rec.and_then(|c| c.runtime.bound.as_ref());
+        let seated = rec.is_some_and(|c| c.threads_seat.is_some());
+        if !seated {
+            for w in &self.snap.workspaces {
+                for t in &w.tabs {
+                    if let Some(p) = t
+                        .panes
+                        .iter()
+                        .find(|p| token_of(&p.metadata).as_ref() == Some(&any))
+                    {
+                        return Some(LivePane {
+                            ws: w,
+                            tab: t,
+                            pane: p,
+                            stamped: true,
+                        });
+                    }
                 }
             }
         }
-        let rec = self.desired.clones.get(clone);
-        let bound = rec.and_then(|c| c.runtime.bound.as_ref());
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
+            && (!seated || b.incarnation == self.snap.incarnation)
             && let Some(id) = &b.pane_id
             && let Some(lp) = self.pane_by_id(id)
+            && (seated || self.carries_no_other_clone_token(lp.pane, clone))
         {
             return Some(LivePane {
-                stamped: false,
-                ..lp
-            });
-        }
-        // `clone rebind` is an explicit user assertion that a pane is the clone's: a binding it wrote while the
-        // clone was `unknown` keeps the old incarnation but is `present`, so honor it when that pane exists in
-        // this snapshot and carries no graph token of its own (spec 4.2: graph re-stamps tokens on rebind).
-        if let Some(b) = bound
-            && rec.is_some_and(|c| c.runtime.availability == Availability::Present)
-            && let Some(id) = &b.pane_id
-            && let Some(lp) = self.pane_by_id(id)
-            && token_of(&lp.pane.metadata).is_none()
-        {
-            return Some(LivePane {
-                stamped: false,
+                stamped: token_of(&lp.pane.metadata).as_ref() == Some(&any),
                 ..lp
             });
         }
@@ -288,9 +387,21 @@ impl<'a> LiveIndex<'a> {
             return None;
         }
         Some(LivePane {
-            stamped: false,
+            stamped: token_of(&lp.pane.metadata).as_ref() == Some(&any),
             ..lp
         })
+    }
+
+    /// The pane has no graph token, or carries `clone`'s own, or a retired clone's leftover (an undo adopted it).
+    fn carries_no_other_clone_token(&self, pane: &PaneInfo, clone: &CloneId) -> bool {
+        let Some(t) = token_of(&pane.metadata) else {
+            return true;
+        };
+        t == clone.to_any()
+            || CloneId::parse(t.as_str())
+                .ok()
+                .and_then(|c| self.desired.clones.get(&c))
+                .is_some_and(|r| r.lifecycle == CloneLifecycle::Retired)
     }
 
     /// An active desired clone other than `except` whose committed binding names this pane. Bindings only (no
@@ -308,11 +419,10 @@ impl<'a> LiveIndex<'a> {
             .map(|q| q.clone.clone())
     }
 
-    /// The seat whose committed binding (same incarnation) or journal live ref names this tab.
+    /// The seat whose committed binding (any incarnation) or journal live ref names this tab.
     pub fn tab_owner(&self, tab: &HerdrTabId) -> Option<SeatId> {
         for (seat, d) in &self.desired.seats {
             if let Some(b) = d.runtime.bound.as_ref()
-                && b.incarnation == self.snap.incarnation
                 && b.tab_id.as_ref() == Some(tab)
             {
                 return Some(seat.clone());
@@ -338,12 +448,17 @@ impl<'a> LiveIndex<'a> {
             .get(seat)
             .and_then(|s| s.runtime.bound.as_ref());
         if let Some(b) = bound
-            && b.incarnation == self.snap.incarnation
             && let Some(id) = &b.tab_id
-            && !self.owned_by_other(id, seat)
-            && let Some(found) = self.tab_by_id(id)
         {
-            return Some(found);
+            if !self.owned_by_other(id, seat)
+                && let Some(found) = self.tab_by_id(id)
+            {
+                return Some(found);
+            }
+            // Bound in an older incarnation and absent now: unplaced, never re-found by tokens or panes.
+            if b.incarnation != self.snap.incarnation && self.tab_by_id(id).is_none() {
+                return None;
+            }
         }
         if let Some(live) = live_ref(self.journal, &seat.to_any())
             && live.incarnation == self.snap.incarnation
@@ -493,7 +608,23 @@ impl Out<'_> {
         deps: Vec<EffectId>,
     ) -> EffectId {
         let op = self.desired.op_for(&object);
-        let id = EffectRecord::identity(&op, &object, &kind, rev);
+        self.mk_as(op, rev, rev, kind, object, predicted, nonce_name, deps)
+    }
+
+    /// `mk` with an explicit attribution op and identity revision (`fencing_rev` stays the object's).
+    #[allow(clippy::too_many_arguments)]
+    fn mk_as(
+        &mut self,
+        op: OpId,
+        identity_rev: u64,
+        rev: u64,
+        kind: EffectKind,
+        object: AnyId,
+        predicted: Vec<PredictedEnd>,
+        nonce_name: Option<&str>,
+        deps: Vec<EffectId>,
+    ) -> EffectId {
+        let id = EffectRecord::identity(&op, &object, &kind, identity_rev);
         if self.seen.insert(id.clone()) {
             self.planned.push(PlannedEffect {
                 record: EffectRecord {
@@ -529,9 +660,43 @@ fn has_open(journal: &Journal, object: &AnyId, kind: &EffectKind) -> bool {
         .unwrap_or(false)
 }
 
+/// Statically covered by the restart resume rule (spec §9): the clone had an agent and threads says its seat
+/// is unresolved. With a resumable session the rule resumes it, without one it starts a fresh keyed agent
+/// (the key reattaches the seat). Whether the rule fires now is `plan_resume`'s question.
+fn restart_covered(p: &DesiredPane) -> bool {
+    p.had_agent
+        && p.threads_seat.is_some()
+        && p.seat_fact.as_ref().is_some_and(|f| {
+            Some(&f.seat) == p.threads_seat.as_ref() && f.state == SeatFactState::Unresolved
+        })
+}
+
+/// An unseated clone that had an agent and holds a key reservation: the restart rule launches it so the keyed
+/// check-in tells threads its seat (spec §2 "Unseated clone after D1", §9). Unlike `restart_covered` it does
+/// not shut the ordinary start rule out: that rule only fires for a pane with no launch record (a fresh pane),
+/// the restart rule only for a launch lost with the previous incarnation, and an agent in the pane stops both.
+fn restart_unseated(p: &DesiredPane) -> bool {
+    p.had_agent && p.threads_seat.is_none() && p.key_reservation.is_some()
+}
+
+/// An acknowledged `Restore` whose launch mark predates `changed_at`: the restore launch ran in an earlier
+/// incarnation and the clone never reattached, so the restart trigger owns it again (spec §14.8, §16.7).
+pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bool {
+    matches!(
+        intent,
+        Some(SeatIntent::Restore { threads_done: true, launched: Some(t), .. }) if *t < changed_at
+    )
+}
+
+/// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent. Every
+/// keyed launch waits for the clone's recorded key reservation (spec §5, §14.4); a held-back clone is retried
+/// next pass.
 fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     let any = p.clone.to_any();
     p.harness != crate::model::harness::Harness::Shell
+        && p.key_reservation.is_some()
+        && !matches!(p.seat_intent, Some(SeatIntent::Restore { .. }))
+        && !restart_covered(p)
         && p.occupant.is_none()
         && !has_agent
         && journal
@@ -566,10 +731,10 @@ pub fn plan_effects(
                 // a seat tab is going into it.
                 let wanted = desired.tabs.iter().filter(|t| t.ts == ws.ts).any(|t| {
                     !gates_recreation(desired, t)
-                        && !t.is_unknown()
+                        && (!t.is_unknown() || desired.restoring_seat(&t.seat))
                         && !idx.missing_clones(&t.seat).is_empty()
                 });
-                if ws.is_unknown() || !wanted {
+                if (ws.is_unknown() && !desired.restoring_teamspace(&ws.ts)) || !wanted {
                     continue;
                 }
                 let c = o.mk(
@@ -651,7 +816,11 @@ pub fn plan_effects(
             match idx.tab_for_seat(&tab.seat) {
                 None => {
                     // r2: no create_tab for a moved-out seat, nor when every active clone already lives elsewhere.
-                    if gates_recreation(desired, tab) || tab.is_unknown() {
+                    // Spec section 8 step 1: a pending Restore reopens the seat's tab even when it is Unknown (section 7:
+                    // a bound id absent from the live snapshot vanished); any other Unknown tab gets no create.
+                    if gates_recreation(desired, tab)
+                        || (tab.is_unknown() && !desired.restoring_seat(&tab.seat))
+                    {
                         continue;
                     }
                     // A clone adopted into a pane outside the seat's own tab (undo from the caller's pane) is bound
@@ -791,6 +960,7 @@ pub fn plan_effects(
         }
     }
 
+    plan_resume(&mut o, &idx, journal);
     plan_closes(&mut o, &idx);
     for dup in idx.duplicates() {
         // One effect per copy: the Herdr id and incarnation name it, the nonce label lets the executor find it.
@@ -828,6 +998,140 @@ pub fn plan_effects(
         }
     }
     o.planned
+}
+
+/// What a planning pass must do to a journal meta key so it holds the wanted value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetaChange {
+    Keep,
+    Set,
+    Delete,
+}
+
+pub(crate) fn meta_change(current: Option<&str>, wanted: Option<&str>) -> MetaChange {
+    match (current, wanted) {
+        (c, w) if c == w => MetaChange::Keep,
+        (_, Some(_)) => MetaChange::Set,
+        (_, None) => MetaChange::Delete,
+    }
+}
+
+/// Writes or deletes `key` only when its value differs, so a steady state costs no fsync per pass.
+fn put_meta_if_changed(journal: &Journal, key: &str, wanted: Option<&str>) {
+    let current = journal.meta_get(key).ok().flatten();
+    match meta_change(current.as_deref(), wanted) {
+        MetaChange::Keep => {}
+        MetaChange::Set => {
+            if let Some(v) = wanted {
+                let _ = journal.meta_set(key, v);
+            }
+        }
+        MetaChange::Delete => {
+            let _ = journal.meta_delete(key);
+        }
+    }
+}
+
+/// The resume driver (spec §9, §14.4): the single launcher for the restart and restore triggers. Both need
+/// the clone's bound pane to exist in this snapshot with no agent in it; only the session path exists before
+/// D1: both triggers resume the last session when there is one and otherwise launch a fresh keyed agent, which
+/// the key reattaches to the same seat. `RelaunchOccupant` carries the 90 s incarnation grace and the
+/// shell-foreground guard; the restore launch runs at once, once per Restore epoch.
+fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
+    let changed_at = incarnation_changed_at(journal);
+    let desired = o.desired;
+    for p in &desired.panes {
+        let any = p.clone.to_any();
+        let blocked_key = resume_blocked_key(&p.clone);
+        let mut blocked: Option<serde_json::Value> = None;
+        let startable = p.harness != crate::model::harness::Harness::Shell && p.occupant.is_none();
+        let pane = idx.bound_pane(&p.clone);
+        let key_conflict = p
+            .seat_fact
+            .as_ref()
+            .is_some_and(|f| matches!(f.state, SeatFactState::KeyConflict { .. }));
+
+        if startable
+            && !key_conflict
+            && let Some(SeatIntent::Restore {
+                seat: restore_seat,
+                epoch,
+                threads_done: true,
+                launched: None,
+                ..
+            }) = &p.seat_intent
+            // The key must be bound to the Restore's seat before the restore launch (spec §14.4, §16.1): no
+            // reservation, or one bound elsewhere, holds the launch back without spending the epoch's attempt.
+            && p.key_reservation
+                .as_ref()
+                .is_some_and(|r| r.seat.as_deref() == Some(restore_seat.as_str()))
+        {
+            if pane.as_ref().is_some_and(|lp| lp.pane.agent.is_none()) {
+                // One launch per epoch is enforced by the launch mark, not by the effect identity: the identity
+                // revision counts failed marks, so a failed mark is retried without a launch.
+                o.mk_as(
+                    epoch.clone(),
+                    restore_mark_failures(journal, &p.clone, epoch),
+                    p.rev,
+                    EffectKind::StartAgent,
+                    any,
+                    vec![],
+                    None,
+                    vec![],
+                );
+            }
+        } else if startable
+            && p.key_reservation.is_some()
+            && let Some(changed) = changed_at
+            && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
+            // A seated clone waits for a threads fact read after the restart; an unseated one has none, so it
+            // waits for an answer to its key resolution taken after the restart: with threads unreachable
+            // nothing launches.
+            && (restart_unseated(p)
+                && threads_answered_at(journal, &p.clone).is_some_and(|at| at > changed)
+                || restart_covered(p)
+                    && p.seat_fact.as_ref().is_some_and(|f| f.read_at >= changed))
+        {
+            match &pane {
+                Some(lp) => {
+                    let done = journal.meta_get(&resumed_key(&p.clone)).ok().flatten();
+                    if lp.pane.agent.is_none()
+                        && done.as_deref() != Some(changed.to_rfc3339().as_str())
+                        && !has_open(journal, &any, &EffectKind::RelaunchOccupant)
+                    {
+                        o.mk(
+                            EffectKind::RelaunchOccupant,
+                            any,
+                            p.rev,
+                            vec![],
+                            None,
+                            vec![],
+                        );
+                    }
+                }
+                None => {
+                    let last = p
+                        .bound
+                        .as_ref()
+                        .and_then(|b| b.pane_id.as_ref().map(|id| id.0.clone()));
+                    if let Some(last) = last {
+                        blocked = Some(serde_json::json!({
+                            "pane": last,
+                            "reason": "last pane missing",
+                        }));
+                    }
+                }
+            }
+        }
+        // An acknowledged Restore with nothing to resume launches fresh, so it is never "not launchable": clear
+        // a key an earlier build wrote.
+        sync_meta(journal, &restore_stuck_key(&p.clone), None);
+        put_meta_if_changed(
+            journal,
+            &blocked_key,
+            blocked.map(|v| v.to_string()).as_deref(),
+        );
+    }
 }
 
 fn split_chain(o: &mut Out<'_>, journal: &Journal, p: &DesiredPane, deps: Vec<EffectId>) {

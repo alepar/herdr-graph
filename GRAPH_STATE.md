@@ -39,12 +39,14 @@ The Git-tracked state includes:
 | Instance | Instance identity, schema version, default harness/model/arguments/summary eligibility, designated summarizer seat |
 | Teamspaces | Identity, name history, lifecycle, project-repository reference, Herdr binding and system channel |
 | Seats | Identity, system duty, lifecycle, template provenance, application membership, configuration overrides, seat-wide thread participation and runtime binding |
-| Clones | Pane binding, current occupant, native-session history, individual thread opt-outs, invitations and reload status |
+| Clones | Pane binding, current occupant, native-session history, individual thread opt-outs, invitations, reload status, threads seat (write-once; succession history) and seat intent |
 | Templates/applications | Team and seat definitions (`kind = "team"` or `"seat"`), typed member `seat_template` references and responsibility; each application's member-to-seat mapping, additions, exclusions, reuse and relationship contributions |
 | Instructions/rules | Markdown and instruction sections that agents interpret |
 | Transcript tracking | Native transcript path and immutable optional capture attribution (teamspace ID and team/seat display names), successfully covered byte ranges, gaps and unresolved input |
 | Processing requests | Explicit input range, delivery/dispatch/completion status and result reference; overlapping pending ranges can merge before delivery |
 | Actions/operations | Mutation history, affected objects, before/after information, approval metadata and compensation data for undo |
+
+A clone's threads seat is write-once. The only exception is succession of a final-retired seat on restore, admitted only against a Restore seat intent with the matching seat and epoch; the replaced seat moves to the clone's seat history. At most one non-retired clone holds a given seat. A purged clone that holds a seat (or a key reservation) stays as an inert tombstone with only its identity and a Finalize (or ReleaseKey) intent until threads acknowledges.
 
 Names organize the folders; stable IDs identify the objects. Renaming teamspace/seat folders can move them without changing identity. Transcript index folders use safe name slugs and full stable IDs captured at registration and stay at that location through rename, observed move, retirement and undo. Retirement preserves records and history.
 
@@ -63,6 +65,8 @@ Targeted ID lookup parses only matching ID filenames across supported locations 
 Templates with omitted `kind` remain team templates. Legacy `role` fields read as `system_duty`, including old undo documents; unused `role_ref` is ignored and no longer written. Instructions remain readable. Edits to reusable template or actual member `AGENTS.md` use reviewed `template edit`; global and teamspace `rules/<name>.md` and seat `AGENTS.md`/`rules/<name>.md` use reviewed `plan instructions set|clear` (read with `instructions show`); summaries are stored by `request complete --summary-from`. `content write` was removed. All of these keep revisions, runtime effects and undo consistent.
 
 Keep using the upgraded binary for these instances. Older binaries cannot discover new-layout records, and no downgrade migration is supplied. Git graph-change summaries contain committed mutations; the SQLite journal remains authoritative for live, rejected, failed and cancelled operation lifecycle. Preserve both the Git repository and local journal when backing up or moving an instance.
+
+Clone records written by this version may carry `threads_seat`, `threads_seat_history`, `seat_intent` and `seat_fact`, and `clone purge` deletes retired clone records; older binaries do not know these fields and downgrade is not supported.
 
 ## Threads node boundaries
 

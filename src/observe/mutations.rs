@@ -9,7 +9,7 @@ use super::classify::{CascadeRule, EndedSession};
 use super::sessions::SessionCapture;
 use crate::model::action::ActionKind;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
-use crate::model::clone::CloneRecord;
+use crate::model::clone::{CloneRecord, SeatFact};
 use crate::model::common::{
     Availability, Binding, CloneLifecycle, Lifecycle, NameChange, NameSource, Occupant,
     RetireMechanism, Retirement,
@@ -38,7 +38,10 @@ pub const OCCUPANCY_KEY: &str = "observed.occupancy";
 pub const MOVE_KEY: &str = "observed.move";
 pub const AVAILABILITY_KEY: &str = "observed.availability";
 
+pub const SEAT_FACT_KEY: &str = "bookkeeping.seat_fact";
+
 pub fn register_mutations(reg: &mut MutationRegistry) {
+    reg.register(SEAT_FACT_KEY, Arc::new(SeatFactMutation));
     reg.register(CASCADE_KEY, Arc::new(CascadeMutation));
     reg.register(RENAME_KEY, Arc::new(RenameMutation));
     reg.register(OCCUPANCY_KEY, Arc::new(OccupancyMutation));
@@ -150,6 +153,18 @@ pub fn move_request_following(
         "sub": "move", "clone": clone, "binding": binding, "seat_moved_out": seat_moved_out,
         "seat_follow": seat_follow,
     }))
+}
+
+/// `bookkeeping.seat_fact`: SeatObservation's committed read of a clone's threads seat.
+pub fn seat_fact_request(clone: &CloneId, fact: &SeatFact) -> ChangeRequest {
+    ChangeRequest {
+        kind: RequestKind::Bookkeeping,
+        args: json!({ "sub": "seat_fact", "clone": clone, "fact": fact }),
+        relied_on: vec![],
+        requester: Requester::default(),
+        supersedes: None,
+        confirmed: None,
+    }
 }
 
 pub fn availability_request(object: &AnyId, availability: Availability) -> ChangeRequest {
@@ -268,6 +283,10 @@ impl CascadeMutation {
             let mut c = c.clone();
             end_occupant(&mut c, SessionEndReason::PaneClosed, at);
             c.runtime = absent();
+            // The node manager's closed clone stays and is reopened on its threads seat, as a restore does.
+            if nm == Some(seat) {
+                crate::threads::assignment::write_restore_intent(&mut c, &cx.op);
+            }
             cx.tree.put_record(loc.record_path.clone(), &mut c)?;
         }
         let mut rec = f.rec.clone();
@@ -359,14 +378,17 @@ impl CascadeMutation {
         }
         end_occupant(&mut rec, SessionEndReason::PaneClosed, at);
         rec.runtime = absent();
-        // A node manager's clone is kept: the closure is recorded, nothing is retired.
+        // A node manager's clone is kept: the closure is recorded, nothing is retired. Its pane is reopened on the
+        // same threads seat, as a restore does (a Retired seat then holds instead of closing the clone again).
         if nm == Some(&rec.seat) {
+            crate::threads::assignment::write_restore_intent(&mut rec, &cx.op);
             let seat = rec.seat.clone();
             cx.tree.put_record(loc.record_path, &mut rec)?;
             node_manager_closed(cx, &seat)?;
             return Ok(true);
         }
         rec.lifecycle = CloneLifecycle::Retired;
+        crate::threads::assignment::clear_restore_on_retire(&mut rec);
         rec.retired = Some(Retirement {
             op: cx.op.clone(),
             action: Some(act.clone()),
@@ -820,6 +842,39 @@ impl Mutation for AvailabilityMutation {
         }
         Ok(Applied {
             summary: format!("{} is {:?}", a.object, a.availability),
+            action: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// bookkeeping.seat_fact
+// ---------------------------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SeatFactArgs {
+    clone: CloneId,
+    fact: SeatFact,
+}
+
+struct SeatFactMutation;
+
+impl Mutation for SeatFactMutation {
+    fn apply(&self, cx: &mut MutationCx<'_>) -> Result<Applied, MutationError> {
+        let a: SeatFactArgs = parse(cx)?;
+        let any = a.clone.to_any();
+        let loc = cx.tree.locate(&any)?.ok_or_else(|| gone(&any))?;
+        let mut rec: CloneRecord = cx
+            .tree
+            .read_record(&loc.record_path)?
+            .ok_or_else(|| gone(&any))?;
+        // Idempotent: an equal fact is not rewritten.
+        if rec.seat_fact.as_ref() != Some(&a.fact) {
+            rec.seat_fact = Some(a.fact);
+            cx.tree.put_record(loc.record_path, &mut rec)?;
+        }
+        Ok(Applied {
+            summary: format!("seat fact {}", a.clone),
             action: None,
         })
     }
