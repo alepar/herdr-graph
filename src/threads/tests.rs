@@ -4810,6 +4810,40 @@ async fn close_then_undo_unretires_the_same_seat_with_memberships_and_no_reaccep
     assert_eq!(fx.threads.call_count("release_requirement"), 0);
 }
 
+/// Threads reads a retired seat's pending memberships as Retired (the stored episodes stay pending). A poll of a
+/// reversibly retired seat must not record that read: the close then the undo keep the invitations Pending
+/// with the same links, with no re-invitation.
+#[tokio::test]
+async fn close_then_undo_keeps_pending_invitations_pending() {
+    let fx = fx();
+    let clone = base(&fx).await;
+    occupy(&fx, &clone, "seat-A").await;
+    steps(&fx, 6).await;
+    let held = clone_rec(&fx, &clone.id).invitations;
+    assert_eq!(held.len(), 2, "{held:?}");
+    assert!(held.iter().all(|i| i.state == InvitationState::Pending), "{held:?}");
+    let kind = fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    assert_eq!(kind, RetirementKind::Reversible);
+    let invites = fx.threads.call_count("invite");
+    // Polls of the pending invitations run against the retired seat.
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert_eq!(
+        clone_rec(&fx, &clone.id).invitations,
+        held,
+        "a reversible retirement keeps the invitations as they were"
+    );
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    steps(&fx, 5).await;
+    later(&fx).await;
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert_eq!(clone_rec(&fx, &clone.id).invitations, held, "same invitations");
+    assert_eq!(fx.threads.call_count("invite"), invites, "no re-invitation");
+    assert_eq!(fx.threads.call_count("release_requirement"), 0);
+}
+
 #[tokio::test]
 async fn reversible_seat_is_never_succeeded() {
     let fx = fx();

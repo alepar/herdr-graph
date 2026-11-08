@@ -2254,9 +2254,15 @@ impl ThreadsExecutor {
             Err(err) => return port_outcome(err),
         };
         // No membership yet: the invitation is still pending on the threads side.
-        let state = detail
+        let read = detail
             .as_ref()
             .map_or(InvitationState::Pending, |d| d.state);
+        // Threads reads every pending or accepted membership of a retired seat as Retired, reversible or final,
+        // while the episode itself is untouched (an un-retire brings it back as it was). That is the seat's
+        // retirement, which the seat fact carries, not an outcome of the invitation: record nothing for it and
+        // stop polling. A reversible retirement keeps the memberships (D2); a final one is the succession's.
+        let seat_retired = read == InvitationState::Retired;
+        let state = if seat_retired { inv.state } else { read };
         let mut fresh = link.clone();
         if let Some(d) = &detail {
             fresh.invitation = d.invitation.clone().or(fresh.invitation);
@@ -2278,11 +2284,12 @@ impl ThreadsExecutor {
         {
             return o;
         }
-        let settled = match state {
-            InvitationState::Pending => false,
-            InvitationState::Accepted => !leaving,
-            InvitationState::Released | InvitationState::Retired => true,
-        };
+        let settled = seat_retired
+            || match state {
+                InvitationState::Pending => false,
+                InvitationState::Accepted => !leaving,
+                InvitationState::Released | InvitationState::Retired => true,
+            };
         if settled {
             ExecOutcome::Done
         } else {

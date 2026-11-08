@@ -59,6 +59,10 @@ struct State {
     /// (store/service_controls.rs); a refusal is not stored. The key/seat state is not recomputed on replay.
     stored: BTreeMap<String, (String, StoredAnswer)>,
     release_error: Option<FakeSeatViewError>,
+    /// Seats a pane close or an operator retire left retired, until an unretire. Threads v3.1.0 reads every
+    /// Pending or Accepted membership of a retired seat (reversible or final) as Retired, while the stored
+    /// episode stays as it was (store/service_substrate.rs `current_requirement`, queries.rs participants).
+    retired_seats: BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -225,15 +229,17 @@ impl FakeThreads {
             RetirementKind::Final
         };
         view.set(seat, SeatStatus::Retired { kind });
+        self.lock().retired_seats.insert(seat.0.clone());
         kind
     }
 
     /// Model an explicit operator final retire: the seat reads final and threads deletes its key, like
     /// `finalize_retirement` does at purge.
     pub fn operator_final_retire(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) {
-        self.lock()
-            .keys
-            .retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        let mut st = self.lock();
+        st.keys.retain(|_, bound| bound.as_ref() != Some(&seat.0));
+        st.retired_seats.insert(seat.0.clone());
+        drop(st);
         view.set(
             seat,
             SeatStatus::Retired {
@@ -420,11 +426,17 @@ impl ThreadsPort for FakeThreads {
         let _guard = self.namespace_guard().await?;
         let st = self.lock();
         Self::gate(&st)?;
+        let retired = st.retired_seats.contains(&seat.0);
         Ok(st
             .members
             .get(&(thread.0.clone(), seat.0.clone()))
             .map(|m| MembershipDetail {
-                state: m.state,
+                state: match m.state {
+                    InvitationState::Pending | InvitationState::Accepted if retired => {
+                        InvitationState::Retired
+                    }
+                    s => s,
+                },
                 invitation: Some(m.invitation.clone()),
                 requirement: m.requirement.clone(),
                 revision: m.requirement.is_some().then_some(m.revision),
@@ -577,6 +589,7 @@ impl ThreadsPort for FakeThreads {
             None => {
                 st.stored
                     .insert(op.0.clone(), (payload, StoredAnswer::Done));
+                st.retired_seats.remove(&seat.0);
                 Ok(())
             }
         }
