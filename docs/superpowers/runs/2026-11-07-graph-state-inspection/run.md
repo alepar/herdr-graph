@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-07-graph-state-inspection
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-design
+phase: code
 codeMechanism: Workflow
 runTag: graph-state-inspection-20261108T225851
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -20,6 +20,8 @@ graph-pass: depth 6→6 · width 1.8→1.8 · applied 0 · parked 3
 redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §2.1, §2.2, §2.3, §2.4, §2.5, §3, §5, Key abstractions, Unchanged behavior · lastGood 131d2fb354fdc7f64d6b811481f805eb387b93c6 · designRoast - · state applied
 
 approvals:
+- root-acceptance · {"version":1,"owner":"super-auto","sourceTree":"1d48d061574984a990ae904499428db4625d5aea","requirements":[{"id":"final-review","kind":"review","owner":"super-auto","source":"skill"},{"id":"code-roast","kind":"review","owner":"super-auto","source":"user","quote":"both roasts are on"},{"id":"sweep","kind":"measurement","owner":"super-auto","source":"user","quote":"the test results at the tip (tiers 1-3, plus tier 5 if a threads path changed)","command":"toolbox run -c hg-build cargo test && toolbox run -c hg-build cargo test --features test-support && toolbox run -c hg-build cargo test --features private-herdr -- --test-threads=1","configuration":"hg-build toolbox, quiet host, tiers 1-3 sequential, leak check after","requiredLive":true},{"id":"finish","kind":"human","owner":"human","source":"user","quote":"I merge it into main. Do not merge to main yourself."}],"evidence":[],"reviews":[],"decisions":[],"recovery":{"obligations":[],"gaps":[]},"checkEvidence":{"records":[],"requiredLiveChecks":[],"gaps":[]},"runFailures":[]}
+- review-collection · {"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","workspace":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/graph-state-inspection/.superpowers/sdd/hg-blw-plan","reviewPath":"/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/graph-state-inspection/.superpowers/sdd/hg-blw-plan/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md","review":"pending","required":[],"settled":false}
 - top-split · auto · hg-blw.1 LEAF, hg-blw.2 LEAF, hg-blw.3 LEAF, hg-blw.4 LEAF, hg-blw.5 LEAF (reviewer PROMOTE overruled: split into hg-blw.5/.8/.9, sp:demoted-by-session), hg-blw.6 LEAF, hg-blw.7 LEAF, hg-blw.8 LEAF, hg-blw.9 LEAF
 - coverage-round-1 · C1 kept-leaf auto, C2–C10 applied auto, C11 rejected auto, C12–C14 applied auto, C15 sweep created auto · R1–R14 (coverage-round-1-requirements.md) · specsAt 1a97a7f1f411b244a1f35232fa3d850f8c53d42d · requirements: 11 · mapped: 11 · unmapped: 0 (R12–R14 appended from r-new)
 - coverage-round-2 · C16, C17, C19–C29, C31 applied auto; C18, C30 rejected auto; NEEDS-SPEC hg-blw.2 not honored (no subepic; answered by src/model/launch.rs) · requirements: 15 · mapped: 14 · unmapped: 1 (R15, proposed by this round; delivered by hg-blw.4 via C19) · findings: 14 → 13 · novel: 8/13 (62%) · widening: no
