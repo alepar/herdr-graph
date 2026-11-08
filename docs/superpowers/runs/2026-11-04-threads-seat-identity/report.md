@@ -213,3 +213,15 @@ Suggested reading order:
 - Parked degraded-verdicts for the sweep, run-regressions, verification debt and final-review cluster 4. The smell: the "0 Blocking" rests on bounded reviews and an unmeasured tip. Source: run.md parked.
 - Roast-code round 2 was a degraded round (engine fallback report). The smell: its severities are raw seat severities, not judged. Source: friction.md.
 - The roast-design-2 and -3 reports failed the format check, and the repair was rejected; the original reports stand. The smell: their Escalations sections hold finding text under a none marker. Source: friction.md.
+
+
+## Addendum 2026-11-07: gated work, main merge, audit fixes
+
+- herdr-threads v3.1.0 released (D1, D2, G2, G5); gates hg-66u.1-.3 closed; all 12 gated beads landed (.43, .44, .40, .31, .32, .33, .15, .68, .21, .24, .14, .18). Matcher deletion (hg-66u.14) keeps one fallback by human decision S1: a clone with no threads seat is matched by preserved Herdr pane id.
+- main merged in (4595898, 13 conflicted files) with one cross-design fix (a2bf5a7: a seated node manager's B11 reopen goes through a Restore intent); merge review: 0 blocking, 1 important (fixed: hg-66u.98).
+- Post-gate audit (audit-post-gate-2026-11-07.md): 0 blocking, 2 important, 2 minor, all fixed: fresh op keys per attempt against threads' answer replay (hg-66u.99), undo of a G5 retirement recreates a vanished tab/workspace and absent-seat Finalize drains (hg-66u.100).
+- Sweep fixes hg-66u.95 (reservation-answer test), .96 (e2e summary test on the summarizer path), .101 (integration_sweep), .97 (test rigs cannot outlive a hard-killed run), .104 (e2e used a stale cached herdr-threads 2.6.4; now builds/verifies the pin).
+- Final suite @ 3cff887 in hg-build: tiers 1-2 2641 passed, 1 failed (session_end_flows_to_transcripts, load flake, passes alone); tier 3 with threads 3.1.0 1373 passed, 2 failed (private_process_info_is_shell, e2e_daemon_kill_mid_op_recovers_no_duplicates: main's tests, untouched here, intermittent); 0 leaked rigs. hg-66u.104's own runs after it: default tier and e2e 37/38 pass, the one failure the same intermittent kill-mid-op test (3/3 on rerun).
+- Leaked rigs: 79 processes stopped and 75 /tmp/hg-* dirs removed with the user's approval; AGENTS.md (with a CLAUDE.md import) now requires hg-build and leak checks.
+- Still open upstream: live handoff is untestable on a private rig; cold restart with a client attached was not covered by threads' own qualification.
+- Upgrade order: the herdr-threads daemon must be 3.1.0 before a graph built from this branch connects (it registers service_session_v3); node schema 17 is one-way.

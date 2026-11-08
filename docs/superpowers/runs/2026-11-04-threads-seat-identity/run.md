@@ -3,7 +3,7 @@
 resumeChange: 2026-11-07 · "1 lgtm" · hg-66u.14 keeps a preserved-pane-id fallback for seatless clones; matcher deleted otherwise (spec S1)
 resumeChange: 2026-11-07 · user answers: "Merge main in now (Recommended)" · "Fix it here (Recommended)" (e2e_summary_lands_in_archived_seat_folder) · "1 + moe to hg-build, our own dedicated toolbox. always stop leaks. make note in AGENTS.md project level to use hg-build and avoid leaks" · upstream feedback: "Don't file"
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: code
+phase: finish
 codeMechanism: Workflow
 runTag: threads-seat-identity-20261105T073527
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -19,7 +19,7 @@ spec: 2026-11-04-threads-seat-identity-design.md
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8)
 
 approvals:
-- review-collection · {"invocationId": "inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2.md", "review": "pending", "required": [], "settled": false}
+- review-collection · {"invocationId": "inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2.md", "review": "pending", "required": [], "settled": true}
 - review-collection · {"invocationId": "inv-2e07a039-6297-4308-8862-f3a2878fe7ab", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-2e07a039-6297-4308-8862-f3a2878fe7ab.md", "review": "pending", "required": [], "settled": true}
 - review-collection · {"invocationId": "inv-8d1468f1-4551-46bd-8b96-82617c3ea922", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-8d1468f1-4551-46bd-8b96-82617c3ea922.md", "review": "pending", "required": [], "settled": true}
 - review-collection · {"invocationId": "inv-cef1709c-2f16-4a29-a694-c154c775b2ea", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.superpowers/sdd/hg-66u-plan/final-review-inv-cef1709c-2f16-4a29-a694-c154c775b2ea.md", "review": "pending", "required": [], "settled": false}
@@ -203,3 +203,4 @@ feedback: not filed (user declined 2026-11-07); draft stays at upstream-feedback
 main merged: 2026-11-07 4595898 + a2bf5a7 (merge-main-2026-11-07.md); fix beads hg-66u.95/.96/.97 dispatched
 fix beads landed: hg-66u.95 (55c8348), .96, .97 (ad95dcf), .98 (f473c25); reported open run-failure: integration_sweep sweep_undo_restores_onto_a_succeeded_seat fails at hg-66u.98's base too (to the sweep)
 audit and sweep fixes landed: hg-66u.99, .100, .101
+hg-66u.104 landed (e2e builds/verifies the pinned threads binary); finish ledger read failed (model safeguard flag on read-ledger:finish), metrics unavailable for that invocation
