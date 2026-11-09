@@ -13,6 +13,7 @@ use crate::store::record::read_toml;
 use crate::store::slug::slugify;
 use crate::store::tree::TreeRead;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Conservative hook-output cap in bytes (spec §4.4). No documented Claude Code hook output limit was found
@@ -21,11 +22,30 @@ pub const HOOK_RENDER_CAP: usize = 9000;
 
 const AGENTS_MD: &str = "AGENTS.md";
 
+/// One render part: the instruction manifest entry (spec §1.2).
+///
+/// Owns: `bytes` and `digest` of the rendered body, set in one place, `Collector::add`. Must not: compute
+/// staleness, read `.graph-local`, or change the rendered text. Where new behavior goes: a new per-part
+/// fact is computed in `Collector::add`; readers (`instructions stack`, the loaded comparison) consume it.
 #[derive(Debug, Clone, Serialize)]
 pub struct Part {
     pub label: String,
     pub path: String,
     pub body: String,
+    /// Length of `body` in bytes.
+    pub bytes: usize,
+    /// `sha256:<lowercase hex>` of `body`.
+    pub digest: String,
+}
+
+/// The digest of a rendered part body: `sha256:` and lowercase hex of the SHA-256 of `body`'s bytes.
+pub fn part_digest(body: &str) -> String {
+    let hash = Sha256::digest(body.as_bytes());
+    let mut out = String::from("sha256:");
+    for b in hash {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -223,10 +243,13 @@ impl Collector {
         if body.trim().is_empty() {
             return;
         }
+        let body = newline_terminated(body);
         self.parts.push(Part {
             label,
             path: path.to_owned(),
-            body: newline_terminated(body),
+            bytes: body.len(),
+            digest: part_digest(&body),
+            body,
         });
     }
 
@@ -591,4 +614,29 @@ impl TreeRead for PatchedTree<'_> {
 /// The plan warning for a seat whose hook output cannot be sized because a reference does not resolve.
 pub fn unsized_warning(seat: &SeatId, e: &StoreError) -> String {
     format!("hook output for seat {seat} cannot be sized: graph integrity error: {e}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn part_digest_and_bytes() {
+        // sha256("abc") is a published test vector.
+        assert_eq!(
+            part_digest("abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut c = Collector {
+            parts: Vec::new(),
+            findings: Vec::new(),
+        };
+        c.add("l".into(), "p.md", "héllo".into());
+        c.add("blank".into(), "q.md", "  \n".into());
+        assert_eq!(c.parts.len(), 1);
+        let p = &c.parts[0];
+        assert_eq!(p.body, "héllo\n");
+        assert_eq!(p.bytes, 7);
+        assert_eq!(p.digest, part_digest("héllo\n"));
+    }
 }

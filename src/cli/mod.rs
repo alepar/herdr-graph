@@ -136,6 +136,8 @@ mod tests {
             &["seat", "--json"],
             &["show", "st_x"],
             &["instructions", "show", "global"],
+            &["instructions", "stack", "s1"],
+            &["instructions", "stack", "s1", "--clone", "c1", "--json"],
             &["list"],
             &["list", "seats"],
             &["path", "st_x"],

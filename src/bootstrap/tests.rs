@@ -3169,6 +3169,8 @@ mod instructions {
                 label: (*l).into(),
                 path: format!("{l}.md"),
                 body: format!("{}\n", "x".repeat(*n - 1)),
+                bytes: *n,
+                digest: part_digest(&format!("{}\n", "x".repeat(*n - 1))),
             })
             .collect();
         retext(RenderedInstructions {
@@ -3373,6 +3375,8 @@ mod hook_instructions {
                 label: (*l).into(),
                 path: format!("{l}.md"),
                 body: format!("{}\n", "x".repeat(*n - 1)),
+                bytes: *n,
+                digest: part_digest(&format!("{}\n", "x".repeat(*n - 1))),
             })
             .collect();
         let mut text = revision_line("s", &seat, "abc");

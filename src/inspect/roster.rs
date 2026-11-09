@@ -583,7 +583,7 @@ fn word<T: Serialize>(v: &T) -> String {
     }
 }
 
-fn instructions_text(i: &InstructionsView) -> String {
+pub(crate) fn instructions_text(i: &InstructionsView) -> String {
     let mut s = match i.status {
         InstructionsStatus::Current => match &i.loaded_rev {
             Some(r) => format!("current @{}", &r[..r.len().min(12)]),
