@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod failpoint;
 pub mod fsutil;
 pub mod herdr;
+pub mod inspect;
 pub mod ipc;
 pub mod journal;
 pub mod model;

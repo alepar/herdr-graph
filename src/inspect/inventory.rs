@@ -1,0 +1,533 @@
+//! Inventory: the teamspace → seat → clone join the inspection views read.
+use crate::inspect::scope::{Member, Scope};
+use crate::model::clone::CloneRecord;
+use crate::model::native_session::NativeSession;
+use crate::model::seat::SeatRecord;
+use crate::model::teamspace::TeamspaceRecord;
+use crate::model::transcript::TranscriptRecord;
+use crate::model::{
+    Availability, CommitId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, SeatId, TeamspaceId,
+    Timestamp, TranscriptId,
+};
+use crate::ports::store::{ObjectLocation, Store, StoreError, unresolved};
+use crate::store::layout;
+use crate::store::tree::CommitView;
+use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
+
+/// The joined tree for one scope at one commit.
+///
+/// Owns: the teamspace → seat → clone join over live and `archive/` records, each clone's runtime binding,
+/// its full `sessions[]` with the current one marked, the one transcript resolver ([`resolve_transcript`])
+/// and the purge-tombstone count. It hides record enumeration and the parent join.
+///
+/// Must not: decide what a view shows (retired filtering, sorting, limits are the view's), read
+/// `.graph-local` or Git history, or resolve HEAD (it takes the invocation's pinned `CommitId`).
+///
+/// Where new behavior goes: a new per-clone joined fact is a new field on the entry types, filled in
+/// [`Inventory::load`]; views never enumerate records or join parents themselves. Errors are `StoreError`
+/// for the enumeration only, integrity kept distinguishable (exit 6 through `inspect::fail`).
+#[derive(Debug)]
+pub struct Inventory {
+    pub teamspaces: Vec<TeamspaceEntry>,
+    /// Purge tombstones among the kept clones.
+    pub tombstones: usize,
+}
+
+#[derive(Debug)]
+pub struct TeamspaceEntry {
+    pub location: ObjectLocation,
+    pub record: TeamspaceRecord,
+    pub seats: Vec<SeatEntry>,
+}
+
+#[derive(Debug)]
+pub struct SeatEntry {
+    pub location: ObjectLocation,
+    pub record: SeatRecord,
+    pub clones: Vec<CloneEntry>,
+}
+
+#[derive(Debug)]
+pub struct CloneEntry {
+    pub location: ObjectLocation,
+    pub record: CloneRecord,
+    /// `CloneRecord::is_tombstone`.
+    pub tombstone: bool,
+    pub runtime: RuntimeView,
+    /// Record order; views sort.
+    pub sessions: Vec<SessionEntry>,
+}
+
+impl CloneEntry {
+    /// The occupant's session, when the occupant names one of `sessions`.
+    pub fn current(&self) -> Option<&SessionEntry> {
+        self.sessions.iter().find(|s| s.current)
+    }
+}
+
+#[derive(Debug)]
+pub struct SessionEntry {
+    pub session: NativeSession,
+    pub current: bool,
+    pub transcript: Option<TranscriptRef>,
+}
+
+/// Spec §2.2 JSON `runtime`; serialized by the views as is.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RuntimeView {
+    pub availability: Availability,
+    pub pane: Option<HerdrPaneId>,
+    pub tab: Option<HerdrTabId>,
+    pub workspace: Option<HerdrWorkspaceId>,
+    pub observed_at: Option<Timestamp>,
+}
+
+/// Spec §2.5 JSON `transcript`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TranscriptRef {
+    pub id: Option<TranscriptId>,
+    pub path: PathBuf,
+    pub source: TranscriptSource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptSource {
+    Session,
+    TranscriptRecord,
+}
+
+impl Inventory {
+    pub fn load(store: &dyn Store, at: &CommitId, scope: &Scope) -> Result<Inventory, StoreError> {
+        if *scope == Scope::Global {
+            return Ok(Inventory {
+                teamspaces: vec![],
+                tombstones: 0,
+            });
+        }
+        let view = CommitView {
+            store,
+            at: at.clone(),
+        };
+        let teamspaces = layout::list_teamspaces(&view)?;
+        let seats = layout::all_seats(&view)?;
+        let clones = layout::all_clones(&view)?;
+
+        let ts_ids: BTreeSet<TeamspaceId> = teamspaces.iter().map(|(_, t)| t.id.clone()).collect();
+        let seat_parent: BTreeMap<&SeatId, &TeamspaceId> =
+            seats.iter().map(|(_, s)| (&s.id, &s.teamspace)).collect();
+        for (_, s) in &seats {
+            if !ts_ids.contains(&s.teamspace) {
+                return Err(unresolved(&s.id, "teamspace", &s.teamspace));
+            }
+        }
+        // Clones kept by the scope, grouped under their seat.
+        let mut kept: BTreeMap<SeatId, Vec<(ObjectLocation, CloneRecord)>> = BTreeMap::new();
+        for (loc, c) in clones {
+            let Some(ts) = seat_parent.get(&c.seat) else {
+                return Err(unresolved(&c.id, "seat", &c.seat));
+            };
+            let member = Member::Clone {
+                teamspace: ts,
+                seat: &c.seat,
+                clone: &c.id,
+            };
+            if scope.contains(member) {
+                kept.entry(c.seat.clone()).or_default().push((loc, c));
+            }
+        }
+
+        // One transcript read, only when a kept session needs the fallback.
+        let needs_records = kept
+            .values()
+            .flatten()
+            .flat_map(|(_, c)| &c.sessions)
+            .any(|s| s.transcript_path.is_none() && s.transcript.is_some());
+        let records: BTreeMap<TranscriptId, TranscriptRecord> = if needs_records {
+            layout::list_transcripts(&view)?
+                .into_iter()
+                .map(|(_, r)| (r.id.clone(), r))
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
+        let mut tombstones = 0;
+        let mut out = Vec::new();
+        for (tloc, t) in teamspaces {
+            let mut seat_entries = Vec::new();
+            for (sloc, s) in seats.iter().filter(|(_, s)| s.teamspace == t.id) {
+                let clone_entries: Vec<CloneEntry> = kept
+                    .remove(&s.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(loc, c)| clone_entry(loc, c, &records))
+                    .collect();
+                let own = scope.contains(Member::Seat {
+                    teamspace: &t.id,
+                    seat: &s.id,
+                });
+                if own || !clone_entries.is_empty() {
+                    tombstones += clone_entries.iter().filter(|c| c.tombstone).count();
+                    seat_entries.push(SeatEntry {
+                        location: sloc.clone(),
+                        record: s.clone(),
+                        clones: clone_entries,
+                    });
+                }
+            }
+            if scope.contains(Member::Teamspace(&t.id)) || !seat_entries.is_empty() {
+                out.push(TeamspaceEntry {
+                    location: tloc,
+                    record: t,
+                    seats: seat_entries,
+                });
+            }
+        }
+        Ok(Inventory {
+            teamspaces: out,
+            tombstones,
+        })
+    }
+
+    /// Every clone with its parents, tree order.
+    pub fn clones(&self) -> impl Iterator<Item = (&TeamspaceEntry, &SeatEntry, &CloneEntry)> {
+        self.teamspaces.iter().flat_map(|t| {
+            t.seats
+                .iter()
+                .flat_map(move |s| s.clones.iter().map(move |c| (t, s, c)))
+        })
+    }
+}
+
+fn clone_entry(
+    location: ObjectLocation,
+    record: CloneRecord,
+    transcripts: &BTreeMap<TranscriptId, TranscriptRecord>,
+) -> CloneEntry {
+    let bound = record.runtime.bound.as_ref();
+    let runtime = RuntimeView {
+        availability: record.runtime.availability,
+        pane: bound.and_then(|b| b.pane_id.clone()),
+        tab: bound.and_then(|b| b.tab_id.clone()),
+        workspace: bound.and_then(|b| b.workspace_id.clone()),
+        observed_at: record.runtime.observed_at,
+    };
+    let occupant = record.occupant.as_ref().map(|o| &o.native_session);
+    let sessions = record
+        .sessions
+        .iter()
+        .map(|s| SessionEntry {
+            current: occupant == Some(&s.id),
+            transcript: resolve_transcript(s, transcripts),
+            session: s.clone(),
+        })
+        .collect();
+    CloneEntry {
+        location,
+        tombstone: record.is_tombstone(),
+        record,
+        runtime,
+        sessions,
+    }
+}
+
+/// The one transcript rule (spec §2.5): the session's `transcript_path`; else, when `transcript` (tr_) is
+/// set, that transcript record's `transcript_path`; else None (shown as `unresolved`).
+fn resolve_transcript(
+    s: &NativeSession,
+    records: &BTreeMap<TranscriptId, TranscriptRecord>,
+) -> Option<TranscriptRef> {
+    if let Some(path) = &s.transcript_path {
+        return Some(TranscriptRef {
+            id: s.transcript.clone(),
+            path: path.clone(),
+            source: TranscriptSource::Session,
+        });
+    }
+    let id = s.transcript.as_ref()?;
+    let rec = records.get(id)?;
+    Some(TranscriptRef {
+        id: Some(id.clone()),
+        path: rec.transcript_path.clone(),
+        source: TranscriptSource::TranscriptRecord,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inspect::fixture::{Fx, session, ts};
+    use crate::inspect::output::Envelope;
+    use crate::inspect::pin_head;
+    use crate::model::harness::Harness;
+    use crate::model::{Binding, CloneId, CloneLifecycle, Incarnation, Lifecycle, Runtime};
+
+    #[test]
+    fn joins_tree_with_full_sessions() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let live = fx.seat(&t, "live", Lifecycle::Active);
+        let old = fx.archived_seat(&t, "old");
+        let at = fx.archived_teamspace("gone");
+        let deep = fx.archived_seat(&at, "deep");
+
+        let s1 = session(
+            Harness::Claude,
+            "n1",
+            "2026-11-01T00:00:00Z",
+            Some("/t/1"),
+            None,
+        );
+        let s2 = session(Harness::Claude, "n2", "2026-11-02T00:00:00Z", None, None);
+        let occ = s2.id.clone();
+        let cl = fx.clone_rec(
+            &live,
+            "main",
+            CloneLifecycle::Active,
+            vec![s1, s2],
+            Some(occ.clone()),
+        );
+        fx.set_runtime(
+            &cl,
+            Runtime {
+                availability: Availability::Present,
+                bound: Some(Binding {
+                    token: None,
+                    workspace_id: Some(HerdrWorkspaceId("w1".into())),
+                    tab_id: Some(HerdrTabId("t1".into())),
+                    pane_id: Some(HerdrPaneId("p1".into())),
+                    terminal_id: None,
+                    incarnation: Incarnation::default(),
+                }),
+                observed_at: Some(ts("2026-11-03T00:00:00Z")),
+            },
+        );
+        let rc = fx.clone_rec(
+            &old,
+            "retired",
+            CloneLifecycle::Retired,
+            vec![
+                session(Harness::Codex, "n3", "2026-10-01T00:00:00Z", None, None),
+                session(Harness::Codex, "n4", "2026-10-02T00:00:00Z", None, None),
+            ],
+            None,
+        );
+        let dc = fx.clone_rec(&deep, "deepc", CloneLifecycle::Retired, vec![], None);
+        fx.commit("c");
+
+        let at_head = pin_head(&fx.store).unwrap();
+        let inv = Inventory::load(&fx.store, &at_head, &Scope::Instance).unwrap();
+        let got: Vec<_> = inv
+            .clones()
+            .map(|(t, s, c)| {
+                (
+                    t.record.name.clone(),
+                    s.record.name.clone(),
+                    c.record.id.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(got.len(), 3);
+        for (tn, sn, id) in [
+            ("alpha", "live", &cl),
+            ("alpha", "old", &rc),
+            ("gone", "deep", &dc),
+        ] {
+            assert!(
+                got.contains(&(tn.into(), sn.into(), id.clone())),
+                "{tn}/{sn}: {got:?}"
+            );
+        }
+        let (_, _, main) = inv.clones().find(|(_, _, c)| c.record.id == cl).unwrap();
+        assert_eq!(main.sessions.len(), 2);
+        let marked: Vec<_> = main.sessions.iter().filter(|s| s.current).collect();
+        assert_eq!(marked.len(), 1);
+        assert_eq!(marked[0].session.id, occ);
+        assert_eq!(main.current().unwrap().session.id, occ);
+        assert_eq!(
+            main.runtime,
+            RuntimeView {
+                availability: Availability::Present,
+                pane: Some(HerdrPaneId("p1".into())),
+                tab: Some(HerdrTabId("t1".into())),
+                workspace: Some(HerdrWorkspaceId("w1".into())),
+                observed_at: Some(ts("2026-11-03T00:00:00Z")),
+            }
+        );
+        let (_, _, retired) = inv.clones().find(|(_, _, c)| c.record.id == rc).unwrap();
+        assert_eq!(retired.sessions.len(), 2);
+        assert!(retired.current().is_none());
+        assert_eq!(retired.runtime.pane, None);
+        assert_eq!(inv.tombstones, 0);
+        // The parents are the records' own, archived ones included.
+        assert!(inv.teamspaces.iter().any(|t| t.record.name == "gone"
+            && t.record.lifecycle == Lifecycle::Retired
+            && t.seats[0].record.name == "deep"));
+    }
+
+    #[test]
+    fn occupant_naming_no_session_marks_none() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "s", Lifecycle::Active);
+        let other = session(
+            Harness::Claude,
+            "x",
+            "2026-11-01T00:00:00Z",
+            Some("/t"),
+            None,
+        );
+        let stray = session(
+            Harness::Claude,
+            "y",
+            "2026-11-01T00:00:00Z",
+            Some("/t"),
+            None,
+        )
+        .id;
+        fx.clone_rec(&s, "c", CloneLifecycle::Active, vec![other], Some(stray));
+        fx.commit("c");
+        let at = pin_head(&fx.store).unwrap();
+        let inv = Inventory::load(&fx.store, &at, &Scope::Instance).unwrap();
+        let (_, _, c) = inv.clones().next().unwrap();
+        assert!(c.current().is_none() && c.sessions.iter().all(|s| !s.current));
+    }
+
+    #[test]
+    fn transcript_resolution() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "s", Lifecycle::Active);
+        let cl = CloneId::new();
+        let mut with_both = session(
+            Harness::Claude,
+            "a",
+            "2026-11-01T00:00:00Z",
+            Some("/own/a"),
+            None,
+        );
+        let mut only_record = session(Harness::Claude, "b", "2026-11-02T00:00:00Z", None, None);
+        let neither = session(Harness::Claude, "c", "2026-11-03T00:00:00Z", None, None);
+        let tr_b = fx.transcript(&s, &cl, &only_record.id, "/record/b");
+        let tr_a = fx.transcript(&s, &cl, &with_both.id, "/record/a");
+        only_record.transcript = Some(tr_b.clone());
+        with_both.transcript = Some(tr_a.clone());
+        fx.clone_rec_id(
+            &s,
+            cl.clone(),
+            "c",
+            CloneLifecycle::Active,
+            vec![with_both, only_record, neither],
+            None,
+        );
+        fx.commit("c");
+        let at = pin_head(&fx.store).unwrap();
+        let inv = Inventory::load(&fx.store, &at, &Scope::Instance).unwrap();
+        let (_, _, c) = inv.clones().next().unwrap();
+        let tr: Vec<_> = c.sessions.iter().map(|s| s.transcript.clone()).collect();
+        // The session's own path wins over the record's.
+        assert_eq!(
+            tr[0],
+            Some(TranscriptRef {
+                id: Some(tr_a),
+                path: PathBuf::from("/own/a"),
+                source: TranscriptSource::Session
+            })
+        );
+        assert_eq!(
+            tr[1],
+            Some(TranscriptRef {
+                id: Some(tr_b),
+                path: PathBuf::from("/record/b"),
+                source: TranscriptSource::TranscriptRecord
+            })
+        );
+        assert_eq!(tr[2], None);
+    }
+
+    #[test]
+    fn scoped_and_tombstones() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let a = fx.seat(&t, "a", Lifecycle::Active);
+        let b = fx.seat(&t, "b", Lifecycle::Active);
+        let a1 = fx.clone_rec(&a, "a1", CloneLifecycle::Active, vec![], None);
+        fx.clone_rec(&a, "a2", CloneLifecycle::Active, vec![], None);
+        fx.clone_rec(&b, "b1", CloneLifecycle::Active, vec![], None);
+        fx.tombstone(&a, "t1");
+        fx.tombstone(&a, "t2");
+        fx.commit("c");
+        let at = pin_head(&fx.store).unwrap();
+        let load = |sc: &Scope| Inventory::load(&fx.store, &at, sc).unwrap();
+
+        let inv = load(&Scope::Seat(a.clone()));
+        assert_eq!(inv.teamspaces.len(), 1, "teamspace kept as context");
+        assert_eq!(inv.teamspaces[0].seats.len(), 1);
+        assert_eq!(inv.teamspaces[0].seats[0].record.id, a);
+        assert_eq!(inv.clones().count(), 4);
+        assert_eq!(inv.tombstones, 2);
+
+        let inv = load(&Scope::Seat(b.clone()));
+        assert_eq!(inv.clones().count(), 1);
+        assert_eq!(inv.tombstones, 0);
+
+        let inv = load(&Scope::Clone(a1.clone()));
+        let kept: Vec<_> = inv.clones().map(|(_, _, c)| c.record.id.clone()).collect();
+        assert_eq!(kept, vec![a1]);
+        assert_eq!(inv.tombstones, 0);
+
+        let inv = load(&Scope::Global);
+        assert!(inv.teamspaces.is_empty() && inv.tombstones == 0);
+
+        let inv = load(&Scope::Teamspace(t));
+        assert_eq!(inv.teamspaces[0].seats.len(), 2);
+        assert_eq!(inv.clones().count(), 5);
+        assert_eq!(inv.tombstones, 2);
+
+        let inv = load(&Scope::Instance);
+        assert_eq!(inv.tombstones, 2);
+        assert!(inv.clones().filter(|(_, _, c)| c.tombstone).count() == 2);
+    }
+
+    #[test]
+    fn pinned_commit_not_torn() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "s", Lifecycle::Active);
+        let c1 = fx.clone_rec(&s, "one", CloneLifecycle::Active, vec![], None);
+        fx.commit("first");
+        let pinned = pin_head(&fx.store).unwrap();
+        let c2 = fx.clone_rec(&s, "two", CloneLifecycle::Active, vec![], None);
+        let later = fx.commit("second");
+        assert_ne!(pinned, later);
+
+        let inv = Inventory::load(&fx.store, &pinned, &Scope::Instance).unwrap();
+        let ids: Vec<_> = inv.clones().map(|(_, _, c)| c.record.id.clone()).collect();
+        assert_eq!(ids, vec![c1]);
+        assert!(!ids.contains(&c2));
+        let env = Envelope::new(&pinned, ());
+        assert_eq!(env.head, pinned.0);
+        assert_ne!(env.head, later.0);
+    }
+
+    #[test]
+    fn dangling_parent_is_integrity() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "s", Lifecycle::Active);
+        let c = fx.clone_rec(&s, "c", CloneLifecycle::Active, vec![], None);
+        fx.clone_mut(&c).seat = crate::model::SeatId::new();
+        fx.commit("bad");
+        let at = pin_head(&fx.store).unwrap();
+        let e = Inventory::load(&fx.store, &at, &Scope::Instance).unwrap_err();
+        assert!(matches!(e, StoreError::Integrity { .. }), "{e:?}");
+        let e: anyhow::Error = e.into();
+        assert_eq!(
+            format!("{:?}", crate::inspect::fail(&e)),
+            format!("{:?}", std::process::ExitCode::from(6))
+        );
+    }
+}

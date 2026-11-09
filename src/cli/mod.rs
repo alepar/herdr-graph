@@ -8,12 +8,15 @@ pub mod daemon;
 pub mod daemon_error;
 pub mod init;
 pub mod instructions;
+pub mod log;
 pub mod node_manager_warning;
 pub mod ops;
 pub mod plan;
 pub mod request;
+pub mod roster;
 pub mod seat;
 pub mod session;
+pub mod sessions;
 pub mod setup;
 pub mod show;
 pub mod status;
@@ -62,6 +65,12 @@ pub enum Command {
     Request(request::Commands),
     #[command(flatten)]
     Who(who::Commands),
+    #[command(flatten)]
+    Roster(roster::Commands),
+    #[command(flatten)]
+    Sessions(sessions::Commands),
+    #[command(flatten)]
+    Log(log::Commands),
 }
 
 pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
@@ -80,6 +89,9 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Undo(c) => undo::run(c),
         Command::Request(c) => request::run(c),
         Command::Who(c) => who::run(c),
+        Command::Roster(c) => roster::run(c),
+        Command::Sessions(c) => sessions::run(c),
+        Command::Log(c) => log::run(c),
     }
 }
 
@@ -169,6 +181,31 @@ mod tests {
                 "0-10",
             ],
             &["who", "p1"],
+            &["roster"],
+            &["roster", "global"],
+            &["roster", "seat", "s1", "--all", "--json"],
+            &["roster", "--live", "--unmanaged"],
+            &["sessions"],
+            &[
+                "sessions", "clone", "c1", "--since", "2d", "--limit", "5", "--json",
+            ],
+            &["sessions", "teamspace", "t1", "--since", "2026-11-01"],
+            &["log"],
+            &[
+                "log",
+                "seat",
+                "s1",
+                "--since",
+                "2026-11-01T00:00:00Z",
+                "--limit",
+                "10",
+                "--by",
+                "s2",
+                "--all",
+                "--max-scan",
+                "100",
+                "--json",
+            ],
         ];
         for argv in cases {
             let full: Vec<&str> = std::iter::once("herdr-graph")
@@ -176,5 +213,26 @@ mod tests {
                 .collect();
             Cli::try_parse_from(&full).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
         }
+    }
+
+    #[test]
+    fn inspect_stubs_not_implemented() {
+        for argv in [["roster"], ["sessions"], ["log"]] {
+            let full = std::iter::once("herdr-graph").chain(argv);
+            let cli = Cli::try_parse_from(full).unwrap();
+            let e = run(cli).unwrap_err().to_string();
+            assert!(e.contains("not implemented"), "{argv:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn unmanaged_requires_live() {
+        assert!(Cli::try_parse_from(["herdr-graph", "roster", "--unmanaged"]).is_err());
+    }
+
+    #[test]
+    fn bad_since_rejected() {
+        assert!(Cli::try_parse_from(["herdr-graph", "log", "--since", "nonsense"]).is_err());
+        assert!(Cli::try_parse_from(["herdr-graph", "sessions", "--since", "nonsense"]).is_err());
     }
 }
