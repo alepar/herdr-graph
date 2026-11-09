@@ -7,7 +7,7 @@ use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::common::Lifecycle;
 use crate::model::operation::{OpState, OperationRecord, Rejection};
 use crate::model::seat::SeatRecord;
-use crate::model::{AnyId, CloneId, OpId, SeatId, Timestamp};
+use crate::model::{AnyId, CloneId, OpId, SeatId, TeamspaceId, Timestamp};
 use crate::ports::clock::Clock;
 use crate::ports::store::{Store, StoreError, read_record};
 use crate::store::layout;
@@ -94,10 +94,36 @@ fn is_unresolved(journal: &Journal, row: &OpRow) -> Result<bool, JournalError> {
 
 const ALL: usize = usize::MAX >> 1;
 
-/// Newest first. Ops of retired requesters stay listed (spec §3.7).
+/// Which ops `list_ops` keeps; `None` fields match anything. Requester ids are matched as stored, so ops of
+/// retired seats and teamspaces still match.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpsFilter {
+    pub seat: Option<SeatId>,
+    pub teamspace: Option<TeamspaceId>,
+    pub clone: Option<CloneId>,
+    pub unresolved: bool,
+}
+
+impl OpsFilter {
+    fn matches_requester(&self, r: &Requester) -> bool {
+        self.seat
+            .as_ref()
+            .is_none_or(|s| r.seat.as_ref() == Some(s))
+            && self
+                .teamspace
+                .as_ref()
+                .is_none_or(|t| r.teamspace.as_ref() == Some(t))
+            && self
+                .clone
+                .as_ref()
+                .is_none_or(|c| r.clone.as_ref() == Some(c))
+    }
+}
+
+/// Newest first; `limit` applies after filtering. Ops of retired requesters stay listed (spec §3.7).
 pub fn list_ops(
     journal: &Journal,
-    unresolved: bool,
+    filter: &OpsFilter,
     limit: usize,
 ) -> Result<Vec<OpSummary>, JournalError> {
     let mut out = Vec::new();
@@ -105,7 +131,9 @@ pub fn list_ops(
         if out.len() >= limit {
             break;
         }
-        if !unresolved || is_unresolved(journal, &row)? {
+        if filter.matches_requester(&row.request.requester)
+            && (!filter.unresolved || is_unresolved(journal, &row)?)
+        {
             out.push(summary_of(&row));
         }
     }
@@ -118,16 +146,13 @@ pub fn pending_for(
     seat: Option<&SeatId>,
     clone: Option<&CloneId>,
 ) -> Result<Vec<OpSummary>, JournalError> {
-    let mut out = Vec::new();
-    for row in journal.list(&[], ALL)? {
-        let r = &row.request.requester;
-        let matches = seat.is_none_or(|s| r.seat.as_ref() == Some(s))
-            && clone.is_none_or(|c| r.clone.as_ref() == Some(c));
-        if matches && is_unresolved(journal, &row)? {
-            out.push(summary_of(&row));
-        }
-    }
-    Ok(out)
+    let filter = OpsFilter {
+        seat: seat.cloned(),
+        clone: clone.cloned(),
+        unresolved: true,
+        ..Default::default()
+    };
+    list_ops(journal, &filter, ALL)
 }
 
 /// `ops.get` payload: the summary plus journal detail and the reminder state.
@@ -443,9 +468,26 @@ fn id_arg<T: std::str::FromStr<Err = crate::model::IdError>>(
         .map_err(|e| CommandError::bad_request(format!("{key}: {e}")))
 }
 
-/// `ops.list` payload, shared by the daemon handler and the CLI's daemon-less read.
-pub fn list_json(journal: &Journal, unresolved: bool, limit: usize) -> Result<Value, JournalError> {
-    Ok(json!({ "ops": list_ops(journal, unresolved, limit)? }))
+/// `ops.list` payload: `{"head": <store head>, "ops": [...]}`. `head` is the commit the daemon read the
+/// listing against; the CLI's `--json` envelope reports it.
+pub fn list_json(
+    journal: &Journal,
+    store: &dyn Store,
+    filter: &OpsFilter,
+    limit: usize,
+) -> Result<Value, OpsError> {
+    let head = store.head()?;
+    Ok(json!({ "head": head, "ops": list_ops(journal, filter, limit)? }))
+}
+
+fn opt_id_arg<T: std::str::FromStr<Err = crate::model::IdError>>(
+    args: &Value,
+    key: &str,
+) -> Result<Option<T>, CommandError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => id_arg(args, key).map(Some),
+    }
 }
 
 /// Registers `ops.list`, `ops.get`, `ops.cancel`, `ops.reassign`, `ops.check_instruction`.
@@ -463,7 +505,13 @@ pub fn register_commands(reg: &mut Registry, deps: OpsDeps) {
                 .get("limit")
                 .and_then(|v| v.as_u64())
                 .map_or(200, |n| n as usize);
-            list_json(&d.journal, unresolved, limit).map_err(jerr)
+            let filter = OpsFilter {
+                seat: opt_id_arg(&args, "seat")?,
+                teamspace: opt_id_arg(&args, "teamspace")?,
+                clone: None,
+                unresolved,
+            };
+            list_json(&d.journal, d.store.as_ref(), &filter, limit).map_err(err)
         }
     });
     let d = deps.clone();
@@ -569,6 +617,32 @@ mod tests {
         fx.w.journal()
     }
 
+    fn unresolved() -> OpsFilter {
+        OpsFilter {
+            unresolved: true,
+            ..Default::default()
+        }
+    }
+
+    fn failed_op(fx: &Fx, requester: Requester) -> OpId {
+        let req = ChangeRequest {
+            kind: RequestKind::SeatRetire,
+            args: json!({}),
+            relied_on: vec![],
+            requester,
+            supersedes: None,
+            confirmed: None,
+        };
+        let op = j(fx).admit(&req, t0()).unwrap();
+        j(fx).begin_applying(&op, t0()).unwrap().unwrap();
+        j(fx).finish_failed(&op, "boom", t0()).unwrap();
+        op
+    }
+
+    fn ops_of(v: Vec<OpSummary>) -> std::collections::BTreeSet<OpId> {
+        v.into_iter().map(|s| s.op).collect()
+    }
+
     #[test]
     fn cancel_admitted_only() {
         let fx = fx();
@@ -613,7 +687,7 @@ mod tests {
         two_seats(&fx);
         let one = seat(&fx, "one");
         let rejected = rejected_op(&fx, requester_of(&one));
-        assert_eq!(list_ops(j(&fx), true, 50).unwrap().len(), 1);
+        assert_eq!(list_ops(j(&fx), &unresolved(), 50).unwrap().len(), 1);
         let r = cancel(j(&fx), &rejected.op, t0()).unwrap();
         assert_eq!(
             (r.result, r.state),
@@ -626,11 +700,11 @@ mod tests {
             "state unchanged"
         );
         assert!(
-            list_ops(j(&fx), true, 50).unwrap().is_empty(),
+            list_ops(j(&fx), &unresolved(), 50).unwrap().is_empty(),
             "no longer unresolved"
         );
         assert_eq!(
-            list_ops(j(&fx), false, 50)
+            list_ops(j(&fx), &OpsFilter::default(), 50)
                 .unwrap()
                 .iter()
                 .filter(|o| o.op == rejected.op)
@@ -655,13 +729,13 @@ mod tests {
         j(&fx).begin_applying(&op, t0()).unwrap().unwrap();
         j(&fx).finish_failed(&op, "boom", t0()).unwrap();
         assert_eq!(
-            list_ops(j(&fx), true, 50).unwrap().len(),
+            list_ops(j(&fx), &unresolved(), 50).unwrap().len(),
             1,
             "failed is unresolved"
         );
         let r = cancel(j(&fx), &op, t0()).unwrap();
         assert_eq!(r.result, CancelResult::Cancelled);
-        assert!(list_ops(j(&fx), true, 50).unwrap().is_empty());
+        assert!(list_ops(j(&fx), &unresolved(), 50).unwrap().is_empty());
     }
 
     #[test]
@@ -682,7 +756,7 @@ mod tests {
             "reassign does not resolve the op"
         );
         assert_eq!(
-            list_ops(j(&fx), true, 50).unwrap().len(),
+            list_ops(j(&fx), &unresolved(), 50).unwrap().len(),
             1,
             "still discoverable"
         );
@@ -865,7 +939,7 @@ mod tests {
             (OpState::Superseded, Some(done.op.clone()))
         );
         assert!(
-            list_ops(j(&fx), true, 50).unwrap().is_empty(),
+            list_ops(j(&fx), &unresolved(), 50).unwrap().is_empty(),
             "superseded is resolved"
         );
         assert!(
@@ -951,13 +1025,180 @@ mod tests {
         let one = seat(&fx, "one");
         let rejected = rejected_op(&fx, requester_of(&one));
         commit(&fx, "seat retire one");
-        let listed = list_ops(j(&fx), true, 50).unwrap();
+        let listed = list_ops(j(&fx), &unresolved(), 50).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].op, rejected.op);
         assert_eq!(listed[0].requester.seat, Some(one.id.clone()));
         assert_eq!(pending_for(j(&fx), Some(&one.id), None).unwrap().len(), 1);
         // the limit applies after filtering
-        assert_eq!(list_ops(j(&fx), false, 1).unwrap().len(), 1);
+        assert_eq!(list_ops(j(&fx), &OpsFilter::default(), 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn filter_by_seat_and_teamspace() {
+        let fx = fx();
+        two_seats(&fx);
+        let (one, two) = (seat(&fx, "one"), seat(&fx, "two"));
+        let rejected = rejected_op(&fx, requester_of(&one));
+        let failed = failed_op(&fx, requester_of(&one));
+        let queued = {
+            let req = ChangeRequest {
+                kind: RequestKind::SeatRetire,
+                args: json!({ "seat": "x" }),
+                relied_on: vec![],
+                requester: requester_of(&one),
+                supersedes: None,
+                confirmed: None,
+            };
+            fx.w.admit(req).unwrap()
+        };
+        let other = rejected_op(&fx, requester_of(&two));
+        let by_seat = OpsFilter {
+            seat: Some(one.id.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ops_of(list_ops(j(&fx), &by_seat, 50).unwrap()),
+            [rejected.op.clone(), failed, queued].into()
+        );
+        let by_ts = OpsFilter {
+            teamspace: Some(two.teamspace.clone()),
+            ..Default::default()
+        };
+        assert_eq!(list_ops(j(&fx), &by_ts, 50).unwrap().len(), 4);
+        let other_ts = OpsFilter {
+            teamspace: Some(TeamspaceId::new()),
+            ..Default::default()
+        };
+        assert!(list_ops(j(&fx), &other_ts, 50).unwrap().is_empty());
+        let by_two = OpsFilter {
+            seat: Some(two.id.clone()),
+            teamspace: Some(two.teamspace.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ops_of(list_ops(j(&fx), &by_two, 50).unwrap()),
+            [other.op].into()
+        );
+        let mismatch = OpsFilter {
+            seat: Some(one.id.clone()),
+            teamspace: Some(TeamspaceId::new()),
+            ..Default::default()
+        };
+        assert!(list_ops(j(&fx), &mismatch, 50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn filter_combines_with_unresolved_and_limit() {
+        let fx = fx();
+        two_seats(&fx);
+        let one = seat(&fx, "one");
+        let a = rejected_op(&fx, requester_of(&one));
+        let b = rejected_op(&fx, requester_of(&one));
+        let f = |unresolved| OpsFilter {
+            seat: Some(one.id.clone()),
+            unresolved,
+            ..Default::default()
+        };
+        cancel(j(&fx), &a.op, t0()).unwrap();
+        assert_eq!(
+            ops_of(list_ops(j(&fx), &f(true), 50).unwrap()),
+            [b.op.clone()].into()
+        );
+        assert_eq!(list_ops(j(&fx), &f(false), 50).unwrap().len(), 2);
+        assert_eq!(list_ops(j(&fx), &f(false), 1).unwrap().len(), 1);
+        assert!(list_ops(j(&fx), &f(false), 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn retired_requester_still_matches() {
+        let fx = fx();
+        two_seats(&fx);
+        let one = seat(&fx, "one");
+        let rejected = rejected_op(&fx, requester_of(&one));
+        commit(&fx, "seat retire one");
+        let retired = layout::all_seats(&view(&fx))
+            .unwrap()
+            .into_iter()
+            .find(|(_, s)| s.id == one.id)
+            .map(|(_, s)| s)
+            .expect("retired seat is still a record");
+        assert_eq!(retired.lifecycle, Lifecycle::Retired);
+        let f = OpsFilter {
+            seat: Some(one.id.clone()),
+            teamspace: Some(one.teamspace.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ops_of(list_ops(j(&fx), &f, 50).unwrap()),
+            [rejected.op].into()
+        );
+    }
+
+    #[test]
+    fn list_json_reports_head_and_adds_no_commit() {
+        let fx = fx();
+        two_seats(&fx);
+        let one = seat(&fx, "one");
+        rejected_op(&fx, requester_of(&one));
+        let before = fx.store.head().unwrap();
+        let f = OpsFilter {
+            seat: Some(one.id.clone()),
+            ..Default::default()
+        };
+        let v = list_json(j(&fx), fx.store.as_ref(), &f, 50).unwrap();
+        assert_eq!(v["head"], json!(before));
+        assert_eq!(v["ops"].as_array().unwrap().len(), 1);
+        assert_eq!(fx.store.head().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn ipc_list_filters_by_seat_teamspace_and_limit() {
+        let fx = fx();
+        two_seats(&fx);
+        let (one, two) = (seat(&fx, "one"), seat(&fx, "two"));
+        rejected_op(&fx, requester_of(&one));
+        rejected_op(&fx, requester_of(&one));
+        rejected_op(&fx, requester_of(&two));
+        let mut reg = Registry::default();
+        register_commands(
+            &mut reg,
+            OpsDeps {
+                journal: j(&fx).clone(),
+                store: fx.store.clone(),
+                clock: fx.clock.clone(),
+            },
+        );
+        let h = reg.handler("ops.list").unwrap();
+        let call = |args: Value| {
+            h.call(
+                CommandCtx {
+                    request_id: "r".into(),
+                    caller: CallerInfo::default(),
+                },
+                args,
+            )
+        };
+        let n = |v: Value| v["ops"].as_array().unwrap().len();
+        // the three setup commits (no requester) plus the three rejected ops
+        assert_eq!(n(call(json!({})).await.unwrap()), 6);
+        assert_eq!(n(call(json!({ "seat": one.id })).await.unwrap()), 2);
+        assert_eq!(
+            n(call(json!({ "seat": one.id, "limit": 1 })).await.unwrap()),
+            1
+        );
+        assert_eq!(
+            n(
+                call(json!({ "teamspace": two.teamspace, "unresolved": true }))
+                    .await
+                    .unwrap()
+            ),
+            3
+        );
+        let v = call(json!({})).await.unwrap();
+        assert_eq!(v["head"], json!(fx.store.head().unwrap()));
+        let e = call(json!({ "seat": "nonsense" })).await.unwrap_err();
+        assert!(e.message.contains("seat"), "{}", e.message);
     }
 
     #[tokio::test]
