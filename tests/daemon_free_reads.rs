@@ -78,6 +78,8 @@ fn reads_without_daemon_exit_5() {
         vec!["request", "list", "--pending"],
         vec!["undo", "--list"],
         vec!["undo", "--json"],
+        vec!["roster", "--live"],
+        vec!["roster", "--live", "--unmanaged", "--json"],
     ] {
         assert_exit_5(&f, &args);
     }

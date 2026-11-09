@@ -13,6 +13,7 @@ pub mod doctor;
 pub mod ensure;
 pub mod lock;
 pub mod registry;
+pub mod roster_live;
 pub mod server;
 
 #[derive(Debug, Clone)]

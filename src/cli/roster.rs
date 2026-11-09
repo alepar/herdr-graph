@@ -1,11 +1,13 @@
 //! `roster` (spec §2.2): seats and clones with pane, occupant, threads state and instruction status.
 //! The group and its args are registered here; `run()` is implemented by hg-blw.1 (`--live` and
 //! `--unmanaged` by hg-blw.6).
-use crate::daemon::client::{EXIT_NO_INSTANCE, instance_or_none};
-use crate::inspect::output::{Envelope, Format, emit};
-use crate::inspect::roster::{RosterQuery, build};
+use crate::cli::daemon_error;
+use crate::daemon::client::{CallMode, EXIT_NO_INSTANCE, call_daemon, instance_or_none};
+use crate::inspect::output::{Envelope, Format, emit, print};
+use crate::inspect::roster::{Roster, RosterQuery, build};
 use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
 use crate::inspect::{fail, pin_head};
+use crate::model::CommitId;
 use crate::store::GitStore;
 use clap::Subcommand;
 use std::io::Write;
@@ -33,27 +35,54 @@ pub enum Commands {
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
-    let Commands::Roster { live: true, .. } = &cmd else {
-        let Some(root) = instance_or_none() else {
-            return Ok(ExitCode::from(EXIT_NO_INSTANCE));
-        };
-        let store = match GitStore::open(&root) {
-            Ok(s) => s,
-            Err(e) => return Ok(fail(&e.into())),
-        };
-        return Ok(
-            match execute(
-                &store,
-                &cmd,
-                &mut std::io::stdout().lock(),
-                &mut std::io::stderr().lock(),
-            ) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => fail(&e),
-            },
-        );
+    if let Commands::Roster { live: true, .. } = &cmd {
+        return live(&cmd);
+    }
+    let Some(root) = instance_or_none() else {
+        return Ok(ExitCode::from(EXIT_NO_INSTANCE));
     };
-    anyhow::bail!("roster --live: not implemented yet")
+    let store = match GitStore::open(&root) {
+        Ok(s) => s,
+        Err(e) => return Ok(fail(&e.into())),
+    };
+    Ok(
+        match execute(
+            &store,
+            &cmd,
+            &mut std::io::stdout().lock(),
+            &mut std::io::stderr().lock(),
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(&e),
+        },
+    )
+}
+
+/// `--live`: one `roster.live` call; the daemon builds the roster at its pinned HEAD and overlays the live
+/// data. A down daemon is exit 5 through `daemon_error`; degraded live data still exits 0.
+fn live(cmd: &Commands) -> anyhow::Result<ExitCode> {
+    let Commands::Roster {
+        scope,
+        all,
+        unmanaged,
+        json,
+        ..
+    } = cmd;
+    let args = serde_json::json!({ "scope": scope, "all": all, "unmanaged": unmanaged });
+    let reply = match call_daemon("roster.live", args, CallMode::NoEnsure) {
+        Ok(v) => v,
+        Err(e) => return Ok(daemon_error::report(e)),
+    };
+    let head = reply["head"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("roster.live reply has no head"))?;
+    let roster: Roster = serde_json::from_value(reply["roster"].clone())?;
+    print(
+        &Envelope::new(&CommitId(head.to_owned()), roster).with_live(true),
+        Format::from_flag(*json),
+        &[],
+    )?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The daemon-free roster: pins HEAD once, resolves the scope and builds the one roster at that commit.

@@ -66,6 +66,7 @@ struct FakeState {
 pub struct FakeHerdr {
     state: Mutex<FakeState>,
     events: Mutex<Vec<mpsc::Sender<HerdrEvent>>>,
+    snapshots: std::sync::atomic::AtomicUsize,
 }
 
 fn shell() -> ProcessInfo {
@@ -244,7 +245,13 @@ impl FakeHerdr {
         Arc::new(Self {
             state: Mutex::new(state),
             events: Mutex::new(Vec::new()),
+            snapshots: Default::default(),
         })
+    }
+
+    /// How many `snapshot()` calls were attempted (faulted ones included).
+    pub fn snapshot_calls(&self) -> usize {
+        self.snapshots.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Every call attempted so far, in order (faulted ones included).
@@ -649,6 +656,8 @@ impl FakeHerdr {
 #[async_trait::async_trait]
 impl HerdrApi for FakeHerdr {
     async fn snapshot(&self) -> Result<HerdrSnapshot, HerdrError> {
+        self.snapshots
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut st = self.state.lock().unwrap();
         if let Some(f) = st
             .faults

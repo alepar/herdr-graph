@@ -7,12 +7,15 @@ use crate::model::clone::SeatFactState;
 use crate::model::harness::Harness;
 use crate::model::manager::Pointers;
 use crate::model::{
-    CloneId, CloneLifecycle, CommitId, Lifecycle, NsId, OpId, SeatId, TeamspaceId, Timestamp,
+    Binding, CloneId, CloneLifecycle, CommitId, HerdrPaneId, HerdrTabId, HerdrWorkspaceId,
+    Lifecycle, NsId, OpId, SeatId, TeamspaceId, Timestamp,
 };
+use crate::ports::herdr::{AgentStatus, HerdrSnapshot};
 use crate::ports::store::{Store, StoreError};
 use crate::store::GitStore;
 use crate::store::tree::CommitView;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 /// The roster body: seats and clones with pane, occupant, threads state and instruction status.
@@ -32,17 +35,22 @@ use std::fmt::Write as _;
 /// daemon never builds a second roster.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Roster {
-    /// hg-blw.6: `{herdr?, threads?}` when part of the live read failed; always serialized (null here).
-    pub live_unavailable: Option<serde_json::Value>,
+    /// `{herdr?, threads?}` when part of the live read failed; always serialized (null when all was read).
+    pub live_unavailable: Option<LiveUnavailable>,
     /// hg-blw.9: the walker's scan report; absent unless the last_change pass ran.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub scan: Option<serde_json::Value>,
-    /// hg-blw.6: `{seat_refusals, seat_lost}`; absent outside --live.
+    /// `{seat_refusals, seat_lost}`; absent outside --live.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub threads_live: Option<serde_json::Value>,
-    /// hg-blw.6: `{workspaces, tabs, panes}`; absent without --unmanaged.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub unmanaged: Option<serde_json::Value>,
+    pub threads_live: Option<ThreadsLive>,
+    /// `{workspaces, tabs, panes}`; absent without --unmanaged, null when the snapshot is unavailable.
+    /// Outer `None` is absent, `Some(None)` is null.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "present_or_null"
+    )]
+    pub unmanaged: Option<Option<Unmanaged>>,
     pub teamspaces: Vec<RosterTeamspace>,
 }
 
@@ -94,8 +102,96 @@ pub struct RosterClone {
     pub threads: Option<ThreadsView>,
     /// The shared type: unknown here, error on a failed render, filled by hg-blw.12.
     pub instructions: InstructionsView,
-    /// hg-blw.6 retypes to `Option<CloneLive>`; always serialized (null).
-    pub live: Option<serde_json::Value>,
+    /// The live overlay; always serialized (null without --live and when the snapshot is unavailable).
+    pub live: Option<CloneLive>,
+}
+
+/// `Some(inner)` for a present field, so a JSON null stays distinguishable from an absent one.
+fn present_or_null<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+/// One clone's live overlay (spec §2.2 `--live`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CloneLive {
+    /// The pane's agent; null when the binding does not match or the pane has no agent.
+    pub agent: Option<AgentView>,
+    /// True only for a same-server binding whose pane is in that tab and workspace in the snapshot.
+    pub live_pane_matches: bool,
+    /// The clone's committed binding names an earlier Herdr server (so `live_pane_matches` is false).
+    pub binding_from_earlier_server: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentView {
+    pub kind: String,
+    pub status: AgentStatus,
+}
+
+/// Which part of the live read failed, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LiveUnavailable {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub herdr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub threads: Option<String>,
+}
+
+/// The daemon's in-memory threads seat read; each field is null when the seat view is not running.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadsLive {
+    pub seat_refusals: Option<BTreeMap<String, String>>,
+    pub seat_lost: Option<Vec<serde_json::Value>>,
+}
+
+/// Herdr objects in the snapshot with no graph binding (spec §5, S1): ids and labels as Herdr reports them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Unmanaged {
+    pub workspaces: Vec<UnWorkspace>,
+    pub tabs: Vec<UnTab>,
+    pub panes: Vec<UnPane>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnWorkspace {
+    pub id: HerdrWorkspaceId,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnTab {
+    pub id: HerdrTabId,
+    pub label: Option<String>,
+    pub workspace: HerdrWorkspaceId,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnPane {
+    pub id: HerdrPaneId,
+    pub label: Option<String>,
+    pub tab: HerdrTabId,
+}
+
+/// The committed bindings the overlay compares with a snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct Bindings {
+    /// Each roster clone's `runtime.bound`.
+    pub clones: BTreeMap<CloneId, Binding>,
+    /// Every non-retired teamspace, seat and clone binding in the instance (for `--unmanaged`).
+    pub all: Vec<Binding>,
+}
+
+/// The daemon's threads seat read, or why it is not running.
+pub enum ThreadsRead {
+    Ok {
+        refusals: BTreeMap<String, String>,
+        lost: Vec<serde_json::Value>,
+    },
+    Unavailable(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,6 +228,18 @@ fn state_word(s: &SeatFactState) -> &'static str {
 
 /// The one roster builder (daemon-free CLI and the daemon's roster.live). `at` is the invocation's pinned HEAD.
 pub fn build(store: &GitStore, at: &CommitId, q: &RosterQuery) -> Result<Roster, StoreError> {
+    build_with_bindings(store, at, q, false).map(|(r, _)| r)
+}
+
+/// [`build`] plus the committed bindings the live overlay compares with a snapshot. `all_bindings` also
+/// collects every non-retired binding of the whole instance (whatever the scope), for `--unmanaged`.
+pub fn build_with_bindings(
+    store: &GitStore,
+    at: &CommitId,
+    q: &RosterQuery,
+    all_bindings: bool,
+) -> Result<(Roster, Bindings), StoreError> {
+    let mut bindings = Bindings::default();
     let inv = Inventory::load(store, at, &q.scope)?;
     let view = CommitView {
         store: store as &dyn Store,
@@ -186,6 +294,9 @@ pub fn build(store: &GitStore, at: &CommitId, q: &RosterQuery) -> Result<Roster,
                             .map(|f| state_word(&f.state).to_owned()),
                         read_at: r.seat_fact.as_ref().map(|f| f.read_at),
                     });
+                    if let Some(b) = &r.runtime.bound {
+                        bindings.clones.insert(r.id.clone(), b.clone());
+                    }
                     RosterClone {
                         id: r.id.clone(),
                         name: r.name.clone(),
@@ -221,13 +332,163 @@ pub fn build(store: &GitStore, at: &CommitId, q: &RosterQuery) -> Result<Roster,
             });
         }
     }
-    Ok(Roster {
+    if all_bindings {
+        let whole = Inventory::load(store, at, &Scope::Instance)?;
+        for t in &whole.teamspaces {
+            if t.record.lifecycle != Lifecycle::Retired {
+                bindings.all.extend(t.record.runtime.bound.clone());
+            }
+            for s in &t.seats {
+                if s.record.lifecycle != Lifecycle::Retired {
+                    bindings.all.extend(s.record.runtime.bound.clone());
+                }
+                for c in &s.clones {
+                    if c.record.lifecycle != CloneLifecycle::Retired {
+                        bindings.all.extend(c.record.runtime.bound.clone());
+                    }
+                }
+            }
+        }
+    }
+    let roster = Roster {
         live_unavailable: None,
         scan: None,
         threads_live: None,
         unmanaged: None,
         teamspaces,
-    })
+    };
+    Ok((roster, bindings))
+}
+
+fn label(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_owned())
+}
+
+/// Fill the live slots from one snapshot (or its failure). Pure: no I/O.
+pub fn overlay(
+    roster: &mut Roster,
+    bindings: &Bindings,
+    snap: Result<&HerdrSnapshot, String>,
+    threads: ThreadsRead,
+    unmanaged: bool,
+) {
+    let mut unavailable = LiveUnavailable {
+        herdr: None,
+        threads: None,
+    };
+    match &threads {
+        ThreadsRead::Ok { refusals, lost } => {
+            roster.threads_live = Some(ThreadsLive {
+                seat_refusals: Some(refusals.clone()),
+                seat_lost: Some(lost.clone()),
+            });
+        }
+        ThreadsRead::Unavailable(reason) => {
+            roster.threads_live = Some(ThreadsLive {
+                seat_refusals: None,
+                seat_lost: None,
+            });
+            unavailable.threads = Some(reason.clone());
+        }
+    }
+    match snap {
+        Err(reason) => {
+            unavailable.herdr = Some(reason);
+            for c in roster
+                .teamspaces
+                .iter_mut()
+                .flat_map(|t| &mut t.seats)
+                .flat_map(|s| &mut s.clones)
+            {
+                c.live = None;
+            }
+            roster.unmanaged = unmanaged.then_some(None);
+        }
+        Ok(snap) => {
+            for c in roster
+                .teamspaces
+                .iter_mut()
+                .flat_map(|t| &mut t.seats)
+                .flat_map(|s| &mut s.clones)
+            {
+                let binding = bindings.clones.get(&c.id);
+                let same = binding.is_some_and(|b| b.incarnation.same_server(&snap.incarnation));
+                let pane = binding.filter(|_| same).and_then(|b| find_pane(snap, b));
+                c.live = Some(CloneLive {
+                    agent: pane.and_then(|p| p.agent.as_ref()).map(|a| AgentView {
+                        kind: a.kind.clone(),
+                        status: a.status,
+                    }),
+                    live_pane_matches: pane.is_some(),
+                    binding_from_earlier_server: binding.is_some() && !same,
+                });
+            }
+            roster.unmanaged = unmanaged.then(|| Some(unmanaged_of(snap, &bindings.all)));
+        }
+    }
+    roster.live_unavailable =
+        (unavailable.herdr.is_some() || unavailable.threads.is_some()).then_some(unavailable);
+}
+
+/// The snapshot's pane named by `b` (workspace, tab and pane all present and nested), if any.
+fn find_pane<'a>(
+    snap: &'a HerdrSnapshot,
+    b: &Binding,
+) -> Option<&'a crate::ports::herdr::PaneInfo> {
+    let (w, t, p) = (
+        b.workspace_id.as_ref()?,
+        b.tab_id.as_ref()?,
+        b.pane_id.as_ref()?,
+    );
+    snap.workspaces
+        .iter()
+        .find(|ws| &ws.id == w)?
+        .tabs
+        .iter()
+        .find(|tb| &tb.id == t)?
+        .panes
+        .iter()
+        .find(|pn| &pn.id == p)
+}
+
+/// Snapshot objects not named by any same-server binding in `bound`.
+fn unmanaged_of(snap: &HerdrSnapshot, bound: &[Binding]) -> Unmanaged {
+    let same: Vec<&Binding> = bound
+        .iter()
+        .filter(|b| b.incarnation.same_server(&snap.incarnation))
+        .collect();
+    let mut out = Unmanaged {
+        workspaces: vec![],
+        tabs: vec![],
+        panes: vec![],
+    };
+    for w in &snap.workspaces {
+        if !same.iter().any(|b| b.workspace_id.as_ref() == Some(&w.id)) {
+            out.workspaces.push(UnWorkspace {
+                id: w.id.clone(),
+                label: label(&w.label),
+            });
+        }
+        for t in &w.tabs {
+            if !same.iter().any(|b| b.tab_id.as_ref() == Some(&t.id)) {
+                out.tabs.push(UnTab {
+                    id: t.id.clone(),
+                    label: label(&t.label),
+                    workspace: w.id.clone(),
+                });
+            }
+            for p in &t.panes {
+                if !same.iter().any(|b| b.pane_id.as_ref() == Some(&p.id)) {
+                    out.panes.push(UnPane {
+                        id: p.id.clone(),
+                        label: p.label.clone().filter(|l| !l.is_empty()),
+                        tab: t.id.clone(),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 fn word<T: Serialize>(v: &T) -> String {
@@ -291,7 +552,7 @@ fn clone_line(c: &RosterClone) -> String {
             t.state.clone().unwrap_or_else(|| "-".into()),
         ),
     };
-    format!(
+    let mut line = format!(
         "{} ({})  {}  {}  {}  threads {}  {}  instructions: {}",
         c.name,
         c.id,
@@ -301,11 +562,34 @@ fn clone_line(c: &RosterClone) -> String {
         tseat,
         tstate,
         instructions_text(&c.instructions)
-    )
+    );
+    if let Some(l) = &c.live {
+        line.push_str("  ");
+        line.push_str(
+            &match (&l.agent, l.live_pane_matches, l.binding_from_earlier_server) {
+                (Some(a), _, _) => format!("agent {} {}", a.kind, word(&a.status)),
+                (None, true, _) => "no agent".to_owned(),
+                (None, false, true) => "binding from earlier herdr server".to_owned(),
+                (None, false, false) => "no live pane".to_owned(),
+            },
+        );
+    }
+    line
+}
+
+fn dash(l: &Option<String>) -> &str {
+    l.as_deref().unwrap_or("-")
 }
 
 impl View for Roster {
     fn render_text(&self, out: &mut String) {
+        if let Some(u) = &self.live_unavailable {
+            let parts: Vec<String> = [("herdr", &u.herdr), ("threads", &u.threads)]
+                .into_iter()
+                .filter_map(|(k, v)| v.as_ref().map(|r| format!("{k}: {r}")))
+                .collect();
+            let _ = writeln!(out, "live data unavailable: {}", parts.join("; "));
+        }
         for t in &self.teamspaces {
             let _ = writeln!(out, "{} ({}) {}", t.name, t.id, word(&t.lifecycle));
             for s in &t.seats {
@@ -323,6 +607,26 @@ impl View for Roster {
                 for c in &s.clones {
                     let _ = writeln!(out, "    {}", clone_line(c));
                 }
+            }
+        }
+        if let Some(tl) = &self.threads_live {
+            for (seat, msg) in tl.seat_refusals.iter().flatten() {
+                let _ = writeln!(out, "threads seat refused: {seat}: {msg}");
+            }
+            for lost in tl.seat_lost.iter().flatten() {
+                let _ = writeln!(out, "threads seat lost: {lost}");
+            }
+        }
+        if let Some(Some(u)) = &self.unmanaged {
+            let _ = writeln!(out, "unmanaged:");
+            for w in &u.workspaces {
+                let _ = writeln!(out, "  workspace {} {}", w.id, dash(&w.label));
+            }
+            for t in &u.tabs {
+                let _ = writeln!(out, "  tab {} {} in {}", t.id, dash(&t.label), t.workspace);
+            }
+            for p in &u.panes {
+                let _ = writeln!(out, "  pane {} {} in {}", p.id, dash(&p.label), p.tab);
             }
         }
     }
@@ -649,5 +953,371 @@ mod tests {
             instructions_text(&InstructionsView::error("boom")),
             "error: boom"
         );
+    }
+
+    // ---- live overlay ----
+
+    use crate::ports::herdr::{AgentInfo, PaneInfo, TabInfo, WorkspaceInfo};
+
+    fn inc(pid: u32) -> Incarnation {
+        Incarnation {
+            generation: 1,
+            server_pid: Some(pid),
+            server_started: Some("t0".into()),
+        }
+    }
+
+    fn pane(id: &str, label: Option<&str>, agent: Option<(&str, AgentStatus)>) -> PaneInfo {
+        PaneInfo {
+            id: HerdrPaneId(id.into()),
+            terminal_id: None,
+            label: label.map(str::to_owned),
+            cwd: None,
+            metadata: Default::default(),
+            agent: agent.map(|(k, s)| AgentInfo {
+                kind: k.into(),
+                status: s,
+                session: None,
+            }),
+        }
+    }
+
+    fn tab(id: &str, label: &str, panes: Vec<PaneInfo>) -> TabInfo {
+        TabInfo {
+            id: HerdrTabId(id.into()),
+            label: label.into(),
+            panes,
+        }
+    }
+
+    fn ws(id: &str, label: &str, tabs: Vec<TabInfo>) -> WorkspaceInfo {
+        WorkspaceInfo {
+            id: HerdrWorkspaceId(id.into()),
+            label: label.into(),
+            metadata: Default::default(),
+            tabs,
+        }
+    }
+
+    /// w3/t2/p7 (the world's present clone) with an idle claude agent, plus unbound w9/t9/p9 and a second
+    /// pane p8 in the bound tab.
+    fn snap(pid: u32) -> HerdrSnapshot {
+        HerdrSnapshot {
+            incarnation: inc(pid),
+            workspaces: vec![
+                ws(
+                    "w3",
+                    "graph",
+                    vec![tab(
+                        "t2",
+                        "foreman",
+                        vec![
+                            pane("p7", None, Some(("claude", AgentStatus::Idle))),
+                            pane("p8", Some("scratch"), None),
+                        ],
+                    )],
+                ),
+                ws("w9", "", vec![tab("t9", "", vec![pane("p9", None, None)])]),
+            ],
+        }
+    }
+
+    fn live_world(bound_pid: u32) -> (World, Roster, Bindings) {
+        let mut w = world();
+        let mut b = w.fx.clone_mut(&w.present).runtime.bound.clone().unwrap();
+        b.incarnation = inc(bound_pid);
+        let rt = Runtime {
+            availability: Availability::Present,
+            bound: Some(b),
+            observed_at: None,
+        };
+        let present = w.present.clone();
+        w.fx.set_runtime(&present, rt);
+        w.fx.commit("rebind");
+        let at = pin_head(&w.fx.store).unwrap();
+        let q = RosterQuery {
+            scope: Scope::Instance,
+            all: false,
+        };
+        let (r, b) = build_with_bindings(&w.fx.store, &at, &q, true).unwrap();
+        (w, r, b)
+    }
+
+    fn clone_of<'a>(r: &'a Roster, id: &CloneId) -> &'a RosterClone {
+        r.teamspaces
+            .iter()
+            .flat_map(|t| &t.seats)
+            .flat_map(|s| &s.clones)
+            .find(|c| &c.id == id)
+            .unwrap()
+    }
+
+    fn threads_ok() -> ThreadsRead {
+        ThreadsRead::Ok {
+            refusals: BTreeMap::from([("sn9".to_owned(), "refused".to_owned())]),
+            lost: vec![json!({"seat": "sn8"})],
+        }
+    }
+
+    #[test]
+    fn overlay_matches_same_server() {
+        let (w, mut r, b) = live_world(5);
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), false);
+        let live = clone_of(&r, &w.present).live.clone().unwrap();
+        assert!(live.live_pane_matches && !live.binding_from_earlier_server);
+        assert_eq!(
+            live.agent,
+            Some(AgentView {
+                kind: "claude".into(),
+                status: AgentStatus::Idle
+            })
+        );
+        // a clone with no binding is live but matches nothing
+        let alt = clone_of(&r, &w.absent).live.clone().unwrap();
+        assert_eq!((alt.agent, alt.live_pane_matches), (None, false));
+        assert!(!alt.binding_from_earlier_server);
+        assert!(r.live_unavailable.is_none() && r.unmanaged.is_none());
+        let tl = r.threads_live.unwrap();
+        assert_eq!(tl.seat_refusals.unwrap()["sn9"], "refused");
+        assert_eq!(tl.seat_lost.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn matches_needs_the_pane_in_that_tab_and_workspace() {
+        let (w, mut r, b) = live_world(5);
+        let mut s = snap(5);
+        // the same pane id now lives in another tab
+        let moved = s.workspaces[0].tabs[0].panes.remove(0);
+        s.workspaces[1].tabs[0].panes.push(moved);
+        overlay(&mut r, &b, Ok(&s), threads_ok(), false);
+        let live = clone_of(&r, &w.present).live.clone().unwrap();
+        assert!(!live.live_pane_matches && live.agent.is_none());
+        assert!(!live.binding_from_earlier_server);
+    }
+
+    #[test]
+    fn earlier_incarnation_is_false_and_reported() {
+        let (w, mut r, b) = live_world(4);
+        // the new server (pid 5) reuses w3/t2/p7
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), false);
+        let live = clone_of(&r, &w.present).live.clone().unwrap();
+        assert!(!live.live_pane_matches);
+        assert!(live.binding_from_earlier_server);
+        assert!(
+            live.agent.is_none(),
+            "no agent for a binding of another server"
+        );
+        let mut out = String::new();
+        r.render_text(&mut out);
+        assert!(out.contains("binding from earlier herdr server"), "{out}");
+    }
+
+    #[test]
+    fn degraded_herdr() {
+        let (w, mut r, b) = live_world(5);
+        overlay(
+            &mut r,
+            &b,
+            Err("no herdr client".into()),
+            threads_ok(),
+            true,
+        );
+        for c in r
+            .teamspaces
+            .iter()
+            .flat_map(|t| &t.seats)
+            .flat_map(|s| &s.clones)
+        {
+            assert!(c.live.is_none());
+        }
+        assert_eq!(
+            r.live_unavailable,
+            Some(LiveUnavailable {
+                herdr: Some("no herdr client".into()),
+                threads: None
+            })
+        );
+        assert_eq!(r.unmanaged, Some(None), "null, not an empty list");
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["unmanaged"], json!(null));
+        assert!(v.as_object().unwrap().contains_key("unmanaged"));
+        assert_eq!(v["live_unavailable"], json!({"herdr": "no herdr client"}));
+        let mut out = String::new();
+        r.render_text(&mut out);
+        assert_eq!(
+            out.lines().next(),
+            Some("live data unavailable: herdr: no herdr client")
+        );
+        let _ = w;
+    }
+
+    #[test]
+    fn degraded_threads() {
+        let (w, mut r, b) = live_world(5);
+        overlay(
+            &mut r,
+            &b,
+            Ok(&snap(5)),
+            ThreadsRead::Unavailable("seat view rejected".into()),
+            false,
+        );
+        assert_eq!(
+            r.threads_live,
+            Some(ThreadsLive {
+                seat_refusals: None,
+                seat_lost: None
+            })
+        );
+        assert_eq!(
+            r.live_unavailable,
+            Some(LiveUnavailable {
+                herdr: None,
+                threads: Some("seat view rejected".into())
+            })
+        );
+        assert!(
+            clone_of(&r, &w.present)
+                .live
+                .as_ref()
+                .unwrap()
+                .live_pane_matches
+        );
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(
+            v["live_unavailable"],
+            json!({"threads": "seat view rejected"})
+        );
+        assert_eq!(
+            v["threads_live"],
+            json!({"seat_refusals": null, "seat_lost": null})
+        );
+        let mut out = String::new();
+        r.render_text(&mut out);
+        assert_eq!(
+            out.lines().next(),
+            Some("live data unavailable: threads: seat view rejected")
+        );
+    }
+
+    #[test]
+    fn live_unavailable_null_when_all_read() {
+        let (_w, mut r, b) = live_world(5);
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), false);
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["live_unavailable"], json!(null));
+        let mut out = String::new();
+        r.render_text(&mut out);
+        assert!(!out.contains("unavailable"), "{out}");
+    }
+
+    #[test]
+    fn unmanaged_lists_only_unbound() {
+        let (_w, mut r, mut b) = live_world(5);
+        // an earlier-server binding naming w9/t9/p9 does not hide the new server's objects; a retired
+        // record's binding is never collected; a same-server one hides its objects
+        b.all.push(Binding {
+            workspace_id: Some(HerdrWorkspaceId("w9".into())),
+            tab_id: Some(HerdrTabId("t9".into())),
+            pane_id: Some(HerdrPaneId("p9".into())),
+            incarnation: inc(4),
+            ..Default::default()
+        });
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), true);
+        let u = r.unmanaged.clone().unwrap().unwrap();
+        let ids = |v: Vec<&str>| v.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            u.workspaces
+                .iter()
+                .map(|w| w.id.0.clone())
+                .collect::<Vec<_>>(),
+            ids(vec!["w9"])
+        );
+        assert_eq!(
+            u.tabs
+                .iter()
+                .map(|t| (t.id.0.clone(), t.workspace.0.clone()))
+                .collect::<Vec<_>>(),
+            vec![("t9".to_owned(), "w9".to_owned())]
+        );
+        assert_eq!(
+            u.panes
+                .iter()
+                .map(|p| (p.id.0.clone(), p.tab.0.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("p8".to_owned(), "t2".to_owned()),
+                ("p9".to_owned(), "t9".to_owned())
+            ]
+        );
+        let mut out = String::new();
+        r.render_text(&mut out);
+        assert!(out.contains("unmanaged:\n  workspace w9 -\n  tab t9 - in w9\n  pane p8 scratch in t2\n  pane p9 - in t9"), "{out}");
+        // the JSON section carries ids, labels and parent ids only
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(
+            v["unmanaged"]["panes"][0],
+            json!({"id": "p8", "label": "scratch", "tab": "t2"})
+        );
+    }
+
+    #[test]
+    fn unmanaged_collects_only_non_retired_bindings() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("p", Lifecycle::Active);
+        let s = fx.seat(&t, "s", Lifecycle::Active);
+        let bound = |pane: &str| Runtime {
+            availability: Availability::Present,
+            bound: Some(Binding {
+                pane_id: Some(HerdrPaneId(pane.into())),
+                incarnation: inc(5),
+                ..Default::default()
+            }),
+            observed_at: None,
+        };
+        let live = fx.clone_rec(&s, "live", CloneLifecycle::Active, vec![], None);
+        let dead = fx.clone_rec(&s, "dead", CloneLifecycle::Retired, vec![], None);
+        fx.set_runtime(&live, bound("p1"));
+        fx.set_runtime(&dead, bound("p2"));
+        fx.commit("c");
+        let at = pin_head(&fx.store).unwrap();
+        // a seat scope still collects the whole instance's bindings
+        let q = RosterQuery {
+            scope: Scope::Seat(s),
+            all: true,
+        };
+        let (_r, b) = build_with_bindings(&fx.store, &at, &q, true).unwrap();
+        let panes: Vec<_> = b.all.iter().map(|b| b.pane_id.clone().unwrap().0).collect();
+        assert_eq!(
+            panes,
+            vec!["p1".to_owned()],
+            "the retired clone's binding is not collected"
+        );
+        assert!(b.clones.contains_key(&live) && b.clones.contains_key(&dead));
+    }
+
+    #[test]
+    fn unmanaged_label_null() {
+        let (_w, mut r, b) = live_world(5);
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), true);
+        let u = r.unmanaged.unwrap().unwrap();
+        assert_eq!(u.workspaces[0].label, None);
+        assert_eq!(u.tabs[0].label, None);
+        assert_eq!(u.panes[0].label.as_deref(), Some("scratch"));
+        assert_eq!(u.panes[1].label, None);
+    }
+
+    #[test]
+    fn unmanaged_absent_without_flag_and_round_trips() {
+        let (_w, mut r, b) = live_world(5);
+        overlay(&mut r, &b, Ok(&snap(5)), threads_ok(), false);
+        let v = serde_json::to_value(&r).unwrap();
+        assert!(!v.as_object().unwrap().contains_key("unmanaged"));
+        let back: Roster = serde_json::from_value(v).unwrap();
+        assert_eq!(back.unmanaged, None);
+        // null survives the daemon-to-CLI round trip as null, not as absent
+        overlay(&mut r, &b, Err("x".into()), threads_ok(), true);
+        let back: Roster = serde_json::from_value(serde_json::to_value(&r).unwrap()).unwrap();
+        assert_eq!(back.unmanaged, Some(None));
+        assert_eq!(back, r);
     }
 }
