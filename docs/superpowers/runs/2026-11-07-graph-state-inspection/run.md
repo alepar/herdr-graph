@@ -35,3 +35,15 @@ parked:
 - graph-pass · graph-change · "hg-blw.10 <- hg-blw.12 drop (safe no): docs can be drafted from the spec; depth 6→5"
 - graph-pass · graph-change · "proposal: seam-contract HistoryWalker last-commit-touching-path signature in hg-blw.7 (removes hg-blw.2 <- hg-blw.5)"
 - graph-pass · graph-change · "proposal: seam-contract Part.bytes/digest and InstructionsView status stub in hg-blw.7 (removes hg-blw.12 <- hg-blw.2/.1); with the two above, depth 6→4"
+codeBuckets:
+  completed: hg-blw.7, hg-blw.8, hg-blw.3, hg-blw.1, hg-blw.5, hg-blw.6, hg-blw.9
+  escalated: hg-blw.2
+  pendingRetry:
+  parked:
+  stalled: false
+  review: not ready (baseline rows B2, B5, B7 undelivered at head; roster --live reports threads as read when herdr-threads is down, pinned by the tier-3 test; lib test suite red from stale inspect_stubs_not_implemented)
+  sweep: SWEEP DEFERRED (caller-owned)
+  worktreesKept: task worktrees hg-blw.1/.2/.3/.5/.6/.7/.8/.9/.12 and /tmp/sp-f11883d5 — process cleanup incomplete (exit 4; hg-build unusable)
+  processSweep: stopped 0 · survived 0 · unknown 1 · kept 0 — unknown: /tmp/sp-f11883d5 — git worktree inventory failed
+- hg-blw.2 escalation · degraded-verdict · "BLOCKED [cause: build/test container unusable] — hg-build lost /etc/passwd; restart wedged it in Stopping; force-stop refused by the permission layer. Needs a human to restart or recreate hg-build (README setup). hg-blw.2 code is done on task-hg-blw.2 (48dfe5f + 9bf2777)."
+
