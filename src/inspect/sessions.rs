@@ -1,0 +1,452 @@
+//! The `sessions` view (spec §2.5): a flat, newest-first list of every native session in scope.
+use crate::inspect::inventory::{Inventory, TranscriptRef};
+use crate::inspect::output::View;
+use crate::inspect::scope::Scope;
+use crate::model::harness::Harness;
+use crate::model::native_session::SessionEndReason;
+use crate::model::{NsId, Timestamp};
+use serde::Serialize;
+use std::path::PathBuf;
+
+/// The `sessions` view body, serialized as `{tombstones, total, rows}` inside the envelope.
+///
+/// Owns: sorting (`started` descending, ns_ id ascending on ties), `--since`, `--limit`, `total` and the
+/// text footers. Must not: enumerate records, resolve transcripts (rows carry exactly the
+/// `TranscriptRef` Inventory resolved) or read history. Where new behavior goes: a new per-session fact
+/// is added to Inventory's `SessionEntry` and copied into [`SessionRow`] here.
+#[derive(Debug, Serialize)]
+pub struct SessionsView {
+    /// Purge tombstones in scope; their sessions are gone from HEAD and not listed.
+    pub tombstones: usize,
+    /// Sessions in scope after `--since`, before `--limit`.
+    pub total: usize,
+    pub rows: Vec<SessionRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SessionRow {
+    pub ns: NsId,
+    pub native_session_id: String,
+    pub harness: Harness,
+    pub started: Timestamp,
+    pub ended: Option<Timestamp>,
+    pub end_reason: Option<SessionEndReason>,
+    pub current: bool,
+    pub teamspace: ObjRef,
+    pub seat: ObjRef,
+    pub clone: ObjRef,
+    pub transcript: Option<TranscriptRef>,
+    pub cwd: PathBuf,
+}
+
+/// A parent object of a session with its lifecycle word (`active`, `dormant`, `retired`).
+#[derive(Debug, Serialize)]
+pub struct ObjRef {
+    pub id: String,
+    pub name: String,
+    pub lifecycle: String,
+}
+
+fn obj(id: &impl ToString, name: &str, lifecycle: impl Serialize) -> ObjRef {
+    ObjRef {
+        id: id.to_string(),
+        name: name.to_owned(),
+        lifecycle: word(&lifecycle),
+    }
+}
+
+/// The serde (snake_case) word of a unit enum value.
+fn word(v: &impl Serialize) -> String {
+    match serde_json::to_value(v) {
+        Ok(serde_json::Value::String(s)) => s,
+        Ok(other) => other.to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+pub struct SessionsQuery {
+    pub scope: Scope,
+    pub since: Option<Timestamp>,
+    pub limit: usize,
+}
+
+pub fn build(inv: &Inventory, q: &SessionsQuery) -> SessionsView {
+    let mut rows = Vec::new();
+    for (t, s, c) in inv.clones() {
+        if c.tombstone {
+            continue;
+        }
+        for e in &c.sessions {
+            if q.since.is_some_and(|since| e.session.started < since) {
+                continue;
+            }
+            let n = &e.session;
+            rows.push(SessionRow {
+                ns: n.id.clone(),
+                native_session_id: n.native_session_id.clone(),
+                harness: n.harness,
+                started: n.started,
+                ended: n.ended,
+                end_reason: n.end_reason,
+                current: e.current,
+                teamspace: obj(&t.record.id, &t.record.name, t.record.lifecycle),
+                seat: obj(&s.record.id, &s.record.name, s.record.lifecycle),
+                clone: obj(&c.record.id, &c.record.name, c.record.lifecycle),
+                transcript: e.transcript.clone(),
+                cwd: n.cwd.clone(),
+            });
+        }
+    }
+    rows.sort_by(|a, b| {
+        b.started
+            .cmp(&a.started)
+            .then_with(|| a.ns.to_string().cmp(&b.ns.to_string()))
+    });
+    let total = rows.len();
+    rows.truncate(q.limit);
+    SessionsView {
+        tombstones: inv.tombstones,
+        total,
+        rows,
+    }
+}
+
+fn when(t: &Timestamp) -> String {
+    t.format("%Y-%m-%d %H:%MZ").to_string()
+}
+
+impl SessionRow {
+    fn path_column(&self) -> String {
+        let mut p = format!(
+            "{}/{}/{}",
+            self.teamspace.name, self.seat.name, self.clone.name
+        );
+        if [&self.teamspace, &self.seat, &self.clone]
+            .iter()
+            .any(|o| o.lifecycle == "retired")
+        {
+            p.push_str(" [retired]");
+        }
+        p
+    }
+}
+
+impl View for SessionsView {
+    fn render_text(&self, out: &mut String) {
+        let table: Vec<[String; 8]> = std::iter::once(
+            [
+                "STARTED",
+                "ENDED",
+                "END",
+                "TEAMSPACE/SEAT/CLONE",
+                "HARNESS",
+                "NS",
+                "NATIVE ID",
+                "TRANSCRIPT",
+            ]
+            .map(str::to_owned),
+        )
+        .chain(self.rows.iter().map(|r| {
+            [
+                when(&r.started),
+                r.ended.as_ref().map_or("-".into(), when),
+                r.end_reason.as_ref().map_or("-".into(), word),
+                r.path_column(),
+                word(&r.harness),
+                r.ns.to_string(),
+                r.native_session_id.clone(),
+                r.transcript
+                    .as_ref()
+                    .map_or("unresolved".into(), |t| t.path.display().to_string()),
+            ]
+        }))
+        .collect();
+        let mut widths = [0usize; 8];
+        for row in &table {
+            for (w, cell) in widths.iter_mut().zip(row) {
+                *w = (*w).max(cell.chars().count());
+            }
+        }
+        for row in &table {
+            let last = row.len() - 1;
+            let line: Vec<String> = row
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| {
+                    if i == last {
+                        cell.clone()
+                    } else {
+                        format!("{cell:<w$}", w = widths[i])
+                    }
+                })
+                .collect();
+            out.push_str(&line.join("  "));
+            out.push('\n');
+        }
+        if self.tombstones > 0 {
+            out.push_str(&format!(
+                "tombstones in scope: {} (purged clones' sessions are not listed)\n",
+                self.tombstones
+            ));
+        }
+        if self.rows.len() < self.total {
+            out.push_str(&format!(
+                "showing {} of {}; use --limit\n",
+                self.rows.len(),
+                self.total
+            ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inspect::fixture::{Fx, session, ts};
+    use crate::inspect::pin_head;
+    use crate::model::{CloneLifecycle, Lifecycle};
+
+    fn q(scope: Scope) -> SessionsQuery {
+        SessionsQuery {
+            scope,
+            since: None,
+            limit: 50,
+        }
+    }
+
+    fn run(fx: &Fx, query: &SessionsQuery) -> SessionsView {
+        let head = pin_head(&fx.store).unwrap();
+        let inv = Inventory::load(&fx.store, &head, &query.scope).unwrap();
+        build(&inv, query)
+    }
+
+    fn ns_of(fx_sessions: &[&crate::model::native_session::NativeSession]) -> Vec<String> {
+        fx_sessions.iter().map(|s| s.id.to_string()).collect()
+    }
+
+    #[test]
+    fn newest_first_with_tiebreak() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let st = fx.seat(&t, "foreman", Lifecycle::Active);
+        let a = session(Harness::Claude, "a", "2026-11-02T00:00:00Z", None, None);
+        let b = session(Harness::Claude, "b", "2026-11-02T00:00:00Z", None, None);
+        let old = session(Harness::Claude, "old", "2026-11-01T00:00:00Z", None, None);
+        let new = session(Harness::Claude, "new", "2026-11-03T00:00:00Z", None, None);
+        let mut tied = ns_of(&[&a, &b]);
+        tied.sort();
+        let expect = vec![
+            new.id.to_string(),
+            tied[0].clone(),
+            tied[1].clone(),
+            old.id.to_string(),
+        ];
+        fx.clone_rec(&st, "c1", CloneLifecycle::Active, vec![a, old], None);
+        fx.clone_rec(&st, "c2", CloneLifecycle::Active, vec![b, new], None);
+        fx.commit("c");
+        let v = run(&fx, &q(Scope::Instance));
+        let got: Vec<_> = v.rows.iter().map(|r| r.ns.to_string()).collect();
+        assert_eq!(got, expect);
+        assert_eq!(v.total, 4);
+    }
+
+    #[test]
+    fn includes_retired_and_archived() {
+        let mut fx = Fx::new();
+        let at = fx.archived_teamspace("gone");
+        let ast = fx.archived_seat(&at, "deep");
+        let s = session(Harness::Codex, "n1", "2026-10-01T00:00:00Z", None, None);
+        fx.clone_rec(&ast, "old", CloneLifecycle::Retired, vec![s], None);
+        fx.commit("c");
+        let v = run(&fx, &q(Scope::Instance));
+        assert_eq!(v.rows.len(), 1);
+        let r = &v.rows[0];
+        assert_eq!(
+            (
+                r.teamspace.lifecycle.as_str(),
+                r.seat.lifecycle.as_str(),
+                r.clone.lifecycle.as_str()
+            ),
+            ("retired", "retired", "retired")
+        );
+        let mut text = String::new();
+        v.render_text(&mut text);
+        assert!(text.contains("gone/deep/old [retired]"), "{text}");
+    }
+
+    #[test]
+    fn scopes() {
+        let mut fx = Fx::new();
+        let t1 = fx.teamspace("p1", Lifecycle::Active);
+        let t2 = fx.teamspace("p2", Lifecycle::Active);
+        let s1 = fx.seat(&t1, "a", Lifecycle::Active);
+        let s2 = fx.seat(&t1, "b", Lifecycle::Active);
+        let s3 = fx.seat(&t2, "c", Lifecycle::Active);
+        let mk = |n: &str, d: &str| session(Harness::Claude, n, d, None, None);
+        let c1 = fx.clone_rec(
+            &s1,
+            "x",
+            CloneLifecycle::Active,
+            vec![mk("1", "2026-11-01T00:00:00Z")],
+            None,
+        );
+        fx.clone_rec(
+            &s1,
+            "y",
+            CloneLifecycle::Active,
+            vec![mk("2", "2026-11-02T00:00:00Z")],
+            None,
+        );
+        fx.clone_rec(
+            &s2,
+            "z",
+            CloneLifecycle::Active,
+            vec![mk("3", "2026-11-03T00:00:00Z")],
+            None,
+        );
+        fx.clone_rec(
+            &s3,
+            "w",
+            CloneLifecycle::Active,
+            vec![mk("4", "2026-11-04T00:00:00Z")],
+            None,
+        );
+        fx.commit("c");
+        let natives = |s: Scope| -> Vec<String> {
+            run(&fx, &q(s))
+                .rows
+                .iter()
+                .map(|r| r.native_session_id.clone())
+                .collect()
+        };
+        assert_eq!(natives(Scope::Instance), ["4", "3", "2", "1"]);
+        assert!(natives(Scope::Global).is_empty());
+        assert_eq!(natives(Scope::Teamspace(t1)), ["3", "2", "1"]);
+        assert_eq!(natives(Scope::Seat(s1)), ["2", "1"]);
+        assert_eq!(natives(Scope::Clone(c1)), ["1"]);
+    }
+
+    #[test]
+    fn transcript_fallback_from_inventory() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let st = fx.seat(&t, "foreman", Lifecycle::Active);
+        let cid = crate::model::CloneId::new();
+        let own = session(
+            Harness::Claude,
+            "own",
+            "2026-11-03T00:00:00Z",
+            Some("/own.jsonl"),
+            None,
+        );
+        let mut rec = session(Harness::Claude, "rec", "2026-11-02T00:00:00Z", None, None);
+        let tr = fx.transcript(&st, &cid, &rec.id, "/rec.jsonl");
+        rec.transcript = Some(tr);
+        let none = session(Harness::Codex, "none", "2026-11-01T00:00:00Z", None, None);
+        fx.clone_rec_id(
+            &st,
+            cid,
+            "main",
+            CloneLifecycle::Active,
+            vec![own, rec, none],
+            None,
+        );
+        fx.commit("c");
+        let v = run(&fx, &q(Scope::Instance));
+        let srcs: Vec<_> = v
+            .rows
+            .iter()
+            .map(|r| {
+                r.transcript
+                    .as_ref()
+                    .map(|t| (t.path.display().to_string(), word(&t.source)))
+            })
+            .collect();
+        assert_eq!(
+            srcs,
+            [
+                Some(("/own.jsonl".into(), "session".into())),
+                Some(("/rec.jsonl".into(), "transcript_record".into())),
+                None
+            ]
+        );
+        let mut text = String::new();
+        v.render_text(&mut text);
+        assert!(text.contains("unresolved"), "{text}");
+        let src = include_str!("sessions.rs");
+        let prod = src.split("#[cfg(test)]").next().unwrap();
+        assert!(!prod.contains("list_transcripts"));
+    }
+
+    #[test]
+    fn since_limit_total() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let st = fx.seat(&t, "foreman", Lifecycle::Active);
+        let mk = |n: &str, d: &str| session(Harness::Claude, n, d, None, None);
+        fx.clone_rec(
+            &st,
+            "main",
+            CloneLifecycle::Active,
+            vec![
+                mk("a", "2026-11-01T00:00:00Z"),
+                mk("b", "2026-11-02T00:00:00Z"),
+                mk("c", "2026-11-03T00:00:00Z"),
+            ],
+            None,
+        );
+        fx.commit("c");
+        let v = run(
+            &fx,
+            &SessionsQuery {
+                scope: Scope::Instance,
+                since: Some(ts("2026-11-02T00:00:00Z")),
+                limit: 1,
+            },
+        );
+        assert_eq!(v.total, 2);
+        assert_eq!(v.rows.len(), 1);
+        assert_eq!(v.rows[0].native_session_id, "c");
+        let mut text = String::new();
+        v.render_text(&mut text);
+        assert!(text.contains("showing 1 of 2; use --limit"), "{text}");
+        let all = run(&fx, &q(Scope::Instance));
+        let mut text = String::new();
+        all.render_text(&mut text);
+        assert!(!text.contains("showing"), "{text}");
+    }
+
+    #[test]
+    fn tombstones_counted_not_listed() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let s1 = fx.seat(&t, "a", Lifecycle::Active);
+        let s2 = fx.seat(&t, "b", Lifecycle::Active);
+        fx.tombstone(&s1, "purged");
+        fx.clone_rec(
+            &s1,
+            "live",
+            CloneLifecycle::Active,
+            vec![session(
+                Harness::Claude,
+                "k",
+                "2026-11-01T00:00:00Z",
+                None,
+                None,
+            )],
+            None,
+        );
+        fx.clone_rec(&s2, "other", CloneLifecycle::Active, vec![], None);
+        fx.commit("c");
+        let v = run(&fx, &q(Scope::Seat(s1)));
+        assert_eq!((v.tombstones, v.rows.len()), (1, 1));
+        let mut text = String::new();
+        v.render_text(&mut text);
+        assert!(text.contains("tombstones in scope: 1"), "{text}");
+        let v = run(&fx, &q(Scope::Seat(s2)));
+        assert_eq!((v.tombstones, v.rows.len()), (0, 0));
+        let mut text = String::new();
+        v.render_text(&mut text);
+        assert!(!text.contains("tombstones"), "{text}");
+    }
+}
