@@ -1,17 +1,17 @@
 //! Scope: the inspection views' shared scope grammar, resolution and membership.
-use crate::model::{CloneId, CloneLifecycle, CommitId, SeatId, TeamspaceId};
-use crate::ports::store::Store;
+use crate::model::{AnyId, CloneId, CloneLifecycle, CommitId, SeatId, TeamspaceId};
+use crate::ports::store::{RepoPath, Store, StoreError};
 use crate::store::instruction_source::{
     InstructionError, InstructionScope, PickMode, ScopeKind, parse_words, pick, resolve_scope_in,
 };
 use crate::store::layout;
-use crate::store::tree::CommitView;
+use crate::store::tree::{CommitView, TreeRead};
 
 /// A resolved scope: `global | teamspace <t> | seat <s> | clone <c>`, or the whole instance when omitted.
 ///
 /// Owns: the scope grammar ([`ScopeArg::parse`]), name-or-id resolution at a given commit (retired and
 /// `archive/` objects included, one rule for every view) and object membership ([`Scope::contains`]).
-/// Path membership at a commit's tree is added here by hg-blw.5.
+/// Path membership at a commit's own tree ([`Scope::paths_at`], [`Scope::contains_object_at`]) lives here too.
 ///
 /// Must not: be confused with `InstructionScope` (that is the instruction-file scope and refuses retired
 /// names); filter by object kind or requester (that is LogQuery); resolve HEAD (it takes a `CommitId`).
@@ -158,6 +158,98 @@ impl Scope {
             (Scope::Clone(c), Member::Clone { clone, .. }) => c == clone,
             _ => false,
         }
+    }
+}
+
+/// The operation-record directory every commit adds to; never part of any scope (spec §2.4).
+const GRAPH_CHANGES: &str = "mutations/graph-changes/";
+
+/// Path membership of a scope at one commit's own tree (spec §2.4): built by [`Scope::paths_at`], so renames
+/// and moves are attributed by the tree the commit was made in, not by today's folders.
+#[derive(Debug, Clone)]
+pub struct ScopePaths {
+    all: bool,
+    exact: Vec<String>,
+    prefixes: Vec<String>,
+    seat_id: Option<String>,
+}
+
+impl ScopePaths {
+    pub fn contains(&self, p: &RepoPath) -> bool {
+        let p = p.as_str();
+        if p.starts_with(GRAPH_CHANGES) {
+            return false;
+        }
+        if self.all || self.exact.iter().any(|e| e == p) {
+            return true;
+        }
+        let under = |dir: &str| {
+            p == dir || (p.starts_with(dir) && p.as_bytes().get(dir.len()) == Some(&b'/'))
+        };
+        if self.prefixes.iter().any(|d| under(d)) {
+            return true;
+        }
+        // `transcripts/<seat>/..` (legacy) or `transcripts/<slug>-<ts>/<slug>-<seat>/..` (registration).
+        match (&self.seat_id, p.strip_prefix("transcripts/")) {
+            (Some(id), Some(rest)) => {
+                let tail = format!("-{id}");
+                rest.split('/')
+                    .any(|c| c == id.as_str() || c.ends_with(&tail))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Scope {
+    /// This scope's path membership at `tree` (a commit's own tree). `Instance` holds every path but the
+    /// operation records; `Global` the fixed global set; `Teamspace`/`Seat`/`Clone` the folder their id
+    /// resolves to in `tree` (live or `archive/`), none when the id is absent there; `Seat` also the
+    /// transcripts carrying its id.
+    pub fn paths_at(&self, tree: &dyn TreeRead) -> Result<ScopePaths, StoreError> {
+        let mut sp = ScopePaths {
+            all: false,
+            exact: vec![],
+            prefixes: vec![],
+            seat_id: None,
+        };
+        let mut folder = |id: AnyId| -> Result<(), StoreError> {
+            if let Some(loc) = layout::locate(tree, &id)? {
+                sp.prefixes.push(loc.folder.as_str().to_owned());
+            }
+            Ok(())
+        };
+        match self {
+            Scope::Instance => sp.all = true,
+            Scope::Global => {
+                sp.exact = vec!["graph.toml".into(), "threads-namespace.json".into()];
+                sp.prefixes = vec!["rules".into(), "templates".into(), "applications".into()];
+            }
+            Scope::Teamspace(t) => folder(t.to_any())?,
+            Scope::Seat(s) => {
+                folder(s.to_any())?;
+                sp.seat_id = Some(s.to_string());
+            }
+            Scope::Clone(c) => folder(c.to_any())?,
+        }
+        Ok(sp)
+    }
+
+    /// Whether an object an action names (affected or retired) is in scope: located at `tree`, else at
+    /// `fallback` (the commit's parent tree, for an object that commit deleted), and its record path is
+    /// contained by that same tree's [`ScopePaths`]. Not found in either: false.
+    pub fn contains_object_at(
+        &self,
+        tree: &dyn TreeRead,
+        fallback: Option<&dyn TreeRead>,
+        id: &AnyId,
+    ) -> Result<bool, StoreError> {
+        for t in std::iter::once(tree).chain(fallback) {
+            if let Some(loc) = layout::locate(t, id)? {
+                return Ok(self.paths_at(t)?.contains(&loc.record_path));
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -485,5 +577,156 @@ mod tests {
                 "{case}"
             );
         }
+    }
+
+    // Path membership at a commit's own tree (hg-blw.5).
+
+    fn rp(s: &str) -> RepoPath {
+        RepoPath::new(s).unwrap()
+    }
+
+    fn paths_at(fx: &Fx, scope: &Scope, c: &CommitId) -> ScopePaths {
+        scope.paths_at(&fx.store.at(c)).unwrap()
+    }
+
+    #[test]
+    fn paths_global_vs_instance() {
+        let mut fx = Fx::new();
+        let c = fx.commit("c");
+        let g = paths_at(&fx, &Scope::Global, &c);
+        for yes in [
+            "graph.toml",
+            "threads-namespace.json",
+            "rules/a.md",
+            "templates/t/template.toml",
+            "applications/app_x.toml",
+        ] {
+            assert!(g.contains(&rp(yes)), "{yes}");
+        }
+        for no in ["teamspaces/a/teamspace.toml", "rulesx/a.md", "other"] {
+            assert!(!g.contains(&rp(no)), "{no}");
+        }
+        let i = paths_at(&fx, &Scope::Instance, &c);
+        assert!(i.contains(&rp("teamspaces/a/teamspace.toml")));
+        assert!(i.contains(&rp("graph.toml")));
+    }
+
+    #[test]
+    fn graph_changes_never_in_scope() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let c = fx.commit("c");
+        let op = rp("mutations/graph-changes/2026-11/op_x.toml");
+        for scope in [Scope::Instance, Scope::Global, Scope::Teamspace(t.clone())] {
+            assert!(!paths_at(&fx, &scope, &c).contains(&op), "{scope:?}");
+        }
+        // The undoable-actions folder is not excluded from the instance.
+        assert!(
+            paths_at(&fx, &Scope::Instance, &c)
+                .contains(&rp("mutations/undoable-actions/2026-11/act_x.toml"))
+        );
+    }
+
+    #[test]
+    fn paths_follow_rename_at_commit() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "old", Lifecycle::Active);
+        let a = fx.commit("a");
+        fx.rename_seat(&s, "new");
+        let b = fx.commit("b");
+        let scope = Scope::Seat(s);
+        let old_file = rp("teamspaces/alpha/seats/old/notes.md");
+        let new_file = rp("teamspaces/alpha/seats/new/notes.md");
+        let at_a = paths_at(&fx, &scope, &a);
+        assert!(at_a.contains(&old_file) && !at_a.contains(&new_file));
+        let at_b = paths_at(&fx, &scope, &b);
+        assert!(at_b.contains(&new_file) && !at_b.contains(&old_file));
+    }
+
+    #[test]
+    fn paths_archived_seat() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.archived_seat(&t, "gone");
+        let live = fx.seat(&t, "live", Lifecycle::Active);
+        let c = fx.commit("c");
+        let p = paths_at(&fx, &Scope::Seat(s.clone()), &c);
+        let loc = layout::locate(&fx.store.at(&c), &s.to_any())
+            .unwrap()
+            .unwrap();
+        assert!(loc.folder.as_str().contains("archive"), "{loc:?}");
+        assert!(p.contains(&loc.folder.join("seat.toml").unwrap()));
+        assert!(!p.contains(&rp("teamspaces/alpha/seats/live/seat.toml")));
+        let _ = live;
+        // A seat that does not exist in the tree contains no folder paths.
+        let none = paths_at(&fx, &Scope::Seat(SeatId::new()), &c);
+        assert!(!none.contains(&rp("teamspaces/alpha/seats/live/seat.toml")));
+    }
+
+    #[test]
+    fn seat_transcripts_included() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let s = fx.seat(&t, "a", Lifecycle::Active);
+        let other = fx.seat(&t, "b", Lifecycle::Active);
+        let c = fx.commit("c");
+        let tr = crate::model::TranscriptId::new();
+        let p = paths_at(&fx, &Scope::Seat(s.clone()), &c);
+        assert!(p.contains(&layout::transcript_record(&s, &tr)));
+        assert!(p.contains(&layout::transcript_registration_record(
+            "Alpha", &t, "A", &s, &tr
+        )));
+        assert!(!p.contains(&layout::transcript_record(&other, &tr)));
+        assert!(!p.contains(&layout::transcript_registration_record(
+            "Alpha", &t, "B", &other, &tr
+        )));
+        // Teamspace scope does not take transcripts.
+        let pt = paths_at(&fx, &Scope::Teamspace(t.clone()), &c);
+        assert!(!pt.contains(&layout::transcript_record(&s, &tr)));
+    }
+
+    #[test]
+    fn object_membership_affected_retired() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("alpha", Lifecycle::Active);
+        let a = fx.seat(&t, "a", Lifecycle::Active);
+        let b = fx.seat(&t, "b", Lifecycle::Active);
+        let before = fx.commit("both");
+        fx.remove_seat(&b);
+        let after = fx.commit("b removed");
+        let (tb, ta) = (fx.store.at(&before), fx.store.at(&after));
+        let in_a = Scope::Seat(a.clone());
+        let in_b = Scope::Seat(b.clone());
+        assert!(
+            in_a.contains_object_at(&ta, Some(&tb), &a.to_any())
+                .unwrap()
+        );
+        assert!(
+            !in_a
+                .contains_object_at(&ta, Some(&tb), &b.to_any())
+                .unwrap()
+        );
+        assert!(
+            Scope::Teamspace(t.clone())
+                .contains_object_at(&ta, None, &a.to_any())
+                .unwrap()
+        );
+        // b is gone from the commit's own tree: only the parent tree places it.
+        assert!(
+            in_b.contains_object_at(&ta, Some(&tb), &b.to_any())
+                .unwrap()
+        );
+        assert!(!in_b.contains_object_at(&ta, None, &b.to_any()).unwrap());
+        assert!(
+            !Scope::Global
+                .contains_object_at(&tb, None, &a.to_any())
+                .unwrap()
+        );
+        assert!(
+            Scope::Instance
+                .contains_object_at(&tb, None, &a.to_any())
+                .unwrap()
+        );
     }
 }

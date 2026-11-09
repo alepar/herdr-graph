@@ -1,0 +1,61 @@
+//! `herdr-graph log` through the real binary under `TestRoot`: daemon-free, one JSON document on stdout.
+mod support;
+
+use herdr_graph::store::init::init_instance;
+use std::process::Output;
+use support::isolated::TestRoot;
+
+const BIN: &str = env!("CARGO_BIN_EXE_herdr-graph");
+
+fn run(root: &TestRoot, args: &[&str]) -> Output {
+    let mut c = root.command(BIN);
+    c.args(args).env("HERDR_GRAPH_INSTANCE", root.instance());
+    c.output().unwrap()
+}
+
+#[test]
+fn log_json_lists_the_init_commit() {
+    let root = TestRoot::new();
+    init_instance(&root.instance()).unwrap();
+    let out = run(&root, &["log", "--json"]);
+    let err = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    let docs: Vec<serde_json::Value> = serde_json::Deserializer::from_slice(&out.stdout)
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(docs.len(), 1, "stdout must be one JSON document");
+    let doc = &docs[0];
+    assert_eq!(doc["schema"], 1);
+    let rows = doc["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0]["op"].is_null() && rows[0]["kind"].is_null());
+    assert_eq!(rows[0]["malformed"], serde_json::json!([]));
+    assert_eq!(doc["scan"]["stopped_early"], false);
+    assert!(
+        err.contains("herdr-graph ops"),
+        "ops pointer goes to stderr under --json: {err}"
+    );
+}
+
+#[test]
+fn log_global_and_clone_scopes() {
+    let root = TestRoot::new();
+    init_instance(&root.instance()).unwrap();
+    let out = run(&root, &["log", "global"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert_eq!(
+        text.lines().last().unwrap().split_whitespace().next(),
+        Some("journal-only")
+    );
+    let out = run(&root, &["log", "clone", "x"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("only for sessions"));
+    let help = run(&root, &["log", "--help"]);
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    assert!(
+        help.contains("global paths only") && help.contains("every change in the instance"),
+        "{help}"
+    );
+}
