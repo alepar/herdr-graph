@@ -68,6 +68,10 @@ fn reads_without_daemon_exit_5() {
         vec!["who", "p1"],
         vec!["ops"],
         vec!["ops", "--unresolved"],
+        // --seat/--teamspace resolve against the graph first: the fixture commits no seat, so an unknown
+        // name exits 1 before the daemon call (by design); only the unfiltered flags reach it.
+        vec!["ops", "--limit", "5", "--json"],
+        vec!["ops", "--unresolved", "--json"],
         vec!["op", &op],
         vec!["check-instruction", &op, &seat, "1"],
         vec!["request", "list"],
