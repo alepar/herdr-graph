@@ -14,6 +14,7 @@ use std::process::ExitCode;
 pub mod inventory;
 pub mod output;
 pub mod scope;
+pub mod sessions;
 
 #[cfg(test)]
 pub(crate) mod fixture;
