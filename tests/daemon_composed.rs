@@ -20,6 +20,7 @@ use herdr_graph::plan::store::PlanStore;
 use herdr_graph::ports::clock::ManualClock;
 use herdr_graph::ports::herdr::{AgentInfo, AgentSession, AgentStatus, HerdrApi};
 use herdr_graph::ports::store::Store;
+use herdr_graph::ports::threads::{SeatStatus, ThreadsSeatRef};
 use herdr_graph::ports::writer::{Writer, WriterError};
 use herdr_graph::store::GitStore;
 use herdr_graph::store::init::init_instance;
@@ -27,7 +28,6 @@ use herdr_graph::store::instruction_source::{ScopeKind, resolve_scope};
 use herdr_graph::store::layout;
 use herdr_graph::store::tree::CommitView;
 use herdr_graph::threads::discovery::DiscoveryInputs;
-use herdr_graph::ports::threads::{SeatStatus, ThreadsSeatRef};
 use herdr_graph::threads::{FakePaneSeatMap, FakeThreads, FakeThreadsSeatView};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -349,6 +349,7 @@ async fn every_kind_and_command_registered() {
         "ops.cancel",
         "ops.reassign",
         "ops.check_instruction",
+        "roster.live",
         "undo.list",
         "undo.apply",
         "seat.resolve",
@@ -1882,20 +1883,14 @@ async fn settle_after_step(d: &Daemon) {
         d.fakes.seat_view.reads() >= r0 + 2
     })
     .await;
-    let mut last = (
-        d.fakes.threads.calls().len(),
-        d.fakes.herdr.calls().len(),
-    );
+    let mut last = (d.fakes.threads.calls().len(), d.fakes.herdr.calls().len());
     let mut stable = 0;
     let mut status = Value::Null;
     for _ in 0..200 {
         tokio::time::sleep(Duration::from_millis(50)).await;
         status = d.call("status", json!({})).await.unwrap();
         let r = &status["components"]["reconciler"];
-        let now = (
-            d.fakes.threads.calls().len(),
-            d.fakes.herdr.calls().len(),
-        );
+        let now = (d.fakes.threads.calls().len(), d.fakes.herdr.calls().len());
         if r["unknown_effects"] == 0 && now == last {
             stable += 1;
             if stable >= 8 {

@@ -358,6 +358,16 @@ pub async fn compose_with(
         clock: clock.clone(),
     });
     crate::plan::reminders::register_loop(reg, sched, reminder_period);
+    crate::daemon::roster_live::register(
+        reg,
+        crate::daemon::roster_live::RosterLiveDeps {
+            git: git.clone(),
+            herdr: Some(herdr.clone()),
+            seat_view_error: seat_view_error.clone(),
+            refusals: seat_refusals.clone(),
+            lost: runtime.seat_lost(),
+        },
+    );
     register_threads_connection_with(
         reg,
         threads.clone(),
