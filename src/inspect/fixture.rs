@@ -24,6 +24,7 @@ pub(crate) struct Fx {
     clones: BTreeMap<CloneId, (RepoPath, CloneRecord)>,
     transcripts: BTreeMap<TranscriptId, (RepoPath, TranscriptRecord)>,
     used: BTreeSet<RepoPath>,
+    node_manager: Option<SeatId>,
 }
 
 pub(crate) fn ts(s: &str) -> Timestamp {
@@ -67,6 +68,7 @@ impl Fx {
             clones: BTreeMap::new(),
             transcripts: BTreeMap::new(),
             used: BTreeSet::new(),
+            node_manager: None,
         }
     }
 
@@ -281,6 +283,15 @@ impl Fx {
         id
     }
 
+    pub fn seat_mut(&mut self, id: &SeatId) -> &mut SeatRecord {
+        &mut self.seats.get_mut(id).unwrap().1
+    }
+
+    /// `graph.toml`'s `node_manager_seat`, written by the next `commit`.
+    pub fn set_node_manager(&mut self, seat: &SeatId) {
+        self.node_manager = Some(seat.clone());
+    }
+
     /// Writes every record as one commit on main and returns its id.
     pub fn commit(&mut self, msg: &str) -> CommitId {
         let mut e = EditSet::default();
@@ -300,6 +311,15 @@ impl Fx {
             e.put(path.clone(), record::to_toml_bytes(r).unwrap());
         }
         let head = self.store.head().unwrap();
+        if let Some(nm) = &self.node_manager {
+            let view = crate::store::tree::CommitView {
+                store: &self.store,
+                at: head.clone(),
+            };
+            let mut graph = layout::read_graph(&view).unwrap();
+            graph.node_manager_seat = Some(nm.clone());
+            e.put(layout::graph_toml(), record::to_toml_bytes(&graph).unwrap());
+        }
         let tree = self.store.build_tree(&head, &e).unwrap();
         self.store
             .with_repo(|r| {

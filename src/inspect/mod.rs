@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 pub mod inventory;
 pub mod output;
+pub mod roster;
 pub mod scope;
 pub mod sessions;
 
