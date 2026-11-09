@@ -1,6 +1,6 @@
 //! View output: the `schema`/`head` envelope, the JSON-or-text choice and the shared instructions object.
 use crate::model::{CommitId, Timestamp};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 
 pub const SCHEMA: u32 = 1;
@@ -108,7 +108,7 @@ pub fn print<B: View>(
 /// (hg-blw.1) and stack `clones[].instructions` (hg-blw.2); hg-blw.12 fills its behavior. Views import it and
 /// never define their own. It owns only the shape and its two constructors; the current/stale/unknown rule
 /// belongs to LoadedInstructions.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InstructionsView {
     pub status: InstructionsStatus,
     pub loaded_rev: Option<String>,
@@ -129,7 +129,7 @@ pub struct InstructionsView {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstructionsStatus {
     Current,
@@ -138,26 +138,26 @@ pub enum InstructionsStatus {
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeliveredPart {
     pub label: String,
     pub delivered: Delivery,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Delivery {
     Whole,
     Cut,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StalePart {
     pub label: String,
     pub change: PartChange,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PartChange {
     Modified,

@@ -12,7 +12,7 @@ use crate::model::{
 use crate::ports::store::{ObjectLocation, Store, StoreError, unresolved};
 use crate::store::layout;
 use crate::store::tree::CommitView;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -75,7 +75,7 @@ pub struct SessionEntry {
 }
 
 /// Spec §2.2 JSON `runtime`; serialized by the views as is.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuntimeView {
     pub availability: Availability,
     pub pane: Option<HerdrPaneId>,
@@ -85,14 +85,14 @@ pub struct RuntimeView {
 }
 
 /// Spec §2.5 JSON `transcript`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TranscriptRef {
     pub id: Option<TranscriptId>,
     pub path: PathBuf,
     pub source: TranscriptSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptSource {
     Session,

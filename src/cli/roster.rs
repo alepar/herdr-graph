@@ -1,7 +1,14 @@
 //! `roster` (spec §2.2): seats and clones with pane, occupant, threads state and instruction status.
 //! The group and its args are registered here; `run()` is implemented by hg-blw.1 (`--live` and
 //! `--unmanaged` by hg-blw.6).
+use crate::daemon::client::{EXIT_NO_INSTANCE, instance_or_none};
+use crate::inspect::output::{Envelope, Format, emit};
+use crate::inspect::roster::{RosterQuery, build};
+use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
+use crate::inspect::{fail, pin_head};
+use crate::store::GitStore;
 use clap::Subcommand;
+use std::io::Write;
 use std::process::ExitCode;
 
 #[derive(Subcommand, Debug)]
@@ -25,6 +32,134 @@ pub enum Commands {
     },
 }
 
-pub fn run(_cmd: Commands) -> anyhow::Result<ExitCode> {
-    anyhow::bail!("roster: not implemented yet")
+pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+    let Commands::Roster { live: true, .. } = &cmd else {
+        let Some(root) = instance_or_none() else {
+            return Ok(ExitCode::from(EXIT_NO_INSTANCE));
+        };
+        let store = match GitStore::open(&root) {
+            Ok(s) => s,
+            Err(e) => return Ok(fail(&e.into())),
+        };
+        return Ok(
+            match execute(
+                &store,
+                &cmd,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => fail(&e),
+            },
+        );
+    };
+    anyhow::bail!("roster --live: not implemented yet")
+}
+
+/// The daemon-free roster: pins HEAD once, resolves the scope and builds the one roster at that commit.
+fn execute(
+    store: &GitStore,
+    cmd: &Commands,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let Commands::Roster {
+        scope, all, json, ..
+    } = cmd;
+    let head = pin_head(store)?;
+    let arg = ScopeArg::parse(scope, AllowClone::No)?;
+    let scope: Scope = Scope::resolve(&arg, store, &head)?;
+    let roster = build(store, &head, &RosterQuery { scope, all: *all })?;
+    emit(
+        &Envelope::new(&head, roster).with_live(false),
+        Format::from_flag(*json),
+        &[],
+        out,
+        err,
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inspect::fixture::Fx;
+    use crate::model::{CloneLifecycle, Lifecycle};
+    use serde_json::Value;
+    use std::collections::BTreeMap;
+
+    type Snapshot = (String, Vec<(String, String)>, BTreeMap<String, u32>);
+
+    fn snapshot(store: &GitStore) -> Snapshot {
+        use crate::ports::store::Store;
+        let head = store.head().unwrap().0;
+        store
+            .with_repo(|r| {
+                let idx = r.index()?;
+                let entries = idx
+                    .iter()
+                    .map(|e| {
+                        (
+                            String::from_utf8_lossy(&e.path).into_owned(),
+                            e.id.to_string(),
+                        )
+                    })
+                    .collect();
+                let st = r
+                    .statuses(None)?
+                    .iter()
+                    .map(|e| (e.path().unwrap_or("").to_owned(), e.status().bits()))
+                    .collect();
+                Ok((head.clone(), entries, st))
+            })
+            .unwrap()
+    }
+
+    fn cmd(json: bool) -> Commands {
+        Commands::Roster {
+            scope: vec![],
+            all: true,
+            live: false,
+            unmanaged: false,
+            json,
+        }
+    }
+
+    #[test]
+    fn roster_is_read_only() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let s = fx.seat(&t, "foreman", Lifecycle::Active);
+        fx.clone_rec(&s, "main", CloneLifecycle::Active, vec![], None);
+        fx.commit("c");
+        let before = snapshot(&fx.store);
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        execute(&fx.store, &cmd(false), &mut out, &mut err).unwrap();
+        assert!(String::from_utf8(out).unwrap().contains("foreman"));
+        let (mut jout, mut jerr) = (Vec::new(), Vec::new());
+        execute(&fx.store, &cmd(true), &mut jout, &mut jerr).unwrap();
+        let docs: Vec<Value> = serde_json::Deserializer::from_slice(&jout)
+            .into_iter::<Value>()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0]["schema"], 1);
+        assert_eq!(docs[0]["live"], false);
+        assert!(jerr.is_empty() && err.is_empty());
+        assert_eq!(snapshot(&fx.store), before);
+    }
+
+    #[test]
+    fn clone_scope_is_a_usage_error() {
+        let fx = Fx::new();
+        let c = Commands::Roster {
+            scope: vec!["clone".into(), "x".into()],
+            all: false,
+            live: false,
+            unmanaged: false,
+            json: false,
+        };
+        let e = execute(&fx.store, &c, &mut Vec::new(), &mut Vec::new()).unwrap_err();
+        assert!(e.to_string().contains("clone"), "{e}");
+    }
 }
