@@ -1,14 +1,17 @@
 //! Test-only instance builder for inspect tests: a tempfile instance (`store::init::init_instance`) plus
 //! committed teamspace/seat/clone/transcript records. In-process only: it spawns nothing.
+use crate::model::action::{ActionKind, ActionRecord, AffectedObject};
+use crate::model::change::{RequestKind, Requester};
 use crate::model::clone::{CloneRecord, SeatIntent};
 use crate::model::harness::Harness;
 use crate::model::native_session::NativeSession;
+use crate::model::operation::{OpState, OperationRecord};
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::transcript::TranscriptRecord;
 use crate::model::{
-    CloneId, CloneLifecycle, CommitId, Lifecycle, NsId, Occupant, Runtime, SCHEMA_VERSION, SeatId,
-    TeamspaceId, Timestamp, TranscriptId,
+    ActionId, AnyId, CloneId, CloneLifecycle, CommitId, Lifecycle, NsId, Occupant, OpId, Runtime,
+    SCHEMA_VERSION, SeatId, TeamspaceId, Timestamp, TranscriptId,
 };
 use crate::ports::store::{RepoPath, Store};
 use crate::store::git::graph_signature;
@@ -25,6 +28,12 @@ pub(crate) struct Fx {
     transcripts: BTreeMap<TranscriptId, (RepoPath, TranscriptRecord)>,
     used: BTreeSet<RepoPath>,
     node_manager: Option<SeatId>,
+    ops: BTreeMap<OpId, (RepoPath, OperationRecord)>,
+    actions: BTreeMap<ActionId, (RepoPath, ActionRecord)>,
+    /// Raw edits applied by the next commit only.
+    extra: EditSet,
+    /// Commit time for the next commits; the wall clock when unset.
+    time: Option<Timestamp>,
 }
 
 pub(crate) fn ts(s: &str) -> Timestamp {
@@ -69,6 +78,10 @@ impl Fx {
             transcripts: BTreeMap::new(),
             used: BTreeSet::new(),
             node_manager: None,
+            ops: BTreeMap::new(),
+            actions: BTreeMap::new(),
+            extra: EditSet::default(),
+            time: None,
         }
     }
 
@@ -292,9 +305,141 @@ impl Fx {
         self.node_manager = Some(seat.clone());
     }
 
+    /// Commit time of the following commits (default: now).
+    pub fn set_time(&mut self, t: &str) {
+        self.time = Some(ts(t));
+    }
+
+    /// A raw file edit for the next commit (e.g. a record that must not parse).
+    pub fn put_file(&mut self, path: RepoPath, bytes: Vec<u8>) {
+        self.extra.put(path, bytes);
+    }
+
+    /// An `OperationRecord` (committed state), written by every following commit from then on, so only the
+    /// first one shows it as a change.
+    pub fn operation(&mut self, kind: RequestKind, summary: &str, requester: Requester) -> OpId {
+        let id = OpId::new();
+        let at = self.time.unwrap_or_else(chrono::Utc::now);
+        let rec = OperationRecord {
+            schema: SCHEMA_VERSION,
+            id: id.clone(),
+            rev: 1,
+            kind,
+            summary: summary.into(),
+            requester,
+            state: OpState::Committed,
+            confirmation: None,
+            plan: None,
+            commit: None,
+            action: None,
+            supersedes: None,
+            superseded_by: None,
+            admitted_at: at,
+            finished_at: None,
+            rejection: None,
+        };
+        self.ops
+            .insert(id.clone(), (layout::operation_record(at, &id), rec));
+        id
+    }
+
+    pub fn operation_mut(&mut self, id: &OpId) -> &mut OperationRecord {
+        &mut self.ops.get_mut(id).unwrap().1
+    }
+
+    /// An `ActionRecord`, kept and rewritten like `operation`.
+    pub fn action(
+        &mut self,
+        kind: ActionKind,
+        ops: &[OpId],
+        affected: Vec<AffectedObject>,
+        retired: Vec<AnyId>,
+    ) -> ActionId {
+        let id = ActionId::new();
+        let at = self.time.unwrap_or_else(chrono::Utc::now);
+        let rec = ActionRecord {
+            schema: SCHEMA_VERSION,
+            id: id.clone(),
+            rev: 1,
+            kind,
+            at,
+            ops: ops.to_vec(),
+            affected,
+            retired,
+            already_retired: vec![],
+            compensation: Default::default(),
+            undoes: None,
+            undone_by: vec![],
+        };
+        self.actions
+            .insert(id.clone(), (layout::action_record(at, &id), rec));
+        id
+    }
+
+    pub fn action_mut(&mut self, id: &ActionId) -> &mut ActionRecord {
+        &mut self.actions.get_mut(id).unwrap().1
+    }
+
+    /// Drop an action record from the instance (the next commit deletes its file).
+    pub fn remove_action(&mut self, id: &ActionId) {
+        let (path, _) = self.actions.remove(id).unwrap();
+        self.extra.delete(path);
+    }
+
+    /// Move a seat (without clones) to a new folder name: the next commit deletes the old record and writes
+    /// the new one.
+    pub fn rename_seat(&mut self, id: &SeatId, new_name: &str) {
+        let (old, mut rec) = self.seats.remove(id).unwrap();
+        self.extra.delete(layout::seat_record(&old));
+        rec.name = new_name.into();
+        let ts_dir = self.ts_dir(&rec.teamspace);
+        let dir = self.free(layout::seat_dir(&ts_dir, new_name), rec.id.suffix6());
+        self.seats.insert(id.clone(), (dir, rec));
+    }
+
+    /// Drop a seat (without clones) from the instance; the next commit deletes its record.
+    pub fn remove_seat(&mut self, id: &SeatId) {
+        let (dir, _) = self.seats.remove(id).unwrap();
+        self.extra.delete(layout::seat_record(&dir));
+    }
+
     /// Writes every record as one commit on main and returns its id.
     pub fn commit(&mut self, msg: &str) -> CommitId {
-        let mut e = EditSet::default();
+        self.commit_with_trailers(msg, None, None)
+    }
+
+    /// `commit` with the writer's `Graph-Op:` / `Graph-Action:` trailers (`src/writer/mod.rs` format).
+    pub fn commit_with_trailers(
+        &mut self,
+        summary: &str,
+        op: Option<&OpId>,
+        action: Option<&ActionId>,
+    ) -> CommitId {
+        let mut msg = summary.to_owned();
+        if op.is_some() || action.is_some() {
+            msg.push('\n');
+        }
+        if let Some(op) = op {
+            msg.push_str(&format!("\nGraph-Op: {op}\n"));
+        }
+        if let Some(a) = action {
+            msg.push_str(&format!("Graph-Action: {a}\n"));
+        }
+        let mut e = std::mem::take(&mut self.extra);
+        for (path, r) in self
+            .ops
+            .values()
+            .map(|(p, r)| (p, record::to_toml_bytes(r)))
+        {
+            e.put(path.clone(), r.unwrap());
+        }
+        for (path, r) in self
+            .actions
+            .values()
+            .map(|(p, r)| (p, record::to_toml_bytes(r)))
+        {
+            e.put(path.clone(), r.unwrap());
+        }
         for (dir, r) in self.teamspaces.values() {
             e.put(
                 layout::teamspace_record(dir),
@@ -320,13 +465,21 @@ impl Fx {
             graph.node_manager_seat = Some(nm.clone());
             e.put(layout::graph_toml(), record::to_toml_bytes(&graph).unwrap());
         }
+        let time = self.time;
         let tree = self.store.build_tree(&head, &e).unwrap();
         self.store
             .with_repo(|r| {
-                let sig = graph_signature()?;
+                let sig = match time {
+                    Some(t) => git2::Signature::new(
+                        "herdr-graph",
+                        "herdr-graph@localhost",
+                        &git2::Time::new(t.timestamp(), 0),
+                    )?,
+                    None => graph_signature()?,
+                };
                 let parent = r.find_commit(git2::Oid::from_str(&head.0)?)?;
-                let oid = r.commit(None, &sig, &sig, msg, &r.find_tree(tree)?, &[&parent])?;
-                r.reference("refs/heads/main", oid, true, msg)?;
+                let oid = r.commit(None, &sig, &sig, &msg, &r.find_tree(tree)?, &[&parent])?;
+                r.reference("refs/heads/main", oid, true, &msg)?;
                 Ok(CommitId(oid.to_string()))
             })
             .unwrap()

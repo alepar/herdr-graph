@@ -12,6 +12,7 @@ use crate::store::instruction_source::InstructionError;
 use std::process::ExitCode;
 
 pub mod inventory;
+pub mod log;
 pub mod output;
 pub mod roster;
 pub mod scope;

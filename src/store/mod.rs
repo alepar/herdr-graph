@@ -1,6 +1,7 @@
 //! Committed-revision reads (git2), instance path layout, name→path slugging (spec §1, §2.1–2.3).
 //! Implements crate::ports::store::Store. Readers only ever see complete commits; nothing here reads the working tree.
 pub mod git;
+pub mod history;
 pub mod init;
 pub mod instruction_source;
 pub mod layout;

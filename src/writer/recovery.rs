@@ -48,18 +48,9 @@ pub fn trailers_since(
     for oid in walk {
         let oid = oid?;
         let commit = repo.find_commit(oid)?;
-        let msg = commit.message().unwrap_or_default();
-        let mut op = None;
-        let mut action = None;
-        for line in msg.lines() {
-            if let Some(v) = line.strip_prefix("Graph-Op:") {
-                op = v.trim().parse::<OpId>().ok();
-            } else if let Some(v) = line.strip_prefix("Graph-Action:") {
-                action = v.trim().parse::<ActionId>().ok();
-            }
-        }
-        if let Some(op) = op {
-            out.push((op, CommitId(oid.to_string()), action));
+        let t = crate::store::history::parse_trailers(commit.message().unwrap_or_default());
+        if let Some(op) = t.op {
+            out.push((op, CommitId(oid.to_string()), t.action));
         }
     }
     Ok(out)
