@@ -1,6 +1,7 @@
 //! `roster` (spec §2.2): the seat/clone roster body and its one builder.
 use crate::bootstrap::instructions::{RenderedInstructions, render_instructions};
 use crate::inspect::inventory::{Inventory, RuntimeView, TranscriptRef};
+use crate::inspect::log::LogQuery;
 use crate::inspect::output::{InstructionsStatus, InstructionsView, View};
 use crate::inspect::scope::{Member, Scope};
 use crate::model::clone::SeatFactState;
@@ -13,10 +14,12 @@ use crate::model::{
 use crate::ports::herdr::{AgentStatus, HerdrSnapshot};
 use crate::ports::store::{Store, StoreError};
 use crate::store::GitStore;
+use crate::store::history::{HistoryWalker, ScanReport};
 use crate::store::tree::CommitView;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::ops::ControlFlow;
 
 /// The roster body: seats and clones with pane, occupant, threads state and instruction status.
 ///
@@ -27,8 +30,8 @@ use std::fmt::Write as _;
 /// top-level field.
 ///
 /// Must not: enumerate records or join parents (that is `Inventory`), compute instruction status
-/// (LoadedInstructions, hg-blw.12), walk history (HistoryWalker, through hg-blw.9) or resolve HEAD (it takes
-/// the invocation's pinned `CommitId`).
+/// (LoadedInstructions, hg-blw.12), walk history itself or filter changes (it runs one `HistoryWalker` pass
+/// and asks `LogQuery::matches` per seat) or resolve HEAD (it takes the invocation's pinned `CommitId`).
 ///
 /// Where new behavior goes: live-only data goes into the overlay slots (`clones[].live`, `threads_live`,
 /// `unmanaged`, `live_unavailable`) that only the daemon's `roster.live` handler fills (hg-blw.6); the
@@ -37,9 +40,9 @@ use std::fmt::Write as _;
 pub struct Roster {
     /// `{herdr?, threads?}` when part of the live read failed; always serialized (null when all was read).
     pub live_unavailable: Option<LiveUnavailable>,
-    /// hg-blw.9: the walker's scan report; absent unless the last_change pass ran.
+    /// The walker's scan report; present only when the `last_change` pass ran (at least one seat listed).
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub scan: Option<serde_json::Value>,
+    pub scan: Option<ScanReport>,
     /// `{seat_refusals, seat_lost}`; absent outside --live.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub threads_live: Option<ThreadsLive>,
@@ -71,9 +74,11 @@ pub struct RosterSeat {
     pub manager: Option<ManagerRef>,
     pub is_node_manager: bool,
     pub reload_required: bool,
-    /// hg-blw.9 fills; null here.
+    /// The newest change in this seat's scope, as `log seat <s> --limit 1` shows it (bookkeeping kinds are
+    /// skipped). `null` when none was found within the scan cap (see `last_change_scanned`).
     pub last_change: Option<LastChange>,
-    /// hg-blw.9 fills; null here.
+    /// `true` when the walk reached the root commit or found a change; `false` when it stopped at the cap
+    /// (older history might hold one); `null` when no pass ran.
     pub last_change_scanned: Option<bool>,
     pub clones: Vec<RosterClone>,
 }
@@ -228,7 +233,16 @@ fn state_word(s: &SeatFactState) -> &'static str {
 
 /// The one roster builder (daemon-free CLI and the daemon's roster.live). `at` is the invocation's pinned HEAD.
 pub fn build(store: &GitStore, at: &CommitId, q: &RosterQuery) -> Result<Roster, StoreError> {
-    build_with_bindings(store, at, q, false).map(|(r, _)| r)
+    build_with_cap(store, at, q, HistoryWalker::DEFAULT_MAX_SCAN)
+}
+
+fn build_with_cap(
+    store: &GitStore,
+    at: &CommitId,
+    q: &RosterQuery,
+    max_scan: usize,
+) -> Result<Roster, StoreError> {
+    build_inner(store, at, q, false, max_scan).map(|(r, _)| r)
 }
 
 /// [`build`] plus the committed bindings the live overlay compares with a snapshot. `all_bindings` also
@@ -238,6 +252,16 @@ pub fn build_with_bindings(
     at: &CommitId,
     q: &RosterQuery,
     all_bindings: bool,
+) -> Result<(Roster, Bindings), StoreError> {
+    build_inner(store, at, q, all_bindings, HistoryWalker::DEFAULT_MAX_SCAN)
+}
+
+fn build_inner(
+    store: &GitStore,
+    at: &CommitId,
+    q: &RosterQuery,
+    all_bindings: bool,
+    max_scan: usize,
 ) -> Result<(Roster, Bindings), StoreError> {
     let mut bindings = Bindings::default();
     let inv = Inventory::load(store, at, &q.scope)?;
@@ -350,9 +374,10 @@ pub fn build_with_bindings(
             }
         }
     }
+    let scan = fill_last_changes(store, at, &mut teamspaces, max_scan)?;
     let roster = Roster {
         live_unavailable: None,
-        scan: None,
+        scan,
         threads_live: None,
         unmanaged: None,
         teamspaces,
@@ -491,6 +516,66 @@ fn unmanaged_of(snap: &HerdrSnapshot, bound: &[Binding]) -> Unmanaged {
     out
 }
 
+/// One `HistoryWalker` pass for every listed seat; matching is `LogQuery::matches` on the seat's scope.
+/// `None` (no pass) when no seat is listed.
+fn fill_last_changes(
+    store: &GitStore,
+    at: &CommitId,
+    teamspaces: &mut [RosterTeamspace],
+    max_scan: usize,
+) -> Result<Option<ScanReport>, StoreError> {
+    let mut pending: Vec<(&mut RosterSeat, LogQuery)> = teamspaces
+        .iter_mut()
+        .flat_map(|t| t.seats.iter_mut())
+        .map(|s| {
+            let q = LogQuery {
+                scope: Scope::Seat(s.id.clone()),
+                by: None,
+                all: false,
+                since: None,
+                limit: 1,
+            };
+            (s, q)
+        })
+        .collect();
+    if pending.is_empty() {
+        return Ok(None);
+    }
+    let mut failed: Option<StoreError> = None;
+    let report = HistoryWalker::new(store, at, max_scan).walk(|c| {
+        for (seat, q) in pending.iter_mut().filter(|(s, _)| s.last_change.is_none()) {
+            match q.matches(store, c) {
+                Ok(true) => {
+                    seat.last_change = Some(LastChange {
+                        at: c.at,
+                        op: c.trailers.op.clone(),
+                        summary: c
+                            .operation
+                            .as_ref()
+                            .map_or_else(|| c.summary.clone(), |o| o.summary.clone()),
+                    });
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    failed.get_or_insert(e);
+                }
+            }
+        }
+        if failed.is_some() || pending.iter().all(|(s, _)| s.last_change.is_some()) {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })?;
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    for (seat, _) in &mut pending {
+        seat.last_change_scanned = Some(seat.last_change.is_some() || !report.stopped_early);
+    }
+    Ok(Some(report))
+}
+
 fn word<T: Serialize>(v: &T) -> String {
     match serde_json::to_value(v) {
         Ok(serde_json::Value::String(s)) => s,
@@ -602,6 +687,18 @@ impl View for Roster {
                 }
                 if s.reload_required {
                     line.push_str("  reload_required");
+                }
+                match (&s.last_change, s.last_change_scanned) {
+                    (Some(l), _) => {
+                        let _ = write!(
+                            line,
+                            "  last change {} {}",
+                            l.at.format("%Y-%m-%d %H:%MZ"),
+                            l.summary
+                        );
+                    }
+                    (None, Some(false)) => line.push_str("  last change older than scan"),
+                    (None, _) => line.push_str("  last change -"),
                 }
                 let _ = writeln!(out, "{line}");
                 for c in &s.clones {
@@ -877,13 +974,14 @@ mod tests {
         assert_eq!(v["live"], json!(false));
         assert_eq!(v["live_unavailable"], json!(null));
         let obj = v.as_object().unwrap();
-        for k in ["scan", "threads_live", "unmanaged"] {
+        for k in ["threads_live", "unmanaged"] {
             assert!(!obj.contains_key(k), "{k}");
         }
+        assert!(obj.contains_key("scan"), "the last_change pass ran");
         let mut clones = 0;
         for s in v["teamspaces"][0]["seats"].as_array().unwrap() {
-            assert_eq!(s["last_change"], json!(null));
-            assert_eq!(s["last_change_scanned"], json!(null));
+            assert!(s["last_change"].is_object() || s["last_change"].is_null());
+            assert_eq!(s["last_change_scanned"], json!(true));
             assert!(s["manager"].is_null());
             assert!(s["is_node_manager"].is_boolean() && s["reload_required"].is_boolean());
             for c in s["clones"].as_array().unwrap() {
@@ -925,7 +1023,11 @@ mod tests {
         let lines: Vec<_> = out.lines().collect();
         assert_eq!(lines.len(), 4, "{out}");
         assert!(lines[0].starts_with("proj (ts_") && lines[0].ends_with(") active"));
-        assert!(lines[1].starts_with("  foreman (st_") && lines[1].ends_with(") active"));
+        assert!(
+            lines[1].starts_with("  foreman (st_") && lines[1].contains(") active  last change "),
+            "{}",
+            lines[1]
+        );
         let main = lines.iter().find(|l| l.contains("main (cl_")).unwrap();
         assert!(
             main.starts_with("    main (cl_")
@@ -938,6 +1040,199 @@ mod tests {
             alt.contains(")  unknown  -  -  threads -  -  instructions: unknown"),
             "{alt}"
         );
+    }
+
+    fn human() -> crate::model::change::Requester {
+        crate::model::change::Requester {
+            human: true,
+            ..Default::default()
+        }
+    }
+
+    /// Change the seat's record and commit it under an op with `summary`.
+    fn touch(fx: &mut Fx, seat: &SeatId, summary: &str) -> OpId {
+        let rec = fx.seat_mut(seat);
+        rec.reload_required = !rec.reload_required;
+        let op = fx.operation(
+            crate::model::change::RequestKind::SeatOverride,
+            summary,
+            human(),
+        );
+        fx.commit_with_trailers(summary, Some(&op), None);
+        op
+    }
+
+    fn seat_of<'a>(r: &'a Roster, id: &SeatId) -> &'a RosterSeat {
+        r.teamspaces
+            .iter()
+            .flat_map(|t| &t.seats)
+            .find(|s| &s.id == id)
+            .unwrap()
+    }
+
+    fn text(r: &Roster) -> String {
+        let mut out = String::new();
+        r.render_text(&mut out);
+        out
+    }
+
+    #[test]
+    fn last_change_per_seat_single_pass() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let a = fx.seat(&t, "alpha", Lifecycle::Active);
+        let b = fx.seat(&t, "beta", Lifecycle::Active);
+        fx.set_time("2026-11-05T10:00:00Z");
+        fx.commit("init");
+        fx.set_time("2026-11-05T11:00:00Z");
+        touch(&mut fx, &a, "old a");
+        fx.set_time("2026-11-05T12:00:00Z");
+        let op_b = touch(&mut fx, &b, "new b");
+        fx.set_time("2026-11-05T13:00:00Z");
+        let op_a = touch(&mut fx, &a, "new a");
+        let r = roster(&fx, Scope::Instance, false);
+        let la = seat_of(&r, &a).last_change.clone().unwrap();
+        let lb = seat_of(&r, &b).last_change.clone().unwrap();
+        assert_eq!((la.op, la.summary.as_str()), (Some(op_a), "new a"));
+        assert_eq!(la.at, ts("2026-11-05T13:00:00Z"));
+        assert_eq!((lb.op, lb.summary.as_str()), (Some(op_b), "new b"));
+        assert_eq!(seat_of(&r, &a).last_change_scanned, Some(true));
+        // one pass stops at the commit that filled the last seat: "new a", "new b" and nothing older
+        let scan = r.scan.unwrap();
+        assert_eq!((scan.scanned, scan.stopped_early), (2, false));
+        let out = text(&r);
+        assert!(out.contains("last change 2026-11-05 13:00Z new a"), "{out}");
+        assert!(out.contains("last change 2026-11-05 12:00Z new b"), "{out}");
+    }
+
+    #[test]
+    fn older_than_scan() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let a = fx.seat(&t, "alpha", Lifecycle::Active);
+        let b = fx.seat(&t, "beta", Lifecycle::Active);
+        fx.commit("init");
+        touch(&mut fx, &a, "only a change");
+        touch(&mut fx, &b, "b 1");
+        touch(&mut fx, &b, "b 2");
+        let at = pin_head(&fx.store).unwrap();
+        let r = build_with_cap(
+            &fx.store,
+            &at,
+            &RosterQuery {
+                scope: Scope::Instance,
+                all: false,
+            },
+            2,
+        )
+        .unwrap();
+        let sa = seat_of(&r, &a);
+        assert_eq!(
+            (&sa.last_change, sa.last_change_scanned),
+            (&None, Some(false))
+        );
+        assert_eq!(seat_of(&r, &b).last_change_scanned, Some(true));
+        let scan = r.scan.unwrap();
+        assert_eq!(
+            (scan.scanned, scan.max_scan, scan.stopped_early),
+            (2, 2, true)
+        );
+        let out = text(&r);
+        let line = out.lines().find(|l| l.contains("alpha (st_")).unwrap();
+        assert!(line.ends_with("last change older than scan"), "{line}");
+    }
+
+    #[test]
+    fn none_after_root() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        fx.seat(&t, "alpha", Lifecycle::Active);
+        fx.commit("init");
+        // a seat that exists in no commit of the history: its scope matches nothing, the walk reaches the root
+        let ghost = SeatId::new();
+        let mut teamspaces = vec![RosterTeamspace {
+            id: t.clone(),
+            name: "proj".into(),
+            lifecycle: Lifecycle::Active,
+            seats: vec![RosterSeat {
+                id: ghost.clone(),
+                name: "ghost".into(),
+                lifecycle: Lifecycle::Active,
+                manager: None,
+                is_node_manager: false,
+                reload_required: false,
+                last_change: None,
+                last_change_scanned: None,
+                clones: vec![],
+            }],
+        }];
+        let at = pin_head(&fx.store).unwrap();
+        let scan = fill_last_changes(&fx.store, &at, &mut teamspaces, 5000)
+            .unwrap()
+            .unwrap();
+        assert!(!scan.stopped_early);
+        let r = Roster {
+            live_unavailable: None,
+            scan: Some(scan),
+            threads_live: None,
+            unmanaged: None,
+            teamspaces,
+        };
+        let g = seat_of(&r, &ghost);
+        assert_eq!((&g.last_change, g.last_change_scanned), (&None, Some(true)));
+        let out = text(&r);
+        assert!(out.lines().any(|l| l.ends_with("last change -")), "{out}");
+    }
+
+    #[test]
+    fn scan_present_only_when_pass_runs() {
+        let w = world();
+        let at = pin_head(&w.fx.store).unwrap();
+        let json = |scope: Scope| {
+            serde_json::to_value(Envelope::new(&at, roster(&w.fx, scope, false))).unwrap()
+        };
+        let with = json(Scope::Instance);
+        let scan = with["scan"].as_object().expect("scan object");
+        assert_eq!(scan["max_scan"], json!(5000));
+        assert_eq!(scan["stopped_early"], json!(false));
+        assert!(scan["scanned"].as_u64().unwrap() >= 1);
+        // global scope lists no seat, so no pass runs
+        let without = json(Scope::Global);
+        assert!(!without.as_object().unwrap().contains_key("scan"));
+        let empty = Fx::new();
+        let at = pin_head(&empty.store).unwrap();
+        let v = serde_json::to_value(Envelope::new(&at, roster(&empty, Scope::Instance, false)))
+            .unwrap();
+        assert!(!v.as_object().unwrap().contains_key("scan"));
+    }
+
+    #[test]
+    fn matches_log() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let a = fx.seat(&t, "alpha", Lifecycle::Active);
+        let b = fx.seat(&t, "beta", Lifecycle::Active);
+        fx.commit("init");
+        touch(&mut fx, &a, "a1");
+        touch(&mut fx, &b, "b1");
+        touch(&mut fx, &a, "a2");
+        let at = pin_head(&fx.store).unwrap();
+        let r = roster(&fx, Scope::Instance, false);
+        for id in [&a, &b] {
+            let q = LogQuery {
+                scope: Scope::Seat(id.clone()),
+                by: None,
+                all: false,
+                since: None,
+                limit: 1,
+            };
+            let (v, _) = q.run(&HistoryWalker::new(&fx.store, &at, 5000)).unwrap();
+            let row = serde_json::to_value(&v.rows[0]).unwrap();
+            let lc = seat_of(&r, id).last_change.as_ref().unwrap();
+            assert_eq!(row["op"], serde_json::to_value(&lc.op).unwrap());
+            assert_eq!(row["summary"], json!(lc.summary));
+            assert_eq!(row["at"], serde_json::to_value(lc.at).unwrap());
+        }
     }
 
     #[test]
