@@ -436,6 +436,8 @@ pub struct HookFit {
     pub omitted: Vec<String>,
     /// Label of the single most specific part when it alone had to be cut.
     pub cut: Option<String>,
+    /// Bytes of the cut part's `body` the hook delivered (its block header excluded); None when no part was cut.
+    pub cut_body_bytes: Option<usize>,
 }
 
 fn marker(labels: &[String]) -> String {
@@ -461,6 +463,7 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
             full_size,
             omitted: vec![],
             cut: None,
+            cut_body_bytes: None,
         };
     }
     let tail_len = |omitted: &[String]| 2 + marker(omitted).len();
@@ -486,6 +489,7 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
             full_size,
             omitted,
             cut: None,
+            cut_body_bytes: None,
         };
     }
     let last = blocks.len() - 1;
@@ -498,6 +502,8 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
     }
     let kept = &blocks[last][..end];
     let kept = kept.rfind('\n').map_or("", |i| &kept[..=i]);
+    let header_len = format!("\n## {} — {}\n", r.parts[last].label, r.parts[last].path).len();
+    let cut_body_bytes = Some(kept.len().saturating_sub(header_len));
     let mut text = head + kept;
     text.push('\n');
     text.push_str(&marker(&named));
@@ -507,6 +513,7 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
         full_size,
         omitted: labels[..last].to_vec(),
         cut: Some(labels[last].clone()),
+        cut_body_bytes,
     }
 }
 
@@ -638,5 +645,43 @@ mod tests {
         assert_eq!(p.body, "héllo\n");
         assert_eq!(p.bytes, 7);
         assert_eq!(p.digest, part_digest("héllo\n"));
+    }
+
+    fn rendered(parts: &[(&str, &str)]) -> RenderedInstructions {
+        let seat = SeatId::new();
+        let mut c = Collector {
+            parts: Vec::new(),
+            findings: Vec::new(),
+        };
+        for (label, body) in parts {
+            c.add((*label).into(), &format!("{label}.md"), (*body).into());
+        }
+        let mut text = revision_line("s", &seat, "abc");
+        text.push('\n');
+        for p in &c.parts {
+            text.push('\n');
+            text.push_str(&block(p));
+        }
+        RenderedInstructions {
+            rev: "abc".into(),
+            seat,
+            seat_name: "s".into(),
+            parts: c.parts,
+            text,
+        }
+    }
+
+    #[test]
+    fn cut_body_bytes_is_prefix() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        let fit = fit_hook(&r, 1000);
+        let n = fit.cut_body_bytes.expect("c is cut");
+        assert!(n > 0 && n < big.len());
+        let delivered = format!("## c — c.md\n{}", &r.parts[1].body[..n]);
+        assert!(fit.text.contains(&delivered), "{}", fit.text);
+        // the next line does not appear: the prefix is exactly what was delivered
+        assert!(!fit.text.contains(&r.parts[1].body[..n + 1]));
+        assert_eq!(fit_hook(&r, 1_000_000).cut_body_bytes, None);
     }
 }

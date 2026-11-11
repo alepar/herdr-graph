@@ -48,14 +48,20 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
             let config =
                 setup_claude::codex_dir(env_path("CODEX_HOME").as_deref(), home().as_deref())
                     .ok_or_else(|| anyhow::anyhow!("neither CODEX_HOME nor HOME is set"))?;
-            let code = setup(&setup_claude::CODEX, "codex", &config, uninstall)?;
-            if !uninstall {
-                println!(
-                    "note: Codex runs a new or changed hook only after you trust it: start codex interactively and \
-                     review it (or open /hooks)"
-                );
-            }
-            Ok(code)
+            setup(&setup_claude::CODEX, "codex", &config, uninstall)
+        }
+    }
+}
+
+/// Codex runs a new or changed hook only after the user trusts it; setup never writes trust.
+fn codex_trust_note(hook: HookChange) -> &'static str {
+    match hook {
+        HookChange::Unchanged => {
+            "note: Codex runs a new or changed hook only after you trust it: start codex interactively and \
+             review it (or open /hooks)"
+        }
+        HookChange::Installed | HookChange::Updated => {
+            "note: the herdr-graph hook command changed; Codex runs it only after you re-trust it in /hooks"
         }
     }
 }
@@ -124,6 +130,9 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
         println!("skills: already installed");
     } else {
         println!("skills installed: {}", r.skills_written.join(", "));
+    }
+    if name == "codex" {
+        println!("{}", codex_trust_note(r.hook));
     }
     Ok(ExitCode::SUCCESS)
 }

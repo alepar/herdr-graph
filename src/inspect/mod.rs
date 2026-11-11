@@ -13,6 +13,7 @@ use std::process::ExitCode;
 
 pub mod harness_files;
 pub mod inventory;
+pub mod loaded;
 pub mod log;
 pub mod output;
 pub mod roster;

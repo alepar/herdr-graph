@@ -1,6 +1,7 @@
 //! `roster` (spec §2.2): the seat/clone roster body and its one builder.
 use crate::bootstrap::instructions::{RenderedInstructions, render_instructions};
 use crate::inspect::inventory::{Inventory, RuntimeView, TranscriptRef};
+use crate::inspect::loaded;
 use crate::inspect::log::LogQuery;
 use crate::inspect::output::{InstructionsStatus, InstructionsView, View};
 use crate::inspect::scope::{Member, Scope};
@@ -287,13 +288,9 @@ fn build_inner(
                     name: pointers.name(&id).unwrap_or(id.as_str()).to_owned(),
                     id,
                 });
-            // hg-blw.12 compares the loaded record against this render; keep it per seat.
+            // Each clone's loaded record is compared against this render.
             let rendered: Result<RenderedInstructions, StoreError> =
                 render_instructions(&view, at, &s.record.id);
-            let instructions = match &rendered {
-                Ok(_) => InstructionsView::unknown(),
-                Err(e) => InstructionsView::error(e.to_string()),
-            };
             let clones = s
                 .clones
                 .iter()
@@ -321,6 +318,18 @@ fn build_inner(
                     if let Some(b) = &r.runtime.bound {
                         bindings.clones.insert(r.id.clone(), b.clone());
                     }
+                    let instructions = match &rendered {
+                        Ok(head) => loaded::clone_view(
+                            store,
+                            at,
+                            &r.id,
+                            occupant
+                                .as_ref()
+                                .and_then(|o| o.native_session_id.as_deref()),
+                            head,
+                        ),
+                        Err(e) => InstructionsView::error(e.to_string()),
+                    };
                     RosterClone {
                         id: r.id.clone(),
                         name: r.name.clone(),
@@ -328,7 +337,7 @@ fn build_inner(
                         runtime: c.runtime.clone(),
                         occupant,
                         threads,
-                        instructions: instructions.clone(),
+                        instructions,
                         live: None,
                     }
                 })
@@ -590,13 +599,25 @@ pub(crate) fn instructions_text(i: &InstructionsView) -> String {
             None => "current".into(),
         },
         InstructionsStatus::Stale => format!("stale ({} parts)", i.stale_parts.len()),
-        InstructionsStatus::Unknown => "unknown".into(),
+        InstructionsStatus::Unknown => match &i.loaded_rev {
+            Some(r) => format!(
+                "unknown (loaded @{} into {})",
+                &r[..r.len().min(12)],
+                i.loaded_session
+                    .as_deref()
+                    .unwrap_or("session not identified")
+            ),
+            None => "unknown".into(),
+        },
         InstructionsStatus::Error => {
             format!("error: {}", i.message.as_deref().unwrap_or("unknown error"))
         }
     };
     if i.truncated {
         s.push_str(" truncated");
+    }
+    if let Some(n) = &i.note {
+        let _ = write!(s, " [{n}]");
     }
     s
 }

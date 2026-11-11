@@ -155,6 +155,10 @@ pub enum Delivery {
 pub struct StalePart {
     pub label: String,
     pub change: PartChange,
+    /// The 40-hex commit that last touched the part's path (`removed`: the path the loaded record names);
+    /// absent beyond the history scan cap. Additive to the spec's `{label, change}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_last_touched: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

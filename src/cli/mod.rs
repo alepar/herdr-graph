@@ -131,6 +131,8 @@ mod tests {
             &["setup", "codex", "--uninstall"],
             &["seat", "--hook-prompt", "--codex"],
             &["seat", "--hook-prompt"],
+            &["seat", "--hook-prompt", "--stdin-payload"],
+            &["seat", "--hook-prompt", "--codex", "--stdin-payload"],
             &["init", "/tmp/x", "--with-examples"],
             &["seat"],
             &["seat", "--json"],
