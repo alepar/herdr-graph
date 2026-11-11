@@ -18,7 +18,7 @@ use herdr_graph::store::git::graph_signature;
 use herdr_graph::store::init::init_instance;
 use herdr_graph::store::{EditSet, GitStore, layout, record};
 use serde_json::Value;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -549,6 +549,63 @@ fn held_open_stdin_still_prints_and_exits() {
     assert!(lossy(&out.stdout).contains("global style rule"));
     assert!(g.record()["native_session_id"].is_null());
     assert_eq!(g.record()["stdin_payload"], true);
+}
+
+/// The command `setup claude` installed and its hook `timeout`, read back from the settings file it wrote.
+fn installed_claude_hook(g: &Graph) -> (String, u64) {
+    let out = g.run(&["setup", "claude"]);
+    assert!(out.status.success(), "{}", lossy(&out.stderr));
+    let settings = g.root.claude_dir().join("settings.json");
+    let doc: Value = serde_json::from_slice(&std::fs::read(settings).unwrap()).unwrap();
+    let hook = doc["hooks"]["SessionStart"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["hooks"].as_array().unwrap())
+        .find(|h| h["command"].as_str().unwrap().contains("--hook-prompt"))
+        .expect("installed SessionStart hook")
+        .clone();
+    (
+        hook["command"].as_str().unwrap().to_owned(),
+        hook["timeout"].as_u64().unwrap(),
+    )
+}
+
+/// A hook that never gets EOF on stdin is bounded only by the harness `timeout`, before and after the
+/// payload-once command: the base command's `session-report` already read stdin unbounded.
+#[test]
+fn installed_hook_with_held_open_stdin_is_bounded_like_the_base_hook() {
+    let g = Graph::new();
+    let (installed, timeout) = installed_claude_hook(&g);
+    assert_eq!(timeout, 10, "the base hook budget");
+    assert_ne!(installed, old_claude_command(), "setup installs the new command");
+    for (label, command) in [("installed", installed), ("base", old_claude_command())] {
+        let mut c = g.cmd("sh", &["-c", &command]);
+        c.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut hook = g.root.spawn(&mut c); // own process group; dropped on every path
+        let held_open = hook.child_mut().stdin.take().unwrap();
+        assert!(
+            hook.wait_timeout(Duration::from_secs(1)).is_none(),
+            "{label}: finished while stdin was held open"
+        );
+        drop(held_open); // EOF, as the harness delivers it
+        let began = Instant::now();
+        let status = hook
+            .wait_timeout(Duration::from_secs(8))
+            .unwrap_or_else(|| panic!("{label}: still running after stdin closed"));
+        assert!(status.success(), "{label}: {status}");
+        assert!(began.elapsed() < Duration::from_secs(8), "{label}");
+        let mut stdout = String::new();
+        hook.child_mut()
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
+        assert!(stdout.contains("global style rule"), "{label}: {stdout}");
+    }
 }
 
 #[test]
