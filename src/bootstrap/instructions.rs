@@ -684,4 +684,31 @@ mod tests {
         assert!(!fit.text.contains(&r.parts[1].body[..n + 1]));
         assert_eq!(fit_hook(&r, 1_000_000).cut_body_bytes, None);
     }
+
+    #[test]
+    fn cut_part_with_zero_body_bytes() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        let head = format!(
+            "{}\n{}\n",
+            hook_header(&r),
+            revision_line(&r.seat_name, &r.seat, short_rev(&r.rev))
+        );
+        let block_header = "\n## c — c.md\n";
+        let tail = 2 + marker(&["a".to_owned(), "c (cut)".to_owned()]).len();
+        // Room for the cut part's block header and the marker, and for none of its body.
+        let cap = head.len() + block_header.len() + tail;
+        let fit = fit_hook(&r, cap);
+        assert_eq!(fit.cut.as_deref(), Some("c"));
+        assert_eq!(fit.omitted, ["a"]);
+        assert_eq!(fit.cut_body_bytes, Some(0));
+        assert!(fit.text.len() <= cap, "{} > {cap}", fit.text.len());
+        assert!(
+            fit.text
+                .contains("## c — c.md\n\n[truncated: omitted a, c (cut);"),
+            "{}",
+            fit.text
+        );
+        assert!(!fit.text.contains("line 0000"), "{}", fit.text);
+    }
 }
