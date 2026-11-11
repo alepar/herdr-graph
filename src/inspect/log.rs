@@ -1,7 +1,7 @@
 //! The `log` view (spec §2.4): which commits of `main` match a scope, a requester and the noise filter, and
 //! how a matching commit is shown.
 use crate::inspect::output::View;
-use crate::inspect::scope::Scope;
+use crate::inspect::scope::{Scope, ScopePaths};
 use crate::model::action::ActionRecord;
 use crate::model::change::{Category, RequestKind};
 use crate::model::operation::{ConfirmMode, OperationRecord};
@@ -46,32 +46,60 @@ pub struct LogQuery {
 impl LogQuery {
     /// Scope, `--by` and the bookkeeping filter; `--since`/`--limit` are applied by `run`. `Instance` holds
     /// every change; a change with no readable operation record cannot be told apart from bookkeeping and is
-    /// kept.
+    /// kept. `Err` when the scope cannot be resolved at the commit's tree: a caller degrades that one row.
     pub fn matches(&self, store: &GitStore, c: &Change) -> Result<bool, StoreError> {
-        if let Some(by) = &self.by {
-            let requested_by = c.operation.as_ref().and_then(|o| o.requester.seat.as_ref());
-            if requested_by != Some(by) {
-                return Ok(false);
-            }
-        }
-        if !self.all
-            && c.operation
-                .as_ref()
-                .is_some_and(|o| o.kind.category() == Category::Bookkeeping)
-        {
+        if !self.passes_filters(c) {
             return Ok(false);
         }
         if self.scope == Scope::Instance {
             return Ok(true);
         }
-        let tree = store.at(&c.commit);
-        let paths = self.scope.paths_at(&tree)?;
+        let paths = self.scope.paths_at(&store.at(&c.commit))?;
+        self.matches_scope(store, c, &paths)
+    }
+
+    /// [`LogQuery::matches`] with the scope's paths at `c`'s tree already resolved by the caller (so a roster
+    /// pass resolves the tree once for every seat). `paths` must be this query's scope's paths at `c`.
+    pub fn matches_with(
+        &self,
+        store: &GitStore,
+        c: &Change,
+        paths: &ScopePaths,
+    ) -> Result<bool, StoreError> {
+        if !self.passes_filters(c) {
+            return Ok(false);
+        }
+        self.matches_scope(store, c, paths)
+    }
+
+    /// `--by` and the bookkeeping filter.
+    fn passes_filters(&self, c: &Change) -> bool {
+        if let Some(by) = &self.by {
+            let requested_by = c.operation.as_ref().and_then(|o| o.requester.seat.as_ref());
+            if requested_by != Some(by) {
+                return false;
+            }
+        }
+        self.all
+            || !c
+                .operation
+                .as_ref()
+                .is_some_and(|o| o.kind.category() == Category::Bookkeeping)
+    }
+
+    fn matches_scope(
+        &self,
+        store: &GitStore,
+        c: &Change,
+        paths: &ScopePaths,
+    ) -> Result<bool, StoreError> {
         if c.paths.iter().any(|p| paths.contains(p)) {
             return Ok(true);
         }
         let Some(action) = &c.action else {
             return Ok(false);
         };
+        let tree = store.at(&c.commit);
         let parent = c.parent.as_ref().map(|p| store.at(p));
         let fallback = parent.as_ref().map(|p| p as &dyn TreeRead);
         let named = action
@@ -87,23 +115,28 @@ impl LogQuery {
         Ok(false)
     }
 
-    /// Walk newest first, keeping matching changes until `limit`, stopping at the first commit older than
-    /// `since` (history is time-ordered). Returns the view and the warnings (notices without a JSON field,
-    /// not counting [`OPS_POINTER`]).
+    /// Walk newest first, keeping matching changes until `limit` or the scan cap. A commit older than `since`
+    /// is skipped, not a stop: commit times are not monotonic along history (clock skew, rebases), so one
+    /// old commit says nothing about the ones behind it. A commit whose scope cannot be resolved (an
+    /// unreadable record in its tree) is kept as a row marked [`Malformed::Tree`], since it may match.
+    /// Returns the view and the warnings (notices without a JSON field, not counting [`OPS_POINTER`]).
     pub fn run(&self, walker: &HistoryWalker<'_>) -> Result<(LogView, Vec<String>), StoreError> {
         let store = walker.store();
         let mut kept: Vec<Change> = Vec::new();
-        let mut failed: Option<StoreError> = None;
         let scan = walker.walk(|c| {
-            if kept.len() >= self.limit || self.since.is_some_and(|s| c.at < s) {
+            if kept.len() >= self.limit {
                 return ControlFlow::Break(());
+            }
+            if self.since.is_some_and(|s| c.at < s) {
+                return ControlFlow::Continue(());
             }
             match self.matches(store, c) {
                 Ok(true) => kept.push(c.clone()),
                 Ok(false) => {}
-                Err(e) => {
-                    failed = Some(e);
-                    return ControlFlow::Break(());
+                Err(_) => {
+                    let mut c = c.clone();
+                    c.malformed.push(Malformed::Tree);
+                    kept.push(c);
                 }
             }
             if kept.len() >= self.limit {
@@ -112,9 +145,6 @@ impl LogQuery {
                 ControlFlow::Continue(())
             }
         })?;
-        if let Some(e) = failed {
-            return Err(e);
-        }
         let rows = kept
             .iter()
             .map(|c| row(walker, c))
@@ -622,6 +652,61 @@ mod tests {
     }
 
     #[test]
+    fn since_with_non_monotonic_times() {
+        let mut w = world();
+        w.fx.set_time("2026-11-05T12:00:00Z");
+        let behind = op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        w.fx.set_time("2026-11-01T12:00:00Z");
+        let skewed = op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        w.fx.set_time("2026-11-04T12:00:00Z");
+        let head = op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        let q = LogQuery {
+            since: Some(ts("2026-11-03T00:00:00Z")),
+            ..query(Scope::Instance)
+        };
+        let (v, _) = view(&w.fx, &q, 5000);
+        let got: Vec<_> = v.rows.iter().map(|r| r.commit.clone()).collect();
+        assert!(got.contains(&head.0), "{got:?}");
+        assert!(!got.contains(&skewed.0), "older than since: {got:?}");
+        assert!(
+            got.contains(&behind.0),
+            "a newer commit behind one older commit is still listed: {got:?}"
+        );
+        assert_eq!(v.scan.scanned, 4, "init plus three: the scan was complete");
+        assert!(!v.scan.stopped_early);
+        // A cap that cuts the walk before `behind` says so, instead of a clean "complete".
+        let (v, _) = view(&w.fx, &q, 2);
+        assert!(v.scan.stopped_early);
+    }
+
+    #[test]
+    fn log_degrades_on_unparseable_historical_tree() {
+        let mut w = world();
+        let first = op_commit(&mut w.fx, RequestKind::SeatCreate, human());
+        // A record that does not parse, in one historical tree only.
+        w.fx.put_file(
+            rp("teamspaces/zz-bad/teamspace.toml"),
+            b"{not toml".to_vec(),
+        );
+        let bad = op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        w.fx.delete_file(rp("teamspaces/zz-bad/teamspace.toml"));
+        w.fx.seat_mut(&w.a).reload_required = true;
+        let last = op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        let q = query(Scope::Seat(w.a.clone()));
+        let (v, warnings) = view(&w.fx, &q, 5000);
+        let by_commit = |c: &CommitId| v.rows.iter().find(|r| r.commit == c.0);
+        assert!(by_commit(&last).unwrap().malformed.is_empty());
+        assert!(by_commit(&first).unwrap().malformed.is_empty());
+        assert_eq!(
+            by_commit(&bad).unwrap().malformed,
+            [Malformed::Tree],
+            "the commit whose scope cannot be resolved is a marked row"
+        );
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(!v.scan.stopped_early);
+    }
+
+    #[test]
     fn since_and_limit() {
         let mut w = world();
         let mut commits = vec![];
@@ -629,7 +714,13 @@ mod tests {
             w.fx.set_time(&format!("2026-11-{day}T12:00:00Z"));
             commits.push(op_commit(&mut w.fx, RequestKind::SeatOverride, human()).0);
         }
-        let got = |q: &LogQuery| rows(&w.fx, q);
+        // The init commit carries wall-clock time, which `--since` no longer stops at: leave it out.
+        let got = |q: &LogQuery| -> Vec<String> {
+            rows(&w.fx, q)
+                .into_iter()
+                .filter(|c| *c != w.init.0)
+                .collect()
+        };
         let newest_first: Vec<_> = commits.iter().rev().cloned().collect();
         assert_eq!(
             got(&LogQuery {
@@ -649,7 +740,10 @@ mod tests {
         };
         assert_eq!(got(&since), newest_first[..2]);
         let (v, _) = view(&w.fx, &since, 5000);
-        assert!(!v.scan.stopped_early, "a --since break is not a cap stop");
+        assert!(
+            !v.scan.stopped_early,
+            "a --since scan to the root is complete"
+        );
         let (v, _) = view(
             &w.fx,
             &LogQuery {

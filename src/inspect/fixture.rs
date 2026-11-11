@@ -315,6 +315,11 @@ impl Fx {
         self.extra.put(path, bytes);
     }
 
+    /// Delete a raw file in the next `commit` (the counterpart of `put_file`).
+    pub fn delete_file(&mut self, path: RepoPath) {
+        self.extra.delete(path);
+    }
+
     /// An `OperationRecord` (committed state), written by every following commit from then on, so only the
     /// first one shows it as a change.
     pub fn operation(&mut self, kind: RequestKind, summary: &str, requester: Requester) -> OpId {

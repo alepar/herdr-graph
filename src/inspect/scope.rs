@@ -235,6 +235,32 @@ impl Scope {
         Ok(sp)
     }
 
+    /// The `Seat` scope's [`ScopePaths`] for each of `seats` at `tree`, in order, from one enumeration of the
+    /// tree's seats (what N calls of [`Scope::paths_at`] would each repeat). Identical to `paths_at` per seat.
+    pub fn seat_paths_at(
+        tree: &dyn TreeRead,
+        seats: &[SeatId],
+    ) -> Result<Vec<ScopePaths>, StoreError> {
+        let located = layout::all_seats(tree)?;
+        Ok(seats
+            .iter()
+            .map(|s| {
+                let any = s.to_any();
+                ScopePaths {
+                    all: false,
+                    exact: vec![],
+                    prefixes: located
+                        .iter()
+                        .filter(|(loc, _)| loc.id == any)
+                        .take(1)
+                        .map(|(loc, _)| loc.folder.as_str().to_owned())
+                        .collect(),
+                    seat_id: Some(s.to_string()),
+                }
+            })
+            .collect())
+    }
+
     /// Whether an object an action names (affected or retired) is in scope: located at `tree`, else at
     /// `fallback` (the commit's parent tree, for an object that commit deleted), and its record path is
     /// contained by that same tree's [`ScopePaths`]. Not found in either: false.

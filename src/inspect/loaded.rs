@@ -289,29 +289,52 @@ pub fn status(
 }
 
 /// The view for one clone of a rendered seat: its record against the occupant's native session id, with the
-/// path-last-touched commits of any stale parts read from `store` at `at`. A history read failure only drops
-/// the commit column.
+/// path-last-touched commits of any stale parts answered by `touches` (the caller's walker and cap; see
+/// [`HistoryPaths`] for batching them across clones).
 pub fn clone_view(
     store: &crate::store::GitStore,
-    at: &crate::model::CommitId,
     clone: &CloneId,
     occupant_native_id: Option<&str>,
     head: &RenderedInstructions,
+    touches: &dyn Fn(&[RepoPath]) -> BTreeMap<RepoPath, Touch>,
 ) -> InstructionsView {
-    status(
-        read(store.root(), clone),
-        occupant_native_id,
-        head,
-        &|paths| {
-            crate::store::history::HistoryWalker::new(
-                store,
-                at,
-                crate::store::history::HistoryWalker::DEFAULT_MAX_SCAN,
-            )
-            .last_touches(paths)
-            .unwrap_or_default()
-        },
-    )
+    status(read(store.root(), clone), occupant_native_id, head, touches)
+}
+
+/// One batched `last_touches` call, on the caller's walker and cap.
+pub type HistoryLookup<'a> =
+    dyn Fn(&[RepoPath]) -> Result<BTreeMap<RepoPath, Touch>, crate::ports::store::StoreError> + 'a;
+
+/// The history paths a view builder needs last-touch commits for, gathered over every clone (and the stack's
+/// manifest) so that one `HistoryWalker::last_touches` pass answers them all with the caller's walker and cap.
+///
+/// A builder runs [`clone_view`] once with [`HistoryPaths::recorder`] (every path-last-touched is `null`),
+/// then [`HistoryPaths::resolve`]s, then re-runs `clone_view` for the clones that came out stale with the map.
+#[derive(Default)]
+pub struct HistoryPaths(std::cell::RefCell<BTreeSet<RepoPath>>);
+
+impl HistoryPaths {
+    pub fn add(&self, paths: &[RepoPath]) {
+        self.0.borrow_mut().extend(paths.iter().cloned());
+    }
+
+    /// A `touches` answer for [`clone_view`] that records the paths asked for and knows none.
+    pub fn recorder(&self) -> impl Fn(&[RepoPath]) -> BTreeMap<RepoPath, Touch> + '_ {
+        |paths| {
+            self.add(paths);
+            BTreeMap::new()
+        }
+    }
+
+    /// The one history pass over everything recorded. A failed lookup is an empty map: a history read
+    /// failure only drops the commit column (`null`), never the view.
+    pub fn resolve(&self, lookup: &HistoryLookup) -> BTreeMap<RepoPath, Touch> {
+        let paths: Vec<RepoPath> = self.0.borrow().iter().cloned().collect();
+        if paths.is_empty() {
+            return BTreeMap::new();
+        }
+        lookup(&paths).unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
