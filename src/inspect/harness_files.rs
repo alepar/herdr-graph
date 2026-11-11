@@ -116,6 +116,11 @@ impl Acc {
             note: None,
             env: (origin == Origin::User).then_some(EnvSource::Inspector),
         });
+        if origin == Origin::User {
+            // The user-level label wins even when the ancestor walk reached the file first.
+            e.origin = Origin::User;
+            e.env = Some(EnvSource::Inspector);
+        }
         if let Some(h) = harness
             && !e.harnesses.contains(&h)
         {
@@ -380,6 +385,26 @@ mod tests {
             fs.iter()
                 .filter(|f| f.origin != Origin::User)
                 .all(|f| f.env.is_none())
+        );
+    }
+
+    #[test]
+    fn user_level_wins_over_ancestor_walk() {
+        let t = tree();
+        // Production layout: the seat cwd lies under the user dir's parent, so the ancestor walk
+        // reaches `home/.claude/CLAUDE.md` (and `home/.codex/AGENTS.md` is not on the Codex chain).
+        let cwd = t.dir("home/work/proj");
+        let claude = t.dir("home/.claude");
+        let cl = t.put("home/.claude/CLAUDE.md", "c");
+        let user = UserDirs {
+            claude: Some(claude),
+            codex: None,
+        };
+        let fs = discover(&cwd, &user);
+        let c = find(&fs, &cl);
+        assert_eq!(
+            (c.origin, c.env, c.harnesses.clone()),
+            (Origin::User, Some(EnvSource::Inspector), vec![Claude])
         );
     }
 
