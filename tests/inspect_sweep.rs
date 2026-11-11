@@ -79,10 +79,24 @@ impl Rig {
     }
 
     fn plan_apply(&self, words: &[&str]) {
+        self.plan_apply_as(None, words);
+    }
+
+    /// Plan and apply `words`; with `seat`, the plan's requester is that seat (as `HERDR_GRAPH_SEAT` makes it).
+    fn plan_apply_as(&self, seat: Option<&str>, words: &[&str]) {
+        let run = |args: &[&str]| {
+            let mut c = self.command(BIN);
+            if let Some(s) = seat {
+                c.env("HERDR_GRAPH_SEAT", s);
+            }
+            let o = c.args(args).output().unwrap();
+            assert!(o.status.success(), "{args:?}: {}{}", stderr(&o), stdout(&o));
+            stdout(&o)
+        };
         let mut args = vec!["plan", "--json"];
         args.extend_from_slice(words);
-        let plan: Value = serde_json::from_str(&self.cli_ok(&args)).unwrap();
-        self.cli_ok(&[
+        let plan: Value = serde_json::from_str(&run(&args)).unwrap();
+        run(&[
             "apply",
             plan["plan_id"].as_str().unwrap(),
             "--confirm",
@@ -355,8 +369,14 @@ fn read_only_every_view_and_json_contract() {
 fn spec_keys_and_flags_reach_their_views() {
     let Some(rig) = Rig::start() else { return };
     rig.teamspace_with_seat();
+    let (r0, _) = rig.json(&["roster"]);
+    let seat_id = r0["teamspaces"][0]["seats"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     rig.plan_apply(&["seat", "rename", "foreman", "boss"]);
-    rig.plan_apply(&["seat", "rename", "boss", "foreman"]);
+    // The one change the seat itself requested: `log --by` must find exactly this one.
+    rig.plan_apply_as(Some(&seat_id), &["seat", "rename", "boss", "foreman"]);
     rig.settle();
 
     let (roster, _) = rig.json(&["roster"]);
@@ -512,24 +532,46 @@ fn spec_keys_and_flags_reach_their_views() {
         since["rows"].as_array().unwrap().is_empty(),
         "--since reaches log"
     );
-    let (everything, _) = rig.json(&["log", "--all"]);
+    let (default_view, _) = rig.json(&["log", "--limit", "200"]);
+    let (everything, _) = rig.json(&["log", "--all", "--limit", "200"]);
+    let kinds = |v: &Value| -> Vec<String> {
+        v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["kind"].to_string())
+            .collect()
+    };
+    let bookkeeping = |v: &Value| kinds(v).iter().filter(|k| *k == "\"bookkeeping\"").count();
+    assert_eq!(bookkeeping(&default_view), 0, "the default view hides bookkeeping");
     assert!(
-        everything["rows"].as_array().unwrap().len() >= all_rows,
-        "--all reaches log"
+        bookkeeping(&everything) > 0
+            && everything["rows"].as_array().unwrap().len()
+                > default_view["rows"].as_array().unwrap().len(),
+        "--all reaches log and shows bookkeeping: {everything}"
     );
     let (scoped, _) = rig.json(&["log", "seat", "foreman"]);
     assert!(
         !scoped["rows"].as_array().unwrap().is_empty(),
         "seat scope finds the renames"
     );
-    let (by_nobody, _) = rig.json(&["log", "--by", "foreman"]);
-    assert!(
-        by_nobody["rows"].as_array().unwrap().len() <= all_rows,
-        "--by is a filter, never a widening"
+    let (by_seat, _) = rig.json(&["log", "--by", "foreman"]);
+    let by_rows = by_seat["rows"].as_array().unwrap();
+    assert_eq!(
+        by_rows.len(),
+        1,
+        "--by foreman finds only the seat-requested rename, not the {all_rows} changes: {by_seat}"
     );
+    assert_eq!(by_rows[0]["requester"]["seat"], seat_id.as_str());
+    assert_ne!(bad_by(&rig), Some(0), "--by resolves its seat");
 
     let (ops, _) = rig.json(&["ops", "--seat", "foreman", "--limit", "5"]);
     assert_keys("ops", &ops, &["ops"]);
+}
+
+/// Exit code of `log --by` naming a seat that does not exist.
+fn bad_by(rig: &Rig) -> Option<i32> {
+    rig.cli(&["log", "--by", "nope"]).status.code()
 }
 
 /// Seat name at `commit`, read from the tree that commit names.
@@ -579,15 +621,24 @@ fn every_component_reports_the_one_pinned_head() {
                 seat_name_at(&rig, &head),
                 "roster rows come from the tree at its head {head}"
             );
-            // last_change names an op that exists at that head, and the envelope has one head only
+            // last_change names an op recorded in a commit reachable from that head, and the walk never
+            // scanned more commits than that head has
             let seat = &roster["teamspaces"][0]["seats"][0];
+            let history = rig.git(&["log", "--format=%B", &head]);
             if let Some(op) = seat["last_change"]["op"].as_str() {
-                let ops_at_head = rig.git(&["ls-tree", "-r", "--name-only", &head]);
                 assert!(
-                    ops_at_head.contains(op),
-                    "last_change {op} is not in {head}"
+                    history.contains(op),
+                    "last_change {op} is not in the history of {head}"
                 );
             }
+            let commits_at = |c: &str| -> u64 {
+                rig.git(&["rev-list", "--count", c]).trim().parse().unwrap()
+            };
+            assert!(
+                roster["scan"]["scanned"].as_u64().unwrap() <= commits_at(&head),
+                "roster scan ran past its head {head}: {}",
+                roster["scan"]
+            );
             let (stack, _) = rig.json(&["instructions", "stack", &seat_id]);
             let (log, _) = rig.json(&["log", "--all", "--limit", "3"]);
             let log_head = log["head"].as_str().unwrap();
@@ -615,6 +666,24 @@ fn every_component_reports_the_one_pinned_head() {
                     stack["head"]
                 );
             }
+            // the stack is one component: its rev, its envelope head and its seat row are the same commit
+            let stack_head = stack["head"].as_str().unwrap();
+            assert!(is_hex40(stack_head));
+            assert_eq!(
+                stack["rev"].as_str().unwrap(),
+                stack_head,
+                "stack rev is the envelope head"
+            );
+            assert_eq!(
+                stack["seat"]["name"].as_str().unwrap(),
+                seat_name_at(&rig, stack_head),
+                "stack seat row comes from the tree at its head {stack_head}"
+            );
+            assert!(
+                log["scan"]["scanned"].as_u64().unwrap() <= commits_at(log_head),
+                "log scan ran past its head {log_head}: {}",
+                log["scan"]
+            );
             heads.insert(head);
             heads.insert(log_head.to_owned());
         }
