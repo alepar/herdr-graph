@@ -228,7 +228,7 @@ podman exec -u root hg-build dnf install -y gcc make pkgconf-pkg-config zlib-ng-
 toolbox run -c hg-build cargo test
 ```
 
-The inspection views add one tier-3 test, `tests/inspect_live.rs` (`roster --live` against a private Herdr server: `cargo test --features private-herdr --test inspect_live -- --test-threads=1`). `tests/inspect_loaded.rs` (the real hook chain writing the loaded record) runs in tier 1 through `TestRoot`.
+The inspection views add two tier-3 tests: `tests/inspect_live.rs` (`roster --live` against a private Herdr server: `cargo test --features private-herdr --test inspect_live -- --test-threads=1`) and `tests/inspect_sweep.rs` (the end-to-end read-only sweep, requirement R14, through the setup hook: `cargo test --features private-herdr --test inspect_sweep -- --test-threads=1`). `tests/inspect_loaded.rs` (the real hook chain writing the loaded record) runs in tier 1 through `TestRoot`.
 
 Tier 5 against the installed threads daemon instead of the pinned build: add `HG_TEST_THREADS_BINARY=~/.local/share/herdr-threads/bin/herdr-threads`.
 
