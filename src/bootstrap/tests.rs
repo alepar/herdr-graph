@@ -1001,11 +1001,15 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     let command = hook["command"].as_str().unwrap();
     let quoted = "'/opt/herdr graph/bin/herdr-graph'";
     assert!(
-        command.starts_with(&format!("{quoted} seat --hook-prompt; ")),
+        command.starts_with(&format!(
+            "p=$(cat); printf '%s' \"$p\" | {quoted} seat --hook-prompt --stdin-payload; "
+        )),
         "{command}"
     );
     assert!(
-        command.contains(&format!("{quoted} session-report --from-hook claude")),
+        command.contains(&format!(
+            "printf '%s' \"$p\" | {quoted} session-report --from-hook claude"
+        )),
         "{command}"
     );
     assert!(
@@ -1066,7 +1070,7 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
     assert_eq!(
         groups[0]["hooks"][0]["command"],
         format!(
-            "'{BIN}' seat --hook-prompt --codex {}",
+            "'{BIN}' seat --hook-prompt --codex --stdin-payload {}",
             setup_claude::OWNER_MARKER
         )
     );
@@ -1149,8 +1153,50 @@ fn setup_claude_is_idempotent() {
         groups[0]["hooks"][0]["command"]
             .as_str()
             .unwrap()
-            .starts_with("/new/place/herdr-graph seat --hook-prompt")
+            .contains("| /new/place/herdr-graph seat --hook-prompt --stdin-payload;")
     );
+}
+
+#[test]
+fn rerun_setup_replaces_outdated_hook_in_place() {
+    // Claude and Codex: an owned hook written before `--stdin-payload` becomes the current command, once,
+    // beside the user's own group.
+    for (target, file, old) in [
+        (
+            &setup_claude::CLAUDE,
+            "settings.json",
+            "/old/herdr-graph seat --hook-prompt; /old/herdr-graph session-report --from-hook claude # herdr-graph-owned",
+        ),
+        (
+            &setup_claude::CODEX,
+            "hooks.json",
+            "/old/herdr-graph seat --hook-prompt --codex # herdr-graph-owned",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let doc = serde_json::json!({"hooks": {"SessionStart": [
+            {"hooks": [{"type": "command", "command": "echo mine"}]},
+            {"matcher": "", "hooks": [{"type": "command", "command": old}]},
+        ]}});
+        std::fs::write(dir.path().join(file), serde_json::to_vec(&doc).unwrap()).unwrap();
+        let r =
+            setup_claude::install_for(target, dir.path(), Path::new("/new/herdr-graph")).unwrap();
+        assert_eq!(r.hook, HookChange::Updated);
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join(file)).unwrap()).unwrap();
+        assert_eq!(
+            after["hooks"]["SessionStart"].as_array().unwrap().len(),
+            2,
+            "{after}"
+        );
+        let groups = owned_groups(&after);
+        assert_eq!(groups.len(), 1, "{after}");
+        let command = groups[0]["hooks"][0]["command"].as_str().unwrap();
+        assert!(
+            command.contains("--stdin-payload") && !command.contains("/old/"),
+            "{command}"
+        );
+    }
 }
 
 #[test]

@@ -16,6 +16,7 @@ use crate::bootstrap::instructions::{
 };
 use crate::inspect::harness_files::{HarnessFile, HarnessName, UserDirs, discover};
 use crate::inspect::inventory::Inventory;
+use crate::inspect::loaded;
 use crate::inspect::output::{InstructionsView, View};
 use crate::inspect::roster::instructions_text;
 use crate::inspect::scope::Scope;
@@ -147,9 +148,19 @@ pub fn build(
             id: c.record.id.clone(),
             name: c.record.name.clone(),
             lifecycle: c.record.lifecycle,
-            instructions: match &error {
-                Some(e) => InstructionsView::error(e.clone()),
-                None => InstructionsView::unknown(),
+            instructions: match &rendered {
+                Err(e) => InstructionsView::error(e.to_string()),
+                Ok(head) => loaded::clone_view(
+                    store,
+                    at,
+                    &c.record.id,
+                    c.record
+                        .occupant
+                        .as_ref()
+                        .and_then(|_| c.current())
+                        .map(|e| e.session.native_session_id.as_str()),
+                    head,
+                ),
             },
         })
         .collect();
@@ -214,6 +225,37 @@ fn manifest(
             cut: fit.cut,
         },
     ))
+}
+
+/// `loaded <rev> into <id> via hook at HH:MMZ`, when the clone has a record.
+fn loaded_line(i: &InstructionsView) -> Option<String> {
+    let rev = i.loaded_rev.as_deref()?;
+    let mut line = format!(
+        "loaded {} into {}",
+        &rev[..rev.len().min(12)],
+        i.loaded_session
+            .as_deref()
+            .unwrap_or("session not identified")
+    );
+    if let Some(src) = &i.source {
+        let _ = write!(line, " via {src}");
+    }
+    if let Some(at) = i.loaded_at {
+        let _ = write!(line, " at {}", at.format("%H:%MZ"));
+    }
+    if !i.omitted.is_empty() {
+        let _ = write!(line, "  omitted: {}", i.omitted.join(", "));
+    }
+    Some(line)
+}
+
+fn change_word(c: crate::inspect::output::PartChange) -> &'static str {
+    use crate::inspect::output::PartChange;
+    match c {
+        PartChange::Modified => "modified",
+        PartChange::Added => "added",
+        PartChange::Removed => "removed",
+    }
 }
 
 fn size_kb(bytes: usize) -> String {
@@ -329,6 +371,16 @@ impl View for StackView {
                 c.id,
                 instructions_text(&c.instructions)
             );
+            if let Some(line) = loaded_line(&c.instructions) {
+                let _ = writeln!(out, "    {line}");
+            }
+            for p in &c.instructions.stale_parts {
+                let _ = write!(out, "    stale: {} {}", change_word(p.change), p.label);
+                if let Some(c) = &p.path_last_touched {
+                    let _ = write!(out, " (path last touched {})", &c[..c.len().min(7)]);
+                }
+                let _ = writeln!(out);
+            }
         }
     }
 }

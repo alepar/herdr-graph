@@ -208,7 +208,8 @@ pub fn status(
         loaded_at: Some(rec.at),
         loaded_session: rec.native_session_id.clone(),
         source: Some(rec.source.word().to_owned()),
-        truncated: !rec.omitted.is_empty() || rec.parts.iter().any(|p| p.delivered == Delivery::Cut),
+        truncated: !rec.omitted.is_empty()
+            || rec.parts.iter().any(|p| p.delivered == Delivery::Cut),
         parts: rec
             .parts
             .iter()
@@ -277,6 +278,32 @@ pub fn status(
     view
 }
 
+/// The view for one clone of a rendered seat: its record against the occupant's native session id, with the
+/// path-last-touched commits of any stale parts read from `store` at `at`. A history read failure only drops
+/// the commit column.
+pub fn clone_view(
+    store: &crate::store::GitStore,
+    at: &crate::model::CommitId,
+    clone: &CloneId,
+    occupant_native_id: Option<&str>,
+    head: &RenderedInstructions,
+) -> InstructionsView {
+    status(
+        read(store.root(), clone),
+        occupant_native_id,
+        head,
+        &|paths| {
+            crate::store::history::HistoryWalker::new(
+                store,
+                at,
+                crate::store::history::HistoryWalker::DEFAULT_MAX_SCAN,
+            )
+            .last_touches(paths)
+            .unwrap_or_default()
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,7 +366,12 @@ mod tests {
         );
     }
 
-    fn st(dir: &Path, clone: &CloneId, occ: Option<&str>, head: &RenderedInstructions) -> InstructionsView {
+    fn st(
+        dir: &Path,
+        clone: &CloneId,
+        occ: Option<&str>,
+        head: &RenderedInstructions,
+    ) -> InstructionsView {
         status(read(dir, clone), occ, head, &no_touches)
     }
 
@@ -350,18 +382,35 @@ mod tests {
         let r = rendered(&[("a", "one\n")]);
 
         // no record
-        assert_eq!(st(tmp.path(), &clone, Some("s-1"), &r), InstructionsView::unknown());
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-1"), &r),
+            InstructionsView::unknown()
+        );
         // corrupt JSON
         let path = record_path(tmp.path(), &clone);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"{not json").unwrap();
-        assert_eq!(st(tmp.path(), &clone, Some("s-1"), &r), InstructionsView::unknown());
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-1"), &r),
+            InstructionsView::unknown()
+        );
         // an older schema
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
-        let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
+        let mut v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         v["schema"] = 0.into();
         std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
-        assert_eq!(st(tmp.path(), &clone, Some("s-1"), &r), InstructionsView::unknown());
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-1"), &r),
+            InstructionsView::unknown()
+        );
 
         // null native id: unknown, loaded fields still shown, flagless note
         rec(tmp.path(), &clone, &r, InjectionSource::Hook, None, false);
@@ -375,7 +424,14 @@ mod tests {
         assert_eq!(v.parts.len(), 1);
 
         // no occupant, then a different occupant
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let v = st(tmp.path(), &clone, None, &r);
         assert_eq!(v.status, InstructionsStatus::Unknown);
         assert_eq!(v.loaded_session.as_deref(), Some("s-1"));
@@ -390,12 +446,32 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-2"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-2"),
+            true,
+        );
         let dir = record_path(tmp.path(), &clone).parent().unwrap().to_owned();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
-        assert_eq!(st(tmp.path(), &clone, Some("s-1"), &r).status, InstructionsStatus::Unknown);
-        assert_eq!(st(tmp.path(), &clone, Some("s-2"), &r).status, InstructionsStatus::Current);
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-1"), &r).status,
+            InstructionsStatus::Unknown
+        );
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-2"), &r).status,
+            InstructionsStatus::Current
+        );
     }
 
     #[test]
@@ -403,14 +479,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n"), ("b", "two\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::HookCodex, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::HookCodex,
+            Some("s-1"),
+            true,
+        );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
         assert_eq!(v.status, InstructionsStatus::Current);
         assert_eq!(v.source.as_deref(), Some("hook-codex"));
         assert_eq!(v.loaded_session.as_deref(), Some("s-1"));
         assert!(!v.truncated && v.stale_parts.is_empty() && v.note.is_none());
         assert_eq!(
-            v.parts.iter().map(|p| (p.label.as_str(), p.delivered)).collect::<Vec<_>>(),
+            v.parts
+                .iter()
+                .map(|p| (p.label.as_str(), p.delivered))
+                .collect::<Vec<_>>(),
             [("a", Delivery::Whole), ("b", Delivery::Whole)]
         );
     }
@@ -420,7 +506,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n"), ("b", "two\n"), ("c", "three\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         // a modified, b removed, d added
         let head = rendered(&[("a", "ONE\n"), ("c", "three\n"), ("d", "four\n")]);
         let touched = |paths: &[RepoPath]| {
@@ -439,12 +532,24 @@ mod tests {
         };
         let v = status(read(tmp.path(), &clone), Some("s-1"), &head, &touched);
         assert_eq!(v.status, InstructionsStatus::Stale);
-        let got: Vec<_> = v.stale_parts.iter().map(|s| (s.label.as_str(), s.change)).collect();
+        let got: Vec<_> = v
+            .stale_parts
+            .iter()
+            .map(|s| (s.label.as_str(), s.change))
+            .collect();
         assert_eq!(
             got,
-            [("a", PartChange::Modified), ("d", PartChange::Added), ("b", PartChange::Removed)]
+            [
+                ("a", PartChange::Modified),
+                ("d", PartChange::Added),
+                ("b", PartChange::Removed)
+            ]
         );
-        assert!(v.stale_parts.iter().all(|s| s.path_last_touched.as_deref().map(str::len) == Some(40)));
+        assert!(
+            v.stale_parts
+                .iter()
+                .all(|s| s.path_last_touched.as_deref().map(str::len) == Some(40))
+        );
 
         // same label and digest, different delivery mode, is modified
         let tmp = tempfile::tempdir().unwrap();
@@ -452,7 +557,14 @@ mod tests {
         let r = rendered(&[("a", "one\n"), ("big", &big)]);
         let fit = fit_hook(&r, HOOK_RENDER_CAP);
         assert!(fit.cut.is_some());
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
         assert_eq!(v.status, InstructionsStatus::Current);
     }
@@ -464,7 +576,14 @@ mod tests {
         let (g, t, s) = (body('g', 5000), body('t', 5000), body('s', 100));
         let r = rendered(&[("g", &g), ("t", &t), ("s", &s)]);
         assert_eq!(fit_hook(&r, HOOK_RENDER_CAP).omitted, ["g"]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         // the edit keeps g's size, so the cap boundary does not move
         let g2 = body('G', 5000);
         let head = rendered(&[("g", &g2), ("t", &t), ("s", &s)]);
@@ -481,15 +600,29 @@ mod tests {
         let (a, b, c) = (body('a', 3000), body('b', 3000), body('c', 2500));
         let r = rendered(&[("a", &a), ("b", &b), ("c", &c)]);
         assert!(hook_size(&r) <= HOOK_RENDER_CAP, "{}", hook_size(&r));
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         // growing c pushes a over the cap: a is no longer delivered
         let c2 = body('c', 3200);
         let head = rendered(&[("a", &a), ("b", &b), ("c", &c2)]);
         assert_eq!(fit_hook(&head, HOOK_RENDER_CAP).omitted, ["a"]);
         let v = st(tmp.path(), &clone, Some("s-1"), &head);
         assert_eq!(v.status, InstructionsStatus::Stale);
-        let got: Vec<_> = v.stale_parts.iter().map(|s| (s.label.as_str(), s.change)).collect();
-        assert_eq!(got, [("c", PartChange::Modified), ("a", PartChange::Removed)]);
+        let got: Vec<_> = v
+            .stale_parts
+            .iter()
+            .map(|s| (s.label.as_str(), s.change))
+            .collect();
+        assert_eq!(
+            got,
+            [("c", PartChange::Modified), ("a", PartChange::Removed)]
+        );
     }
 
     #[test]
@@ -498,18 +631,39 @@ mod tests {
         let clone = CloneId::new();
         let (g, t, s) = (body('g', 5000), body('t', 5000), body('s', 100));
         let r = rendered(&[("g", &g), ("t", &t), ("s", &s)]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
         assert_eq!((v.status, v.truncated), (InstructionsStatus::Current, true));
         let big = body('x', 12_000);
         let r = rendered(&[("big", &big)]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
         assert_eq!((v.status, v.truncated), (InstructionsStatus::Current, true));
         assert_eq!(v.parts[0].delivered, Delivery::Cut);
         assert!(v.omitted.is_empty());
         let r = rendered(&[("a", "one\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         assert!(!st(tmp.path(), &clone, Some("s-1"), &r).truncated);
     }
 
@@ -530,10 +684,20 @@ mod tests {
         // an edit past the delivered prefix leaves the record current; one inside it makes it stale
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let tail = big.replacen("line 01999", "LINE 01999", 1);
         let head = rendered(&[("a", "small\n"), ("big", &tail)]);
-        assert_eq!(st(tmp.path(), &clone, Some("s-1"), &head).status, InstructionsStatus::Current);
+        assert_eq!(
+            st(tmp.path(), &clone, Some("s-1"), &head).status,
+            InstructionsStatus::Current
+        );
         let front = big.replacen("line 00000", "LINE 00000", 1);
         let head = rendered(&[("a", "small\n"), ("big", &front)]);
         let v = st(tmp.path(), &clone, Some("s-1"), &head);
@@ -546,15 +710,34 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::HookCodex, Some("019a-bc"), true);
-        let v = st(tmp.path(), &clone, Some("/home/u/.codex/sessions/019a-bc.jsonl"), &r);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::HookCodex,
+            Some("019a-bc"),
+            true,
+        );
+        let v = st(
+            tmp.path(),
+            &clone,
+            Some("/home/u/.codex/sessions/019a-bc.jsonl"),
+            &r,
+        );
         assert_eq!(v.status, InstructionsStatus::Unknown);
         assert_eq!(v.note.as_deref(), Some(CODEX_FORM_NOTE));
         // a genuinely different session carries no note
         let v = st(tmp.path(), &clone, Some("019a-zz"), &r);
         assert_eq!((v.status, v.note), (InstructionsStatus::Unknown, None));
         // a Claude record never gets the Codex note
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("019a-bc"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("019a-bc"),
+            true,
+        );
         let v = st(tmp.path(), &clone, Some("019a-bc.jsonl"), &r);
         assert_eq!(v.note, None);
     }
@@ -564,11 +747,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::HookCodex, None, false);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::HookCodex,
+            None,
+            false,
+        );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
-        assert_eq!(v.note.as_deref(), Some("hook predates --stdin-payload; rerun setup"));
+        assert_eq!(
+            v.note.as_deref(),
+            Some("hook predates --stdin-payload; rerun setup")
+        );
         let raw: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(record_path(tmp.path(), &clone)).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(record_path(tmp.path(), &clone)).unwrap())
+                .unwrap();
         assert_eq!(raw["stdin_payload"], false);
         assert!(raw["native_session_id"].is_null());
         assert_eq!(raw["source"], "hook-codex");
@@ -582,7 +776,14 @@ mod tests {
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n")]);
-        rec(tmp.path(), &clone, &r, InjectionSource::Hook, Some("s-1"), true);
+        rec(
+            tmp.path(),
+            &clone,
+            &r,
+            InjectionSource::Hook,
+            Some("s-1"),
+            true,
+        );
         let missing = record_path(&tmp.path().join("no/such/instance"), &clone);
         assert!(!missing.exists());
         std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();

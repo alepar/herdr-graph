@@ -40,6 +40,8 @@ pub struct Target {
     /// The hooks file inside the config dir.
     settings: &'static str,
     group: fn(&Path) -> Value,
+    /// Whether an installed hook command has the current shape (binary path aside).
+    current: fn(&str) -> bool,
     /// How this harness asks before `apply`.
     pub gate: ApprovalGate,
 }
@@ -47,6 +49,7 @@ pub struct Target {
 pub const CLAUDE: Target = Target {
     settings: "settings.json",
     group: claude_group,
+    current: claude_command_current,
     gate: ApprovalGate::SettingsAsk,
 };
 
@@ -54,6 +57,7 @@ pub const CLAUDE: Target = Target {
 pub const CODEX: Target = Target {
     settings: "hooks.json",
     group: codex_group,
+    current: codex_command_current,
     gate: ApprovalGate::RulesFile,
 };
 
@@ -136,6 +140,39 @@ pub fn owned_hook_installed(target: &Target, config: &Path) -> anyhow::Result<bo
         .is_some_and(|a| a.iter().any(is_owned)))
 }
 
+/// Whether `target`'s owned hook commands in `config` all have the current shape. `None` when there is no
+/// owned hook (or no settings file). A hook installed before `--stdin-payload` is not current.
+pub fn owned_hook_current(target: &Target, config: &Path) -> anyhow::Result<Option<bool>> {
+    let path = config.join(target.settings);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    let doc = parse_settings(&path, &text)?;
+    let commands: Vec<&str> = doc["hooks"]["SessionStart"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|g| is_owned(g))
+        .flat_map(|g| g["hooks"].as_array().into_iter().flatten())
+        .filter_map(|h| h["command"].as_str())
+        .filter(|c| c.contains(OWNER_MARKER))
+        .collect();
+    if commands.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(commands.iter().all(|c| (target.current)(c))))
+}
+
+fn claude_command_current(c: &str) -> bool {
+    c.starts_with("p=$(cat); ") && c.contains(" seat --hook-prompt --stdin-payload; ")
+}
+
+fn codex_command_current(c: &str) -> bool {
+    c.contains(" seat --hook-prompt --codex --stdin-payload ")
+}
+
 /// `${CLAUDE_CONFIG_DIR:-<home>/.claude}`.
 pub fn config_dir(claude_config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     let dir = claude_config_dir
@@ -165,18 +202,21 @@ fn sh_quote(s: &str) -> String {
     }
 }
 
-/// The hook command: prompt `/seat` first (when this is a graph pane), then report the session without
-/// waiting on the daemon. `seat --hook-prompt` does not read stdin, so `session-report` still gets the payload.
+/// The hook command: read the payload once, prompt `/seat` first (when this is a graph pane, recording what was
+/// loaded under the payload's session id), then report the session without waiting on the daemon. Both
+/// commands get the same payload on stdin.
 pub fn hook_command(binary: &Path) -> String {
     let b = sh_quote(&binary.to_string_lossy());
-    format!("{b} seat --hook-prompt; {b} session-report --from-hook claude {OWNER_MARKER}")
+    format!(
+        "p=$(cat); printf '%s' \"$p\" | {b} seat --hook-prompt --stdin-payload; printf '%s' \"$p\" | {b} session-report --from-hook claude {OWNER_MARKER}"
+    )
 }
 
-/// The Codex hook command: only the `/seat` prompt, as `additionalContext` JSON. Codex session ids come from
-/// Herdr, so there is no session report.
+/// The Codex hook command: only the `/seat` prompt, as `additionalContext` JSON, with the payload's session id
+/// recorded. Codex session ids come from Herdr, so there is no session report.
 pub fn codex_hook_command(binary: &Path) -> String {
     let b = sh_quote(&binary.to_string_lossy());
-    format!("{b} seat --hook-prompt --codex {OWNER_MARKER}")
+    format!("{b} seat --hook-prompt --codex --stdin-payload {OWNER_MARKER}")
 }
 
 fn claude_group(binary: &Path) -> Value {
