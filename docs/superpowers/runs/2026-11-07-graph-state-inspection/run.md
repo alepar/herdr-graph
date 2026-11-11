@@ -4,6 +4,7 @@ flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
 phase: code
 codeMechanism: Workflow
 runTag: graph-state-inspection-20261108T225851
+skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8) — session moved to AISW claude-1 on 2026-11-10; content identical to the claude-2 copy (diff -rq empty)
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
 
 idea: Implement epic hg-blw (graph state inspection) per the approved design 2026-11-07-graph-state-inspection-design.md, fully autonomous, both roasts on. User's words, relayed by the main-tab coordinator: "hg-blw for impl, /superpowers:super-auto fully autonomouth both roasts are on"
