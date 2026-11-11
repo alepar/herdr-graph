@@ -574,8 +574,68 @@ fn spec_keys_and_flags_reach_their_views() {
     assert_eq!(by_rows[0]["requester"]["seat"], seat_id.as_str());
     assert_ne!(bad_by(&rig), Some(0), "--by resolves its seat");
 
+    // `ops` rows: a dedicated view whose requester has all four keys, and filters that reach the rows.
+    let team_id = r0["teamspaces"][0]["id"].as_str().unwrap().to_owned();
+    let rows_of = |v: &Value| v["ops"].as_array().unwrap().clone();
     let (ops, _) = rig.json(&["ops", "--seat", "foreman", "--limit", "5"]);
     assert_keys("ops", &ops, &["ops"]);
+    let by_seat = rows_of(&ops);
+    assert!(!by_seat.is_empty(), "the seat requested a rename: {ops}");
+    for row in &by_seat {
+        assert_keys(
+            "ops row",
+            row,
+            &[
+                "op",
+                "kind",
+                "state",
+                "requester",
+                "summary",
+                "rejection",
+                "superseded_by",
+                "admitted_at",
+            ],
+        );
+        assert_keys(
+            "ops row requester",
+            &row["requester"],
+            &["teamspace", "seat", "clone", "human"],
+        );
+        assert!(
+            row["requester"].get("native_session").is_none(),
+            "no internal fields: {row}"
+        );
+        assert_eq!(
+            row["requester"]["seat"],
+            seat_id.as_str(),
+            "--seat filters: {row}"
+        );
+    }
+    let (ops, _) = rig.json(&["ops", "--teamspace", "t", "--limit", "5"]);
+    let by_team = rows_of(&ops);
+    assert!(
+        !by_team.is_empty(),
+        "the teamspace requested a rename: {ops}"
+    );
+    for row in &by_team {
+        assert_eq!(
+            row["requester"]["teamspace"],
+            team_id.as_str(),
+            "--teamspace filters: {row}"
+        );
+    }
+    // A teamspace and a seat that requested nothing match no rows.
+    rig.plan_apply(&["teamspace", "create", "idle"]);
+    rig.plan_apply(&["seat", "create", "spare", "--teamspace", "idle"]);
+    let (none, _) = rig.json(&["ops", "--teamspace", "idle"]);
+    assert_eq!(none["ops"], json!([]), "non-matching --teamspace: {none}");
+    let (none, _) = rig.json(&["ops", "--seat", "spare"]);
+    assert_eq!(none["ops"], json!([]), "non-matching --seat: {none}");
+    let (all, _) = rig.json(&["ops", "--limit", "200"]);
+    assert!(
+        rows_of(&all).len() > by_seat.len(),
+        "the unfiltered listing has more rows than the seat's: {all}"
+    );
 }
 
 /// Exit code of `log --by` naming a seat that does not exist.
