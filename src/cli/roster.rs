@@ -29,6 +29,7 @@ pub enum Commands {
         /// With --live: also list Herdr workspaces, tabs and panes graph does not manage.
         #[arg(long, requires = "live")]
         unmanaged: bool,
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
     },
@@ -176,6 +177,50 @@ mod tests {
         assert_eq!(docs[0]["live"], false);
         assert!(jerr.is_empty() && err.is_empty());
         assert_eq!(snapshot(&fx.store), before);
+    }
+
+    /// Every visible argument of `sub` of the group built from `augment`, with its help line.
+    fn missing_help(augment: fn(clap::Command) -> clap::Command, path: &[&str]) -> Vec<String> {
+        let mut command = augment(clap::Command::default());
+        for name in path {
+            command = command
+                .find_subcommand(name)
+                .unwrap_or_else(|| panic!("no subcommand {name} in {path:?}"))
+                .clone();
+        }
+        assert!(
+            command.get_arguments().any(|a| a.get_id() == "json"),
+            "{path:?} has no --json"
+        );
+        command
+            .get_arguments()
+            .filter(|a| !a.is_hide_set())
+            .filter(|a| a.get_help().is_none_or(|h| h.to_string().trim().is_empty()))
+            .map(|a| format!("{path:?} {}", a.get_id()))
+            .collect()
+    }
+
+    #[test]
+    fn help_lines_present() {
+        use clap::Subcommand as _;
+        let mut missing = missing_help(Commands::augment_subcommands, &["roster"]);
+        missing.extend(missing_help(
+            crate::cli::sessions::Commands::augment_subcommands,
+            &["sessions"],
+        ));
+        missing.extend(missing_help(
+            crate::cli::log::Commands::augment_subcommands,
+            &["log"],
+        ));
+        missing.extend(missing_help(
+            crate::cli::instructions::Commands::augment_subcommands,
+            &["instructions", "stack"],
+        ));
+        missing.extend(missing_help(
+            crate::cli::ops::Commands::augment_subcommands,
+            &["ops"],
+        ));
+        assert!(missing.is_empty(), "arguments without a help line: {missing:?}");
     }
 
     #[test]

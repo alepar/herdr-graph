@@ -23,6 +23,7 @@ pub enum Commands {
         /// Maximum rows (default 50).
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
     },
