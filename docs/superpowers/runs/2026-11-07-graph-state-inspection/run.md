@@ -140,7 +140,7 @@ codeBuckets:
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
   sweep: d3c4123 — tier 1: 1500 passed, 1 failed (daemon_composed::session_end_flows_to_transcripts: 'timed out waiting for worker occupant'; passed 3/3 in isolation); test-support: 1527 passed, 0 failed; tier 3: 1573 passed, 0 failed, 6 skipped; tier 5 threads_real: 3 passed; failing: daemon_composed::session_end_flows_to_transcripts (load-sensitive timeout); command: toolbox run -c hg-build cargo test --no-fail-fast; … --features test-support; … --features private-herdr -- --test-threads=1; HG_REAL_THREADS=1 … --test threads_real @ d3c4123bd029ef8fd0a8a784d14571a47ca438bf
   slowness: round 1 graph-bound (width 1 vs cap 4) [inv 2]
-  worktreesKept: /tmp/sp-f11883d5 — process cleanup incomplete (exit 4: unrelated uninspectable processes)
+  worktreesKept: none (task worktrees removed after clean+ancestry checks; /tmp/sp-f11883d5 removed 2026-11-11 after a cwd and environ check found no referencing process; run worktree kept for the main-tab coordinator merge)
   processSweep: stopped 0 · survived 0 · unknown (unrelated processes not inspectable) · kept 0
 - hg-blw.2 escalation · degraded-verdict · "BLOCKED [cause: build/test container unusable] — hg-build lost /etc/passwd; restart wedged it in Stopping; force-stop refused by the permission layer. Needs a human to restart or recreate hg-build (README setup). hg-blw.2 code is done on task-hg-blw.2 (48dfe5f + 9bf2777)."
 - final-review-inv-64d86974-dab5-4fe4-a772-e304978dabd1.md · degraded-verdict · "final review cluster 13 (docs-top: design doc, run.md, ledgers, roast and coverage records, friction.md) unreviewed — over the context window; review collection gap retained (cluster-13 file never written). Run records, not product code; the code roast reviews the product diff"
@@ -178,3 +178,4 @@ stepBackCode-round-3: local — 2 Nits at the round cap (one fix-regression); st
 scopeFilter-round-3: [Nit] src/observe/step.rs:814 punch-list — Nit at the cap
 scopeFilter-round-3: [Nit] src/observe/step.rs:651 punch-list — Nit at the cap (fix-regression)
 scope-filter: 0 in-scope · 2 punch-listed
+finishHandoff: 2026-11-11 · branch super-auto/graph-state-inspection handed to the main-tab coordinator, who merges to main (user: "I merge it into main. Do not merge to main yourself."); run worktree kept until that merge
