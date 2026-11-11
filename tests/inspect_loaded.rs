@@ -383,7 +383,7 @@ fn user_level_claude_md_under_the_cwd_ancestors_is_labelled_user() {
     std::fs::write(&md, "user rules").unwrap();
     let out = g
         .cmd(BIN, &["instructions", "stack", "foreman", "--json"])
-        .env("CLAUDE_CONFIG_DIR", &user_dir)
+        .env("CLAUDE_CONFIG_DIR", &user_dir) // isolation-ok: a dir inside the private root, overriding scrubbed_env's
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", lossy(&out.stderr));
