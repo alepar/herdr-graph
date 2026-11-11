@@ -434,7 +434,8 @@ pub struct HookFit {
     pub full_size: usize,
     /// Labels of the parts left out (general ones first), in render order.
     pub omitted: Vec<String>,
-    /// Label of the single most specific part when it alone had to be cut.
+    /// Label of the single most specific part when it alone had to be cut: set only when its whole header and
+    /// at least one body byte were delivered; otherwise the part is in `omitted`.
     pub cut: Option<String>,
     /// Bytes of the cut part's `body` the hook delivered (its block header excluded); None when no part was cut.
     pub cut_body_bytes: Option<usize>,
@@ -503,7 +504,21 @@ pub fn fit_hook(r: &RenderedInstructions, cap: usize) -> HookFit {
     let kept = &blocks[last][..end];
     let kept = kept.rfind('\n').map_or("", |i| &kept[..=i]);
     let header_len = format!("\n## {} — {}\n", r.parts[last].label, r.parts[last].path).len();
-    let cut_body_bytes = Some(kept.len().saturating_sub(header_len));
+    if kept.len() <= header_len {
+        // No body byte reached the session: the part is omitted like the others, and no partial header is printed.
+        let mut text = head;
+        text.push('\n');
+        text.push_str(&marker(&labels));
+        text.push('\n');
+        return HookFit {
+            text,
+            full_size,
+            omitted: labels,
+            cut: None,
+            cut_body_bytes: None,
+        };
+    }
+    let cut_body_bytes = Some(kept.len() - header_len);
     let mut text = head + kept;
     text.push('\n');
     text.push_str(&marker(&named));
@@ -685,30 +700,76 @@ mod tests {
         assert_eq!(fit_hook(&r, 1_000_000).cut_body_bytes, None);
     }
 
-    #[test]
-    fn cut_part_with_zero_body_bytes() {
-        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
-        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+    /// Head, the cut block's header and the marker tail for the `("a", small), ("c", big)` fixture.
+    fn boundary_parts(r: &RenderedInstructions) -> (usize, usize, usize) {
         let head = format!(
             "{}\n{}\n",
-            hook_header(&r),
+            hook_header(r),
             revision_line(&r.seat_name, &r.seat, short_rev(&r.rev))
         );
         let block_header = "\n## c — c.md\n";
         let tail = 2 + marker(&["a".to_owned(), "c (cut)".to_owned()]).len();
-        // Room for the cut part's block header and the marker, and for none of its body.
-        let cap = head.len() + block_header.len() + tail;
+        (head.len(), block_header.len(), tail)
+    }
+
+    #[test]
+    fn partial_header_budget_omits_the_last_part() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        let (head, block_header, tail) = boundary_parts(&r);
+        // Room for part of the cut part's block header, not all of it.
+        let cap = head + tail + 5;
+        assert!(5 < block_header);
         let fit = fit_hook(&r, cap);
-        assert_eq!(fit.cut.as_deref(), Some("c"));
-        assert_eq!(fit.omitted, ["a"]);
-        assert_eq!(fit.cut_body_bytes, Some(0));
+        assert_eq!(fit.cut, None);
+        assert_eq!(fit.cut_body_bytes, None);
+        assert_eq!(fit.omitted, ["a", "c"]);
         assert!(fit.text.len() <= cap, "{} > {cap}", fit.text.len());
         assert!(
-            fit.text
-                .contains("## c — c.md\n\n[truncated: omitted a, c (cut);"),
+            fit.text.contains("[truncated: omitted a, c;"),
             "{}",
             fit.text
         );
+        assert!(!fit.text.contains("## c"), "{}", fit.text);
+        assert!(!fit.text.contains("(cut)"), "{}", fit.text);
+    }
+
+    #[test]
+    fn header_only_budget_omits_the_last_part() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        let (head, block_header, tail) = boundary_parts(&r);
+        // Room for the cut part's whole block header and the marker, and for none of its body.
+        let cap = head + block_header + tail;
+        let fit = fit_hook(&r, cap);
+        assert_eq!(fit.cut, None);
+        assert_eq!(fit.cut_body_bytes, None);
+        assert_eq!(fit.omitted, ["a", "c"]);
+        assert!(fit.text.len() <= cap, "{} > {cap}", fit.text.len());
+        assert!(
+            fit.text.contains("[truncated: omitted a, c;"),
+            "{}",
+            fit.text
+        );
+        assert!(!fit.text.contains("## c"), "{}", fit.text);
         assert!(!fit.text.contains("line 0000"), "{}", fit.text);
+    }
+
+    #[test]
+    fn one_body_line_past_the_header_is_a_cut() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        let (head, block_header, tail) = boundary_parts(&r);
+        let cap = head + block_header + "line 0000\n".len() + tail;
+        let fit = fit_hook(&r, cap);
+        assert_eq!(fit.cut.as_deref(), Some("c"));
+        assert_eq!(fit.cut_body_bytes, Some(10));
+        assert_eq!(fit.omitted, ["a"]);
+        assert!(fit.text.len() <= cap, "{} > {cap}", fit.text.len());
+        assert!(
+            fit.text.contains("## c — c.md\nline 0000\n"),
+            "{}",
+            fit.text
+        );
     }
 }

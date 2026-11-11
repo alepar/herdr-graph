@@ -109,7 +109,7 @@ fn recorded(p: &Part, cut_bytes: Option<usize>) -> RecordedPart {
 }
 
 /// What a hook delivers for `r` under `fit`: kept parts whole, the cut part with its prefix digest, and the
-/// omitted labels. Omitted parts are a prefix of the render order and the cut part is the last one.
+/// omitted labels. The cut part, when any, has its whole header and at least one body byte delivered. Omitted parts are a prefix of the render order and the cut part is the last one.
 pub fn delivered(r: &RenderedInstructions, fit: &HookFit) -> (Vec<RecordedPart>, Vec<String>) {
     let skip = fit.omitted.len().min(r.parts.len());
     let last = r.parts.len().saturating_sub(1);
@@ -370,6 +370,11 @@ mod tests {
         }
     }
 
+    /// A multi-line body: the hook cuts at line boundaries, so a cut part needs a whole line to deliver.
+    fn lines(n: usize) -> String {
+        (0..n).map(|i| format!("line {i:05}\n")).collect()
+    }
+
     fn body(c: char, n: usize) -> String {
         format!("{}\n", c.to_string().repeat(n - 1))
     }
@@ -586,7 +591,7 @@ mod tests {
 
         // same label and digest, different delivery mode, is modified
         let tmp = tempfile::tempdir().unwrap();
-        let big = body('x', 12_000);
+        let big = lines(1000);
         let r = rendered(&[("a", "one\n"), ("big", &big)]);
         let fit = fit_hook(&r, HOOK_RENDER_CAP);
         assert!(fit.cut.is_some());
@@ -674,7 +679,7 @@ mod tests {
         );
         let v = st(tmp.path(), &clone, Some("s-1"), &r);
         assert_eq!((v.status, v.truncated), (InstructionsStatus::Current, true));
-        let big = body('x', 12_000);
+        let big = lines(1000);
         let r = rendered(&[("big", &big)]);
         rec(
             tmp.path(),
@@ -698,6 +703,28 @@ mod tests {
             true,
         );
         assert!(!st(tmp.path(), &clone, Some("s-1"), &r).truncated);
+    }
+
+    #[test]
+    fn header_boundary_budget_records_the_part_omitted() {
+        let big: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+        let r = rendered(&[("a", "small\n"), ("c", &big)]);
+        // Sweep every budget: a cut part is recorded only with at least one delivered body byte, and the
+        // budgets that deliver none (partial header, header only) record every label as omitted.
+        let mut seen_all_omitted = false;
+        for cap in 0..hook_size(&r) {
+            let fit = fit_hook(&r, cap);
+            let (parts, omitted) = delivered(&r, &fit);
+            for p in parts.iter().filter(|p| p.delivered == Delivery::Cut) {
+                assert!(p.bytes > 0, "cap {cap}: cut part with no body: {p:?}");
+            }
+            if fit.cut.is_none() && fit.omitted == ["a", "c"] {
+                seen_all_omitted = true;
+                assert!(parts.is_empty(), "cap {cap}: {parts:?}");
+                assert_eq!(omitted, ["a", "c"]);
+            }
+        }
+        assert!(seen_all_omitted);
     }
 
     #[test]
