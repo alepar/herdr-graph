@@ -81,6 +81,10 @@ pub struct RosterSeat {
     /// `true` when the walk reached the root commit or found a change; `false` when it stopped at the cap
     /// (older history might hold one); `null` when no pass ran.
     pub last_change_scanned: Option<bool>,
+    /// The commit whose tree has a record that does not parse, when the `last_change` search for this seat
+    /// stopped there (then `last_change` is `null` and `last_change_scanned` is `false`); `null` otherwise.
+    /// Told apart from the scan cap by this field.
+    pub last_change_unreadable: Option<CommitId>,
     pub clones: Vec<RosterClone>,
 }
 
@@ -356,6 +360,7 @@ fn build_inner(
                 reload_required: s.record.reload_required,
                 last_change: None,
                 last_change_scanned: None,
+                last_change_unreadable: None,
                 clones,
             });
         }
@@ -554,8 +559,10 @@ fn unmanaged_of(snap: &HerdrSnapshot, bound: &[Binding]) -> Unmanaged {
 }
 
 /// One `HistoryWalker` pass for every listed seat; matching is `LogQuery::matches_with` on the seat's scope,
-/// with the seats' paths resolved once per commit tree. A commit whose tree cannot be read counts as "no match"
-/// for every seat on that commit, never as a failed roster. `None` (no pass) when no seat is listed.
+/// with the seats' paths resolved once per commit tree. A commit whose tree cannot be read blocks every seat
+/// still unmatched there (and a seat whose own match fails blocks only that seat): the seat reports
+/// `last_change_unreadable` and is never matched against older commits, so the result is a typed signal,
+/// never a failed roster and never a silently older change. `None` (no pass) when no seat is listed.
 fn fill_last_changes(
     store: &GitStore,
     at: &CommitId,
@@ -581,32 +588,51 @@ fn fill_last_changes(
     }
     let report = HistoryWalker::new(store, at, max_scan).walk(|c| {
         let open: Vec<usize> = (0..pending.len())
-            .filter(|&i| pending[i].0.last_change.is_none())
+            .filter(|&i| {
+                pending[i].0.last_change.is_none() && pending[i].0.last_change_unreadable.is_none()
+            })
             .collect();
         let ids: Vec<SeatId> = open.iter().map(|&i| pending[i].0.id.clone()).collect();
-        if let Ok(paths) = Scope::seat_paths_at(&store.at(&c.commit), &ids) {
-            for (&i, paths) in open.iter().zip(&paths) {
-                let (seat, q) = &mut pending[i];
-                if q.matches_with(store, c, paths).unwrap_or(false) {
-                    seat.last_change = Some(LastChange {
-                        at: c.at,
-                        op: c.trailers.op.clone(),
-                        summary: c
-                            .operation
-                            .as_ref()
-                            .map_or_else(|| c.summary.clone(), |o| o.summary.clone()),
-                    });
+        match Scope::seat_paths_at(&store.at(&c.commit), &ids) {
+            Ok(paths) => {
+                for (&i, paths) in open.iter().zip(&paths) {
+                    let (seat, q) = &mut pending[i];
+                    match q.matches_with(store, c, paths) {
+                        Ok(true) => {
+                            seat.last_change = Some(LastChange {
+                                at: c.at,
+                                op: c.trailers.op.clone(),
+                                summary: c
+                                    .operation
+                                    .as_ref()
+                                    .map_or_else(|| c.summary.clone(), |o| o.summary.clone()),
+                            });
+                        }
+                        Ok(false) => {}
+                        Err(_) => seat.last_change_unreadable = Some(c.commit.clone()),
+                    }
+                }
+            }
+            Err(_) => {
+                for &i in &open {
+                    pending[i].0.last_change_unreadable = Some(c.commit.clone());
                 }
             }
         }
-        if pending.iter().all(|(s, _)| s.last_change.is_some()) {
+        if pending
+            .iter()
+            .all(|(s, _)| s.last_change.is_some() || s.last_change_unreadable.is_some())
+        {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
         }
     })?;
     for (seat, _) in &mut pending {
-        seat.last_change_scanned = Some(seat.last_change.is_some() || !report.stopped_early);
+        seat.last_change_scanned = Some(
+            seat.last_change.is_some()
+                || (seat.last_change_unreadable.is_none() && !report.stopped_early),
+        );
     }
     Ok(Some(report))
 }
@@ -722,6 +748,18 @@ impl View for Roster {
                 .collect();
             let _ = writeln!(out, "live data unavailable: {}", parts.join("; "));
         }
+        let unreadable = self
+            .teamspaces
+            .iter()
+            .flat_map(|t| &t.seats)
+            .filter(|s| s.last_change_unreadable.is_some())
+            .count();
+        if unreadable > 0 {
+            let _ = writeln!(
+                out,
+                "warning: {unreadable} seats' last change stopped at a commit whose records do not parse (last_change_unreadable)"
+            );
+        }
         for t in &self.teamspaces {
             let _ = writeln!(out, "{} ({}) {}", t.name, t.id, serde_word(&t.lifecycle));
             for s in &t.seats {
@@ -736,6 +774,14 @@ impl View for Roster {
                     line.push_str("  reload_required");
                 }
                 match (&s.last_change, s.last_change_scanned) {
+                    (None, _) if s.last_change_unreadable.is_some() => {
+                        let at = s.last_change_unreadable.as_ref().map_or("", |c| &c.0);
+                        let _ = write!(
+                            line,
+                            "  last change unknown (unreadable tree at {})",
+                            &at[..at.len().min(12)]
+                        );
+                    }
                     (Some(l), _) => {
                         let _ = write!(
                             line,
@@ -1153,8 +1199,9 @@ mod tests {
         assert!(out.contains("last change 2026-11-05 12:00Z new b"), "{out}");
     }
 
-    #[test]
-    fn roster_last_change_degrades_on_unparseable_historical_tree() {
+    /// alpha changed at init and after the repair; beta's newest change sits in a tree with a record that
+    /// does not parse. Returns the fixture, alpha, beta and the unreadable commit.
+    fn unreadable_tree_world() -> (Fx, SeatId, SeatId, CommitId) {
         let mut fx = Fx::new();
         let t = fx.teamspace("proj", Lifecycle::Active);
         let a = fx.seat(&t, "alpha", Lifecycle::Active);
@@ -1162,22 +1209,76 @@ mod tests {
         fx.set_time("2026-11-05T10:00:00Z");
         fx.commit("init");
         fx.set_time("2026-11-05T11:00:00Z");
-        // beta's newest change sits in a tree with a record that does not parse
         fx.put_file(
             RepoPath::new("teamspaces/zz-bad/teamspace.toml").unwrap(),
             b"{not toml".to_vec(),
         );
         touch(&mut fx, &b, "beta while broken");
+        let bad = pin_head(&fx.store).unwrap();
         fx.set_time("2026-11-05T12:00:00Z");
         fx.delete_file(RepoPath::new("teamspaces/zz-bad/teamspace.toml").unwrap());
         touch(&mut fx, &a, "alpha after repair");
+        (fx, a, b, bad)
+    }
+
+    #[test]
+    fn roster_last_change_degrades_on_unparseable_historical_tree() {
+        let (fx, a, b, bad) = unreadable_tree_world();
         let r = roster(&fx, Scope::Instance, false);
-        let la = seat_of(&r, &a).last_change.clone().unwrap();
-        assert_eq!(la.summary, "alpha after repair");
-        // beta: the unreadable tree is skipped, so its newest readable match is the init commit
+        let sa = seat_of(&r, &a);
+        assert_eq!(
+            sa.last_change.as_ref().unwrap().summary,
+            "alpha after repair"
+        );
+        assert_eq!(sa.last_change_unreadable, None);
+        // beta: the walk reached the unreadable tree while beta was unmatched; it must not fall through to init
         let sb = seat_of(&r, &b);
-        assert_eq!(sb.last_change.as_ref().unwrap().summary, "init");
-        assert_eq!(sb.last_change_scanned, Some(true));
+        assert_eq!(sb.last_change, None);
+        assert_eq!(sb.last_change_scanned, Some(false));
+        assert_eq!(sb.last_change_unreadable, Some(bad.clone()));
+        let v = serde_json::to_value(sb).unwrap();
+        assert_eq!(v["last_change_unreadable"], json!(bad.0));
+        assert!(serde_json::to_value(sa).unwrap()["last_change_unreadable"].is_null());
+    }
+
+    #[test]
+    fn roster_text_warns_on_unreadable_historical_tree() {
+        let (fx, a, b, bad) = unreadable_tree_world();
+        let out = text(&roster(&fx, Scope::Instance, false));
+        let short = &bad.0[..12];
+        let line_of = |id: &SeatId| {
+            out.lines()
+                .find(|l| l.contains(&id.to_string()))
+                .unwrap()
+                .to_string()
+        };
+        let lb = line_of(&b);
+        assert!(
+            lb.ends_with(&format!("last change unknown (unreadable tree at {short})")),
+            "{lb}"
+        );
+        assert!(!lb.contains("older than scan"), "{lb}");
+        assert!(line_of(&a).contains("last change 2026-11-05 12:00Z alpha after repair"));
+        let warnings: Vec<&str> = out.lines().filter(|l| l.starts_with("warning:")).collect();
+        assert_eq!(warnings.len(), 1, "{out}");
+        assert!(
+            warnings[0].contains("1 seats") && warnings[0].contains("last_change_unreadable"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn roster_seat_matched_before_the_unreadable_tree_is_unaffected() {
+        let (fx, a, _b, _bad) = unreadable_tree_world();
+        let r = roster(&fx, Scope::Seat(a.clone()), false);
+        let sa = seat_of(&r, &a);
+        assert_eq!(
+            sa.last_change.as_ref().unwrap().summary,
+            "alpha after repair"
+        );
+        assert_eq!(sa.last_change_scanned, Some(true));
+        assert_eq!(sa.last_change_unreadable, None);
+        assert!(!text(&r).contains("warning:"));
     }
 
     #[test]
@@ -1324,6 +1425,7 @@ mod tests {
                 reload_required: false,
                 last_change: None,
                 last_change_scanned: None,
+                last_change_unreadable: None,
                 clones: vec![],
             }],
         }];

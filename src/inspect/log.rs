@@ -118,7 +118,8 @@ impl LogQuery {
     /// Walk newest first, keeping matching changes until `limit` or the scan cap. A commit older than `since`
     /// is skipped, not a stop: commit times are not monotonic along history (clock skew, rebases), so one
     /// old commit says nothing about the ones behind it. A commit whose scope cannot be resolved (an
-    /// unreadable record in its tree) is kept as a row marked [`Malformed::Tree`], since it may match.
+    /// unreadable record in its tree) is kept as a row marked [`Malformed::Tree`], since it may match: the row
+    /// may be outside the scope and it counts toward `limit`.
     /// Returns the view and the warnings (notices without a JSON field, not counting [`OPS_POINTER`]).
     pub fn run(&self, walker: &HistoryWalker<'_>) -> Result<(LogView, Vec<String>), StoreError> {
         let store = walker.store();
@@ -149,14 +150,25 @@ impl LogQuery {
             .iter()
             .map(|c| row(walker, c))
             .collect::<Result<Vec<_>, _>>()?;
-        let bad = rows.iter().filter(|r| !r.malformed.is_empty()).count();
-        let warnings = if bad > 0 {
-            vec![format!(
+        let mut warnings = vec![];
+        let trees = rows
+            .iter()
+            .filter(|r| r.malformed.contains(&Malformed::Tree))
+            .count();
+        let bad = rows
+            .iter()
+            .filter(|r| r.malformed.iter().any(|m| *m != Malformed::Tree))
+            .count();
+        if bad > 0 {
+            warnings.push(format!(
                 "warning: {bad} commits with unreadable records (listed with malformed)"
-            )]
-        } else {
-            vec![]
-        };
+            ));
+        }
+        if trees > 0 {
+            warnings.push(format!(
+                "warning: {trees} commits whose tree could not be read (listed with malformed: [\"tree\"]; they may be outside the scope and count toward --limit)"
+            ));
+        }
         Ok((LogView { scan, rows }, warnings))
     }
 }
@@ -704,6 +716,28 @@ mod tests {
         );
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(!v.scan.stopped_early);
+    }
+
+    #[test]
+    fn tree_rows_get_their_own_warning() {
+        let mut w = world();
+        // One commit whose tree cannot be read: its own warning, not the record-malformed one.
+        w.fx.put_file(
+            rp("teamspaces/zz-bad/teamspace.toml"),
+            b"{not toml".to_vec(),
+        );
+        op_commit(&mut w.fx, RequestKind::SeatOverride, human());
+        w.fx.delete_file(rp("teamspaces/zz-bad/teamspace.toml"));
+        let (_, warnings) = view(&w.fx, &query(Scope::Seat(w.a.clone())), 5000);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let t = &warnings[0];
+        assert!(t.contains("1 commits whose tree could not be read"), "{t}");
+        assert!(
+            t.contains("outside the scope") && t.contains("--limit"),
+            "{t}"
+        );
+        assert!(t.contains("\"tree\""), "{t}");
+        assert!(!t.contains("unreadable records"), "{t}");
     }
 
     #[test]
