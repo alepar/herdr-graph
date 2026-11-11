@@ -445,7 +445,12 @@ fn spec_keys_and_flags_reach_their_views() {
         live["live"], true,
         "roster.live registered and answered: {live}"
     );
-    assert_eq!(live["live_unavailable"], Value::Null, "{live}");
+    // the sweep rig has no threads service: only the threads half is degraded
+    assert_eq!(live["live_unavailable"]["herdr"], Value::Null, "{live}");
+    assert!(
+        live["live_unavailable"]["threads"].is_string(),
+        "threads degraded without a threads service: {live}"
+    );
     assert_keys("roster --unmanaged", &live, &["unmanaged"]);
     assert!(
         rig.cli(&["roster", "--unmanaged"]).status.code() != Some(0),
@@ -543,7 +548,11 @@ fn spec_keys_and_flags_reach_their_views() {
             .collect()
     };
     let bookkeeping = |v: &Value| kinds(v).iter().filter(|k| *k == "\"bookkeeping\"").count();
-    assert_eq!(bookkeeping(&default_view), 0, "the default view hides bookkeeping");
+    assert_eq!(
+        bookkeeping(&default_view),
+        0,
+        "the default view hides bookkeeping"
+    );
     assert!(
         bookkeeping(&everything) > 0
             && everything["rows"].as_array().unwrap().len()
@@ -631,9 +640,8 @@ fn every_component_reports_the_one_pinned_head() {
                     "last_change {op} is not in the history of {head}"
                 );
             }
-            let commits_at = |c: &str| -> u64 {
-                rig.git(&["rev-list", "--count", c]).trim().parse().unwrap()
-            };
+            let commits_at =
+                |c: &str| -> u64 { rig.git(&["rev-list", "--count", c]).trim().parse().unwrap() };
             assert!(
                 roster["scan"]["scanned"].as_u64().unwrap() <= commits_at(&head),
                 "roster scan ran past its head {head}: {}",

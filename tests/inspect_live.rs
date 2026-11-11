@@ -98,6 +98,20 @@ impl Rig {
         panic!("timed out waiting for {desc}\ndaemon log:\n{log}");
     }
 
+    /// Wait until the daemon has stopped committing (HEAD unchanged for 1.5 s), so a later commit count
+    /// measures only what the test itself did.
+    fn settle(&self) {
+        let mut last = (self.commit_count(), Instant::now());
+        self.wait_until("the daemon to stop committing", |r| {
+            let n = r.commit_count();
+            if n != last.0 {
+                last = (n, Instant::now());
+                return false;
+            }
+            last.1.elapsed() >= Duration::from_millis(1500)
+        });
+    }
+
     fn roster_json(&self, extra: &[&str]) -> Value {
         let mut args = vec!["roster", "--live", "--json"];
         args.extend_from_slice(extra);
@@ -181,15 +195,22 @@ fn roster_live_matches_the_graph_pane_and_lists_only_unbound_objects() {
         .expect("pane id")
         .to_owned();
 
+    rig.settle();
     let commits = rig.commit_count();
     let v = rig.roster_json(&["--unmanaged"]);
     assert_eq!(v["schema"], 1);
     assert_eq!(v["live"], true);
-    assert_eq!(v["live_unavailable"], json!(null), "{v}");
+    // no threads service is reachable in this rig: the roster says so instead of an empty healthy report
+    assert_eq!(v["live_unavailable"]["herdr"], json!(null), "{v}");
+    assert!(
+        v["live_unavailable"]["threads"].is_string(),
+        "threads degraded without a threads service: {v}"
+    );
     let clone = &v["teamspaces"][0]["seats"][0]["clones"][0];
     assert_eq!(clone["live"]["live_pane_matches"], true, "{v}");
     assert_eq!(clone["live"]["binding_from_earlier_server"], false);
-    assert!(v["threads_live"].is_object(), "{v}");
+    assert_eq!(v["threads_live"]["seat_refusals"], json!(null), "{v}");
+    assert_eq!(v["threads_live"]["seat_lost"], json!(null), "{v}");
     let panes: Vec<&str> = v["unmanaged"]["panes"]
         .as_array()
         .unwrap()
@@ -213,9 +234,10 @@ fn roster_live_matches_the_graph_pane_and_lists_only_unbound_objects() {
     let plain = rig.roster_json(&[]);
     assert!(!plain.as_object().unwrap().contains_key("unmanaged"));
 
-    // text form works and leads with no unavailability line
+    // text form works and names the degraded threads read
     let text = rig.cli_ok(&["roster", "--live", "--unmanaged"]);
-    assert!(!text.contains("live data unavailable"), "{text}");
+    assert!(text.contains("live data unavailable: threads:"), "{text}");
+    assert!(!text.contains("herdr:"), "{text}");
     assert!(text.contains("unmanaged:"), "{text}");
 
     assert_eq!(rig.commit_count(), commits, "roster --live adds no commit");

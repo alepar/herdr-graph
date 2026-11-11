@@ -54,6 +54,21 @@ pub type SeatViewError = Arc<Mutex<Option<String>>>;
 /// Seats the last seat read refused one by one (seat -> message), shown by `status` as `seat_refusals`.
 pub use crate::threads::mapping::SeatRefusals;
 
+/// What the last seat read left behind, for `roster --live`. One value under one lock, so a reader never
+/// pairs one read's outcome with another read's refusals.
+#[derive(Default, Clone)]
+pub struct SeatReadSnapshot {
+    /// `None` until a seat read has been made (counted as unavailable); `Err` carries the failure reason of
+    /// the last read, of any kind (a refusal, a transport error, threads not located).
+    pub last: Option<Result<(), String>>,
+    /// Per-seat refusals of the last successful read; empty after a failed one.
+    pub refusals: std::collections::BTreeMap<String, String>,
+}
+
+/// Outcome of every seat read, shown by `roster --live`. Unlike `SeatViewError` (the `status` slot) it is
+/// set by transient failures too and never keeps a stale success.
+pub type SeatReadState = Arc<Mutex<SeatReadSnapshot>>;
+
 /// Services the composition needs; production builds them from the environment, tests inject fakes.
 pub struct Services {
     pub herdr: Arc<dyn HerdrApi>,
@@ -65,6 +80,8 @@ pub struct Services {
     pub seat_view_error: SeatViewError,
     /// Seats the last seat read omitted as refused, shown by the `threads` status component.
     pub seat_refusals: SeatRefusals,
+    /// Outcome of the last seat read, shown by `roster --live`; never read until the first read.
+    pub seat_read: SeatReadState,
     pub clock: Arc<dyn Clock>,
     /// Period of the reminder loop (`REMINDER_PERIOD` in the daemon; tests shrink it).
     pub reminder_period: Duration,
@@ -84,6 +101,7 @@ impl Services {
             seat_view: Arc::new(crate::threads::FakeThreadsSeatView::new()),
             seat_view_error: SeatViewError::default(),
             seat_refusals: SeatRefusals::default(),
+            seat_read: SeatReadState::default(),
             clock,
             reminder_period: REMINDER_PERIOD,
         }
@@ -105,12 +123,13 @@ impl Services {
             &env,
             &crate::config::plugin_config_dir_via_herdr,
         );
-        let (threads, pane_seat_map, seat_view, seat_view_error, seat_refusals) =
+        let (threads, pane_seat_map, seat_view, seat_view_error, seat_refusals, seat_read) =
             production_ports(ctx, DiscoveryInputs::from_process(configured));
         let mut services = Self::new(herdr, threads, pane_seat_map, Arc::new(SystemClock));
         services.seat_view = seat_view;
         services.seat_view_error = seat_view_error;
         services.seat_refusals = seat_refusals;
+        services.seat_read = seat_read;
         Ok(services)
     }
 }
@@ -121,7 +140,7 @@ pub fn production_threads(
     ctx: &DaemonCtx,
     inputs: DiscoveryInputs,
 ) -> (Arc<dyn ThreadsPort>, Arc<dyn PaneSeatMap>) {
-    let (threads, map, _, _, _) = production_ports(ctx, inputs);
+    let (threads, map, _, _, _, _) = production_ports(ctx, inputs);
     (threads, map)
 }
 
@@ -131,6 +150,7 @@ type ProductionPorts = (
     Arc<dyn ThreadsSeatView>,
     SeatViewError,
     SeatRefusals,
+    SeatReadState,
 );
 
 /// `production_threads` plus the seat view over the same lazily located endpoint and its rejection slot.
@@ -142,12 +162,14 @@ pub fn production_ports(ctx: &DaemonCtx, inputs: DiscoveryInputs) -> ProductionP
     let map = Arc::new(lazy::LazyMap::new(endpoint.clone()));
     let seat_view_error = map.seat_view_error();
     let seat_refusals = map.seat_refusals();
+    let seat_read = map.seat_read();
     (
         Arc::new(lazy::LazyThreads::new(endpoint)),
         map.clone(),
         map,
         seat_view_error,
         seat_refusals,
+        seat_read,
     )
 }
 
@@ -219,6 +241,7 @@ pub async fn compose_with(
         seat_view,
         seat_view_error,
         seat_refusals,
+        seat_read,
         clock,
         reminder_period,
     } = services;
@@ -363,8 +386,7 @@ pub async fn compose_with(
         crate::daemon::roster_live::RosterLiveDeps {
             git: git.clone(),
             herdr: Some(herdr.clone()),
-            seat_view_error: seat_view_error.clone(),
-            refusals: seat_refusals.clone(),
+            seat_read,
             lost: runtime.seat_lost(),
         },
     );
@@ -1001,6 +1023,7 @@ mod lazy {
         inner: Arc<Mutex<Option<(Discovered, Arc<ThreadsSeatMap>)>>>,
         seat_view_error: SeatViewError,
         seat_refusals: SeatRefusals,
+        seat_read: SeatReadState,
     }
 
     impl LazyMap {
@@ -1010,7 +1033,13 @@ mod lazy {
                 inner: Arc::new(Mutex::new(None)),
                 seat_view_error: SeatViewError::default(),
                 seat_refusals: SeatRefusals::default(),
+                seat_read: SeatReadState::default(),
             }
+        }
+
+        /// The outcome of the last seat read, for `roster --live`.
+        pub fn seat_read(&self) -> SeatReadState {
+            self.seat_read.clone()
         }
 
         /// The slot holding the seats the last read refused one by one, for the `threads` status component.
@@ -1031,6 +1060,7 @@ mod lazy {
                 inner: self.inner.clone(),
                 seat_view_error: self.seat_view_error.clone(),
                 seat_refusals: self.seat_refusals.clone(),
+                seat_read: self.seat_read.clone(),
             };
             let map = tokio::task::spawn_blocking(move || {
                 let mut slot = me.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -1105,6 +1135,26 @@ mod lazy {
                 read
             }
             .await;
+            {
+                // Every outcome, one snapshot under one lock.
+                let mut snap = self.seat_read.lock().unwrap_or_else(|e| e.into_inner());
+                match &read {
+                    Ok(_) => {
+                        snap.last = Some(Ok(()));
+                        snap.refusals = self
+                            .seat_refusals
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .iter()
+                            .map(|(seat, msg)| (seat.0.clone(), msg.clone()))
+                            .collect();
+                    }
+                    Err(e) => {
+                        snap.last = Some(Err(e.to_string()));
+                        snap.refusals.clear();
+                    }
+                }
+            }
             // A refusal is remembered for `status`; transient transport errors leave it as it was.
             let mut slot = self
                 .seat_view_error
@@ -1214,11 +1264,20 @@ mod lazy {
                     .is_none(),
                 "no read yet, nothing to show"
             );
+            assert!(
+                view.seat_read().lock().unwrap().last.is_none(),
+                "never read is distinguishable from a successful read"
+            );
             let err = view
                 .inspect(&[ThreadsSeatRef("seat-a".into())])
                 .await
                 .unwrap_err();
             assert!(matches!(err, ThreadsError::Rejected(_)), "{err:?}");
+            assert_eq!(
+                view.seat_read().lock().unwrap().last,
+                Some(Err(err.to_string())),
+                "every failed read is recorded for roster --live"
+            );
             let component = registry.status_components()["threads"].clone();
             assert_eq!(
                 component["seat_view_error"],
@@ -1229,6 +1288,40 @@ mod lazy {
                 store.head().unwrap(),
                 head,
                 "a refused read commits nothing"
+            );
+        }
+
+        #[tokio::test]
+        async fn transient_seat_read_failure_is_recorded_for_roster_but_not_for_status() {
+            let dir = tempfile::tempdir().unwrap();
+            let endpoint = Arc::new(Endpoint {
+                inputs: DiscoveryInputs::default(),
+                explicit: Ok(Some(Discovered {
+                    socket: dir.path().join("nobody-listens.sock"),
+                    instance: herdr_threads::node::NodeUuid::from_bytes([1; 16]),
+                })),
+                herdr_socket: dir.path().join("host.sock"),
+                intents: dir.path().join("graph/.graph-local/threads-intents"),
+                graph_root: dir.path().join("graph"),
+            });
+            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
+            let view = LazyMap::new(endpoint);
+            let err = view
+                .inspect(&[ThreadsSeatRef("seat-a".into())])
+                .await
+                .unwrap_err();
+            assert!(
+                !matches!(err, ThreadsError::Rejected(_) | ThreadsError::Unsupported),
+                "{err:?}"
+            );
+            assert_eq!(
+                view.seat_read().lock().unwrap().last,
+                Some(Err(err.to_string()))
+            );
+            assert_eq!(
+                *view.seat_view_error().lock().unwrap(),
+                None,
+                "status keeps its meaning"
             );
         }
 
