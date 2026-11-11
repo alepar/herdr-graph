@@ -1,0 +1,13 @@
+[Should-fix] src/inspect/log.rs:68; src/inspect/roster.rs:580
+[Should-fix] src/daemon/roster_live.rs:64
+[Should-fix] src/inspect/loaded.rs:296
+[Should-fix] tests/inspect_sweep.rs:568
+[Nit] src/inspect/roster.rs:554
+[Nit] src/store/history.rs:130
+[Nit] src/inspect/log.rs:98
+[Nit] src/daemon/roster_live.rs:52
+[Nit] src/inspect/stack.rs:199
+[Nit] tests/inspect_live.rs:184
+[Nit] CURRENT-DESIGN.md:96
+[Nit] src/cli/ops.rs:120
+[Nit] src/inspect/roster.rs:588
