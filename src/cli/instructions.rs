@@ -99,13 +99,7 @@ fn stack(
     };
     let clone_id = match clone {
         None => None,
-        Some(c) => {
-            let arg = ScopeArg::parse(&words("clone", c), AllowClone::Yes)?;
-            let Scope::Clone(id) = Scope::resolve(&arg, store, &head)? else {
-                unreachable!("a clone word resolves to a clone scope")
-            };
-            Some(id)
-        }
+        Some(c) => Some(seat_clone(store, &head, &seat_id, c)?),
     };
     let view = crate::inspect::stack::build(
         store,
@@ -123,6 +117,34 @@ fn stack(
         err,
     )?;
     Ok(())
+}
+
+/// `--clone` among the named seat's clones, by id or name: two seats may each have a clone of the same name.
+fn seat_clone(
+    store: &crate::store::GitStore,
+    head: &crate::model::CommitId,
+    seat: &crate::model::SeatId,
+    target: &str,
+) -> anyhow::Result<crate::model::CloneId> {
+    use crate::model::{CloneId, CloneLifecycle};
+    use crate::store::instruction_source::{PickMode, pick};
+    // An id is taken as given; `stack::build` refuses one that is not this seat's.
+    if let Ok(id) = CloneId::parse(target) {
+        return Ok(id);
+    }
+    let view = crate::store::tree::CommitView {
+        store,
+        at: head.clone(),
+    };
+    let matches = crate::store::layout::all_clones(&view)?
+        .into_iter()
+        .filter(|(_, r)| r.seat == *seat && r.name == target)
+        .map(|(_, r)| {
+            let live = r.lifecycle != CloneLifecycle::Retired;
+            (r.id.clone(), r.id.to_string(), live)
+        })
+        .collect();
+    Ok(pick("clone", target, matches, PickMode::RetiredAllowed)?)
 }
 
 /// A file's text, or the placeholder line when it is not admissible.

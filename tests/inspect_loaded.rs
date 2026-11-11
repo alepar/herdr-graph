@@ -679,3 +679,99 @@ fn write_failure_changes_neither_output_nor_exit_code() {
     assert_eq!(bad.stdout, ok.stdout);
     assert_eq!(git_status(&g), "");
 }
+
+fn put_files(g: &Graph, files: &[(&str, String)], msg: &str) {
+    let mut e = EditSet::default();
+    for (path, body) in files {
+        e.put(RepoPath::new(path).unwrap(), body.clone().into_bytes());
+    }
+    commit(&g.store, &e, msg);
+}
+
+/// 11-byte lines, so a shorter budget always moves the cut by whole lines.
+fn lines(n: usize) -> String {
+    (0..n).map(|i| format!("line {i:04}\n")).collect()
+}
+
+#[test]
+fn truncated_injection_cut_omitted_then_stale_on_boundary_move() {
+    let mut g = Graph::new();
+    // Render order is global, then teamspace: the teamspace file is the last part and alone exceeds the cap.
+    let big = lines(1200);
+    assert!(big.len() > herdr_graph::bootstrap::instructions::HOOK_RENDER_CAP);
+    put_files(
+        &g,
+        &[("teamspaces/proj/rules/big.md", big.clone())],
+        "big teamspace rule",
+    );
+    let out = g.hook(&hook_command(bin_path()), Some(CLAUDE_PAYLOAD));
+    assert!(out.status.success(), "{}", lossy(&out.stderr));
+    let printed = lossy(&out.stdout);
+    assert!(
+        printed
+            .contains("[truncated: omitted global rules/style.md, teamspace rules/big.md (cut);"),
+        "{printed}"
+    );
+    assert!(!printed.contains("global style rule"), "{printed}");
+    g.occupant_lands("s-1");
+
+    for v in [g.roster_instructions(), g.stack_instructions()] {
+        assert_eq!(v["status"], "current", "{v}");
+        assert_eq!(v["truncated"], true);
+        assert_eq!(v["omitted"], serde_json::json!(["global rules/style.md"]));
+        assert_eq!(
+            v["parts"],
+            serde_json::json!([{"label": "teamspace rules/big.md", "delivered": "cut"}])
+        );
+    }
+    let rec = g.record();
+    assert_eq!(rec["parts"][0]["delivered"], "cut");
+    let kept = rec["parts"][0]["bytes"].as_u64().unwrap() as usize;
+    assert!(kept > 0 && kept < big.len() && kept % 11 == 0, "{kept}");
+
+    // A new earlier part is omitted too: the marker grows, the cap boundary moves, and the cut part's own
+    // text (unchanged) is delivered to a shorter prefix.
+    put_files(
+        &g,
+        &[("rules/extra.md", "another global rule\n".into())],
+        "earlier part",
+    );
+    let v = g.roster_instructions();
+    assert_eq!(v["status"], "stale", "{v}");
+    assert_eq!(v["truncated"], true);
+    let stale: Vec<(&str, &str)> = v["stale_parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["label"].as_str().unwrap(), s["change"].as_str().unwrap()))
+        .collect();
+    assert_eq!(stale, [("teamspace rules/big.md", "modified")]);
+
+    // The next injection delivers the new boundary and the record is current again, still truncated.
+    g.hook(&hook_command(bin_path()), Some(CLAUDE_PAYLOAD));
+    let v = g.roster_instructions();
+    assert_eq!(v["status"], "current", "{v}");
+    assert_eq!(
+        v["omitted"],
+        serde_json::json!(["global rules/extra.md", "global rules/style.md"])
+    );
+    assert!(g.record()["parts"][0]["bytes"].as_u64().unwrap() < kept as u64);
+}
+
+#[test]
+fn doctor_harness_hook_reports_malformed_settings() {
+    let root = TestRoot::new();
+    let dir = root.claude_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("settings.json"), "{ \"hooks\": [oops").unwrap();
+    let checks = herdr_graph::daemon::doctor::harness_hook_checks(Some(&dir), None);
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    let c = &checks[0];
+    assert_eq!(c.name, "harness_hook claude");
+    assert!(c.warn && c.ok, "a warning, not a failure: {c:?}");
+    assert!(
+        c.detail.contains("is not valid JSON") && c.detail.contains("settings.json"),
+        "{c:?}"
+    );
+    assert_ne!(c.detail, "current");
+}

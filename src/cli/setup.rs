@@ -136,3 +136,27 @@ fn setup(target: &Target, name: &str, config: &Path, uninstall: bool) -> anyhow:
     }
     Ok(ExitCode::SUCCESS)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_trust_note_installed_and_updated_say_re_trust() {
+        for change in [HookChange::Installed, HookChange::Updated] {
+            let note = codex_trust_note(change);
+            assert!(
+                note.contains("changed") && note.contains("re-trust"),
+                "{note}"
+            );
+            assert!(!note.contains("start codex interactively"), "{note}");
+        }
+    }
+
+    #[test]
+    fn codex_trust_note_unchanged_says_start_codex() {
+        let note = codex_trust_note(HookChange::Unchanged);
+        assert!(note.contains("start codex interactively"), "{note}");
+        assert!(!note.contains("re-trust"), "{note}");
+    }
+}
