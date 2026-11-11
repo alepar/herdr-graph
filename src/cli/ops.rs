@@ -5,9 +5,11 @@
 use crate::cli::daemon_error;
 use crate::daemon::client::{CallMode, call_daemon};
 use crate::daemon::client::{EXIT_NO_INSTANCE, instance_or_none};
+use crate::inspect::log::RequesterView;
 use crate::inspect::output::{Envelope, Format, View, print};
 use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
 use crate::inspect::{fail, pin_head};
+use crate::model::change::Requester;
 use crate::model::{AnyId, CommitId, OpId};
 use clap::Subcommand;
 use serde::Serialize;
@@ -115,12 +117,62 @@ fn render_op(o: &Value) -> String {
     out
 }
 
-/// The `ops --json` body: one row per op, as the daemon's `ops.list` reply carries them.
+/// One `ops --json` row. The requester is `log`'s `RequesterView`, so every key is present (null when absent)
+/// and the daemon's internal fields (`native_session`) do not leak.
+#[derive(Serialize)]
+struct OpsRow {
+    op: String,
+    kind: Value,
+    state: String,
+    requester: RequesterView,
+    summary: String,
+    rejection: Value,
+    superseded_by: Value,
+    admitted_at: Value,
+    /// The daemon's row, kept for the text rendering.
+    #[serde(skip)]
+    raw: Value,
+}
+
+impl OpsRow {
+    /// A row that does not parse is an error naming the op, never a silent drop.
+    fn parse(raw: &Value) -> anyhow::Result<OpsRow> {
+        let op = raw["op"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("daemon ops row has no op: {raw}"))?;
+        let field = |k: &str| -> anyhow::Result<String> {
+            raw[k]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow::anyhow!("daemon ops row {op} has no {k}"))
+        };
+        let requester: Requester = serde_json::from_value(raw["requester"].clone())
+            .map_err(|e| anyhow::anyhow!("daemon ops row {op}: requester: {e}"))?;
+        Ok(OpsRow {
+            op: op.to_owned(),
+            kind: raw["kind"].clone(),
+            state: field("state")?,
+            requester: RequesterView {
+                teamspace: requester.teamspace,
+                seat: requester.seat,
+                clone: requester.clone,
+                human: requester.human,
+            },
+            summary: field("summary")?,
+            rejection: raw["rejection"].clone(),
+            superseded_by: raw["superseded_by"].clone(),
+            admitted_at: raw["admitted_at"].clone(),
+            raw: raw.clone(),
+        })
+    }
+}
+
+/// The `ops --json` body: one row per op.
 #[derive(Serialize)]
 struct OpsView {
     #[serde(skip)]
     unresolved: bool,
-    ops: Vec<Value>,
+    ops: Vec<OpsRow>,
 }
 
 impl View for OpsView {
@@ -132,7 +184,7 @@ impl View for OpsView {
             ));
         }
         for o in &self.ops {
-            out.push_str(&render_op(o));
+            out.push_str(&render_op(&o.raw));
         }
     }
 }
@@ -142,7 +194,15 @@ fn envelope_from_reply(reply: &Value, unresolved: bool) -> anyhow::Result<Envelo
     let head = reply["head"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("daemon reply has no head"))?;
-    let ops = reply["ops"].as_array().cloned().unwrap_or_default();
+    let ops = reply["ops"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(OpsRow::parse)
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
     Ok(Envelope::new(
         &CommitId(head.to_owned()),
         OpsView { unresolved, ops },
@@ -303,7 +363,14 @@ mod tests {
     #[test]
     fn envelope_head_is_reply_head() {
         let head = "0123456789abcdef0123456789abcdef01234567";
-        let reply = json!({ "head": head, "ops": [{ "op": "op_A" }, { "op": "op_B" }] });
+        let row = |op: &str| {
+            json!({
+                "op": op, "kind": "seat_rename", "state": "applied", "summary": "s",
+                "requester": {}, "rejection": null, "superseded_by": null,
+                "admitted_at": "2026-11-10T00:00:00Z",
+            })
+        };
+        let reply = json!({ "head": head, "ops": [row("op_A"), row("op_B")] });
         let env = envelope_from_reply(&reply, false).unwrap();
         let v = serde_json::to_value(&env).unwrap();
         assert_eq!(v["schema"], 1);
@@ -311,6 +378,41 @@ mod tests {
         assert_eq!(v["ops"].as_array().unwrap().len(), 2);
         assert!(v.get("unresolved").is_none());
         assert!(envelope_from_reply(&json!({ "ops": [] }), false).is_err());
+    }
+
+    const SEAT: &str = "st_01JABCDEFGHJKMNPQRSTVWXYZ0";
+
+    #[test]
+    fn ops_json_row_has_full_requester() {
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let reply = json!({ "head": head, "ops": [{
+            "op": "op_A", "kind": "seat_rename", "state": "applied", "summary": "seat_rename",
+            "requester": { "seat": SEAT, "native_session": "ns_01JABCDEFGHJKMNPQRSTVWXYZ0" },
+            "rejection": null, "superseded_by": null, "admitted_at": "2026-11-10T00:00:00Z",
+        }] });
+        let v = serde_json::to_value(envelope_from_reply(&reply, false).unwrap()).unwrap();
+        let row = &v["ops"][0];
+        assert_eq!(
+            row["requester"],
+            json!({ "teamspace": null, "seat": SEAT, "clone": null, "human": false })
+        );
+        for k in [
+            "op",
+            "kind",
+            "state",
+            "requester",
+            "summary",
+            "rejection",
+            "superseded_by",
+            "admitted_at",
+        ] {
+            assert!(row.get(k).is_some(), "row key {k:?}: {row}");
+        }
+        let bad = json!({ "head": head, "ops": [{ "op": "op_B", "state": "applied" }] });
+        let err = envelope_from_reply(&bad, false)
+            .err()
+            .expect("unparsable row is an error");
+        assert!(err.to_string().contains("op_B"), "{err}");
     }
 
     #[test]
