@@ -523,6 +523,30 @@ fn readers_never_write_the_record() {
     assert!(!g.record_file().exists());
 }
 
+#[cfg(feature = "test-support")]
+#[test]
+fn seat_json_through_the_daemon_leaves_the_record_unchanged() {
+    let mut g = Graph::new();
+    g.occupant_lands("s-1");
+    g.hook(&hook_command(bin_path()), Some(CLAUDE_PAYLOAD));
+    let before = std::fs::read(g.record_file()).unwrap();
+    // `seat --json` ensures the daemon (fake services, a Herdr socket that ignores connections) and
+    // calls `seat.resolve`; the rig stops the daemon on drop.
+    let listener = std::os::unix::net::UnixListener::bind(g.root.herdr_socket()).unwrap();
+    let l2 = listener.try_clone().unwrap();
+    std::thread::spawn(move || for _conn in l2.incoming() {});
+    let out = g
+        .cmd(BIN, &["seat", "--json"])
+        .env("HG_TEST_FAKE_SERVICES", "1")
+        .env("HERDR_PANE_ID", "p_unbound")
+        .output()
+        .unwrap();
+    let code = out.status.code();
+    assert_ne!(code, Some(5), "daemon unreachable: {}", lossy(&out.stderr));
+    assert_eq!(std::fs::read(g.record_file()).unwrap(), before);
+    assert_eq!(git_status(&g), "");
+}
+
 #[test]
 fn unbound_caller_writes_nothing() {
     let g = Graph::new();
