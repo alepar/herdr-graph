@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-07-graph-state-inspection
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-code
+phase: fix-loop
 codeMechanism: Workflow
 runTag: graph-state-inspection-20261108T225851
 skillSource: /var/home/alepar/.aisw/profiles/claude/claude-1/plugins/cache/superpowers-alepar/superpowers/6.4.2-alepar6.8/skills @ 34fd607b17373d09b2099cf2bec3745b91c10cb7 (6.4.2-alepar6.8) — session moved to AISW claude-1 on 2026-11-10; content identical to the claude-2 copy (diff -rq empty)
@@ -14,6 +14,8 @@ spec: 2026-11-07-graph-state-inspection-design.md
 epic: hg-blw
 roastDesignRound: 2
 roastCodeRound: 1
+roast-code: 2026-11-10-graph-state-inspection-roast-pr-1.md
+findingsLedger: findings-ledger.md
 roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md, 2026-11-08-graph-state-inspection-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
