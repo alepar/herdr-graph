@@ -15,6 +15,8 @@ epic: hg-blw
 roastDesignRound: 2
 roastCodeRound: 3
 roastCodeExit: capped
+friction: 12 events
+sweepFix: 1 failing → hg-blw.33 · re-run d3c4123 — tier 1: 1500 passed, 1 failed (daemon_composed::session_end_flows_to_transcripts: 'timed out waiting for worker occupant'; passed 3/3 in isolation); test-support: 1527 passed, 0 failed; tier 3: 1573 passed, 0 failed, 6 skipped; tier 5 threads_real: 3 passed; failing: daemon_composed::session_end_flows_to_transcripts (load-sensitive timeout); command: toolbox run -c hg-build cargo test --no-fail-fast; … --features test-support; … --features private-herdr -- --test-threads=1; HG_REAL_THREADS=1 … --test threads_real @ d3c4123bd029ef8fd0a8a784d14571a47ca438bf
 roast-code: 2026-11-10-graph-state-inspection-roast-pr-1.md, 2026-11-10-graph-state-inspection-roast-pr-2.md, 2026-11-11-graph-state-inspection-roast-pr-3-format-repair.md
 findingsLedger: findings-ledger.md
 roast-design: 2026-11-08-graph-state-inspection-roast-design-1.md, 2026-11-08-graph-state-inspection-roast-design-2.md
@@ -136,12 +138,14 @@ codeBuckets:
   parked: hg-blw.11
   stalled: false
   review: not ready (unreviewed: whole-epic coverage and omission provenance remain incomplete)
-  sweep: 6af8705 — 1571 passed, 2 failed, 0 errors, 6 skipped; failing: test_isolation::test_sources_spawn_only_through_isolated_helpers (tiers 1, test-support, 3), herdr_client::private_process_info_is_shell (tier 3 only; passed 2/2 in isolation); tier 5 threads_real 3 passed; command: toolbox run -c hg-build cargo test --no-fail-fast; … --features test-support; … --features private-herdr -- --test-threads=1; HG_REAL_THREADS=1 … --test threads_real @ 6af8705ff2a7d19061049e5ba5764445105c85d6
+  sweep: d3c4123 — tier 1: 1500 passed, 1 failed (daemon_composed::session_end_flows_to_transcripts: 'timed out waiting for worker occupant'; passed 3/3 in isolation); test-support: 1527 passed, 0 failed; tier 3: 1573 passed, 0 failed, 6 skipped; tier 5 threads_real: 3 passed; failing: daemon_composed::session_end_flows_to_transcripts (load-sensitive timeout); command: toolbox run -c hg-build cargo test --no-fail-fast; … --features test-support; … --features private-herdr -- --test-threads=1; HG_REAL_THREADS=1 … --test threads_real @ d3c4123bd029ef8fd0a8a784d14571a47ca438bf
   slowness: round 1 graph-bound (width 1 vs cap 4) [inv 2]
   worktreesKept: /tmp/sp-f11883d5 — process cleanup incomplete (exit 4: unrelated uninspectable processes)
   processSweep: stopped 0 · survived 0 · unknown (unrelated processes not inspectable) · kept 0
 - hg-blw.2 escalation · degraded-verdict · "BLOCKED [cause: build/test container unusable] — hg-build lost /etc/passwd; restart wedged it in Stopping; force-stop refused by the permission layer. Needs a human to restart or recreate hg-build (README setup). hg-blw.2 code is done on task-hg-blw.2 (48dfe5f + 9bf2777)."
 - final-review-inv-64d86974-dab5-4fe4-a772-e304978dabd1.md · degraded-verdict · "final review cluster 13 (docs-top: design doc, run.md, ledgers, roast and coverage records, friction.md) unreviewed — over the context window; review collection gap retained (cluster-13 file never written). Run records, not product code; the code roast reviews the product diff"
+- sweep · degraded-verdict · "attribution gap — daemon_composed::session_end_flows_to_transcripts timed out (worker occupant) in the tier-1 re-run at d3c4123; passed in the first sweep, in test-support and tier 3 at the same tip, and 3/3 in isolation; the final review also saw one timeout in hg-blw.11. Load-sensitive flake; owner not established"
+- sweep · degraded-verdict · "herdr_client::private_process_info_is_shell failed once in tier 3 at 8654603 (foreground argv []) and passed 2/2 in isolation and in tier 3 at d3c4123; test untouched by this run; load-sensitive flake"
 
 checkpoint: 2026-11-10 · planned yield for the AISW claude-2 → claude-1 session switch (requested by seat sQ0VWtXSQNJM, message mQ0VGEVwkPBH, citing the user). Coordinator invocation inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c (Workflow run wf_b5069177-628) stopped by TaskStop at its round-1 boundary, after hg-blw.2 merged (0810f37) and before hg-blw.12 re-dispatched; nothing in flight was killed. Invocation is UNSETTLED: resume it with the same invocationId (explicit unsettled resume), same args as its Launch line, resumeFromRunId wf_b5069177-628 optional. Next: hg-blw.12 (re-cut on the integration tip; stale worktree task-hg-blw.12 @534d92d from the cancelled stack is kept for the coordinator to discard), then hg-blw.10, hg-blw.11; then phase 4 code roast round 1, phase 5 fix loop, phase 6 tier 1–3 sweep, report, hand-back to the main-tab coordinator (no merge to main).
 stepBackCode-round-1: local — findings fall into 8 clusters each with one owning rule (threads-live-state, history-scan-policy, codex-and-origin-labelling, ops-json-contract, live-error-mapping, docs-drift, enum-word, process-dispositions); no design decision owns them
