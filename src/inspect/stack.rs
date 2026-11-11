@@ -468,7 +468,7 @@ mod tests {
         file(
             &mut fx,
             "teamspaces/proj/seats/foreman/AGENTS.md",
-            &"s".repeat(12000),
+            &"s\n".repeat(6000),
         );
         let c = fx.commit("rules");
         let v = build_for(&fx, &seat, None).unwrap();
