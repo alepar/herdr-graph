@@ -93,7 +93,7 @@ Read-only views of graph state. None of them writes to the graph repository.
 
 ### roster
 
-`herdr-graph roster [<scope>] [--all] [--live [--unmanaged]] [--json]` lists every non-retired teamspace, seat and clone with lifecycle, pane, occupant (harness, native session id, transcript path or `unresolved`), threads seat and state, manager, last change and instruction status. `--all` adds retired objects. Each seat's last change comes from one walk of the history and is `null` when none is found within the scan cap (`last_change_scanned: false` means older history was not searched).
+`herdr-graph roster [<scope>] [--all] [--live [--unmanaged]] [--json]` lists every non-retired teamspace, seat and clone with lifecycle, pane, occupant (harness, native session id, transcript path or `unresolved`), threads seat and state, manager, last change and instruction status. `--all` adds retired objects. Each seat's last change comes from one walk of the history and is `null` when none is found within the scan cap (`last_change_scanned: false` means older history was not searched). If the search for a seat reaches a commit whose tree has a record that does not parse, it stops there: `last_change` is `null`, `last_change_scanned` is `false`, `last_change_unreadable` names that commit (`null` otherwise), and the text shows `last change unknown (unreadable tree at <id>)` and a `warning:` line.
 
 `--live` makes one daemon call and adds, per clone, the Herdr agent kind and status and whether the committed pane binding still matches the live snapshot, plus the threads refusals and lost-seat state from the daemon's last seat read. The threads half is reported only when that last read succeeded. When it failed (threads not running or not located, or it refused the read), or no read has been made yet, the refusals and lost-seat fields are `null` and `live_unavailable.threads` gives the reason; without a reachable threads service `--live` is always in that degraded form. `--unmanaged` lists Herdr workspaces, tabs and panes graph does not manage (ids and labels only).
 
@@ -137,6 +137,7 @@ Limits, all reading `unknown`:
 - `--by <seat>` is an AND filter with the scope: `log seat a --by b` is the changes to `a` that `b` requested. Commits with no requester (observed, bookkeeping, reconciler) never match it.
 - Bookkeeping commits are hidden unless `--all`.
 - A scoped query scans up to `--max-scan` commits (default 5000). `scan.stopped_early` and the text line `scanned N commits, older history not searched` tell "nothing found" from "cap reached". `--limit` defaults to 30.
+- A commit whose tree has a record that does not parse cannot have its scope resolved. It is listed with `malformed: ["tree"]` and a warning, even though it may be outside the scope, and it counts toward `--limit`.
 - A row's `undone` state is read from HEAD, not from the commit that created the action.
 
 ### ops filters
