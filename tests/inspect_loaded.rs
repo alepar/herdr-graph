@@ -352,6 +352,54 @@ fn mismatched_and_null_ids_read_unknown() {
 }
 
 #[test]
+fn codex_rollout_stem_occupant_gets_the_form_note() {
+    let mut g = Graph::new();
+    let uuid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    let payload = format!(
+        r#"{{"session_id":"{uuid}","hook_event_name":"SessionStart","cwd":"/work","source":"startup","transcript_path":null,"model":"gpt-x"}}"#
+    );
+    let out = g.hook(&codex_hook_command(bin_path()), Some(&payload));
+    assert!(out.status.success(), "{}", lossy(&out.stderr));
+    assert_eq!(g.record()["native_session_id"], uuid);
+    // The occupant id observe/sessions.rs derives from Herdr's agent_session path: the rollout file stem.
+    g.occupant_lands(&format!("rollout-2026-11-10T12-00-00-{uuid}"));
+    let v = g.roster_instructions();
+    assert_eq!(
+        v["status"], "unknown",
+        "the ids are not treated as matching"
+    );
+    assert_eq!(v["note"], "codex session id form differs");
+    assert_eq!(g.stack_instructions()["note"], v["note"]);
+}
+
+#[test]
+fn user_level_claude_md_under_the_cwd_ancestors_is_labelled_user() {
+    let g = Graph::new();
+    // The seat cwd is `<instance>/.graph-local/cwd/<seat>`; a user dir whose parent is an ancestor of it
+    // is reached by the ancestor walk first.
+    let user_dir = g.instance().join(".claude");
+    std::fs::create_dir_all(&user_dir).unwrap();
+    let md = user_dir.join("CLAUDE.md");
+    std::fs::write(&md, "user rules").unwrap();
+    let out = g
+        .cmd(BIN, &["instructions", "stack", "foreman", "--json"])
+        .env("CLAUDE_CONFIG_DIR", &user_dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", lossy(&out.stderr));
+    let doc: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let files = doc["harness_files"].as_array().unwrap();
+    let f = files
+        .iter()
+        .find(|f| f["path"] == md.to_str().unwrap())
+        .unwrap_or_else(|| panic!("{md:?} not listed: {files:?}"));
+    assert_eq!(
+        (f["origin"].as_str(), f["env"].as_str()),
+        (Some("user"), Some("inspector"))
+    );
+}
+
+#[test]
 fn codex_hook_records_the_payload_session() {
     let mut g = Graph::new();
     let codex = codex_hook_command(bin_path());

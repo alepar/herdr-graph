@@ -184,11 +184,24 @@ pub fn read(instance: &Path, clone: &CloneId) -> Read {
     }
 }
 
-fn stem(id: &str) -> &str {
-    Path::new(id)
+/// The bare session uuid of a Codex id: its directory and `.jsonl` stripped, then an optional
+/// `rollout-<YYYY-MM-DDThh-mm-ss>-` prefix (Herdr's `agent_session` file stem; the hook payload carries the
+/// bare uuid).
+fn codex_bare(id: &str) -> &str {
+    let stem = Path::new(id)
         .file_stem()
         .and_then(|s| s.to_str())
-        .unwrap_or("")
+        .unwrap_or("");
+    stem.strip_prefix("rollout-")
+        .and_then(|rest| rest.get(19..).and_then(|r| r.strip_prefix('-')))
+        .unwrap_or(stem)
+}
+
+/// The two ids name the same Codex session in different forms. Used for the note only, never as a match.
+fn codex_form_differs(loaded: &str, occupant: &str) -> bool {
+    loaded != occupant
+        && !codex_bare(loaded).is_empty()
+        && codex_bare(loaded) == codex_bare(occupant)
 }
 
 /// The status rule (spec §2.3): identity first, then content. `head` is the HEAD render of the clone's seat;
@@ -227,10 +240,7 @@ pub fn status(
         return view;
     };
     if loaded != occupant {
-        if rec.source == InjectionSource::HookCodex
-            && !stem(loaded).is_empty()
-            && stem(loaded) == stem(occupant)
-        {
+        if rec.source == InjectionSource::HookCodex && codex_form_differs(loaded, occupant) {
             view.note = Some(CODEX_FORM_NOTE.to_owned());
         }
         return view;
@@ -707,6 +717,9 @@ mod tests {
 
     #[test]
     fn codex_form_differs_note() {
+        const BARE_UUID: &str = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+        const ROLLOUT_STEM: &str =
+            "rollout-2026-11-10T12-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
         let tmp = tempfile::tempdir().unwrap();
         let clone = CloneId::new();
         let r = rendered(&[("a", "one\n")]);
@@ -715,19 +728,19 @@ mod tests {
             &clone,
             &r,
             InjectionSource::HookCodex,
-            Some("019a-bc"),
+            Some(BARE_UUID),
             true,
         );
-        let v = st(
-            tmp.path(),
-            &clone,
-            Some("/home/u/.codex/sessions/019a-bc.jsonl"),
-            &r,
-        );
+        // production form: Herdr's occupant id is the rollout stem, the payload carries the bare uuid
+        let v = st(tmp.path(), &clone, Some(ROLLOUT_STEM), &r);
         assert_eq!(v.status, InstructionsStatus::Unknown);
         assert_eq!(v.note.as_deref(), Some(CODEX_FORM_NOTE));
         // a genuinely different session carries no note
         let v = st(tmp.path(), &clone, Some("019a-zz"), &r);
+        assert_eq!((v.status, v.note), (InstructionsStatus::Unknown, None));
+        // a rollout stem whose trailing uuid differs from the payload carries no note
+        let other = "rollout-2026-11-10T12-00-00-0199a1b2-c3d4-7e5f-8a9b-ffffffffffff";
+        let v = st(tmp.path(), &clone, Some(other), &r);
         assert_eq!((v.status, v.note), (InstructionsStatus::Unknown, None));
         // a Claude record never gets the Codex note
         rec(
@@ -735,7 +748,7 @@ mod tests {
             &clone,
             &r,
             InjectionSource::Hook,
-            Some("019a-bc"),
+            Some(BARE_UUID),
             true,
         );
         let v = st(tmp.path(), &clone, Some("019a-bc.jsonl"), &r);
