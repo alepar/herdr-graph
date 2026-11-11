@@ -1,0 +1,47 @@
+# Final review: cluster 7 (src-plan), epic hg-blw
+
+## Source and inputs
+
+- Invocation inv-4b650ab2-a313-4bcb-9196-17e40854f3ab; base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 6eb6cec786cde8ca070fbf9aed46bb0609ff63ac, both verified with `git rev-parse --verify <sha>^{commit}`. Review source binding (`bind-review-source`) ran first and exited 0.
+- Cluster files: src/plan/ops.rs; slice slices/000038.diff. Context: digest.md, `bd show hg-blw`, `bd show hg-blw.8`, design doc docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md at head (§2.1, §2.4 "Journal side", §2.6, §3, Requirement baseline).
+- Caller checkout observed at HEAD 6eb6cec with a clean status, before and during the review. No caller file was edited.
+- src/plan/ops.rs at head is byte-identical to its only touching commit f5a349b (`git diff f5a349b 6eb6cec -- src/plan/ops.rs` is empty), so the merges did not alter it.
+
+## Requirement trace
+
+- B3 ("state activity, latest modifications: global, space, seat"), journal side per §2.4: `ops.list` is registered for production in src/daemon/compose.rs:408 through `plan::ops::register_commands`. The handler now reads optional `seat` and `teamspace` ids (`opt_id_arg`), `unresolved` and `limit` (default 200 kept), builds an `OpsFilter` and calls `list_json`, which filters daemon-side on the stored requester ids and reports `head` from the daemon's store. Absent fields keep the old behaviour (all-None filter matches every op).
+- The production requester carries the teamspace: `plan::commands::requester_for` (src/plan/commands.rs:99-126) fills `teamspace` from the seat record at admission, and `reassign` sets both seat and teamspace. So `--teamspace` has a real producer, not only test fixtures.
+- Retired requesters: matching is on stored ids with no liveness check, so ops of retired seats/teamspaces still match (test `retired_requester_still_matches` retires the seat via a commit and checks both filters).
+- Rejected, failed and in-flight ops: `filter_by_seat_and_teamspace` covers rejected, failed and an admitted (queued) op under `--seat`.
+- `pending_for` (consumed by `/seat` at src/bootstrap/mod.rs:354) now delegates to `list_ops` with `unresolved: true` and limit ALL. Same journal iteration order, same seat/clone predicate, same unresolved predicate, no limit: behaviour unchanged.
+- No commit: `list_json_reports_head_and_adds_no_commit` asserts the store head is unchanged after a listing.
+- Wire contract with the CLI (src/cli/ops.rs, another cluster): the CLI sends ids as strings and reads `reply["head"].as_str()`; `CommitId` is `#[serde(transparent)]` over `String`, so `head` serialises as a string. Name resolution through Scope, the envelope, `--json` and exit 5 with the daemon down are on the CLI side and are the seam reviewer's to trace.
+
+## Code analysis
+
+- `OpsFilter::matches_requester` is evaluated before `is_unresolved`, so the meta lookup only runs for requester matches; `limit` applies after filtering, as the doc comment and spec say. `limit: 0` returns an empty list (tested).
+- `list_json` now returns `OpsError` and maps through `err` (Journal/Store errors become internal, as before for the journal); the only caller is the `ops.list` handler. The unrelated `undo::commands::list_json` is a different function.
+- `head` is read from the Git store before the journal listing. The journal is not in Git, so the two are not one atomic snapshot; this matches the spec, which only asks that the reply carry the daemon's head for the envelope.
+- The old doc comment on `list_json` (the stale "daemon-less read" claim that spec §3 and bead hg-la5 name as a separate follow-up) was replaced by an accurate one because the signature changed. The bead said not to change it, and the task 5 report says it was "not touched"; the diff shows otherwise. The result is correct, but hg-la5 remains open for work that is now done.
+- `opt_id_arg` delegates to `id_arg`, so a present but non-string value (`{"seat": 5}`) is rejected as `missing seat` rather than as a type error. The rejection is right; only the wording is off. The CLI always sends strings.
+- An op whose requester seat could not be located at admission (unparseable or unknown `HERDR_GRAPH_SEAT` lookup failing) has `teamspace: None` and so never matches `--teamspace`, though it would match `--seat`. This follows from matching stored ids, as the bead specifies; it is an edge of the production producer, not of this filter.
+
+## Verification
+
+- I could not rerun tests: `toolbox run -c hg-build true` fails with "Error: unable to find user alepar: no matching entries in passwd file" (exit 255), the same toolbox failure task 9 reports. No test process was started, so no rig could leak.
+- Recorded evidence: task-5 report gives `cargo test --lib -- plan::ops cli::ops` 23 passed and `--test daemon_free_reads` 4 passed, on pre-commit tree c2eb13a, not the committed tree (already a deferred minor in the digest).
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- No test run at the reviewed head: the hg-build toolbox is broken ("unable to find user alepar"), and the only recorded run of plan::ops tests is on pre-commit tree c2eb13a, not on f5a349b or 6eb6cec.
+- No test covers an op whose requester has a seat but `teamspace: None` (seat not locatable at admission) under `--teamspace`; behaviour is exclusion by design of id matching.
+- No test exercises `ops.list` with a non-string `seat`/`teamspace` value; the handler rejects it with a "missing <key>" message.
+
+## Deferred OK
+- Close bead hg-la5 (stale `list_json` comment): the diff already replaced the stale "daemon-less read" doc comment in src/plan/ops.rs with an accurate one, contrary to the bead text and the task 5 report's "not touched" claim.
+- `opt_id_arg` reports "missing <key>" for a present non-string value; a type-specific message would be clearer (src/plan/ops.rs `opt_id_arg`/`id_arg`).

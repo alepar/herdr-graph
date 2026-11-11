@@ -1,0 +1,251 @@
+diff --git a/src/cli/log.rs b/src/cli/log.rs
+new file mode 100644
+index 0000000..1e0810d
+--- /dev/null
++++ b/src/cli/log.rs
+@@ -0,0 +1,245 @@
++//! `log` (spec §2.4): the scoped history of graph changes, daemon-free and read-only.
++use crate::daemon::client::{EXIT_NO_INSTANCE, instance_or_none};
++use crate::inspect::log::{LogQuery, OPS_POINTER};
++use crate::inspect::output::{Envelope, Format, emit};
++use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
++use crate::inspect::{fail, pin_head};
++use crate::model::Timestamp;
++use crate::store::GitStore;
++use crate::store::history::HistoryWalker;
++use clap::Subcommand;
++use std::io::Write;
++use std::process::ExitCode;
++
++#[derive(Subcommand, Debug)]
++pub enum Commands {
++    /// Scoped history of graph changes, newest first (daemon-free).
++    Log {
++        /// Scope: global (global paths only: graph.toml, rules/, templates/, applications/,
++        /// threads-namespace.json) | teamspace <t> | seat <s>; omitted = every change in the instance.
++        #[arg(num_args = 0..=2)]
++        scope: Vec<String>,
++        /// Only changes at or after this time: RFC 3339, YYYY-MM-DD, or a duration like 2d.
++        #[arg(long, value_parser = crate::inspect::parse_since)]
++        since: Option<Timestamp>,
++        /// Maximum rows (default 30).
++        #[arg(long, default_value_t = 30)]
++        limit: usize,
++        /// Only changes requested by this seat (name or id); an AND filter with the scope.
++        #[arg(long)]
++        by: Option<String>,
++        /// Include bookkeeping changes.
++        #[arg(long)]
++        all: bool,
++        /// Commits to scan before stopping (default 5000).
++        #[arg(long, default_value_t = 5000)]
++        max_scan: usize,
++        #[arg(long)]
++        json: bool,
++    },
++}
++
++/// The parsed `log` arguments.
++pub struct LogArgs {
++    pub scope: Vec<String>,
++    pub since: Option<Timestamp>,
++    pub limit: usize,
++    pub by: Option<String>,
++    pub all: bool,
++    pub max_scan: usize,
++}
++
++pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
++    let Commands::Log {
++        scope,
++        since,
++        limit,
++        by,
++        all,
++        max_scan,
++        json,
++    } = cmd;
++    let Some(root) = instance_or_none() else {
++        return Ok(ExitCode::from(EXIT_NO_INSTANCE));
++    };
++    let store = match GitStore::open(&root) {
++        Ok(s) => s,
++        Err(e) => return Ok(fail(&e.into())),
++    };
++    let args = LogArgs {
++        scope,
++        since,
++        limit,
++        by,
++        all,
++        max_scan,
++    };
++    let (mut out, mut err) = (std::io::stdout().lock(), std::io::stderr().lock());
++    match execute(&store, &args, Format::from_flag(json), &mut out, &mut err) {
++        Ok(()) => Ok(ExitCode::SUCCESS),
++        Err(e) => Ok(fail(&e)),
++    }
++}
++
++/// Pin HEAD once, resolve the scope and `--by` at it, walk, and emit. Warnings go to `err` in both modes; the
++/// ops pointer is the one notice `emit` places last (stdout in text, stderr under `--json`).
++pub fn execute(
++    store: &GitStore,
++    a: &LogArgs,
++    format: Format,
++    out: &mut dyn Write,
++    err: &mut dyn Write,
++) -> anyhow::Result<()> {
++    let head = pin_head(store)?;
++    let scope = Scope::resolve(&ScopeArg::parse(&a.scope, AllowClone::No)?, store, &head)?;
++    let by = match &a.by {
++        None => None,
++        Some(b) => {
++            let arg = ScopeArg::parse(&["seat".to_owned(), b.clone()], AllowClone::No)?;
++            match Scope::resolve(&arg, store, &head)? {
++                Scope::Seat(id) => Some(id),
++                _ => unreachable!("a seat word resolves to a seat"),
++            }
++        }
++    };
++    let query = LogQuery {
++        scope,
++        by,
++        all: a.all,
++        since: a.since,
++        limit: a.limit,
++    };
++    let walker = HistoryWalker::new(store, &head, a.max_scan);
++    let (view, warnings) = query.run(&walker)?;
++    for w in &warnings {
++        writeln!(err, "{w}")?;
++    }
++    emit(
++        &Envelope::new(&head, view),
++        format,
++        &[OPS_POINTER.to_owned()],
++        out,
++        err,
++    )?;
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::inspect::fixture::Fx;
++    use crate::model::Lifecycle;
++    use crate::model::change::{RequestKind, Requester};
++    use std::path::Path;
++
++    /// HEAD, the refs, the index and every work-tree file with its bytes.
++    fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
++        fn walk(dir: &Path, root: &Path, out: &mut Vec<(String, Vec<u8>)>) {
++            let mut entries: Vec<_> = std::fs::read_dir(dir)
++                .unwrap()
++                .map(|e| e.unwrap())
++                .collect();
++            entries.sort_by_key(|e| e.file_name());
++            for e in entries {
++                let p = e.path();
++                let rel = p.strip_prefix(root).unwrap().display().to_string();
++                if e.file_type().unwrap().is_dir() {
++                    // Object storage is append-only and may legitimately gain nothing; compare the rest.
++                    if rel != ".git/objects" {
++                        walk(&p, root, out);
++                    }
++                } else {
++                    out.push((rel, std::fs::read(&p).unwrap()));
++                }
++            }
++        }
++        let mut out = vec![];
++        walk(root, root, &mut out);
++        out
++    }
++
++    fn args(scope: &[&str], by: Option<&str>) -> LogArgs {
++        LogArgs {
++            scope: scope.iter().map(|s| s.to_string()).collect(),
++            since: None,
++            limit: 30,
++            by: by.map(str::to_owned),
++            all: false,
++            max_scan: 5000,
++        }
++    }
++
++    fn fx() -> Fx {
++        let mut fx = Fx::new();
++        let t = fx.teamspace("alpha", Lifecycle::Active);
++        let a = fx.seat(&t, "a", Lifecycle::Active);
++        let op = fx.operation(
++            RequestKind::SeatCreate,
++            "made a",
++            Requester {
++                seat: Some(a),
++                ..Default::default()
++            },
++        );
++        fx.commit_with_trailers("seat_create: made a", Some(&op), None);
++        fx
++    }
++
++    fn run_to_strings(fx: &Fx, a: &LogArgs, format: Format) -> anyhow::Result<(String, String)> {
++        let (mut out, mut err) = (Vec::new(), Vec::new());
++        execute(&fx.store, a, format, &mut out, &mut err)?;
++        Ok((
++            String::from_utf8(out).unwrap(),
++            String::from_utf8(err).unwrap(),
++        ))
++    }
++
++    #[test]
++    fn log_is_read_only() {
++        let fx = fx();
++        let root = fx.store.root().to_owned();
++        let before = snapshot(&root);
++        assert!(before.iter().any(|(p, _)| p == ".git/HEAD"));
++        assert!(before.iter().any(|(p, _)| p == ".git/index"));
++        for (format, scope) in [
++            (Format::Text, &[][..]),
++            (Format::Json, &["seat", "a"][..]),
++            (Format::Json, &["global"][..]),
++        ] {
++            run_to_strings(&fx, &args(scope, Some("a")), format).unwrap();
++            run_to_strings(&fx, &args(scope, None), format).unwrap();
++        }
++        assert_eq!(snapshot(&root), before);
++    }
++
++    #[test]
++    fn execute_text_and_json() {
++        let fx = fx();
++        let (out, err) = run_to_strings(&fx, &args(&[], None), Format::Text).unwrap();
++        assert!(
++            out.lines().next().unwrap().contains("seat_create  made a"),
++            "{out}"
++        );
++        assert_eq!(out.lines().last().unwrap(), OPS_POINTER);
++        assert!(err.is_empty());
++        let (out, err) = run_to_strings(&fx, &args(&[], None), Format::Json).unwrap();
++        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
++        assert_eq!(v["schema"], 1);
++        assert_eq!(v["head"].as_str().unwrap().len(), 40);
++        assert_eq!(v["rows"].as_array().unwrap().len(), 2);
++        assert_eq!(err, format!("{OPS_POINTER}\n"));
++    }
++
++    #[test]
++    fn execute_rejects_bad_arguments() {
++        let fx = fx();
++        for (scope, by) in [
++            (&["clone", "x"][..], None),
++            (&["seat", "nope"][..], None),
++            (&[][..], Some("nope")),
++        ] {
++            let e = run_to_strings(&fx, &args(scope, by), Format::Text).unwrap_err();
++            assert_eq!(crate::inspect::fail(&e), ExitCode::from(1), "{e:#}");
++        }
++    }
++}

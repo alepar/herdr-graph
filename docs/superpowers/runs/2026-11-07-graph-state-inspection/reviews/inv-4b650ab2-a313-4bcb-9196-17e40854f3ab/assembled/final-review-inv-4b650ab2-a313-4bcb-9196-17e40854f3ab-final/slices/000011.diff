@@ -1,0 +1,21 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-requirements.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-requirements.md
+new file mode 100644
+index 0000000..06726e1
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-requirements.md
+@@ -0,0 +1,15 @@
++R1 roster (daemon-free) lists every non-retired seat and its clones with lifecycle, pane binding/availability, occupant (harness, ns_, native session id, transcript path or unresolved), threads seat state, manager and reload_required; --all adds retired (B1)
++R2 roster --live reports, from one Herdr snapshot via the daemon, each clone's agent kind/status and whether the committed binding still matches, plus threads refusals/lost seats (B1, B8)
++R3 roster --live --unmanaged enumerates Herdr workspaces, tabs and panes with no graph binding, ids and labels only (S1)
++R4 instructions stack <seat> shows, for any seat and daemon-free, every graph-rendered instruction part with label, path, bytes, digest and last-changing commit, plus which parts the 9000-byte hook cap keeps (B2)
++R5 instructions stack lists harness-native CLAUDE.md/AGENTS.md/AGENTS.override.md in the seat cwd and ancestors with path, size and mtime, never reading content (B2, B7)
++R6 the SessionStart hook (both harnesses) records what it injected into a native session in .graph-local/loaded, keyed by native_session_id, without ever failing the caller; seat --instructions and seat.resolve never write; roster and instructions stack show current/stale/unknown/error/truncated from it, with no notification (B2, B5) [restated by redesign cycle 1; was: every injection path incl. seat --instructions and seat.resolve writes]
++R7 log shows committed changes newest first, scoped to global, a teamspace or a seat (changes to, or --by <seat> changes made by), with --since/--limit/--max-scan, bookkeeping hidden unless --all (B3, B6)
++R8 ops can be filtered by requester seat/teamspace, limited, and emitted as JSON through the daemon (B3)
++R9 roster shows each seat's last change (B3)
++R10 sessions lists every native session newest first, scoped by teamspace/seat/clone (incl. retired and archived), with start/end timestamps, ids and transcript path (B4)
++R11 every new view has --json carrying schema:1 and the head revision, and inspection adds no Git commits (spec §2.1)
++R12 no inspection view (roster, roster --live, instructions stack, sessions, log, ops) creates a Git commit or changes HEAD, index or work tree, and a test checks it (R-new, round 1)
++R13 an operator or agent can find the new views: README and CLI help name roster, sessions, log, instructions stack and the ops filters (R-new, round 1)
++R14 one production path works end to end: a hook injection writes the loaded record, roster and instructions stack show current, a committed part edit makes them stale, and log shows that edit (R-new, round 1)
++R15 writing the loaded record leaves the instance's git status clean (R-new, round 2)

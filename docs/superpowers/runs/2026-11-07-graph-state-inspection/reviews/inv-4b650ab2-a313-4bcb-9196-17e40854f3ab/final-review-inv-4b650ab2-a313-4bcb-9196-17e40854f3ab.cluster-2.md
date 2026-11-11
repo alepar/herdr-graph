@@ -1,0 +1,56 @@
+# Final review: cluster 2 (src-cli), epic hg-blw
+
+Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 6eb6cec786cde8ca070fbf9aed46bb0609ff63ac (both verified with `git rev-parse --verify`). The caller checkout was at 6eb6cec with a clean status at the start of the review and was not switched. Files reviewed: src/cli/log.rs, src/cli/mod.rs, src/cli/ops.rs, src/cli/roster.rs, src/cli/sessions.rs (slices 000020-000024), against the design doc docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md at head and its `## Requirement baseline`.
+
+## Method
+
+- Read every cluster slice, plus the head versions of src/cli/mod.rs and src/cli/instructions.rs.
+- Traced the named risks into src/inspect/{output,scope,log,roster,mod}.rs, src/plan/ops.rs, src/daemon/roster_live.rs, src/cli/daemon_error.rs and the tests/ binaries, reading those files only.
+- Walked the `inspect_stubs_not_implemented` test across every commit in the range.
+- Checked the bead tree with `bd list --parent hg-blw`.
+- Tests were not run. `toolbox run -c hg-build true` fails with "unable to find user alepar: no matching entries in passwd file" (rc 255). This matches the wedged toolbox that the task 6 and task 9 reports describe.
+
+## Requirement baseline trace from CLI entry points
+
+- B1 (which seats are active): `herdr-graph roster [<scope>] [--all] [--json]` goes from cli::roster::run to execute, then pin_head, Scope::resolve and inspect::roster::build at one pinned HEAD, then Envelope with live false. Delivered daemon-free. `roster --live` goes through `roster.live` with CallMode::NoEnsure, and a down daemon reaches exit 5 through daemon_error::report (tests/daemon_free_reads.rs lists `roster --live` and `roster --live --unmanaged --json` under exit 5).
+- B3 (activity and latest modifications for global, space and seat): `herdr-graph log [global|teamspace t|seat s] [--since] [--limit] [--by] [--all] [--max-scan] [--json]` goes from cli::log::execute to pin_head, Scope::resolve (AllowClone::No), `--by` resolved through the retired-allowed seat resolver, then HistoryWalker and LogQuery at the pinned head. OPS_POINTER is emitted as the last text line in text mode and on stderr under --json. `ops --seat/--teamspace/--limit/--json` resolves names to ids at one pinned HEAD and sends them to `ops.list`; the envelope head is the daemon's reply head. Delivered.
+- B4 (all sessions by space, seat and clone, timestamps, newest first): `herdr-graph sessions [<scope>|clone c] [--since] [--limit] [--json]` goes from cli::sessions::prepare to pin_head, ScopeArg::parse(AllowClone::Yes), Inventory::load and sessions::build. Delivered.
+- B6 (log hides bookkeeping by default): the CLI passes `all: false` unless `--all` is given, and LogQuery owns the filter. Delivered at the CLI seam.
+- B8 (roster --live in scope now) and S1 (`--unmanaged` only enumerates): the CLI exposes `--live` and `--unmanaged` (`requires = "live"`) and deserializes the daemon's Roster into the one roster view. The CLI side is delivered. The overlay contents are on the src-daemon/src-inspect side of the seam, so that seam reviewer should trace them.
+- B2 (which files are loaded into context per seat): not delivered at head. No `instructions stack` subcommand exists: InstructionsAction at head has only `Show`. Roster `instructions` is always `InstructionsView::unknown()` with `parts: []` (src/inspect/roster.rs:294), because no loaded-record writer exists. Bead hg-blw.2 is open with a review bead hg-blw.19 open, and hg-blw.12 is open; the task 9 report says hg-blw.12 is BLOCKED.
+- B5 (staleness is shown): not delivered at head. No path produces `current` or `stale`. There is no `.graph-local/loaded/` writer and no `--stdin-payload` flag anywhere in src at head.
+- B7 (harness-native files by presence, size and mtime): not delivered at head. Its only planned entry point, `instructions stack`, does not exist.
+- No human scope change row covers B2, B5 or B7. S1 affects B8 only.
+
+## Defect analysis
+
+- `cli::tests::inspect_stubs_not_implemented` (src/cli/mod.rs:219) still runs `sessions` and expects `run(cli).unwrap_err()` with "not implemented". `sessions` has been implemented since 8befb82 (merged at 5ce3ad7), and `cli::sessions::run` returns `Ok(ExitCode)` on every path: no instance gives Ok(2), other errors give Ok(fail(..)). So `unwrap_err()` panics every time and the lib test suite is red at head. The test also starts a real `sessions` run against the process environment (the task 6 report hit the real-HOME isolation tripwire). Its list has shrunk at each merge (roster, sessions, log, then roster --live and sessions) but `sessions` was never removed. Every inspect stub it guarded is now implemented, so the test has nothing left to assert and should be deleted.
+- `cli::ops::list` now calls `envelope_from_reply` in text mode too, so plain `herdr-graph ops` fails with "daemon reply has no head" (an anyhow error, exit 1) against a daemon that predates this change. IPC_VERSION was not bumped, so a stale running daemon is not refused as a version mismatch. This is low impact because daemons restart on upgrade, but text mode does not need `head` at all.
+- In `cli::log::execute`, HistoryWalker warnings about malformed records go straight to stderr in both modes. That bypasses emit's notice list. §2.1 says notices without a field are part of the text rendering in text mode, while the same section and the task 4 acceptance ask for "one stderr warning per command". The implementation follows the acceptance. The spec wording conflicts with itself, and there is no defect in delivered behavior.
+- Exit-code ordering in `ops --seat/--teamspace`: names are resolved before the daemon call, so with the daemon down an unknown name gives exit 1 and a missing instance gives exit 2, not 5. The task 5 review already recorded this as a deferred minor, and tests/daemon_free_reads.rs documents it.
+- The read-only guards in the cluster are sound. log_is_read_only snapshots HEAD, the refs, the index and the work tree. roster_is_read_only compares the index and the status. sessions_is_read_only checks HEAD. Each command pins HEAD once and passes it to Scope, the builders and the Envelope, which meets the §2.1 one-HEAD rule.
+
+## Verdict
+
+not ready (lib test inspect_stubs_not_implemented fails at head; baseline rows B2, B5, B7 have no production entry point)
+
+## Must fix before landing
+
+- Delete `cli::tests::inspect_stubs_not_implemented` (src/cli/mod.rs:219-226). It runs the implemented `sessions` command and calls `unwrap_err()` on a run that always returns Ok, so `cargo test --lib` fails at head. Evidence: the test list is `[&["sessions"][..]]` at 6eb6cec, and every return in cli::sessions::run is `Ok(..)`.
+- B2 is not delivered: `herdr-graph instructions stack <seat>` does not exist (InstructionsAction has only Show at head), and roster `instructions.parts` is always `[]` because there is no loaded-record writer (src/inspect/roster.rs:294 always uses InstructionsView::unknown()). hg-blw.2 and hg-blw.12 are still open. No human scope change row covers it.
+- B5 is not delivered: no production path yields `current`, `stale` or `stale_parts`. There is no `.graph-local/loaded/` writer and no `seat --hook-prompt --stdin-payload` in src at head (hg-blw.12 is open and BLOCKED per the task 9 report). No human scope change row covers it.
+- B7 is not delivered: harness-native files are listed only by `instructions stack`, which does not exist at head (hg-blw.2 is open). No human scope change row covers it.
+
+## Untested scope
+
+- No test in this cluster was run at head. The hg-build toolbox fails with "unable to find user alepar: no matching entries in passwd file", so every pass claim for the cluster rests on the per-task reports, not on the integrated head.
+- No CLI-binary test of `ops --json` or `ops --seat`/`--teamspace` against a running daemon. Only the envelope helper, flag parsing and the daemon-down exit 5 are covered, plus list_ops and `ops.list` at the registry level.
+- No CLI-level test of log's malformed-record stderr warning in text or JSON mode. It is covered only at the LogQuery level.
+- No CLI-binary test of the degraded `roster --live` text (`live data unavailable: ...` as the first line). The task 7 review deferred this because the test needs a daemon with no Herdr.
+
+## Deferred OK
+
+- In text mode, plain `ops` needs `head` in the daemon reply. A pre-upgrade daemon still running with the same IPC_VERSION makes `ops` fail with "daemon reply has no head" (exit 1). Text mode could fall back when head is missing.
+- `ops --seat/--teamspace` resolves names before the daemon call, so with the daemon down it gives exit 1 or 2 instead of 5. This is already recorded in the task 5 review and documented in tests/daemon_free_reads.rs.
+- `log` writes malformed-record warnings to stderr in text mode as well, which follows the task 4 acceptance. The design doc should make §2.1's two statements on text-mode notices agree.
+- The roster `--live` CLI passes raw scope words to the daemon, and scope errors come back as bad_request, exit 1 through daemon_error. That matches the daemon-free exit 1, but no test pins it at the CLI binary.

@@ -1,0 +1,57 @@
+diff --git a/tests/inspect_sessions.rs b/tests/inspect_sessions.rs
+new file mode 100644
+index 0000000..93a3cb9
+--- /dev/null
++++ b/tests/inspect_sessions.rs
+@@ -0,0 +1,51 @@
++//! `herdr-graph sessions` as a binary, daemon-free, under `TestRoot`.
++mod support;
++
++use herdr_graph::store::init::init_instance;
++use std::process::Command;
++use support::isolated::TestRoot;
++
++const BIN: &str = env!("CARGO_BIN_EXE_herdr-graph");
++
++fn cmd(root: &TestRoot, args: &[&str]) -> Command {
++    let mut c = root.command(BIN);
++    c.args(args).env("HERDR_GRAPH_INSTANCE", root.instance());
++    c
++}
++
++#[test]
++fn sessions_json_and_errors_need_no_daemon() {
++    let root = TestRoot::new();
++    init_instance(&root.instance()).unwrap();
++
++    let out = cmd(&root, &["sessions", "--json"]).output().unwrap();
++    assert_eq!(
++        out.status.code(),
++        Some(0),
++        "{}",
++        String::from_utf8_lossy(&out.stderr)
++    );
++    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
++    assert_eq!(v["schema"], 1);
++    assert_eq!(v["head"].as_str().unwrap().len(), 40);
++    assert_eq!(v["tombstones"], 0);
++    assert_eq!(v["total"], 0);
++    assert_eq!(v["rows"], serde_json::json!([]));
++    assert!(
++        !herdr_graph::config::InstancePaths::new(&root.instance())
++            .socket
++            .exists()
++    );
++
++    let out = cmd(&root, &["sessions", "clone", "nosuch"])
++        .output()
++        .unwrap();
++    assert_eq!(out.status.code(), Some(1));
++    assert!(out.stdout.is_empty());
++    assert!(String::from_utf8_lossy(&out.stderr).contains("nosuch"));
++
++    let out = cmd(&root, &["sessions", "--since", "nonsense"])
++        .output()
++        .unwrap();
++    assert_eq!(out.status.code(), Some(2));
++}

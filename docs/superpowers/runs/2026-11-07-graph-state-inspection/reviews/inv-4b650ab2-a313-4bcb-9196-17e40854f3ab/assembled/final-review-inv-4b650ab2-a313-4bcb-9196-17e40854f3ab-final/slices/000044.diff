@@ -1,0 +1,23 @@
+diff --git a/tests/daemon_free_reads.rs b/tests/daemon_free_reads.rs
+index 9245c27..a74f513 100644
+--- a/tests/daemon_free_reads.rs
++++ b/tests/daemon_free_reads.rs
+@@ -68,12 +68,18 @@ fn reads_without_daemon_exit_5() {
+         vec!["who", "p1"],
+         vec!["ops"],
+         vec!["ops", "--unresolved"],
++        // --seat/--teamspace resolve against the graph first: the fixture commits no seat, so an unknown
++        // name exits 1 before the daemon call (by design); only the unfiltered flags reach it.
++        vec!["ops", "--limit", "5", "--json"],
++        vec!["ops", "--unresolved", "--json"],
+         vec!["op", &op],
+         vec!["check-instruction", &op, &seat, "1"],
+         vec!["request", "list"],
+         vec!["request", "list", "--pending"],
+         vec!["undo", "--list"],
+         vec!["undo", "--json"],
++        vec!["roster", "--live"],
++        vec!["roster", "--live", "--unmanaged", "--json"],
+     ] {
+         assert_exit_5(&f, &args);
+     }
