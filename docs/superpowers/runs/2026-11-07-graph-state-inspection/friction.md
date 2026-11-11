@@ -6,3 +6,4 @@
 - [2026-11-10] coordinator stopped 'stalled' with hg-blw.10 ready: a triage-added edge (hg-blw.10 <- hg-blw.20 review bead) was not in the planner's JS deps rows, so mid-round readiness never saw it clear; re-entered with a fresh invocation
 - [2026-11-10] code roast r1: assembler exit 2 'review input selection: provenance unavailable; captured source available' (inv-64d86974 cluster-13 gap); ran the bounded direct review per super-auto phase 4 (product paths only); rung: Workflow
 - [2026-11-10] review collection for inv-64d86974 stays at gaps (cluster-13 file never written, no recovery path for a missing split cluster); fix-loop re-entry proceeds with the gap retained and reported, since nothing can produce the original review
+- [2026-11-10] code roast r2: same assembler provenance result; bounded direct review again; rung: Workflow
