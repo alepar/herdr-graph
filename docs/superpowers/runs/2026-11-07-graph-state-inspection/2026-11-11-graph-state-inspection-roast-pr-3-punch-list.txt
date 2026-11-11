@@ -1,0 +1,4 @@
+[Nit] CURRENT-DESIGN.md:96
+[Nit] src/inspect/sessions.rs:59; src/inspect/stack.rs:376
+[Nit] src/observe/step.rs:814
+[Nit] src/observe/step.rs:651

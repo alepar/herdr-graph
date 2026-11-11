@@ -7,3 +7,6 @@
 - [2026-11-10] code roast r1: assembler exit 2 'review input selection: provenance unavailable; captured source available' (inv-64d86974 cluster-13 gap); ran the bounded direct review per super-auto phase 4 (product paths only); rung: Workflow
 - [2026-11-10] review collection for inv-64d86974 stays at gaps (cluster-13 file never written, no recovery path for a missing split cluster); fix-loop re-entry proceeds with the gap retained and reported, since nothing can produce the original review
 - [2026-11-10] code roast r2: same assembler provenance result; bounded direct review again; rung: Workflow
+- [2026-11-11] code roast r3: same provenance result; bounded direct review; rung: Workflow
+- [2026-11-11] report format repair: 2026-11-11-graph-state-inspection-roast-pr-3.md → 2026-11-11-graph-state-inspection-roast-pr-3-format-repair.md — none marker has finding text in Escalations (stray --- separators)
+- [2026-11-11] step-back not dispatched for code round 3 (2 Nits at the cap); recorded as a deviation
