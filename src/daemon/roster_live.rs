@@ -16,6 +16,7 @@ use std::sync::Arc;
 pub struct RosterLiveDeps {
     pub git: Arc<GitStore>,
     pub herdr: Option<Arc<dyn HerdrApi>>,
+    /// The observe loop's slot: it writes one snapshot per step, from its full read of the seated set.
     pub seat_read: SeatReadState,
     pub lost: SeatLost,
 }
@@ -71,8 +72,8 @@ async fn handle(d: &Arc<RosterLiveDeps>, args: &Value) -> Result<Value, CommandE
         None => Err("no herdr client".to_owned()),
         Some(h) => h.snapshot().await.map_err(|e| e.to_string()),
     };
-    // One snapshot of the last seat read; `Ok` only when that read succeeded, a read never made counts as
-    // unavailable. `lost` is read while the snapshot lock is held.
+    // One snapshot of the observe loop's last full seat read; `Ok` only when that read succeeded (an empty
+    // seated set counts), unavailable before the first cycle. `lost` is read while the snapshot lock is held.
     let threads = {
         let snap = d.seat_read.lock().unwrap_or_else(|e| e.into_inner());
         match &snap.last {

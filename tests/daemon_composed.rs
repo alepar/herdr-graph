@@ -2074,6 +2074,172 @@ async fn live_handoff_under_a_running_loop_reconnects_and_creates_nothing() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// roster.live threads half: the observe loop's full read owns the snapshot (hg-blw.30)
+// ---------------------------------------------------------------------------------------------
+
+/// Polls `roster.live` until `done` holds on its roster, and returns that roster.
+async fn roster_live_until(d: &Daemon, what: &str, done: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let roster = d.call("roster.live", json!({})).await.unwrap()["roster"].clone();
+        if done(&roster) {
+            return roster;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}: {roster}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// A teamspace with two shell seats whose clones are seated in threads (fake seat view), both bound.
+async fn two_seated_seats(d: &Daemon) -> [ThreadsSeatRef; 2] {
+    d.committed(&["teamspace", "create", "t", "--active"]).await;
+    for name in ["sh", "sh2"] {
+        d.committed(&[
+            "seat",
+            "create",
+            name,
+            "--teamspace",
+            "t",
+            "--active",
+            "--harness",
+            "shell",
+        ])
+        .await;
+    }
+    eventually("both panes bound", || {
+        bound_pane(d, "sh").is_some() && bound_pane(d, "sh2").is_some()
+    })
+    .await;
+    let seats = [
+        ("sh", ThreadsSeatRef("seat-sh".into())),
+        ("sh2", ThreadsSeatRef("seat-sh2".into())),
+    ];
+    for (name, seat) in &seats {
+        let pane = bound_pane(d, name).unwrap();
+        d.fakes.panes.set(&pane, &seat.0);
+        d.fakes.seat_view.set(seat, SeatStatus::Resolved { pane });
+    }
+    eventually("both clones record their threads seat", || {
+        seats
+            .iter()
+            .all(|(n, seat)| clone_of(d, n).threads_seat.as_deref() == Some(seat.0.as_str()))
+    })
+    .await;
+    settle_after_step(d).await;
+    seats.map(|(_, seat)| seat)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn roster_live_threads_healthy_on_an_instance_with_no_seated_clone() {
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    let roster = roster_live_until(&d, "the first observe step's seat read", |r| {
+        r["live_unavailable"].is_null()
+    })
+    .await;
+    assert_eq!(
+        roster["threads_live"]["seat_refusals"],
+        json!({}),
+        "{roster}"
+    );
+    assert_eq!(roster["threads_live"]["seat_lost"], json!([]), "{roster}");
+    assert_eq!(d.fakes.seat_view.reads(), 0, "nothing seated, nothing read");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn roster_live_reports_a_successful_seat_read_with_its_refusals() {
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    let [seat, _] = two_seated_seats(&d).await;
+    d.fakes.seat_view.refuse(&seat, "nope");
+    let roster = roster_live_until(&d, "the refusal to reach the roster", |r| {
+        r["threads_live"]["seat_refusals"]
+            .as_object()
+            .is_some_and(|m| !m.is_empty())
+    })
+    .await;
+    assert_eq!(roster["live_unavailable"], json!(null), "{roster}");
+    let refusals = roster["threads_live"]["seat_refusals"].as_object().unwrap();
+    assert_eq!(
+        refusals.keys().collect::<Vec<_>>(),
+        vec!["seat-sh"],
+        "only the refused seat: {roster}"
+    );
+    assert_eq!(roster["threads_live"]["seat_lost"], json!([]), "{roster}");
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn roster_live_reports_a_failed_seat_read() {
+    use herdr_graph::threads::FakeSeatViewError;
+    let (_dir, root) = new_instance();
+    let d = Daemon::start(&root).await;
+    two_seated_seats(&d).await;
+    roster_live_until(&d, "a healthy read of the seated set", |r| {
+        r["live_unavailable"].is_null()
+    })
+    .await;
+    d.fakes
+        .seat_view
+        .set_error(Some(FakeSeatViewError::Disconnected));
+    let roster = roster_live_until(&d, "the failed read to reach the roster", |r| {
+        r["live_unavailable"]["threads"].is_string()
+    })
+    .await;
+    assert_eq!(roster["live_unavailable"]["herdr"], json!(null), "{roster}");
+    assert_eq!(
+        roster["threads_live"]["seat_refusals"],
+        json!(null),
+        "{roster}"
+    );
+    assert_eq!(roster["threads_live"]["seat_lost"], json!(null), "{roster}");
+    let clones: Vec<&Value> = roster["teamspaces"][0]["seats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|s| s["clones"].as_array().unwrap())
+        .collect();
+    assert_eq!(clones.len(), 2);
+    assert!(
+        clones.iter().all(|c| !c["live"].is_null()),
+        "Herdr was read, so clone live stays populated: {roster}"
+    );
+    d.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn roster_live_threads_recovers_when_the_seated_set_empties() {
+    use herdr_graph::threads::FakeSeatViewError;
+    let (_dir, root) = new_instance();
+    support::node_manager_opt_out(&root);
+    let d = Daemon::start(&root).await;
+    two_seated_seats(&d).await;
+    d.fakes
+        .seat_view
+        .set_error(Some(FakeSeatViewError::Disconnected));
+    roster_live_until(&d, "the failed read", |r| {
+        r["live_unavailable"]["threads"].is_string()
+    })
+    .await;
+    d.committed(&["teamspace", "retire", "t"]).await;
+    let roster = roster_live_until(&d, "the empty seated set to clear the error", |r| {
+        r["live_unavailable"].is_null()
+    })
+    .await;
+    assert_eq!(
+        roster["threads_live"]["seat_refusals"],
+        json!({}),
+        "{roster}"
+    );
+    assert_eq!(roster["threads_live"]["seat_lost"], json!([]), "{roster}");
+    d.stop().await;
+}
+
+// ---------------------------------------------------------------------------------------------
 // redesign-code-1 integration sweep (hg-k4l.67): the composed daemon wires CascadeMutation, the runtime loop
 // and the reconciler together
 // ---------------------------------------------------------------------------------------------
