@@ -136,6 +136,8 @@ mod tests {
             &["seat", "--json"],
             &["show", "st_x"],
             &["instructions", "show", "global"],
+            &["instructions", "stack", "s1"],
+            &["instructions", "stack", "s1", "--clone", "c1", "--json"],
             &["list"],
             &["list", "seats"],
             &["path", "st_x"],
@@ -212,16 +214,6 @@ mod tests {
                 .chain(argv.iter().copied())
                 .collect();
             Cli::try_parse_from(&full).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
-        }
-    }
-
-    #[test]
-    fn inspect_stubs_not_implemented() {
-        for argv in [&["sessions"][..]] {
-            let full = std::iter::once("herdr-graph").chain(argv.iter().copied());
-            let cli = Cli::try_parse_from(full).unwrap();
-            let e = run(cli).unwrap_err().to_string();
-            assert!(e.contains("not implemented"), "{argv:?}: {e}");
         }
     }
 

@@ -11,12 +11,14 @@ use crate::ports::store::{Store, StoreError};
 use crate::store::instruction_source::InstructionError;
 use std::process::ExitCode;
 
+pub mod harness_files;
 pub mod inventory;
 pub mod log;
 pub mod output;
 pub mod roster;
 pub mod scope;
 pub mod sessions;
+pub mod stack;
 
 #[cfg(test)]
 pub(crate) mod fixture;

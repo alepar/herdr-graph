@@ -24,6 +24,14 @@ pub enum InstructionsAction {
         #[arg(required = true, num_args = 1..=3)]
         words: Vec<String>,
     },
+    /// The seat's instruction manifest at HEAD, hook-cap fit, harness files and per-clone loaded status (no daemon).
+    Stack {
+        seat: String,
+        #[arg(long)]
+        clone: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
@@ -31,12 +39,29 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(EXIT_NO_INSTANCE));
     };
     let store = crate::store::GitStore::open(&root)?;
+    let Commands::Instructions { action } = cmd;
+    if let InstructionsAction::Stack { seat, clone, json } = action {
+        return Ok(
+            match stack(
+                &store,
+                &root,
+                &seat,
+                clone.as_deref(),
+                json,
+                &mut std::io::stdout().lock(),
+                &mut std::io::stderr().lock(),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => crate::inspect::fail(&e),
+            },
+        );
+    }
     let view = CommitView {
         store: &store,
         at: store.head()?,
     };
-    let Commands::Instructions { action } = cmd;
     match action {
+        InstructionsAction::Stack { .. } => unreachable!("handled above"),
         InstructionsAction::Show { words } => {
             let mut text = show_text(&view, &words)?;
             if !text.ends_with('\n') {
@@ -46,6 +71,55 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `instructions stack`: pins HEAD once, resolves the seat (and clone) at that commit and prints the view.
+fn stack(
+    store: &crate::store::GitStore,
+    instance: &std::path::Path,
+    seat: &str,
+    clone: Option<&str>,
+    json: bool,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
+    let head = crate::inspect::pin_head(store)?;
+    let words = |kind: &str, name: &str| vec![kind.to_owned(), name.to_owned()];
+    let Scope::Seat(seat_id) = Scope::resolve(
+        &ScopeArg::parse(&words("seat", seat), AllowClone::No)?,
+        store,
+        &head,
+    )?
+    else {
+        unreachable!("a seat word resolves to a seat scope")
+    };
+    let clone_id = match clone {
+        None => None,
+        Some(c) => {
+            let arg = ScopeArg::parse(&words("clone", c), AllowClone::Yes)?;
+            let Scope::Clone(id) = Scope::resolve(&arg, store, &head)? else {
+                unreachable!("a clone word resolves to a clone scope")
+            };
+            Some(id)
+        }
+    };
+    let view = crate::inspect::stack::build(
+        store,
+        &head,
+        &seat_id,
+        clone_id.as_ref(),
+        &crate::inspect::harness_files::UserDirs::from_env(),
+        instance,
+    )?;
+    crate::inspect::output::emit(
+        &crate::inspect::output::Envelope::new(&head, view),
+        crate::inspect::output::Format::from_flag(json),
+        &[],
+        out,
+        err,
+    )?;
+    Ok(())
 }
 
 /// A file's text, or the placeholder line when it is not admissible.
@@ -271,6 +345,67 @@ mod tests {
         let all = show(&fx, "global").unwrap();
         assert!(all.contains("== rules/Bad.md ==\n(rules/Bad.md: not an admissible instruction file: invalid instruction file name"), "{all}");
         assert!(!all.contains("hi\n"), "{all}");
+    }
+
+    fn snapshot(store: &GitStore) -> (String, Vec<(String, String)>, Vec<(String, u32)>) {
+        use crate::ports::store::Store;
+        let head = store.head().unwrap().0;
+        store
+            .with_repo(|r| {
+                let idx = r.index()?;
+                let entries = idx
+                    .iter()
+                    .map(|e| {
+                        (
+                            String::from_utf8_lossy(&e.path).into_owned(),
+                            e.id.to_string(),
+                        )
+                    })
+                    .collect();
+                let st = r
+                    .statuses(None)?
+                    .iter()
+                    .map(|e| (e.path().unwrap_or("").to_owned(), e.status().bits()))
+                    .collect();
+                Ok((head.clone(), entries, st))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn stack_is_read_only() {
+        let fx = fixture(&[("teamspaces/alpha/seats/a1/AGENTS.md", b"seat agents\n")]);
+        let before = snapshot(&fx.store);
+        for json in [false, true] {
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            stack(&fx.store, &fx.dir, "a1", None, json, &mut out, &mut err).unwrap();
+            assert_eq!(snapshot(&fx.store), before, "json={json}");
+            let text = String::from_utf8(out).unwrap();
+            if json {
+                let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+                assert_eq!(v["schema"], 1);
+                assert_eq!(v["head"], before.0.as_str());
+                assert_eq!(v["parts"][0]["path"], "teamspaces/alpha/seats/a1/AGENTS.md");
+                assert_eq!(text.trim_end().lines().count(), 1);
+                assert!(err.is_empty());
+            } else {
+                assert!(text.starts_with("seat a1 ("), "{text}");
+                assert!(text.contains("path last touched"), "{text}");
+            }
+        }
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let e = stack(
+            &fx.store, &fx.dir, "nosuch", None, false, &mut out, &mut err,
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("nosuch"), "{e}");
+    }
+
+    #[test]
+    fn instructions_stack_parses() {
+        crate::cli::Cli::try_parse_from(["herdr-graph", "instructions", "stack", "a1", "--json"])
+            .unwrap();
+        assert!(crate::cli::Cli::try_parse_from(["herdr-graph", "instructions", "stack"]).is_err());
     }
 
     #[test]
