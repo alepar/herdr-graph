@@ -9,6 +9,7 @@ use crate::inspect::scope::{AllowClone, Scope, ScopeArg};
 use crate::observe::step::SeatLost;
 use crate::ports::herdr::HerdrApi;
 use crate::store::GitStore;
+use crate::store::instruction_source::InstructionError;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -29,6 +30,15 @@ pub fn register(reg: &mut Registry, deps: RosterLiveDeps) {
     });
 }
 
+/// The one `InstructionError` mapping of this handler: a store failure goes through `from_store` (an integrity
+/// failure is exit 6, as in the daemon-free reader); every other variant is the caller's bad request.
+fn instruction_error(e: InstructionError) -> CommandError {
+    match e {
+        InstructionError::Store(s) => CommandError::from_store(s),
+        other => CommandError::bad_request(other.to_string()),
+    }
+}
+
 async fn handle(d: &Arc<RosterLiveDeps>, args: &Value) -> Result<Value, CommandError> {
     let words: Vec<String> = args
         .get("scope")
@@ -47,8 +57,7 @@ async fn handle(d: &Arc<RosterLiveDeps>, args: &Value) -> Result<Value, CommandE
         let head = pin_head(&*git).map_err(CommandError::from_store)?;
         let arg = ScopeArg::parse(&words, AllowClone::No)
             .map_err(|e| CommandError::bad_request(e.to_string()))?;
-        let scope = Scope::resolve(&arg, &*git, &head)
-            .map_err(|e| CommandError::bad_request(e.to_string()))?;
+        let scope = Scope::resolve(&arg, &*git, &head).map_err(instruction_error)?;
         let (roster, bindings) =
             build_with_bindings(&git, &head, &RosterQuery { scope, all }, unmanaged)
                 .map_err(CommandError::from_store)?;
@@ -93,7 +102,7 @@ mod tests {
     use crate::inspect::fixture::Fx;
     use crate::model::{CloneLifecycle, Lifecycle};
     use crate::ports::herdr::CreateWorkspace;
-    use crate::ports::store::Store;
+    use crate::ports::store::{Store, StoreError, unresolved};
 
     struct Rig {
         fx: Fx,
@@ -243,5 +252,133 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, crate::ipc::IpcErrorCode::BadRequest);
+    }
+
+    #[test]
+    fn instruction_store_errors_route_through_from_store() {
+        use crate::ipc::IpcErrorCode;
+        let e = instruction_error(InstructionError::Store(unresolved(
+            "st_a",
+            "teamspace",
+            "ts_b",
+        )));
+        assert_eq!(e.code, IpcErrorCode::Integrity);
+        let e = instruction_error(InstructionError::Store(StoreError::Git("boom".into())));
+        assert_eq!(e.code, IpcErrorCode::Internal);
+        let e = instruction_error(InstructionError::Usage("x".into()));
+        assert_eq!(e.code, IpcErrorCode::BadRequest);
+    }
+
+    #[tokio::test]
+    async fn dangling_clone_seat_is_integrity() {
+        let mut r = rig(true).await;
+        let t = r.fx.teamspace("p2", Lifecycle::Active);
+        let seat = r.fx.seat(&t, "other", Lifecycle::Active);
+        let c =
+            r.fx.clone_rec(&seat, "c2", CloneLifecycle::Active, vec![], None);
+        r.fx.clone_mut(&c).seat = crate::model::SeatId::new();
+        r.fx.commit("bad");
+        let e = call(&r, json!({})).await.unwrap_err();
+        assert_eq!(e.code, crate::ipc::IpcErrorCode::Integrity, "{}", e.message);
+    }
+
+    async fn two_seat_rig() -> Rig {
+        let mut r = rig(false).await;
+        let t = r.fx.teamspace("proj2", Lifecycle::Active);
+        let s = r.fx.seat(&t, "aide", Lifecycle::Active);
+        r.fx.clone_rec(&s, "side", CloneLifecycle::Active, vec![], None);
+        let gone = r.fx.seat(&t, "gone", Lifecycle::Retired);
+        r.fx.clone_rec(&gone, "old", CloneLifecycle::Retired, vec![], None);
+        r.fx.commit("more");
+        r
+    }
+
+    fn seat_names(v: &Value) -> Vec<String> {
+        v["roster"]["teamspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|t| t["seats"].as_array().unwrap())
+            .map(|s| s["name"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn scoped_roster_lists_only_that_seat() {
+        let r = two_seat_rig().await;
+        let v = call(&r, json!({"scope": ["seat", "foreman"]}))
+            .await
+            .unwrap();
+        assert_eq!(seat_names(&v), vec!["foreman"]);
+    }
+
+    #[tokio::test]
+    async fn all_includes_retired() {
+        let r = two_seat_rig().await;
+        let v = call(&r, json!({"all": false})).await.unwrap();
+        let mut names = seat_names(&v);
+        names.sort();
+        assert_eq!(names, vec!["aide", "foreman"]);
+        let v = call(&r, json!({"all": true})).await.unwrap();
+        let mut names = seat_names(&v);
+        names.sort();
+        assert_eq!(names, vec!["aide", "foreman", "gone"]);
+    }
+
+    #[tokio::test]
+    async fn loaded_record_status_reaches_the_reply() {
+        use crate::bootstrap::instructions::{HOOK_RENDER_CAP, fit_hook, render_instructions};
+        use crate::inspect::fixture::{session, ts};
+        use crate::inspect::loaded::{self, InjectionSource};
+        let mut r = rig(false).await;
+        let t = r.fx.teamspace("proj3", Lifecycle::Active);
+        let seat = r.fx.seat(&t, "occ", Lifecycle::Active);
+        let sess = session(
+            crate::model::harness::Harness::Claude,
+            "native-1",
+            "2026-11-01T00:00:00Z",
+            None,
+            None,
+        );
+        let ns = sess.id.clone();
+        let cid =
+            r.fx.clone_rec(&seat, "main", CloneLifecycle::Active, vec![sess], Some(ns));
+        r.fx.commit("occupied");
+        let git = GitStore::open(r.fx.store.root()).unwrap();
+        let head = r.fx.store.head().unwrap();
+        let status_of = |v: &Value| {
+            v["roster"]["teamspaces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|t| t["seats"].as_array().unwrap())
+                .flat_map(|s| s["clones"].as_array().unwrap())
+                .find(|c| c["id"] == json!(cid.to_string()))
+                .unwrap()["instructions"]["status"]
+                .clone()
+        };
+        let v = call(&r, json!({})).await.unwrap();
+        assert_eq!(status_of(&v), json!("unknown"), "no record yet");
+        let rendered = render_instructions(
+            &crate::store::tree::CommitView {
+                store: &git,
+                at: head.clone(),
+            },
+            &head,
+            &seat,
+        )
+        .unwrap();
+        loaded::record(
+            r.fx.store.root(),
+            &cid,
+            &rendered,
+            &fit_hook(&rendered, HOOK_RENDER_CAP),
+            InjectionSource::Hook,
+            Some("native-1".into()),
+            true,
+            ts("2026-11-08T10:30:00Z"),
+        );
+        let v = call(&r, json!({})).await.unwrap();
+        assert_eq!(status_of(&v), json!("current"), "{v}");
     }
 }
