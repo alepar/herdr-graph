@@ -218,16 +218,6 @@ mod tests {
     }
 
     #[test]
-    fn inspect_stubs_not_implemented() {
-        for argv in [&["roster", "--live"][..]] {
-            let full = std::iter::once("herdr-graph").chain(argv.iter().copied());
-            let cli = Cli::try_parse_from(full).unwrap();
-            let e = run(cli).unwrap_err().to_string();
-            assert!(e.contains("not implemented"), "{argv:?}: {e}");
-        }
-    }
-
-    #[test]
     fn unmanaged_requires_live() {
         assert!(Cli::try_parse_from(["herdr-graph", "roster", "--unmanaged"]).is_err());
     }
