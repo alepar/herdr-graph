@@ -1,0 +1,134 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md
+new file mode 100644
+index 0000000..a8feed1
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md
+@@ -0,0 +1,128 @@
++# Final seam review, epic hg-blw, integration branch super-auto/graph-state-inspection
++
++Invocation inv-4b650ab2-a313-4bcb-9196-17e40854f3ab. Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 6eb6cec786cde8ca070fbf9aed46bb0609ff63ac. Both were verified with `git rev-parse --verify <sha>^{commit}`. bind-review-source exited 0 before this file was written.
++
++The caller checkout was observed at HEAD 6eb6cec with a clean `git status --short`, before and after the review. It was not switched, restored or edited. No tests were run and no rigs were started. Every cluster reviewer reported that the hg-build toolbox fails with "unable to find user alepar".
++
++## Inputs and method
++
++- Inputs:
++  - the ten cluster reviews (cluster-1 docs through cluster-10 tests);
++  - clusters.json;
++  - `git diff base..head`;
++  - `bd show hg-blw --json` and `bd list --parent hg-blw --all`.
++- Acceptance standard: the `## Requirement baseline` of the design doc at head (docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md). It has rows B1-B8 and one human scope change, S1, which affects B8 only.
++- Seams traced at head (with `git show 6eb6cec:<path>`):
++  - CLI `roster --live` (src/cli/roster.rs) to the daemon `roster.live` handler (src/daemon/roster_live.rs), registered in `compose_with` (src/daemon/compose.rs:361), to `inspect::roster::build_with_bindings`/`overlay` (src/inspect/roster.rs);
++  - CLI `ops` filters (src/cli/ops.rs) to the `ops.list` handler (src/plan/ops.rs:497);
++  - Scope (src/inspect/scope.rs) to `store::instruction_source` `PickMode`;
++  - HistoryWalker (src/store/history.rs) to `log` and roster `last_change`, and to the daemon's shared `GitStore`;
++  - the threads seat-view slots (`LazyMap::inspect`, src/daemon/compose.rs:1090-1120) to roster_live;
++  - tests/inspect_live.rs against that production path.
++
++## Baseline rows across the whole tree
++
++- B1 (which seats are active): delivered.
++  - Daemon-free: `herdr-graph roster`, then cli::roster::execute, then pin_head, Scope::resolve and inspect::roster::build at one HEAD.
++  - Live: `--live` reaches the daemon through `roster.live`, which uses the same `build_inner`. The daemon builds no second roster.
++- B2 (which files are loaded into context per seat): not delivered.
++  - At head, `InstructionsAction` has only `Show` (src/cli/instructions.rs:21-27), so there is no `instructions stack`.
++  - The `src` tree at head has no `stdin_payload`, `.graph-local/loaded` writer or `harness_files`.
++  - src/inspect/roster.rs:290-295 renders the stack and then discards it: every clone gets `InstructionsView::unknown()`, or `error`.
++  - The hg-blw.2 work sits on unmerged branch task-hg-blw.2 at 9bf2777 (`git merge-base --is-ancestor 9bf2777 6eb6cec` is false). The hg-blw.12 work sits on task-hg-blw.12 at 534d92d.
++  - hg-blw.2, hg-blw.12 and hg-blw.19 are open. No S row covers B2.
++- B3 (activity and latest modifications: global, space, seat): delivered.
++  - `log [global|teamspace|seat]` goes through HistoryWalker and LogQuery at one pinned HEAD.
++  - Roster `last_change` uses the same `LogQuery::matches`.
++  - The journal side, `ops --seat/--teamspace`, has a real producer: `requester_for` fills both ids at admission. The CLI resolves names with `PickMode::RetiredAllowed`, so ops of retired requesters still match.
++- B4 (sessions by space, seat and clone, newest first): delivered. `sessions [scope|clone c]` goes through Inventory::load and sessions::build, sorted by start time descending.
++- B5 (staleness is shown): not delivered. No production path assigns `InstructionsStatus::Current` or `Stale`. The only assignment is in a test (src/inspect/roster.rs:1242). The rule depends on the unmerged hg-blw.12 record. No S row covers B5.
++- B6 (`log` hides bookkeeping by default): delivered. The CLI passes `all: false` unless `--all` is given, LogQuery drops `Category::Bookkeeping`, and roster `last_change` also passes `all: false`.
++- B7 (harness-native files by presence, size and mtime, content never read): not delivered. Its only planned surface is `instructions stack`'s `harness_files`, and that command is absent at head. No S row covers B7.
++- B8 (`roster --live` in scope now): reachable from production, and the Herdr side is correct.
++  - The CLI sends `{scope, all, unmanaged}`, and the handler reads the same keys.
++  - The reply `{head, roster}` round-trips through `Roster`'s serde. That includes the `Option<Option<Unmanaged>>` absent-versus-null distinction (`present_or_null`).
++  - The handler takes exactly one snapshot.
++  - Composed with the production threads port, though, the threads half of the degraded-state contract fails (next section). The tier-3 test pins that failure as correct.
++- S1 (`--unmanaged` only enumerates): delivered. The CLI flag `requires = "live"`. The daemon passes it to `build_with_bindings(…, all_bindings)` and `overlay`, which list ids and labels only (UnWorkspace/UnTab/UnPane) against instance-wide bindings.
++
++## Seam analysis
++
++- Threads seat view, daemon handler, tier-3 test. These form one defect that crosses three clusters:
++  - `LazyMap::inspect` (src/daemon/compose.rs:1108-1119) sets `seat_view_error` only on `Rejected`/`Unsupported`. It leaves the slot unchanged on `Disconnected`, transport and discovery errors, including a `self.map().await?` failure.
++  - `roster_live::handle` (src/daemon/roster_live.rs:64-82) decides threads availability from that slot alone.
++  - Result: with herdr-threads down, `roster --live` reports `live_unavailable: null` and empty refusals and lost lists. If threads went down after an earlier good read, it reports the stale refusals from that read.
++  - tests/inspect_live.rs runs with no threads service and asserts exactly that output.
++  - Fixing the daemon alone turns the tier-3 test red, and fixing the test alone makes it fail against the current daemon. The two have to land together. Cluster 3 and cluster 10 each saw one half.
++- Integrity exit codes differ between the two roster modes:
++  - Daemon-free roster maps `InstructionError::Store(Integrity)` from Scope::resolve to exit 6 through `inspect::fail`.
++  - roster_live maps every Scope::resolve error to `bad_request`, exit 1 (src/daemon/roster_live.rs:50-51).
++  - The same input therefore exits differently depending on `--live`. Low reach, and cluster 3 already filed it as deferred.
++- One-HEAD rule for `ops --seat/--teamspace`:
++  - The CLI resolves names at its own pinned HEAD (src/cli/ops.rs:164), and the envelope carries the daemon's reply head.
++  - A commit landing between the two gives the invocation two HEADs. Both read the same repository and ids do not change, so the output is still right. Only the §2.1 statement is loose.
++- Roster `last_change` running inside the daemon:
++  - `roster.live` runs the full `build_inner`, including the HistoryWalker `last_change` pass, on the `GitStore` it shares with the writer (compose.rs `git = Arc::new(GitStore::open…)`, passed to both WriterCore and RosterLiveDeps).
++  - `HistoryWalker::commits` holds the repo mutex through a `Sort::TOPOLOGICAL` revwalk. Cluster 8 judged that plausibly O(full history). Per-commit diffs and `paths_at` reads then take the lock again for each commit.
++  - So a `roster --live` on a long history delays writer commits for that time. It does not break correctness, because the work runs in spawn_blocking and the lock is released between commits.
++- Malformed historical records:
++  - Cluster 5 found that an unparseable record in a historical tree aborts roster's `last_change` pass.
++  - Through the daemon, the same StoreError becomes a failed `roster.live` (`CommandError::from_store`). One bad historical record therefore blanks both roster modes, not just the daemon-free one.
++- Stale stub test against merged commands:
++  - `cli::tests::inspect_stubs_not_implemented` (src/cli/mod.rs:219-226) still runs `sessions` and calls `unwrap_err()`.
++  - `sessions` comes from another merged task (hg-blw.3) and returns Ok, so `cargo test --lib` is red at head. Only the composed branch shows this.
++  - The fix exists only on unmerged task-hg-blw.2 (9bf2777).
++- ops text mode against an older daemon: `ops` text mode now needs `head` in the `ops.list` reply, and IPC_VERSION was not bumped. Cluster 2 recorded this as deferred.
++
++## Verdict
++not ready (baseline rows B2, B5, B7 undelivered at head; roster --live reports threads as read when herdr-threads is down, pinned by the tier-3 test; lib test suite red from stale inspect_stubs_not_implemented)
++
++## Must fix before landing
++- B2 undelivered: no production entry point at head shows which instruction files a seat's agent has; src/cli/instructions.rs has only `Show` (no `instructions stack`), no `.graph-local/loaded` writer or `--stdin-payload` exists in src, and src/inspect/roster.rs:290-295 always sets `instructions` to `InstructionsView::unknown()`; the work sits unmerged on task-hg-blw.2 (9bf2777) and task-hg-blw.12 (534d92d), hg-blw.2/.12/.19 are open, and no human scope change row covers it.
++- B5 undelivered: no production path assigns `InstructionsStatus::Current` or `Stale` (the only assignment is test code at src/inspect/roster.rs:1242), so staleness is never shown; it needs the hg-blw.12 LoadedInstructions record and status rule wired into roster build; the Codex session-id partial (run.md parked P1) has neither evidence nor a human scope change row.
++- B7 undelivered: no command at head lists harness-native files by presence, size and mtime (no `harness_files` anywhere in src); its surface `instructions stack` is the unmerged hg-blw.2 scope; no human scope change row covers it.
++- src/daemon/roster_live.rs:64-82 with src/daemon/compose.rs:1108-1119 (LazyMap::inspect): any threads seat read failure other than Rejected/Unsupported (Disconnected, transport, discovery) leaves `seat_view_error` unset, so `roster --live` returns `live_unavailable: null` with empty or stale `seat_refusals`/`seat_lost`, which violates spec §2.2 (B8 degraded state); record the last read's outcome for every failure and map it to `ThreadsRead::Unavailable(reason)`, with a unit test for a Disconnected read.
++- tests/inspect_live.rs `roster_live_matches_the_graph_pane_and_lists_only_unbound_objects` asserts `live_unavailable == null` and `threads_live` an object in a rig with no herdr-threads service, which pins the threads-down defect as correct; assert the degraded form (or run a real threads daemon) in the same change as the daemon fix, because either change alone leaves the tier-3 test red.
++- src/cli/mod.rs:219-226 `cli::tests::inspect_stubs_not_implemented` still runs the implemented `sessions` command outside TestRoot and calls `unwrap_err()` on a run that returns Ok, so `cargo test --lib` fails at head and the test reads the real user environment; delete the test (no stubs remain), as unmerged 9bf2777 does.
++- Spec §2.3 (design line 259) emits the Claude hook `p=$(cat); printf '%s' "$p" | <bin> seat --hook-prompt --stdin-payload; …`, whose unbounded shell read contradicts hg-blw.12's "held-open stdin still prints and exits within the budget" and the spec's "the hook never fails or blocks"; reconcile the spec and the bead before hg-blw.12 is redispatched.
++- hg-blw.10 (README and CLI help; README.md is unchanged in base..head and must carry the Codex re-trust and older-hook caveats) and hg-blw.11 (integration sweep: R12 read-only test across views, R14 hook→current→stale→log end to end) are open with nothing delivered at head.
++
++## Untested scope
++- No test ran at the reviewed head: the hg-build toolbox fails ("unable to find user alepar: no matching entries in passwd file"), so every pass claim rests on per-task reports on pre-merge trees; no green tier 1-3 run of the integrated branch is on record.
++- No test covers `roster.live` with the threads service unreachable (Disconnected); the only threads-degraded test sets `seat_view_error` directly.
++- No test covers an integrity StoreError during Scope::resolve in `roster.live` versus the daemon-free roster (exit 1 versus exit 6).
++- No test covers a historical tree with an unparseable record through roster (daemon-free or `--live`) or `log seat|teamspace`.
++- No measurement of `roster --live` latency, or of writer-commit delay from the shared repo mutex, on a history near the 5000-commit cap with many seats.
++- No CLI-binary test of `ops --json` or `ops --seat/--teamspace` against a running daemon, and none of `ops --seat <known>` with the daemon down.
++- No CLI-binary test of degraded `roster --live` text (`live data unavailable: …` first line), of `binding_from_earlier_server` after a Herdr restart, or of per-clone `live.agent`.
++- No binary-level test of `log` teamspace/seat scopes, `--by`, `--all` (B6), `stopped_early`, or of daemon-free `roster` and `sessions` with seat-bearing history.
++- No end-to-end R12 read-only test across roster, roster --live, sessions, log and ops, and no R14 hook→current→stale→log test (hg-blw.11, open).
++- No HistoryWalker test with a merge commit on main, or with a trailer whose record is missing from the commit's diff.
++- Recovery with a `Graph-Action` trailer present has no end-to-end test (the parser half is unit-tested; the gap predates this diff).
++
++## Deferred OK
++- src/daemon/roster_live.rs:50-51: map `InstructionError::Store` through `CommandError::from_store` so an integrity failure during scope resolution exits 6 under `--live`, as it does daemon-free.
++- src/daemon/roster_live.rs:36-41: non-string scope words are dropped silently instead of being rejected as a bad request; only a malformed client sends them.
++- `ops --seat/--teamspace` resolves names at the CLI's HEAD while the envelope carries the daemon's reply head, so one invocation can see two HEADs; ids are stable, so the output is correct, but spec §2.1's one-HEAD wording should note the exception.
++- `ops` text mode requires `head` in the `ops.list` reply without an IPC_VERSION bump, so a pre-upgrade daemon still running makes plain `ops` fail with exit 1.
++- `ops --seat/--teamspace` resolves names before the daemon call, so with the daemon down it exits 1 or 2 instead of 5 (documented in tests/daemon_free_reads.rs).
++- `log` writes malformed-record warnings to stderr in text mode too, following the task 4 acceptance; spec §2.1's two statements on text-mode notices should be made consistent.
++- `roster.live` runs the HistoryWalker `last_change` pass on the GitStore shared with the writer, and `Sort::TOPOLOGICAL` in `HistoryWalker::commits` holds the repo mutex through what may be an O(full history) revwalk; drop the sort or measure it (performance only, output correct).
++- `last_touches` early exit compares distinct found paths against the input length, so duplicate inputs scan to the cap; dedupe when the stack consumer lands.
++- `paths_at` parses every teamspace and seat record for each scanned commit, and roster repeats it for each pending seat; the cost multiplier is understated for roster.
++- A malformed historical record aborts roster `last_change` and `log seat|teamspace` rather than degrading only the affected seat (spec §2.1 "one bad object never blanks a view"); the same applies through `roster.live`.
++- Spec §2.2 JSON shape omits `note`, `occupant.transcript`, the per-clone `live` overlay shape, the `seat_refusals`/`seat_lost` location and `unmanaged` placement, and §2.3 omits `stdin_payload`; sync the spec with the code when hg-blw.12 lands.
++- Spec §2.2 text sample `retired(reversible)` has no typed JSON field and cannot be rendered; drop it or add a field.
++- Spec header line 3 still says "phases hg-blw.1–.6" and does not record that hg-blw.12 supersedes hg-blw.4.
++- findings-ledger-design.md still marks the four round-2 entries `open` although run.md and the spec show them applied inline.
++- The Codex hooks citation and Codex session-id byte-equality remain unverified (parked in run.md, honest `unknown` fallback).
++- `log` text names the requester by ids instead of names; the JSON carries the ids.
++- In instance scope, an active teamspace with no listed seats is omitted from the roster.
++- The `--since` stop in `LogQuery::run` assumes monotonically decreasing commit times along first parents; clock skew could end the walk early.
++- Close bead hg-la5: src/plan/ops.rs already replaced the stale `list_json` "daemon-less read" comment, contrary to the task 5 report's "not touched".
++- `opt_id_arg` reports "missing <key>" for a present non-string value; a type-specific message would be clearer.
++- tests/inspect_live.rs compares `commit_count()` across `roster --live` while background daemon loops may commit; plausible flake, the unit test pins the property.
++- tests/inspect_live.rs `Rig` teardown relies on `reap_root` signals rather than a graceful daemon shutdown call; safe, it escalates to SIGKILL.
++- tests/inspect_log.rs `log global` does not assert the init commit row appears under global scope.
++- tests/inspect_sessions.rs pins exit 2 for `--since nonsense` while other usage errors exit 1; the inconsistency is now encoded in a test.
++- tests/daemon_composed.rs carries rustfmt-only re-wrapping unrelated to the change.

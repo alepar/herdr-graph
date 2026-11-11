@@ -1,0 +1,142 @@
+diff --git a/src/store/instruction_source.rs b/src/store/instruction_source.rs
+index 908329f..746c089 100644
+--- a/src/store/instruction_source.rs
++++ b/src/store/instruction_source.rs
+@@ -255,30 +255,52 @@ pub fn parse_words(
+     })
+ }
+ 
+-/// Pick one object among name matches `(id, live)`: one live → ok; several live → Ambiguous; only retired → Retired.
+-fn pick<T: Clone>(
++/// How `pick` treats retired-only matches. `LiveOnly` is `instructions show`'s rule (retired-only → Retired);
++/// `RetiredAllowed` is the inspect Scope rule (spec Key abstractions, Scope): with no live match one retired
++/// match resolves and several are ambiguous, listing every id.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum PickMode {
++    LiveOnly,
++    RetiredAllowed,
++}
++
++fn ambiguous(what: &str, target: &str, ids: Vec<&str>) -> InstructionError {
++    InstructionError::Ambiguous(format!(
++        "{what} name {target:?} is ambiguous: {}",
++        ids.join(", ")
++    ))
++}
++
++/// Pick one object among name matches `(value, id, live)`: one live → ok; several live → Ambiguous; with no
++/// live match, `LiveOnly` → Retired, `RetiredAllowed` → the one retired match, or Ambiguous for several.
++pub fn pick<T: Clone>(
+     what: &str,
+     target: &str,
+     matches: Vec<(T, String, bool)>,
++    mode: PickMode,
+ ) -> Result<T, InstructionError> {
+     let live: Vec<_> = matches.iter().filter(|m| m.2).collect();
+-    match (live.as_slice(), matches.first()) {
++    match (live.as_slice(), matches.as_slice()) {
+         ([one], _) => Ok(one.0.clone()),
+-        ([], Some(_)) => Err(InstructionError::Retired {
++        ([], []) => Err(InstructionError::UnknownTarget {
+             what: what.to_owned(),
+             target: target.to_owned(),
+         }),
+-        ([], None) => Err(InstructionError::UnknownTarget {
++        ([], [only]) if mode == PickMode::RetiredAllowed => Ok(only.0.clone()),
++        ([], many) if mode == PickMode::RetiredAllowed => Err(ambiguous(
++            what,
++            target,
++            many.iter().map(|m| m.1.as_str()).collect(),
++        )),
++        ([], _) => Err(InstructionError::Retired {
+             what: what.to_owned(),
+             target: target.to_owned(),
+         }),
+-        (many, _) => {
+-            let ids: Vec<&str> = many.iter().map(|m| m.1.as_str()).collect();
+-            Err(InstructionError::Ambiguous(format!(
+-                "{what} name {target:?} is ambiguous: {}",
+-                ids.join(", ")
+-            )))
+-        }
++        (many, _) => Err(ambiguous(
++            what,
++            target,
++            many.iter().map(|m| m.1.as_str()).collect(),
++        )),
+     }
+ }
+ 
+@@ -287,6 +309,17 @@ pub fn resolve_scope(
+     tree: &dyn TreeRead,
+     scope: ScopeKind,
+     target: Option<&str>,
++) -> Result<InstructionScope, InstructionError> {
++    resolve_scope_in(tree, scope, target, PickMode::LiveOnly)
++}
++
++/// `resolve_scope` with an explicit retired-match rule. Under `RetiredAllowed` an id resolves whatever its
++/// lifecycle (live, retired or under `archive/`); an unknown id is still `UnknownTarget`.
++pub fn resolve_scope_in(
++    tree: &dyn TreeRead,
++    scope: ScopeKind,
++    target: Option<&str>,
++    mode: PickMode,
+ ) -> Result<InstructionScope, InstructionError> {
+     let need = |what: &str| {
+         target.ok_or_else(|| InstructionError::Usage(format!("{what} needs a name or id")))
+@@ -299,6 +332,8 @@ pub fn resolve_scope(
+         what: what.to_owned(),
+         target: t.to_owned(),
+     };
++    let id_retired_ok =
++        |lifecycle: Lifecycle| lifecycle != Lifecycle::Retired || mode == PickMode::RetiredAllowed;
+     match scope {
+         ScopeKind::Global => match target {
+             None => Ok(InstructionScope::Global),
+@@ -312,10 +347,10 @@ pub fn resolve_scope(
+                     .iter()
+                     .find(|(_, r)| r.id == id)
+                     .ok_or_else(|| unknown("teamspace", t))?;
+-                return if rec.lifecycle == Lifecycle::Retired {
+-                    Err(retired("teamspace", t))
+-                } else {
++                return if id_retired_ok(rec.lifecycle) {
+                     Ok(InstructionScope::Teamspace(id))
++                } else {
++                    Err(retired("teamspace", t))
+                 };
+             }
+             let matches = all
+@@ -329,7 +364,7 @@ pub fn resolve_scope(
+                     )
+                 })
+                 .collect();
+-            pick("teamspace", t, matches).map(InstructionScope::Teamspace)
++            pick("teamspace", t, matches, mode).map(InstructionScope::Teamspace)
+         }
+         ScopeKind::Seat => {
+             let t = need("seat")?;
+@@ -339,10 +374,10 @@ pub fn resolve_scope(
+                     .iter()
+                     .find(|(_, r)| r.id == id)
+                     .ok_or_else(|| unknown("seat", t))?;
+-                return if rec.lifecycle == Lifecycle::Retired {
+-                    Err(retired("seat", t))
+-                } else {
++                return if id_retired_ok(rec.lifecycle) {
+                     Ok(InstructionScope::Seat(id))
++                } else {
++                    Err(retired("seat", t))
+                 };
+             }
+             let matches = all
+@@ -356,7 +391,7 @@ pub fn resolve_scope(
+                     )
+                 })
+                 .collect();
+-            pick("seat", t, matches).map(InstructionScope::Seat)
++            pick("seat", t, matches, mode).map(InstructionScope::Seat)
+         }
+     }
+ }

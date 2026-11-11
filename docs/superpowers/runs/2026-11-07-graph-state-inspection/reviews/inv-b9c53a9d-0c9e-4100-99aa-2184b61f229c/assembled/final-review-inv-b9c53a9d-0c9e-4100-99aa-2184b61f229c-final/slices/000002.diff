@@ -1,0 +1,22 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt b/docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt
+new file mode 100644
+index 0000000..7bc8781
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt
+@@ -0,0 +1,16 @@
++r1 [Blocking] §2.3 Status table, `unknown` row; Key abstractions LoadedInstructions "a record older than `since` is `Unknown`"
++r1 [Should-fix] §2.3 "Who writes it" (`seat --instructions`; daemon `seat.resolve` for `seat --json`); LoadedInstructions Lifecycle "last writer wins"
++r1 [Should-fix] §2.3 record `parts`/`omitted`/`cut`; Status `current` "every part at HEAD has the same label and digest as the record"
++r1 [Nit] Key abstractions Scope "resolves retired targets too … reuses `instruction_source`'s `pick` logic and error wording"; hg-blw.7 acceptance
++r1 [Nit] §2.3 Digest choice ("their `path` is `seat.toml` or `template.toml`"); Status `stale` row "one `git log -1` per changed path"
++r1 [Nit] Key abstractions Inventory "Errors: `StoreError` only … maps to exit 6"; §2.2 Cost "one render per active seat"
++r1 [Nit] §2.3 harness files "in the seat's cwd … and its ancestors: … `AGENTS.md`, `AGENTS.override.md`"; user-level `$CODEX_HOME/AGENTS.md`
++r1 [Nit] §2.3 "`harness` one of `claude | codex` (the harness that reads that file name)"
++r1 [Should-fix] §2.2 JSON `"instructions":{"status","loaded_rev","loaded_at","source","truncated","stale_parts"}`; task hg-blw.4 acceptance
++r1 [Nit] §2.1 "Each JSON document carries `schema: 1` and the `head` revision it was computed from"; Inventory "read once from HEAD"; HistoryWalker "walks `main` from HEAD"
++r1 [Should-fix] §2.4 "What it reads per commit: … the `ActionRecord`, when present"; JSON row `action:{id,kind,undoable,undone}`; sample "act_01… undone"
++r1 [Should-fix] §2.3 Status/unknown; hg-blw.11 second acceptance and hg-blw.4 status tests
++r1 [Should-fix] §2.4 Cost "scanned 5000 commits, older history not searched"; §2.4 Journal pointer to `ops`; §2.3 `@`-imports line; §2.5 tombstone footer
++r1 [Should-fix] §2.4 Scope membership "A commit is in scope when any of these holds: … `--by <seat>`"; LogQuery "or (with `--by`) when the requester's seat matches"
++r1 [Should-fix] §2.2 With `--live`; Key abstractions Roster Errors "daemon down for `--live` is exit 5"
++r1 [Nit] §2.2 With --live "`live_pane_matches`: whether the snapshot still shows the committed binding"; §5 S1 unmanaged

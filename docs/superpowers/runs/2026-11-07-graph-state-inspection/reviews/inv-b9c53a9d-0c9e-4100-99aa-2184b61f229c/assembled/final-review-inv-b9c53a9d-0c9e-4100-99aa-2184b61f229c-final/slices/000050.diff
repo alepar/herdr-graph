@@ -1,0 +1,798 @@
+diff --git a/src/inspect/loaded.rs b/src/inspect/loaded.rs
+new file mode 100644
+index 0000000..aca6ab0
+--- /dev/null
++++ b/src/inspect/loaded.rs
+@@ -0,0 +1,792 @@
++//! LoadedInstructions: what the SessionStart hook last put into a clone's session, and whether it is still
++//! the HEAD render (spec §2.3).
++//!
++//! Owns: `<instance>/.graph-local/loaded/<clone>.json` (one record per clone, replaced on every hook run), the
++//! session binding of that record (its `native_session_id` against the clone's occupant) and the
++//! current/stale/unknown/truncated rule that turns a record plus the HEAD render into an
++//! [`InstructionsView`]. One writer: the hook path of `cli::seat`, through [`record`].
++//!
++//! Must not: fail or block its caller (every write error is swallowed), touch Git (the record lives under the
++//! ignored `.graph-local`), be written by `seat --instructions`, `seat.resolve` or any reader, or let a caller
++//! compare digests or session ids itself.
++//!
++//! Where new behavior goes: a new injection path calls [`record`] with a new [`InjectionSource`] variant; a new
++//! comparison fact goes into [`status`].
++use crate::bootstrap::instructions::{
++    HOOK_RENDER_CAP, HookFit, Part, RenderedInstructions, fit_hook, part_digest,
++};
++use crate::inspect::output::{
++    DeliveredPart, Delivery, InstructionsStatus, InstructionsView, PartChange, StalePart,
++};
++use crate::model::{CloneId, SeatId, Timestamp};
++use crate::ports::store::RepoPath;
++use crate::store::history::Touch;
++use serde::{Deserialize, Serialize};
++use std::collections::{BTreeMap, BTreeSet};
++use std::path::{Path, PathBuf};
++
++pub const SCHEMA: u32 = 1;
++
++/// Shown with a record written by a hook that did not pass `--stdin-payload`.
++pub const FLAGLESS_NOTE: &str = "hook predates --stdin-payload; rerun setup";
++/// Shown when a Codex record and the occupant name the same session in different forms.
++pub const CODEX_FORM_NOTE: &str = "codex session id form differs";
++
++/// How the instructions reached the session; the `source` word of the view.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "kebab-case")]
++pub enum InjectionSource {
++    Hook,
++    HookCodex,
++}
++
++impl InjectionSource {
++    pub fn word(self) -> &'static str {
++        match self {
++            InjectionSource::Hook => "hook",
++            InjectionSource::HookCodex => "hook-codex",
++        }
++    }
++}
++
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct LoadedRecord {
++    pub schema: u32,
++    pub clone: CloneId,
++    pub seat: SeatId,
++    /// The session id from the hook's stdin payload; `None` when the hook had no payload or no id.
++    pub native_session_id: Option<String>,
++    /// Whether the hook ran with `--stdin-payload`.
++    pub stdin_payload: bool,
++    pub rev: String,
++    pub at: Timestamp,
++    pub source: InjectionSource,
++    pub parts: Vec<RecordedPart>,
++    pub omitted: Vec<String>,
++    /// Bytes of hook text printed.
++    pub bytes: usize,
++}
++
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct RecordedPart {
++    pub label: String,
++    pub path: String,
++    pub delivered: Delivery,
++    /// Digest of the delivered body: the whole body, or for a cut part only the delivered prefix.
++    pub digest: String,
++    /// Delivered body bytes.
++    pub bytes: usize,
++}
++
++/// `<instance>/.graph-local/loaded/<clone>.json`.
++pub fn record_path(instance: &Path, clone: &CloneId) -> PathBuf {
++    instance
++        .join(".graph-local")
++        .join("loaded")
++        .join(format!("{clone}.json"))
++}
++
++fn recorded(p: &Part, cut_bytes: Option<usize>) -> RecordedPart {
++    match cut_bytes {
++        Some(n) => {
++            let body = p.body.get(..n).unwrap_or(&p.body);
++            RecordedPart {
++                label: p.label.clone(),
++                path: p.path.clone(),
++                delivered: Delivery::Cut,
++                digest: part_digest(body),
++                bytes: body.len(),
++            }
++        }
++        None => RecordedPart {
++            label: p.label.clone(),
++            path: p.path.clone(),
++            delivered: Delivery::Whole,
++            digest: p.digest.clone(),
++            bytes: p.bytes,
++        },
++    }
++}
++
++/// What a hook delivers for `r` under `fit`: kept parts whole, the cut part with its prefix digest, and the
++/// omitted labels. Omitted parts are a prefix of the render order and the cut part is the last one.
++pub fn delivered(r: &RenderedInstructions, fit: &HookFit) -> (Vec<RecordedPart>, Vec<String>) {
++    let skip = fit.omitted.len().min(r.parts.len());
++    let last = r.parts.len().saturating_sub(1);
++    let parts = r.parts[skip..]
++        .iter()
++        .enumerate()
++        .map(|(i, p)| {
++            let cut = (skip + i == last && fit.cut.is_some())
++                .then_some(fit.cut_body_bytes)
++                .flatten();
++            recorded(p, cut)
++        })
++        .collect();
++    (parts, fit.omitted.clone())
++}
++
++/// The one record entry point. Best-effort: every error is swallowed, so a read-only or full disk changes
++/// neither the hook's output nor its exit code.
++#[allow(clippy::too_many_arguments)]
++pub fn record(
++    instance: &Path,
++    clone: &CloneId,
++    r: &RenderedInstructions,
++    fit: &HookFit,
++    source: InjectionSource,
++    native_session_id: Option<String>,
++    stdin_payload: bool,
++    now: Timestamp,
++) {
++    let (parts, omitted) = delivered(r, fit);
++    let rec = LoadedRecord {
++        schema: SCHEMA,
++        clone: clone.clone(),
++        seat: r.seat.clone(),
++        native_session_id,
++        stdin_payload,
++        rev: r.rev.clone(),
++        at: now,
++        source,
++        parts,
++        omitted,
++        bytes: fit.text.len(),
++    };
++    let _ = write(instance, clone, &rec);
++}
++
++fn write(instance: &Path, clone: &CloneId, rec: &LoadedRecord) -> std::io::Result<()> {
++    let path = record_path(instance, clone);
++    if let Some(dir) = path.parent() {
++        std::fs::create_dir_all(dir)?;
++    }
++    let bytes = serde_json::to_vec(rec).map_err(std::io::Error::other)?;
++    crate::fsutil::write_atomic(&path, &bytes)
++}
++
++pub enum Read {
++    Missing,
++    /// Corrupt JSON, or a schema other than [`SCHEMA`].
++    Unreadable,
++    Record(Box<LoadedRecord>),
++}
++
++pub fn read(instance: &Path, clone: &CloneId) -> Read {
++    let bytes = match std::fs::read(record_path(instance, clone)) {
++        Ok(b) => b,
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Read::Missing,
++        Err(_) => return Read::Unreadable,
++    };
++    match serde_json::from_slice::<LoadedRecord>(&bytes) {
++        Ok(r) if r.schema == SCHEMA => Read::Record(Box::new(r)),
++        _ => Read::Unreadable,
++    }
++}
++
++fn stem(id: &str) -> &str {
++    Path::new(id)
++        .file_stem()
++        .and_then(|s| s.to_str())
++        .unwrap_or("")
++}
++
++/// The status rule (spec §2.3): identity first, then content. `head` is the HEAD render of the clone's seat;
++/// `touches` answers the path-last-touched query for the stale parts, in one call.
++pub fn status(
++    rec: Read,
++    occupant_native_id: Option<&str>,
++    head: &RenderedInstructions,
++    touches: &dyn Fn(&[RepoPath]) -> BTreeMap<RepoPath, Touch>,
++) -> InstructionsView {
++    let rec = match rec {
++        Read::Record(r) => r,
++        Read::Missing | Read::Unreadable => return InstructionsView::unknown(),
++    };
++    let mut view = InstructionsView {
++        loaded_rev: Some(rec.rev.clone()),
++        loaded_at: Some(rec.at),
++        loaded_session: rec.native_session_id.clone(),
++        source: Some(rec.source.word().to_owned()),
++        truncated: !rec.omitted.is_empty()
++            || rec.parts.iter().any(|p| p.delivered == Delivery::Cut),
++        parts: rec
++            .parts
++            .iter()
++            .map(|p| DeliveredPart {
++                label: p.label.clone(),
++                delivered: p.delivered,
++            })
++            .collect(),
++        omitted: rec.omitted.clone(),
++        note: (!rec.stdin_payload).then(|| FLAGLESS_NOTE.to_owned()),
++        ..InstructionsView::unknown()
++    };
++    let (Some(loaded), Some(occupant)) = (rec.native_session_id.as_deref(), occupant_native_id)
++    else {
++        return view;
++    };
++    if loaded != occupant {
++        if rec.source == InjectionSource::HookCodex
++            && !stem(loaded).is_empty()
++            && stem(loaded) == stem(occupant)
++        {
++            view.note = Some(CODEX_FORM_NOTE.to_owned());
++        }
++        return view;
++    }
++
++    let (now_parts, _) = delivered(head, &fit_hook(head, HOOK_RENDER_CAP));
++    let mut stale: Vec<(String, PartChange, String)> = Vec::new();
++    for h in &now_parts {
++        match rec.parts.iter().find(|p| p.label == h.label) {
++            Some(p) if p.digest != h.digest || p.delivered != h.delivered => {
++                stale.push((h.label.clone(), PartChange::Modified, h.path.clone()));
++            }
++            Some(_) => {}
++            None => stale.push((h.label.clone(), PartChange::Added, h.path.clone())),
++        }
++    }
++    for p in &rec.parts {
++        if !now_parts.iter().any(|h| h.label == p.label) {
++            stale.push((p.label.clone(), PartChange::Removed, p.path.clone()));
++        }
++    }
++    if stale.is_empty() {
++        view.status = InstructionsStatus::Current;
++        return view;
++    }
++    let paths: Vec<RepoPath> = stale
++        .iter()
++        .filter_map(|(_, _, path)| RepoPath::new(path).ok())
++        .collect::<BTreeSet<_>>()
++        .into_iter()
++        .collect();
++    let touched = touches(&paths);
++    view.status = InstructionsStatus::Stale;
++    view.stale_parts = stale
++        .into_iter()
++        .map(|(label, change, path)| StalePart {
++            label,
++            change,
++            path_last_touched: RepoPath::new(&path)
++                .ok()
++                .and_then(|rp| touched.get(&rp))
++                .map(|t| t.commit.0.clone()),
++        })
++        .collect();
++    view
++}
++
++/// The view for one clone of a rendered seat: its record against the occupant's native session id, with the
++/// path-last-touched commits of any stale parts read from `store` at `at`. A history read failure only drops
++/// the commit column.
++pub fn clone_view(
++    store: &crate::store::GitStore,
++    at: &crate::model::CommitId,
++    clone: &CloneId,
++    occupant_native_id: Option<&str>,
++    head: &RenderedInstructions,
++) -> InstructionsView {
++    status(
++        read(store.root(), clone),
++        occupant_native_id,
++        head,
++        &|paths| {
++            crate::store::history::HistoryWalker::new(
++                store,
++                at,
++                crate::store::history::HistoryWalker::DEFAULT_MAX_SCAN,
++            )
++            .last_touches(paths)
++            .unwrap_or_default()
++        },
++    )
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::bootstrap::instructions::{hook_size, revision_line};
++    use crate::inspect::fixture::ts;
++    use crate::model::CommitId;
++
++    fn rendered(parts: &[(&str, &str)]) -> RenderedInstructions {
++        let seat = SeatId::new();
++        let parts: Vec<Part> = parts
++            .iter()
++            .map(|(label, body)| Part {
++                label: (*label).into(),
++                path: format!("{label}.md"),
++                bytes: body.len(),
++                digest: part_digest(body),
++                body: (*body).into(),
++            })
++            .collect();
++        let mut text = revision_line("s", &seat, "abc");
++        text.push('\n');
++        for p in &parts {
++            text.push_str(&format!("\n## {} — {}\n{}", p.label, p.path, p.body));
++        }
++        RenderedInstructions {
++            rev: "abc".into(),
++            seat,
++            seat_name: "s".into(),
++            parts,
++            text,
++        }
++    }
++
++    fn body(c: char, n: usize) -> String {
++        format!("{}\n", c.to_string().repeat(n - 1))
++    }
++
++    fn no_touches(_: &[RepoPath]) -> BTreeMap<RepoPath, Touch> {
++        BTreeMap::new()
++    }
++
++    fn rec(
++        dir: &Path,
++        clone: &CloneId,
++        r: &RenderedInstructions,
++        source: InjectionSource,
++        id: Option<&str>,
++        flag: bool,
++    ) {
++        let fit = fit_hook(r, HOOK_RENDER_CAP);
++        record(
++            dir,
++            clone,
++            r,
++            &fit,
++            source,
++            id.map(str::to_owned),
++            flag,
++            ts("2026-11-08T10:30:00Z"),
++        );
++    }
++
++    fn st(
++        dir: &Path,
++        clone: &CloneId,
++        occ: Option<&str>,
++        head: &RenderedInstructions,
++    ) -> InstructionsView {
++        status(read(dir, clone), occ, head, &no_touches)
++    }
++
++    #[test]
++    fn status_table_unknown_cases() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n")]);
++
++        // no record
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-1"), &r),
++            InstructionsView::unknown()
++        );
++        // corrupt JSON
++        let path = record_path(tmp.path(), &clone);
++        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
++        std::fs::write(&path, b"{not json").unwrap();
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-1"), &r),
++            InstructionsView::unknown()
++        );
++        // an older schema
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let mut v: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++        v["schema"] = 0.into();
++        std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-1"), &r),
++            InstructionsView::unknown()
++        );
++
++        // null native id: unknown, loaded fields still shown, flagless note
++        rec(tmp.path(), &clone, &r, InjectionSource::Hook, None, false);
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!(v.status, InstructionsStatus::Unknown);
++        assert_eq!(v.loaded_rev.as_deref(), Some("abc"));
++        assert_eq!(v.loaded_at, Some(ts("2026-11-08T10:30:00Z")));
++        assert_eq!(v.loaded_session, None);
++        assert_eq!(v.source.as_deref(), Some("hook"));
++        assert_eq!(v.note.as_deref(), Some(FLAGLESS_NOTE));
++        assert_eq!(v.parts.len(), 1);
++
++        // no occupant, then a different occupant
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, None, &r);
++        assert_eq!(v.status, InstructionsStatus::Unknown);
++        assert_eq!(v.loaded_session.as_deref(), Some("s-1"));
++        assert_eq!(v.note, None);
++        let v = st(tmp.path(), &clone, Some("s-2"), &r);
++        assert_eq!(v.status, InstructionsStatus::Unknown);
++        assert_eq!(v.loaded_session.as_deref(), Some("s-1"));
++    }
++
++    #[test]
++    fn replaced_on_new_session() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-2"),
++            true,
++        );
++        let dir = record_path(tmp.path(), &clone).parent().unwrap().to_owned();
++        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-1"), &r).status,
++            InstructionsStatus::Unknown
++        );
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-2"), &r).status,
++            InstructionsStatus::Current
++        );
++    }
++
++    #[test]
++    fn current_when_same() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n"), ("b", "two\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::HookCodex,
++            Some("s-1"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!(v.status, InstructionsStatus::Current);
++        assert_eq!(v.source.as_deref(), Some("hook-codex"));
++        assert_eq!(v.loaded_session.as_deref(), Some("s-1"));
++        assert!(!v.truncated && v.stale_parts.is_empty() && v.note.is_none());
++        assert_eq!(
++            v.parts
++                .iter()
++                .map(|p| (p.label.as_str(), p.delivered))
++                .collect::<Vec<_>>(),
++            [("a", Delivery::Whole), ("b", Delivery::Whole)]
++        );
++    }
++
++    #[test]
++    fn stale_modified_added_removed() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n"), ("b", "two\n"), ("c", "three\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        // a modified, b removed, d added
++        let head = rendered(&[("a", "ONE\n"), ("c", "three\n"), ("d", "four\n")]);
++        let touched = |paths: &[RepoPath]| {
++            paths
++                .iter()
++                .map(|p| {
++                    (
++                        p.clone(),
++                        Touch {
++                            commit: CommitId(format!("{:0>40}", p.as_str().len())),
++                            at: ts("2026-11-08T00:00:00Z"),
++                        },
++                    )
++                })
++                .collect()
++        };
++        let v = status(read(tmp.path(), &clone), Some("s-1"), &head, &touched);
++        assert_eq!(v.status, InstructionsStatus::Stale);
++        let got: Vec<_> = v
++            .stale_parts
++            .iter()
++            .map(|s| (s.label.as_str(), s.change))
++            .collect();
++        assert_eq!(
++            got,
++            [
++                ("a", PartChange::Modified),
++                ("d", PartChange::Added),
++                ("b", PartChange::Removed)
++            ]
++        );
++        assert!(
++            v.stale_parts
++                .iter()
++                .all(|s| s.path_last_touched.as_deref().map(str::len) == Some(40))
++        );
++
++        // same label and digest, different delivery mode, is modified
++        let tmp = tempfile::tempdir().unwrap();
++        let big = body('x', 12_000);
++        let r = rendered(&[("a", "one\n"), ("big", &big)]);
++        let fit = fit_hook(&r, HOOK_RENDER_CAP);
++        assert!(fit.cut.is_some());
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!(v.status, InstructionsStatus::Current);
++    }
++
++    #[test]
++    fn omitted_edit_stays_current() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let (g, t, s) = (body('g', 5000), body('t', 5000), body('s', 100));
++        let r = rendered(&[("g", &g), ("t", &t), ("s", &s)]);
++        assert_eq!(fit_hook(&r, HOOK_RENDER_CAP).omitted, ["g"]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        // the edit keeps g's size, so the cap boundary does not move
++        let g2 = body('G', 5000);
++        let head = rendered(&[("g", &g2), ("t", &t), ("s", &s)]);
++        let v = st(tmp.path(), &clone, Some("s-1"), &head);
++        assert_eq!(v.status, InstructionsStatus::Current);
++        assert!(v.truncated);
++        assert_eq!(v.omitted, ["g"]);
++    }
++
++    #[test]
++    fn cap_boundary_move_is_stale() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let (a, b, c) = (body('a', 3000), body('b', 3000), body('c', 2500));
++        let r = rendered(&[("a", &a), ("b", &b), ("c", &c)]);
++        assert!(hook_size(&r) <= HOOK_RENDER_CAP, "{}", hook_size(&r));
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        // growing c pushes a over the cap: a is no longer delivered
++        let c2 = body('c', 3200);
++        let head = rendered(&[("a", &a), ("b", &b), ("c", &c2)]);
++        assert_eq!(fit_hook(&head, HOOK_RENDER_CAP).omitted, ["a"]);
++        let v = st(tmp.path(), &clone, Some("s-1"), &head);
++        assert_eq!(v.status, InstructionsStatus::Stale);
++        let got: Vec<_> = v
++            .stale_parts
++            .iter()
++            .map(|s| (s.label.as_str(), s.change))
++            .collect();
++        assert_eq!(
++            got,
++            [("c", PartChange::Modified), ("a", PartChange::Removed)]
++        );
++    }
++
++    #[test]
++    fn truncated_flag_beside_status() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let (g, t, s) = (body('g', 5000), body('t', 5000), body('s', 100));
++        let r = rendered(&[("g", &g), ("t", &t), ("s", &s)]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!((v.status, v.truncated), (InstructionsStatus::Current, true));
++        let big = body('x', 12_000);
++        let r = rendered(&[("big", &big)]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!((v.status, v.truncated), (InstructionsStatus::Current, true));
++        assert_eq!(v.parts[0].delivered, Delivery::Cut);
++        assert!(v.omitted.is_empty());
++        let r = rendered(&[("a", "one\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        assert!(!st(tmp.path(), &clone, Some("s-1"), &r).truncated);
++    }
++
++    #[test]
++    fn cut_prefix_digest() {
++        let big: String = (0..2000).map(|i| format!("line {i:05}\n")).collect();
++        let r = rendered(&[("a", "small\n"), ("big", &big)]);
++        let fit = fit_hook(&r, HOOK_RENDER_CAP);
++        let n = fit.cut_body_bytes.expect("big is cut");
++        let (parts, omitted) = delivered(&r, &fit);
++        assert!(omitted.is_empty() || omitted == fit.omitted);
++        let cut = parts.iter().find(|p| p.label == "big").unwrap();
++        assert_eq!(cut.delivered, Delivery::Cut);
++        assert_eq!(cut.digest, part_digest(&big[..n]));
++        assert_ne!(cut.digest, r.parts[1].digest);
++        assert_eq!(cut.bytes, n);
++
++        // an edit past the delivered prefix leaves the record current; one inside it makes it stale
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let tail = big.replacen("line 01999", "LINE 01999", 1);
++        let head = rendered(&[("a", "small\n"), ("big", &tail)]);
++        assert_eq!(
++            st(tmp.path(), &clone, Some("s-1"), &head).status,
++            InstructionsStatus::Current
++        );
++        let front = big.replacen("line 00000", "LINE 00000", 1);
++        let head = rendered(&[("a", "small\n"), ("big", &front)]);
++        let v = st(tmp.path(), &clone, Some("s-1"), &head);
++        assert_eq!(v.status, InstructionsStatus::Stale);
++        assert_eq!(v.stale_parts[0].label, "big");
++    }
++
++    #[test]
++    fn codex_form_differs_note() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::HookCodex,
++            Some("019a-bc"),
++            true,
++        );
++        let v = st(
++            tmp.path(),
++            &clone,
++            Some("/home/u/.codex/sessions/019a-bc.jsonl"),
++            &r,
++        );
++        assert_eq!(v.status, InstructionsStatus::Unknown);
++        assert_eq!(v.note.as_deref(), Some(CODEX_FORM_NOTE));
++        // a genuinely different session carries no note
++        let v = st(tmp.path(), &clone, Some("019a-zz"), &r);
++        assert_eq!((v.status, v.note), (InstructionsStatus::Unknown, None));
++        // a Claude record never gets the Codex note
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("019a-bc"),
++            true,
++        );
++        let v = st(tmp.path(), &clone, Some("019a-bc.jsonl"), &r);
++        assert_eq!(v.note, None);
++    }
++
++    #[test]
++    fn flagless_note() {
++        let tmp = tempfile::tempdir().unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::HookCodex,
++            None,
++            false,
++        );
++        let v = st(tmp.path(), &clone, Some("s-1"), &r);
++        assert_eq!(
++            v.note.as_deref(),
++            Some("hook predates --stdin-payload; rerun setup")
++        );
++        let raw: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(record_path(tmp.path(), &clone)).unwrap())
++                .unwrap();
++        assert_eq!(raw["stdin_payload"], false);
++        assert!(raw["native_session_id"].is_null());
++        assert_eq!(raw["source"], "hook-codex");
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn write_failure_swallowed() {
++        use std::os::unix::fs::PermissionsExt;
++        let tmp = tempfile::tempdir().unwrap();
++        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
++        let clone = CloneId::new();
++        let r = rendered(&[("a", "one\n")]);
++        rec(
++            tmp.path(),
++            &clone,
++            &r,
++            InjectionSource::Hook,
++            Some("s-1"),
++            true,
++        );
++        let missing = record_path(&tmp.path().join("no/such/instance"), &clone);
++        assert!(!missing.exists());
++        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
++        assert!(matches!(read(tmp.path(), &clone), Read::Missing));
++    }
++}

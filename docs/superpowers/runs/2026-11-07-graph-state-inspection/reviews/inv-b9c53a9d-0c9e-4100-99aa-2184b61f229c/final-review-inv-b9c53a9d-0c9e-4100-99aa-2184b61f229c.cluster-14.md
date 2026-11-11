@@ -1,0 +1,46 @@
+# Final review: cluster 14 (docs-4), epic hg-blw
+
+Invocation inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c. Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d. I verified both with `git rev-parse --verify <sha>^{commit}`. bind-review-source exited 0 before this file was written. When the review started, the caller checkout was at HEAD 2dfa656 with a clean `git status --short`. It was not switched or modified.
+
+## Scope and method
+
+The cluster has nine run-record files under `docs/superpowers/runs/2026-11-07-graph-state-inspection/` (slices 000017-000025). I read all of them from the slices and checked them against the head blobs.
+- `findings-overrides-design.md`: three `dissolved@r1` overrides.
+- `friction.md`: the run's friction log, four entries.
+- `reviews/inv-4b650ab2-…/final-review-…cluster-{1,10,2,3,4,5,6}.md`: the archived cluster reports from the earlier final-review invocation, which reviewed head 6eb6cec.
+
+These files are records of the run. They are not product code or user-facing docs. I checked that each one is internally consistent, that it matches what it claims to record, and that it does not misstate the reviewed head.
+
+## Consistency checks
+
+- `findings-overrides-design.md`: each of its three lines matches, by exact key text, a ledger entry that `findings-ledger-design.md` at head marks `dissolved@r1` (the Blocking §2.3 `unknown` row, the Should-fix "Who writes it", and the Should-fix §2.3 Status/unknown). The ledger header reads `ignored-overrides: 0`, which agrees with every override matching a ledger key.
+- Archived cluster reports: I compared each archived file byte for byte (`cmp`) against its original under `.superpowers/sdd/hg-blw-plan/`. All seven are identical. Each header names its reviewed head (6eb6cec), so none of them presents itself as a review of 2dfa656. `run.md` at head records a `finding-source` line for each, with the same verdicts (lines 33-43). It also records a separate `review-collection` for this invocation (line 45). Old and new reviews are therefore kept apart.
+- I spot-checked whether the archived Must-fix items are superseded at head, without tracing them fully. Those items are the other clusters' and the seam reviewer's to judge.
+  - `src/inspect/stack.rs`, `loaded.rs` and `harness_files.rs` exist at head.
+  - `InstructionsAction::Stack` exists (`src/cli/instructions.rs:28`).
+  - `seat --hook-prompt --stdin-payload` is wired (`src/cli/seat.rs:41-53`).
+  - Commit d1e9ffb drops `inspect_stubs_not_implemented`.
+  - `bd list --parent hg-blw --all` shows hg-blw.2, .4 and .12 closed, and hg-blw.10 and .11 still open.
+  - The archived "not ready" verdicts are therefore historical. Whether the current head delivers B2, B5 and B7, and whether the threads-degraded and tier-3 test defects are fixed, is the src and seam reviewers' to confirm.
+- `friction.md`: each entry is dated, and each one appears in the run elsewhere:
+  - the toolbox wedge in the task 6 and task 9 reports and the archived reviews;
+  - the submodule init in Global Constraints;
+  - the manual worktree removal.
+  It records the permission refusal and the `--force` use openly, without hiding them.
+
+## Requirement baseline
+
+The spec's `## Requirement baseline` (B1-B8, S1) applies to the epic. This cluster carries no production code, so it delivers no row and does not narrow any row. Delivery from production entry points is for the src clusters and the seam reviewer to trace. Nothing in these records claims a row is delivered that is not, or adds an unrecorded scope change.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- none
+
+## Deferred OK
+- The archived reviews and friction.md quote the host account name in a toolbox error ("unable to find user alepar"). This is harmless in the user's own repo. If the run records are ever published outside it, redact it.
+- The archived inv-4b650ab2 cluster reports keep their "not ready" verdicts against 6eb6cec. run.md separates them from this invocation's collection, but no line in the archive says which of their Must-fix items later commits closed. A one-line pointer in run.md to the superseding review would save the next reader the cross-reference.

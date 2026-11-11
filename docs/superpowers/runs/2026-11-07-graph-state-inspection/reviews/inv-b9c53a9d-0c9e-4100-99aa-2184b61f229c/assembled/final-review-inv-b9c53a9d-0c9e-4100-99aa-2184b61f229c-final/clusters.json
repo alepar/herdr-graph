@@ -1,0 +1,331 @@
+{
+ "changed": [
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-2.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/amend-design-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-amend-design-1-dispositions.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-findings-round-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-findings-round-2.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-ledger.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-requirements.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-2.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-2.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/findings-ledger-design.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/findings-overrides-design.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/friction.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-1.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-10.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-2.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-5.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-6.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-7.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-8.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-9.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md",
+  "docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md",
+  "src/bootstrap/instructions.rs",
+  "src/bootstrap/setup_claude.rs",
+  "src/bootstrap/tests.rs",
+  "src/cli/instructions.rs",
+  "src/cli/log.rs",
+  "src/cli/mod.rs",
+  "src/cli/ops.rs",
+  "src/cli/roster.rs",
+  "src/cli/seat.rs",
+  "src/cli/sessions.rs",
+  "src/cli/setup.rs",
+  "src/daemon/compose.rs",
+  "src/daemon/doctor.rs",
+  "src/daemon/mod.rs",
+  "src/daemon/roster_live.rs",
+  "src/herdr/fake.rs",
+  "src/inspect/fixture.rs",
+  "src/inspect/harness_files.rs",
+  "src/inspect/inventory.rs",
+  "src/inspect/loaded.rs",
+  "src/inspect/log.rs",
+  "src/inspect/mod.rs",
+  "src/inspect/output.rs",
+  "src/inspect/roster.rs",
+  "src/inspect/scope.rs",
+  "src/inspect/sessions.rs",
+  "src/inspect/stack.rs",
+  "src/lib.rs",
+  "src/plan/ops.rs",
+  "src/store/history.rs",
+  "src/store/instruction_source.rs",
+  "src/store/mod.rs",
+  "src/writer/recovery.rs",
+  "tests/daemon_composed.rs",
+  "tests/daemon_free_reads.rs",
+  "tests/inspect_live.rs",
+  "tests/inspect_loaded.rs",
+  "tests/inspect_log.rs",
+  "tests/inspect_roster.rs",
+  "tests/inspect_sessions.rs",
+  "tests/inspect_stack.rs"
+ ],
+ "clusters": [
+  {
+   "name": "bootstrap",
+   "files": [
+    "src/bootstrap/instructions.rs",
+    "src/bootstrap/setup_claude.rs",
+    "src/bootstrap/tests.rs"
+   ],
+   "slices": [
+    "slices/000031.diff",
+    "slices/000032.diff",
+    "slices/000033.diff"
+   ]
+  },
+  {
+   "name": "cli",
+   "files": [
+    "src/cli/instructions.rs",
+    "src/cli/log.rs",
+    "src/cli/mod.rs",
+    "src/cli/ops.rs",
+    "src/cli/roster.rs",
+    "src/cli/seat.rs",
+    "src/cli/sessions.rs",
+    "src/cli/setup.rs"
+   ],
+   "slices": [
+    "slices/000034.diff",
+    "slices/000035.diff",
+    "slices/000036.diff",
+    "slices/000037.diff",
+    "slices/000038.diff",
+    "slices/000039.diff",
+    "slices/000040.diff",
+    "slices/000041.diff"
+   ]
+  },
+  {
+   "name": "daemon",
+   "files": [
+    "src/daemon/compose.rs",
+    "src/daemon/doctor.rs",
+    "src/daemon/mod.rs",
+    "src/daemon/roster_live.rs"
+   ],
+   "slices": [
+    "slices/000042.diff",
+    "slices/000043.diff",
+    "slices/000044.diff",
+    "slices/000045.diff"
+   ]
+  },
+  {
+   "name": "herdr",
+   "files": [
+    "src/herdr/fake.rs"
+   ],
+   "slices": [
+    "slices/000046.diff"
+   ]
+  },
+  {
+   "name": "inspect",
+   "files": [
+    "src/inspect/fixture.rs",
+    "src/inspect/harness_files.rs",
+    "src/inspect/inventory.rs",
+    "src/inspect/loaded.rs",
+    "src/inspect/log.rs",
+    "src/inspect/mod.rs",
+    "src/inspect/output.rs",
+    "src/inspect/roster.rs",
+    "src/inspect/scope.rs",
+    "src/inspect/sessions.rs",
+    "src/inspect/stack.rs"
+   ],
+   "slices": [
+    "slices/000047.diff",
+    "slices/000048.diff",
+    "slices/000049.diff",
+    "slices/000050.diff",
+    "slices/000051.diff",
+    "slices/000052.diff",
+    "slices/000053.diff",
+    "slices/000054.diff",
+    "slices/000055.diff",
+    "slices/000056.diff",
+    "slices/000057.diff"
+   ]
+  },
+  {
+   "name": "src-root",
+   "files": [
+    "src/lib.rs"
+   ],
+   "slices": [
+    "slices/000058.diff"
+   ]
+  },
+  {
+   "name": "plan",
+   "files": [
+    "src/plan/ops.rs"
+   ],
+   "slices": [
+    "slices/000059.diff"
+   ]
+  },
+  {
+   "name": "store",
+   "files": [
+    "src/store/history.rs",
+    "src/store/instruction_source.rs",
+    "src/store/mod.rs"
+   ],
+   "slices": [
+    "slices/000060.diff",
+    "slices/000061.diff",
+    "slices/000062.diff"
+   ]
+  },
+  {
+   "name": "writer",
+   "files": [
+    "src/writer/recovery.rs"
+   ],
+   "slices": [
+    "slices/000063.diff"
+   ]
+  },
+  {
+   "name": "tests",
+   "files": [
+    "tests/daemon_composed.rs",
+    "tests/daemon_free_reads.rs",
+    "tests/inspect_live.rs",
+    "tests/inspect_loaded.rs",
+    "tests/inspect_log.rs",
+    "tests/inspect_roster.rs",
+    "tests/inspect_sessions.rs",
+    "tests/inspect_stack.rs"
+   ],
+   "slices": [
+    "slices/000064.diff",
+    "slices/000065.diff",
+    "slices/000066.diff",
+    "slices/000067.diff",
+    "slices/000068.diff",
+    "slices/000069.diff",
+    "slices/000070.diff",
+    "slices/000071.diff"
+   ]
+  },
+  {
+   "name": "docs-1",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt"
+   ],
+   "slices": [
+    "slices/000001.diff",
+    "slices/000002.diff"
+   ]
+  },
+  {
+   "name": "docs-2",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1.md"
+   ],
+   "slices": [
+    "slices/000003.diff",
+    "slices/000004.diff"
+   ]
+  },
+  {
+   "name": "docs-3",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-2.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/amend-design-1.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-amend-design-1-dispositions.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-ledger.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-1.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-2.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/findings-ledger-design.md"
+   ],
+   "slices": [
+    "slices/000005.diff",
+    "slices/000006.diff",
+    "slices/000007.diff",
+    "slices/000008.diff",
+    "slices/000009.diff",
+    "slices/000010.diff",
+    "slices/000011.diff",
+    "slices/000012.diff",
+    "slices/000013.diff",
+    "slices/000014.diff",
+    "slices/000015.diff",
+    "slices/000016.diff"
+   ]
+  },
+  {
+   "name": "docs-4",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/friction.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-1.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-10.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-2.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-5.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-6.md"
+   ],
+   "slices": [
+    "slices/000017.diff",
+    "slices/000018.diff",
+    "slices/000019.diff",
+    "slices/000020.diff",
+    "slices/000021.diff",
+    "slices/000022.diff",
+    "slices/000023.diff",
+    "slices/000024.diff",
+    "slices/000025.diff"
+   ]
+  },
+  {
+   "name": "docs-5",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-7.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-8.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-9.md",
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"
+   ],
+   "slices": [
+    "slices/000026.diff",
+    "slices/000027.diff",
+    "slices/000028.diff",
+    "slices/000029.diff"
+   ]
+  },
+  {
+   "name": "docs-6",
+   "files": [
+    "docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md"
+   ],
+   "slices": [
+    "slices/000030.diff"
+   ]
+  }
+ ]
+}

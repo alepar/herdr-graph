@@ -1,0 +1,35 @@
+# Final review: cluster 9 (writer)
+
+Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD 2dfa656, clean status; not switched or modified. Cluster inputs: `src/writer/recovery.rs`, slice `slices/000063.diff`.
+
+## What changed
+
+`writer::recovery::trailers_since` drops its inline `Graph-Op:` / `Graph-Action:` line loop and calls `crate::store::history::parse_trailers`, taking `t.op` / `t.action` from the returned `Trailers`. The signature, the revwalk, the checkpoint-hide rule and the output tuple `(OpId, CommitId, Option<ActionId>)` are unchanged.
+
+## Spec conformance
+
+- Design §(HistoryWalker relationships, line 517): "`writer::recovery::trailers_since` and the walker share one trailer-parsing function, extracted rather than duplicated." Delivered: `parse_trailers` at `src/store/history.rs:23` is the single production parser; its doc comment names both callers.
+- Plan task 4 Step 1: "Body moved verbatim ... `trailers_since` then calls it and keeps its signature and behaviour ... existing recovery tests must pass unmodified." Compared line by line: `parse_trailers` uses the same `strip_prefix("Graph-Op:")` / `strip_prefix("Graph-Action:")` with `else if`, the same `trim().parse().ok()`, and the same last-occurrence-wins overwrite, so a later unparseable value still resets an earlier good one to `None`, exactly as before. `commit.message().unwrap_or_default()` is preserved. Behaviour is identical for every input.
+- `src/writer/tests.rs` (holding `recover_marks_committed_from_trailer`, `recover_requeues_applying_op_without_trailer_and_counts_attempt`, etc.) is not touched by the diff, so recovery tests are unmodified. Task-4 report records a full `cargo test --lib` run (1298 passed; the one failure was the since-removed `inspect_stubs_not_implemented` tripwire), which includes those recovery tests. I did not re-run tests: a review-owned build would mean a fresh target dir, and the change is a verbatim move.
+- Requirement baseline B1-B8 / S1: none is delivered by this cluster; it is a supporting refactor with no user-visible behaviour. "No new Git writes" is respected; the change is read-only parsing.
+
+## Design notes
+
+- The key-abstractions digest says HistoryWalker callers "never use revwalk or parse trailers directly". Recovery still owns its own checkpoint-hidden revwalk. That is consistent with the design, which scopes the recovery relationship to the shared parser only; recovery's walk (hide checkpoint, full history, no scan cap) is a different shape from the capped newest-first walker and predates this epic.
+- `writer` now depends on `store::history`, which also imports `undo::candidates`. This is a crate-internal module edge, not a cycle at the crate level, and adds no runtime cost to recovery beyond the function call.
+
+## Findings
+
+- none
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- none
+
+## Deferred OK
+- none

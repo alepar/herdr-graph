@@ -1,0 +1,241 @@
+diff --git a/src/cli/seat.rs b/src/cli/seat.rs
+index f0c2132..6a9e945 100644
+--- a/src/cli/seat.rs
++++ b/src/cli/seat.rs
+@@ -4,15 +4,18 @@
+ //! with `--json`, readable sections otherwise. A failed call goes through `cli::daemon_error` (exit 2, 5, 6 or 1)
+ //! and exits 5 and 6 add the seat sentences ([`seat_failure`]). The hidden `--hook-prompt` is what the SessionStart hook runs:
+ //! it tells graph panes to run `/seat`, reads the committed graph directly and never fails or starts a daemon.
+-use crate::bootstrap::instructions::{HOOK_RENDER_CAP, fit_hook, render_instructions};
++use crate::bootstrap::instructions::{
++    HOOK_RENDER_CAP, HookFit, RenderedInstructions, fit_hook, render_instructions,
++};
+ use crate::bootstrap::resolve::{Resolution, resolve_caller};
+ use crate::bootstrap::{render_seat, wants_seat_prompt};
+ use crate::cli::daemon_error::{Outcome, classify};
+ use crate::config::{Env, plugin_config_dir_via_herdr};
+ use crate::daemon::client::{CallMode, ClientError, call_daemon, caller_info_from_env};
+ use crate::daemon::registry::CallerInfo;
+-use crate::model::CommitId;
++use crate::inspect::loaded::{self, InjectionSource};
+ use crate::model::launch::ENV_GRAPH;
++use crate::model::{CloneId, CommitId, Timestamp};
+ use crate::ports::store::Store;
+ use crate::store::tree::TreeRead;
+ use clap::Subcommand;
+@@ -33,6 +36,9 @@ pub enum Commands {
+         /// With `--hook-prompt`: print Codex's `hookSpecificOutput.additionalContext` JSON.
+         #[arg(long, hide = true, requires = "hook_prompt")]
+         codex: bool,
++        /// With `--hook-prompt`: read the hook's stdin payload for the session id and record what was loaded.
++        #[arg(long, hide = true, requires = "hook_prompt")]
++        stdin_payload: bool,
+     },
+ }
+ 
+@@ -41,9 +47,10 @@ pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+         Commands::Seat {
+             hook_prompt: true,
+             codex,
++            stdin_payload,
+             ..
+         } => {
+-            hook_prompt(codex);
++            hook_prompt(codex, stdin_payload);
+             Ok(ExitCode::SUCCESS)
+         }
+         Commands::Seat {
+@@ -128,25 +135,55 @@ pub fn instructions_text(
+     render_instructions(tree, at, &seat).map(|r| Some(r.text))
+ }
+ 
+-/// What the hook prints: header + render (capped) for a bound caller, today's prompt for a graph pane, nothing
+-/// otherwise. Never errors; any failure falls back to today's prompt.
+-pub fn hook_text(
++/// What a bound caller's hook delivered: the clone, the render and how it was fitted. The input of
++/// [`loaded::record`].
++pub struct HookInjection {
++    pub clone: CloneId,
++    pub rendered: RenderedInstructions,
++    pub fit: HookFit,
++}
++
++/// What the hook prints, with the injection when it printed a render: header + render (capped) for a bound
++/// caller, today's prompt for a graph pane, nothing otherwise. Never errors; any failure falls back to today's
++/// prompt.
++pub fn hook_render(
+     tree: Option<(&dyn TreeRead, &CommitId)>,
+     caller: &CallerInfo,
+     graph_env: Option<&str>,
+-) -> Option<String> {
++) -> Option<(String, Option<HookInjection>)> {
+     if let Some((tree, at)) = tree
+-        && let Resolution::Bound { seat, .. } = resolve_caller(tree, caller, None)
+-        && let Ok(r) = render_instructions(tree, at, &seat)
++        && let Resolution::Bound { seat, clone, .. } = resolve_caller(tree, caller, None)
++        && let Ok(rendered) = render_instructions(tree, at, &seat)
+     {
+-        return Some(fit_hook(&r, HOOK_RENDER_CAP).text);
++        let fit = fit_hook(&rendered, HOOK_RENDER_CAP);
++        return Some((
++            fit.text.clone(),
++            Some(HookInjection {
++                clone,
++                rendered,
++                fit,
++            }),
++        ));
+     }
+     wants_seat_prompt(graph_env, tree.map(|(t, _)| t), caller.pane_id.as_deref())
+-        .then(|| HOOK_PROMPT.to_owned())
++        .then(|| (HOOK_PROMPT.to_owned(), None))
+ }
+ 
+-/// Open the located instance's committed head and run `f` on it; None when anything is unavailable.
+-fn with_head<T>(env: &Env, f: impl FnOnce(&dyn TreeRead, &CommitId) -> T) -> Option<T> {
++/// What the hook prints; see [`hook_render`].
++pub fn hook_text(
++    tree: Option<(&dyn TreeRead, &CommitId)>,
++    caller: &CallerInfo,
++    graph_env: Option<&str>,
++) -> Option<String> {
++    hook_render(tree, caller, graph_env).map(|(text, _)| text)
++}
++
++/// Open the located instance's committed head and run `f` on it with the instance root; None when anything is
++/// unavailable.
++fn with_head_at<T>(
++    env: &Env,
++    f: impl FnOnce(&std::path::Path, &dyn TreeRead, &CommitId) -> T,
++) -> Option<T> {
+     let (root, _) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr)?;
+     let store = crate::store::GitStore::open(&root).ok()?;
+     let head = store.head().ok()?;
+@@ -154,7 +191,40 @@ fn with_head<T>(env: &Env, f: impl FnOnce(&dyn TreeRead, &CommitId) -> T) -> Opt
+         store: &store,
+         at: head.clone(),
+     };
+-    Some(f(&view, &head))
++    Some(f(&root, &view, &head))
++}
++
++fn with_head<T>(env: &Env, f: impl FnOnce(&dyn TreeRead, &CommitId) -> T) -> Option<T> {
++    with_head_at(env, |_, t, at| f(t, at))
++}
++
++/// Largest stdin payload read, and the longest wait for it. A held-open stdin costs the hook at most
++/// [`STDIN_WAIT`] after its output is printed.
++const STDIN_CAP: u64 = 64 * 1024;
++const STDIN_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
++
++/// The hook's stdin payload, or None for a terminal, an error, a timeout or an empty read. Reads on a helper
++/// thread so a stdin that never closes cannot hold the process: the thread is abandoned and exit ends it.
++fn read_stdin_payload() -> Option<Vec<u8>> {
++    use std::io::{IsTerminal, Read};
++    let stdin = std::io::stdin();
++    if stdin.is_terminal() {
++        return None;
++    }
++    let (tx, rx) = std::sync::mpsc::channel();
++    std::thread::spawn(move || {
++        let mut buf = Vec::new();
++        let _ = std::io::stdin().take(STDIN_CAP).read_to_end(&mut buf);
++        let _ = tx.send(buf);
++    });
++    rx.recv_timeout(STDIN_WAIT).ok().filter(|b| !b.is_empty())
++}
++
++/// `session_id` of a hook payload (Claude SessionStart and Codex SessionStart both carry it); None when
++/// absent, not a string, or the payload is not JSON.
++pub fn payload_session_id(payload: &[u8]) -> Option<String> {
++    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
++    v.get("session_id")?.as_str().map(str::to_owned)
+ }
+ 
+ /// `seat --instructions`: the render, untruncated; exit 1 when this pane is not a bound seat, exit 6 when the
+@@ -185,17 +255,53 @@ fn print_instructions() -> ExitCode {
+ }
+ 
+ /// Never errors: any failure prints today's prompt or nothing.
+-fn hook_prompt(codex: bool) {
++///
++/// The only writer of the loaded record: after printing, a bound caller's delivered render is recorded with the
++/// session id from the stdin payload (`--stdin-payload`; None without the flag or without an id). The output is
++/// the same with and without the flag, and a record failure changes nothing.
++fn hook_prompt(codex: bool, stdin_payload: bool) {
++    use std::io::Write;
+     let env = Env::from_process();
+     let caller = caller_info_from_env();
+     let graph = std::env::var(ENV_GRAPH).ok();
+-    let text = with_head(&env, |t, at| {
+-        hook_text(Some((t, at)), &caller, graph.as_deref())
+-    })
+-    .unwrap_or_else(|| hook_text(None, &caller, graph.as_deref()));
+-    if let Some(t) = text {
+-        println!("{}", hook_output_text(codex, &t));
+-    }
++    let rendered = with_head_at(&env, |root, t, at| {
++        (
++            root.to_path_buf(),
++            hook_render(Some((t, at)), &caller, graph.as_deref()),
++        )
++    });
++    let (root, out) = match rendered {
++        Some((root, out)) => (Some(root), out),
++        None => (None, hook_render(None, &caller, graph.as_deref())),
++    };
++    let Some((text, injection)) = out else {
++        return;
++    };
++    println!("{}", hook_output_text(codex, &text));
++    let _ = std::io::stdout().flush();
++    let (Some(root), Some(inj)) = (root, injection) else {
++        return;
++    };
++    let id = if stdin_payload {
++        read_stdin_payload().and_then(|p| payload_session_id(&p))
++    } else {
++        None
++    };
++    let source = if codex {
++        InjectionSource::HookCodex
++    } else {
++        InjectionSource::Hook
++    };
++    loaded::record(
++        &root,
++        &inj.clone,
++        &inj.rendered,
++        &inj.fit,
++        source,
++        id,
++        stdin_payload,
++        Timestamp::from(std::time::SystemTime::now()),
++    );
+ }
+ 
+ #[cfg(test)]
+@@ -268,6 +374,23 @@ mod tests {
+         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+     }
+ 
++    #[test]
++    fn payload_session_id_reads_claude_and_codex_shapes() {
++        let claude = br#"{"session_id":"s-1","transcript_path":null,"source":"startup"}"#;
++        assert_eq!(payload_session_id(claude).as_deref(), Some("s-1"));
++        let codex = br#"{"session_id":"019a-x","hook_event_name":"SessionStart","cwd":"/w","source":"startup"}"#;
++        assert_eq!(payload_session_id(codex).as_deref(), Some("019a-x"));
++        assert_eq!(payload_session_id(br#"{"cwd":"/w"}"#), None);
++        assert_eq!(payload_session_id(br#"{"session_id":7}"#), None);
++        assert_eq!(payload_session_id(b"not json"), None);
++        assert_eq!(payload_session_id(b""), None);
++    }
++
++    #[test]
++    fn stdin_payload_flag_needs_hook_prompt() {
++        assert!(Cli::try_parse_from(["herdr-graph", "seat", "--stdin-payload"]).is_err());
++    }
++
+     #[test]
+     fn seat_instructions_flag_parses() {
+         assert!(Cli::try_parse_from(["herdr-graph", "seat", "--instructions"]).is_ok());

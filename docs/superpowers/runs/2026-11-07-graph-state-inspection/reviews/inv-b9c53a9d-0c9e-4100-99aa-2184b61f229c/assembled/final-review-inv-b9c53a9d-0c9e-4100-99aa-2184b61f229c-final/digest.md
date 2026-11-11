@@ -1,0 +1,477 @@
+## diffstat
+
+ .../2026-11-07-graph-state-inspection-design.md    |  283 +++-
+ ...te-inspection-roast-design-1-step-back-keys.txt |   16 +
+ ...ph-state-inspection-roast-design-1-step-back.md |   14 +
+ ...-11-08-graph-state-inspection-roast-design-1.md |  147 ++
+ ...-11-08-graph-state-inspection-roast-design-2.md |   52 +
+ .../amend-design-1.md                              |   48 +
+ .../coverage-amend-design-1-dispositions.md        |   27 +
+ .../coverage-findings-round-1.md                   |   14 +
+ .../coverage-findings-round-2.md                   |   16 +
+ .../coverage-ledger.md                             |   36 +
+ .../coverage-round-1-requirements.md               |   15 +
+ .../coverage-round-1-review-1.md                   |   30 +
+ .../coverage-round-1-review-2.md                   |   30 +
+ .../coverage-round-2-review-1.md                   |   20 +
+ .../coverage-round-2-review-2.md                   |   19 +
+ .../findings-ledger-design.md                      |   24 +
+ .../findings-overrides-design.md                   |    3 +
+ .../2026-11-07-graph-state-inspection/friction.md  |    5 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-1.md |   66 +
+ ...50ab2-a313-4bcb-9196-17e40854f3ab.cluster-10.md |   72 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-2.md |   56 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md |   48 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md |   27 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-5.md |   77 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-6.md |   30 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-7.md |   47 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-8.md |   71 +
+ ...650ab2-a313-4bcb-9196-17e40854f3ab.cluster-9.md |   41 +
+ ...iew-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md |  128 ++
+ .../runs/2026-11-07-graph-state-inspection/run.md  |   66 +
+ src/bootstrap/instructions.rs                      |   95 +-
+ src/bootstrap/setup_claude.rs                      |   52 +-
+ src/bootstrap/tests.rs                             |   58 +-
+ src/cli/instructions.rs                            |  137 +-
+ src/cli/log.rs                                     |  245 +++
+ src/cli/mod.rs                                     |   52 +
+ src/cli/ops.rs                                     |  214 ++-
+ src/cli/roster.rs                                  |  194 +++
+ src/cli/seat.rs                                    |  167 +-
+ src/cli/sessions.rs                                |  168 ++
+ src/cli/setup.rs                                   |   25 +-
+ src/daemon/compose.rs                              |   10 +
+ src/daemon/doctor.rs                               |   70 +
+ src/daemon/mod.rs                                  |    1 +
+ src/daemon/roster_live.rs                          |  224 +++
+ src/herdr/fake.rs                                  |    9 +
+ src/inspect/fixture.rs                             |  487 ++++++
+ src/inspect/harness_files.rs                       |  418 +++++
+ src/inspect/inventory.rs                           |  533 +++++++
+ src/inspect/loaded.rs                              |  792 ++++++++++
+ src/inspect/log.rs                                 |  918 +++++++++++
+ src/inspect/mod.rs                                 |  166 ++
+ src/inspect/output.rs                              |  295 ++++
+ src/inspect/roster.rs                              | 1639 ++++++++++++++++++++
+ src/inspect/scope.rs                               |  732 +++++++++
+ src/inspect/sessions.rs                            |  452 ++++++
+ src/inspect/stack.rs                               |  564 +++++++
+ src/lib.rs                                         |    1 +
+ src/plan/ops.rs                                    |  295 +++-
+ src/store/history.rs                               |  576 +++++++
+ src/store/instruction_source.rs                    |   75 +-
+ src/store/mod.rs                                   |    1 +
+ src/writer/recovery.rs                             |   15 +-
+ tests/daemon_composed.rs                           |   13 +-
+ tests/daemon_free_reads.rs                         |    6 +
+ tests/inspect_live.rs                              |  222 +++
+ tests/inspect_loaded.rs                            |  576 +++++++
+ tests/inspect_log.rs                               |   61 +
+ tests/inspect_roster.rs                            |   59 +
+ tests/inspect_sessions.rs                          |   51 +
+ tests/inspect_stack.rs                             |   43 +
+ 71 files changed, 12071 insertions(+), 168 deletions(-)
+
+
+## generated-input provenance
+
+## Generated-input provenance
+Captured range: bfeb8f3104dd3783d67a46570c9f272e935012b5..2dfa656c7f98715fe66ca53c253de19f369a857d
+Selection: complete; selected product/input paths: 71; omitted historical payloads: 53.
+diffstat.txt describes selected product/input paths. Reports, findings and collection metadata remain ordinary review inputs.
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/clusters.json","sha256":"4f6ce3a7f6b0cab12860d06ab3c7764e040ead547c25ed6d8cf7127afa4b5d82","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/diffstat.txt","sha256":"f7a4a1e13782df0a29c331cdccab995346a1e7b7184728b29ae8cf203ba1651b","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/digest.md","sha256":"fcd7acf1d68a887288e9f9646802895ff96110b951c16ed2a0b2d94bcd2ac05d","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/generated-input-provenance.md","sha256":"22a79c6090290577834be43f116e6284c4b68a97633d31d65f2b4d7341b690fa","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/review-inputs.json","sha256":"3c78ed8aeedc00d0575a0f0bebd9d3dff2f61117d42058d6016426d0c8436aa9","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000001.diff","sha256":"b82083e07dc386a369d4773c23cfdf36d7a0a52cde970495495279330bf89379","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000002.diff","sha256":"9ffed9a840c05646a7d82c73eeef0eac32fad5caa57789705a5c62fc681b4a1a","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000003.diff","sha256":"8ba070f96ff0a3966e71ab73bcb36a2838061f04380e28fb6c59b2181491a1af","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000004.diff","sha256":"01b35308dcc48d6f1713abc4d2a68e09e937421a2eb4fda3dd4d44c5522fb695","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000005.diff","sha256":"0ac8a7a1e78d92ed2b58dcfe2068d6213573f0f45316d76cd0acdcf44260c054","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000006.diff","sha256":"eb88b6e9ca2eebb4984052d281388781c10fef781e53fcc3e920a0e9e1b854ca","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000007.diff","sha256":"0ede95b86639dc6d1c853f41a5a97661eddfcb42c334999f5d8a0d48fb7b384b","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000008.diff","sha256":"6969a3a623e5131a942d44bfdfb1dea7e7440ee181887084da6126fbf7e1c1e8","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000009.diff","sha256":"2408680bf8e9654b4a7fc4d836bf836b8cb8cdc846716c2ee1f5462d96c2759b","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000010.diff","sha256":"cd80a64c298a64cbba0f6c67e0e340f44bed5a76128483cd3634f99922f56649","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000011.diff","sha256":"8a34be1eb549e1152168823bc4e02c3d0c02f6ba4ee40e7720af424bb5dab8fe","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000012.diff","sha256":"929c98060c52dfff7aca0da2d11c9768dbadc7ca3c4b2371b71e4eea04794f5e","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000013.diff","sha256":"de620592e3cbb14407873c18509badf01923acda100d40561fe0bc2650763195","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000014.diff","sha256":"dcc582bc21df2d4c87c95008a3fd0cb9d691d8ba9334f037f37c23c5a58e0cd3","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000015.diff","sha256":"0b1f59b9ce55cd15a8218a5fe05b967c8aab264a818a9bc2023bf1ff30e23b15","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000016.diff","sha256":"563fcf13f193f5c07ced83400dd841a5ce54e347a0a6fe3ccbd06f5541125c7b","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000017.diff","sha256":"65408c26316274be49386ff01aab1105d107a63f7e3a5055008b8e6a0c187dda","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000018.diff","sha256":"93d78ad7f950521192a891b681ca101b0f0038cd8ac9910b838f26ab3e7ea23f","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000019.diff","sha256":"6f185e87bb13caf445830cdd919e8fd7428f99cf4e7131d850ac016ccba98ca5","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000020.diff","sha256":"8b25729eff810dc211ff21febaa6f15ca5b126c2036f95416b1ec983bf36cfef","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000021.diff","sha256":"f0fe87c2875a581bf248fa1384b734ae9e6625e8c7065b9bb7e3142a14fae40a","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000022.diff","sha256":"f33ddf208931f3c0cfef93d0131fe8dabbbf67b26251c479d6d2c4da3a9bbef9","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000023.diff","sha256":"20c9e6d8f4edc730fd102fef5c9b5686b99aa02976e616b88a79684fffa9e7b4","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000024.diff","sha256":"4161b6be9a1d7296feb4f4ddde294e85a952277ab47ff96f63101899cf474332","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000025.diff","sha256":"7ade98ddf8aeda5b03c1f4d5aeccc01601ecb053339e5efa86e07ee71217ba7e","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000026.diff","sha256":"cd03eb95f70081035452c9e1f321ba908b57d85b4f7c2e651fbf0c49727e8c38","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000027.diff","sha256":"8e43dbc5ec229c3b022a2b527691c1f377b049abb44a1a510f7a265550d5e361","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000028.diff","sha256":"a90224724248530bd9da06dc98fb3a8f16721e97dbb4b6be63adeba03b1d6810","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000029.diff","sha256":"47a7c1ff7392b40142e2b3935f5a757d09eea3930c77e7563e1921e3603e7eb1","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000030.diff","sha256":"076de9baf8c5be399427c7f4de402087fc591b26f5301d9aead1d6c2730a358a","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000031.diff","sha256":"bea4f2c803cc2464709ec65e78ecf6d1c229cd6ad08990350167a72c2345f4be","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000032.diff","sha256":"8e1d8b5819d0f604d2445f10b038a1e742bb2ef8ba434c735bfa1bcae2cb1496","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000033.diff","sha256":"554081363b02fcc6525dc948545cb570bca16ce0de21c12109ce4ec5fff3c437","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000034.diff","sha256":"d004d546b13c7ac48d801e20659915d478402947a87258492efc61a1512352d5","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000035.diff","sha256":"95c3814845100241d6fd417e86f22b7252c80581627f788fd5b87c0c9b36a939","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000036.diff","sha256":"dd6451243eb57d5d4ba865c49ef8eec8c32c1db52ad3237be5bf673238564d99","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000037.diff","sha256":"1bf007410f4b01d3ccc214553514efb8c1cc243719ba7e1b011e1625786b7291","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000038.diff","sha256":"1d7072d1fbd376ca269d1d08f1c509427ad53f84afe650a3e9a69f8619686a76","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000039.diff","sha256":"72bd7b5c48731fae8317d50fc135fa6b743e345f4620fe12e85fa85d34321f59","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000040.diff","sha256":"73b3b0d96faea27fb9fb8aa1a5aa18fbe80515882434d2c806e70cd97453b113","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000041.diff","sha256":"f7c24a8b34530be5ddc8e7522cb9eeebefc6310f89ab5aad0cc5f6fe98ce9567","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000042.diff","sha256":"6579204345f59d6947969454f36f3d7ebed678dbe2e792aa38b048a94be18fcb","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000043.diff","sha256":"1b79d5ce319da918a4bd55bc50d14b6adb774f7e0036879802091be4b9962863","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000044.diff","sha256":"4bdf8b6734ab0fd4ebc5fd2b3c5faa692a34e3ea4894563534e485cb63975242","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000045.diff","sha256":"3acb61e47cfb2df56acf481dfe2a858cc537f715350f683a8e9b17a5fc5eec0a","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000046.diff","sha256":"bbf2d8839751c3579a297372b3b6e89d7b963427c6af8cb0017f8c1f03988dba","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000047.diff","sha256":"b4dd74d4556e47c7d1c64a61fbbac184665bcaa7ecaa00212b90bf0077462f36","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- {"path":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/assembled/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab-final/slices/000048.diff","sha256":"96ff6c8a7b606c7a097712f38e1b1e0de1a93080bef9d3e29c96703a715b928c","revision":"2dfa656c7f98715fe66ca53c253de19f369a857d","run":"docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md","recordLine":44,"invocationId":"inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","archive":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab","report":"docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.md"}
+- Outside captured range: 46 informational entries (neither selected nor waived); the first 20 are listed; the full list is review-inputs.json outOfRange.
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:86 inv-p3b-20261031T222244: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: invalid failed assembly archive: bounded report identity or verdict mismatch
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:91 inv-p3c-20261031T232503: incomplete assembled bundle: digest.md
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: invalid failed assembly archive: bounded report identity or verdict mismatch
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:95 inv-p5r1-20261101T001157: incomplete assembled bundle: digest.md
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: invalid failed assembly archive: bounded report identity or verdict mismatch
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:99 inv-p5r2-20261101T010931: incomplete assembled bundle: digest.md
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: invalid failed assembly archive: bounded report identity or verdict mismatch
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-10-31-h1-instruction-gate/run.md:103 inv-p6fr-20261101T020246: incomplete assembled bundle: digest.md
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:22 inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:22 inv-e10f983d-1d5e-4b01-a12c-2978e5f10eb2: incomplete claimed final report
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:23 inv-2e07a039-6297-4308-8862-f3a2878fe7ab: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:23 inv-2e07a039-6297-4308-8862-f3a2878fe7ab: incomplete claimed final report
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:24 inv-8d1468f1-4551-46bd-8b96-82617c3ea922: incomplete claimed collection
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:24 inv-8d1468f1-4551-46bd-8b96-82617c3ea922: incomplete claimed final report
+- Outside captured range (informational; neither selected nor waived): bfeb8f3104dd3783d67a46570c9f272e935012b5:docs/superpowers/runs/2026-11-04-threads-seat-identity/run.md:88 inv-4aa37d70-023c-483a-b47c-3dc801a586fe: incomplete claimed collection
+Open each report/archive at its recorded revision. Omission supplies no finding disposition or verdict.
+
+
+## report summaries
+
+### task 1
+- Status: IMPLEMENTED. base e82aa4f0a93d0011c1e5027938ffdca99b42a507, head 6e829ab05f16f151438a7c648d54eef6a6fff5a1, sourceTree eb4ab8f3c036a46a082f2d554b2aa9916e9c9d87. Not stacked.
+- Assumptions:
+  - Brief says Scope parse of `global x` is Usage; parse_words would give NotAllowed, so ScopeArg::parse pre-checks word count (global 1, teamspace/seat 2, else Usage "too many words").
+  - Fixture: `clone_rec_id` and `set_runtime`/`clone_mut` added beyond the brief so transcript records can reference a clone id and tests can set runtime/corrupt a parent id. `Fx::dir` omitted (unused).
+  - Inventory returns an empty tree for Scope::Global before any read.
+  - Dangling parent check covers all enumerated seats and clones, regardless of scope (except Global).
+  - `cargo fmt` reformatted four unrelated test files; those were reverted, not committed.
+- Concerns:
+  - InstructionsView/Inventory types are unused outside tests until consumer beads land; no dead_code warning appears because they are `pub`.
+  - stop-run-processes check unusable here (see Test hygiene).
+### task 2
+- none
+- Assumptions: none
+- Concerns: none
+### task 3
+- none
+- Assumptions: none
+- Concerns: none
+### task 4
+- none
+- Assumptions: none
+- Concerns: none
+### task 5
+- none
+- Assumptions: none
+- Concerns: none
+### task 6
+- none
+- Assumptions: none
+- Concerns:
+  - cli::tests::inspect_stubs_not_implemented fails with the tripwire (real HOME config). Not touched by this diff (it runs `sessions`, implemented by hg-blw.3 already in base). NOT verified at base: after that run the hg-build container wedged (`podman exec`: "unable to find user root"; crun kill EPE
+  - The toolbox failure also prevented a final post-commit rerun; the commit contains exactly the tested sources plus no changes after the 237-pass run other than none.
+  - When an AGENTS.md is both shadowed (Codex) and Claude-fallback, note is `shadowed` (single note field).
+  - Claude AGENTS.md fallback keys on CLAUDE.md/CLAUDE.local.md only, per spec.
+  - build() treats any render error as the per-seat error row (per brief), not just integrity errors.
+  - Test `codex_bounded_by_git_root` omits the no-Git case: /tmp/.git exists on this host, making it non-hermetic.
+### task 7
+- none
+- Assumptions: none
+- Concerns: none
+### task 8
+- none
+- Assumptions: none
+- Concerns: none
+### task 9
+- none
+- Assumptions: none
+- Concerns: none
+
+## interfaces and seams
+
+new public files:
+- src/cli/log.rs
+- src/cli/roster.rs
+- src/cli/sessions.rs
+- src/daemon/roster_live.rs
+- src/inspect/fixture.rs
+- src/inspect/harness_files.rs
+- src/inspect/inventory.rs
+- src/inspect/loaded.rs
+- src/inspect/log.rs
+- src/inspect/mod.rs
+- src/inspect/output.rs
+- src/inspect/roster.rs
+- src/inspect/scope.rs
+- src/inspect/sessions.rs
+- src/inspect/stack.rs
+- src/store/history.rs
+- tests/inspect_live.rs
+- tests/inspect_loaded.rs
+- tests/inspect_log.rs
+- tests/inspect_roster.rs
+- tests/inspect_sessions.rs
+- tests/inspect_stack.rs
+
+signatures (added/removed pub items):
+src/bootstrap/instructions.rs: +pub fn part_digest(body: &str) -> String {
+src/bootstrap/setup_claude.rs: +pub fn owned_hook_current(target: &Target, config: &Path) -> anyhow::Result<Option<bool>> {
+src/cli/log.rs: +pub enum Commands {
+src/cli/log.rs: +pub struct LogArgs {
+src/cli/log.rs: +pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+src/cli/log.rs: +pub fn execute(
+src/cli/mod.rs: +pub mod log;
+src/cli/mod.rs: +pub mod roster;
+src/cli/mod.rs: +pub mod sessions;
+src/cli/roster.rs: +pub enum Commands {
+src/cli/roster.rs: +pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+src/cli/seat.rs: -pub fn hook_text(
+src/cli/seat.rs: +pub struct HookInjection {
+src/cli/seat.rs: +pub fn hook_render(
+src/cli/seat.rs: +pub fn hook_text(
+src/cli/seat.rs: +pub fn payload_session_id(payload: &[u8]) -> Option<String> {
+src/cli/sessions.rs: +pub enum Commands {
+src/cli/sessions.rs: +pub fn run(cmd: Commands) -> anyhow::Result<ExitCode> {
+src/daemon/doctor.rs: +pub fn harness_hook_checks(claude: Option<&Path>, codex: Option<&Path>) -> Vec<Check> {
+src/daemon/mod.rs: +pub mod roster_live;
+src/daemon/roster_live.rs: +pub struct RosterLiveDeps {
+src/daemon/roster_live.rs: +pub fn register(reg: &mut Registry, deps: RosterLiveDeps) {
+src/herdr/fake.rs: +    pub fn snapshot_calls(&self) -> usize {
+src/inspect/fixture.rs: +pub(crate) struct Fx {
+src/inspect/fixture.rs: +pub(crate) fn ts(s: &str) -> Timestamp {
+src/inspect/fixture.rs: +pub(crate) fn session(
+src/inspect/fixture.rs: +    pub fn new() -> Fx {
+src/inspect/fixture.rs: +    pub fn teamspace(&mut self, name: &str, lifecycle: Lifecycle) -> TeamspaceId {
+src/inspect/fixture.rs: +    pub fn archived_teamspace(&mut self, name: &str) -> TeamspaceId {
+src/inspect/fixture.rs: +    pub fn seat(&mut self, ts: &TeamspaceId, name: &str, lifecycle: Lifecycle) -> SeatId {
+src/inspect/fixture.rs: +    pub fn archived_seat(&mut self, ts: &TeamspaceId, name: &str) -> SeatId {
+src/inspect/fixture.rs: +    pub fn clone_rec(
+src/inspect/fixture.rs: +    pub fn clone_rec_id(
+src/inspect/fixture.rs: +    pub fn tombstone(&mut self, seat: &SeatId, name: &str) -> CloneId {
+src/inspect/fixture.rs: +    pub fn clone_mut(&mut self, id: &CloneId) -> &mut CloneRecord {
+src/inspect/fixture.rs: +    pub fn set_runtime(&mut self, id: &CloneId, runtime: Runtime) {
+src/inspect/fixture.rs: +    pub fn transcript(
+src/inspect/fixture.rs: +    pub fn seat_mut(&mut self, id: &SeatId) -> &mut SeatRecord {
+src/inspect/fixture.rs: +    pub fn set_node_manager(&mut self, seat: &SeatId) {
+src/inspect/fixture.rs: +    pub fn set_time(&mut self, t: &str) {
+src/inspect/fixture.rs: +    pub fn put_file(&mut self, path: RepoPath, bytes: Vec<u8>) {
+src/inspect/fixture.rs: +    pub fn operation(&mut self, kind: RequestKind, summary: &str, requester: Requester) -> OpId {
+src/inspect/fixture.rs: +    pub fn operation_mut(&mut self, id: &OpId) -> &mut OperationRecord {
+src/inspect/fixture.rs: +    pub fn action(
+src/inspect/fixture.rs: +    pub fn action_mut(&mut self, id: &ActionId) -> &mut ActionRecord {
+src/inspect/fixture.rs: +    pub fn remove_action(&mut self, id: &ActionId) {
+src/inspect/fixture.rs: +    pub fn rename_seat(&mut self, id: &SeatId, new_name: &str) {
+src/inspect/fixture.rs: +    pub fn remove_seat(&mut self, id: &SeatId) {
+src/inspect/fixture.rs: +    pub fn commit(&mut self, msg: &str) -> CommitId {
+src/inspect/fixture.rs: +    pub fn commit_with_trailers(
+src/inspect/harness_files.rs: +pub struct HarnessFile {
+src/inspect/harness_files.rs: +pub enum Origin {
+src/inspect/harness_files.rs: +pub enum HarnessName {
+src/inspect/harness_files.rs: +pub enum FileNote {
+src/inspect/harness_files.rs: +pub enum EnvSource {
+src/inspect/harness_files.rs: +pub struct UserDirs {
+src/inspect/harness_files.rs: +    pub fn from_env() -> Self {
+src/inspect/harness_files.rs: +pub fn discover(cwd: &Path, user: &UserDirs) -> Vec<HarnessFile> {
+src/inspect/inventory.rs: +pub struct Inventory {
+src/inspect/inventory.rs: +pub struct TeamspaceEntry {
+src/inspect/inventory.rs: +pub struct SeatEntry {
+src/inspect/inventory.rs: +pub struct CloneEntry {
+src/inspect/inventory.rs: +    pub fn current(&self) -> Option<&SessionEntry> {
+src/inspect/inventory.rs: +pub struct SessionEntry {
+src/inspect/inventory.rs: +pub struct RuntimeView {
+src/inspect/inventory.rs: +pub struct TranscriptRef {
+src/inspect/inventory.rs: +pub enum TranscriptSource {
+src/inspect/inventory.rs: +    pub fn load(store: &dyn Store, at: &CommitId, scope: &Scope) -> Result<Inventory, StoreError> {
+src/inspect/inventory.rs: +    pub fn clones(&self) -> impl Iterator<Item = (&TeamspaceEntry, &SeatEntry, &CloneEntry)> {
+src/inspect/loaded.rs: +pub const SCHEMA: u32 = 1;
+src/inspect/loaded.rs: +pub const FLAGLESS_NOTE: &str = "hook predates --stdin-payload; rerun setup";
+src/inspect/loaded.rs: +pub const CODEX_FORM_NOTE: &str = "codex session id form differs";
+src/inspect/loaded.rs: +pub enum InjectionSource {
+src/inspect/loaded.rs: +    pub fn word(self) -> &'static str {
+src/inspect/loaded.rs: +pub struct LoadedRecord {
+src/inspect/loaded.rs: +pub struct RecordedPart {
+src/inspect/loaded.rs: +pub fn record_path(instance: &Path, clone: &CloneId) -> PathBuf {
+src/inspect/loaded.rs: +pub fn delivered(r: &RenderedInstructions, fit: &HookFit) -> (Vec<RecordedPart>, Vec<String>) {
+src/inspect/loaded.rs: +pub fn record(
+src/inspect/loaded.rs: +pub enum Read {
+src/inspect/loaded.rs: +pub fn read(instance: &Path, clone: &CloneId) -> Read {
+src/inspect/loaded.rs: +pub fn status(
+src/inspect/loaded.rs: +pub fn clone_view(
+src/inspect/log.rs: +pub const OPS_POINTER: &str =
+src/inspect/log.rs: +pub struct LogQuery {
+src/inspect/log.rs: +    pub fn matches(&self, store: &GitStore, c: &Change) -> Result<bool, StoreError> {
+src/inspect/log.rs: +    pub fn run(&self, walker: &HistoryWalker<'_>) -> Result<(LogView, Vec<String>), StoreError> {
+src/inspect/log.rs: +pub struct LogView {
+src/inspect/log.rs: +pub struct LogRow {
+src/inspect/log.rs: +pub struct RequesterView {
+src/inspect/log.rs: +pub struct ConfirmationView {
+src/inspect/log.rs: +pub struct ActionView {
+src/inspect/log.rs: +pub struct ObjectView {
+src/inspect/log.rs: +pub enum ObjectChange {
+src/inspect/mod.rs: +pub mod harness_files;
+src/inspect/mod.rs: +pub mod inventory;
+src/inspect/mod.rs: +pub mod loaded;
+src/inspect/mod.rs: +pub mod log;
+src/inspect/mod.rs: +pub mod output;
+src/inspect/mod.rs: +pub mod roster;
+src/inspect/mod.rs: +pub mod scope;
+src/inspect/mod.rs: +pub mod sessions;
+src/inspect/mod.rs: +pub mod stack;
+src/inspect/mod.rs: +pub(crate) mod fixture;
+src/inspect/mod.rs: +pub fn pin_head(store: &dyn Store) -> Result<CommitId, StoreError> {
+src/inspect/mod.rs: +pub fn parse_since(s: &str) -> Result<Timestamp, String> {
+src/inspect/mod.rs: +pub fn parse_since_at(s: &str, now: Timestamp) -> Result<Timestamp, String> {
+src/inspect/mod.rs: +pub fn fail(e: &anyhow::Error) -> ExitCode {
+src/inspect/output.rs: +pub const SCHEMA: u32 = 1;
+src/inspect/output.rs: +pub trait View: Serialize {
+src/inspect/output.rs: +pub struct Envelope<B> {
+src/inspect/output.rs: +    pub fn new(head: &CommitId, body: B) -> Self {
+src/inspect/output.rs: +    pub fn with_live(mut self, live: bool) -> Self {
+src/inspect/output.rs: +pub enum Format {
+src/inspect/output.rs: +    pub fn from_flag(json: bool) -> Self {
+src/inspect/output.rs: +pub fn emit<B: View>(
+src/inspect/output.rs: +pub fn print<B: View>(
+src/inspect/output.rs: +pub struct InstructionsView {
+src/inspect/output.rs: +pub enum InstructionsStatus {
+src/inspect/output.rs: +pub struct DeliveredPart {
+src/inspect/output.rs: +pub enum Delivery {
+src/inspect/output.rs: +pub struct StalePart {
+src/inspect/output.rs: +pub enum PartChange {
+src/inspect/output.rs: +    pub fn unknown() -> Self {
+src/inspect/output.rs: +    pub fn error(message: impl Into<String>) -> Self {
+src/inspect/roster.rs: +pub struct Roster {
+src/inspect/roster.rs: +pub struct RosterTeamspace {
+src/inspect/roster.rs: +pub struct RosterSeat {
+src/inspect/roster.rs: +pub struct ManagerRef {
+src/inspect/roster.rs: +pub struct LastChange {
+src/inspect/roster.rs: +pub struct RosterClone {
+src/inspect/roster.rs: +pub struct CloneLive {
+src/inspect/roster.rs: +pub struct AgentView {
+src/inspect/roster.rs: +pub struct LiveUnavailable {
+src/inspect/roster.rs: +pub struct ThreadsLive {
+src/inspect/roster.rs: +pub struct Unmanaged {
+src/inspect/roster.rs: +pub struct UnWorkspace {
+src/inspect/roster.rs: +pub struct UnTab {
+src/inspect/roster.rs: +pub struct UnPane {
+src/inspect/roster.rs: +pub struct Bindings {
+src/inspect/roster.rs: +pub enum ThreadsRead {
+src/inspect/roster.rs: +pub struct OccupantView {
+src/inspect/roster.rs: +pub struct ThreadsView {
+src/inspect/roster.rs: +pub struct RosterQuery {
+src/inspect/roster.rs: +pub fn build(store: &GitStore, at: &CommitId, q: &RosterQuery) -> Result<Roster, StoreError> {
+src/inspect/roster.rs: +pub fn build_with_bindings(
+src/inspect/roster.rs: +pub fn overlay(
+src/inspect/roster.rs: +pub(crate) fn instructions_text(i: &InstructionsView) -> String {
+src/inspect/scope.rs: +pub enum Scope {
+src/inspect/scope.rs: +pub struct ScopeArg {
+src/inspect/scope.rs: +pub enum AllowClone {
+src/inspect/scope.rs: +pub enum Member<'a> {
+src/inspect/scope.rs: +    pub fn parse(words: &[String], allow: AllowClone) -> Result<ScopeArg, InstructionError> {
+src/inspect/scope.rs: +    pub fn resolve(
+src/inspect/scope.rs: +    pub fn contains(&self, m: Member<'_>) -> bool {
+src/inspect/scope.rs: +pub struct ScopePaths {
+src/inspect/scope.rs: +    pub fn contains(&self, p: &RepoPath) -> bool {
+src/inspect/scope.rs: +    pub fn paths_at(&self, tree: &dyn TreeRead) -> Result<ScopePaths, StoreError> {
+src/inspect/scope.rs: +    pub fn contains_object_at(
+src/inspect/sessions.rs: +pub struct SessionsView {
+src/inspect/sessions.rs: +pub struct SessionRow {
+src/inspect/sessions.rs: +pub struct ObjRef {
+src/inspect/sessions.rs: +pub struct SessionsQuery {
+src/inspect/sessions.rs: +pub fn build(inv: &Inventory, q: &SessionsQuery) -> SessionsView {
+src/inspect/stack.rs: +pub const HARNESS_FILES_NOTE: &str = "present, not necessarily loaded";
+src/inspect/stack.rs: +pub struct StackView {
+src/inspect/stack.rs: +pub struct SeatHead {
+src/inspect/stack.rs: +pub struct StackPart {
+src/inspect/stack.rs: +pub struct HookView {
+src/inspect/stack.rs: +pub struct StackClone {
+src/inspect/stack.rs: +pub fn build(
+src/lib.rs: +pub mod inspect;
+src/plan/ops.rs: +pub struct OpsFilter {
+src/plan/ops.rs: -pub fn list_json(journal: &Journal, unresolved: bool, limit: usize) -> Result<Value, JournalError> {
+src/plan/ops.rs: +pub fn list_json(
+src/store/history.rs: +pub struct Trailers {
+src/store/history.rs: +pub fn parse_trailers(msg: &str) -> Trailers {
+src/store/history.rs: +pub struct ScanReport {
+src/store/history.rs: +pub enum Malformed {
+src/store/history.rs: +pub struct Change {
+src/store/history.rs: +pub struct Touch {
+src/store/history.rs: +pub struct HistoryWalker<'s> {
+src/store/history.rs: +    pub const DEFAULT_MAX_SCAN: usize = 5000;
+src/store/history.rs: +    pub fn new(store: &'s GitStore, from: &CommitId, max_scan: usize) -> Self {
+src/store/history.rs: +    pub fn store(&self) -> &'s GitStore {
+src/store/history.rs: +    pub fn from(&self) -> &CommitId {
+src/store/history.rs: +    pub fn max_scan(&self) -> usize {
+src/store/history.rs: +    pub fn walk(
+src/store/history.rs: +    pub fn last_touches(
+src/store/history.rs: +    pub fn action_at_head(&self, act: &ActionId) -> Result<Option<ActionRecord>, StoreError> {
+src/store/instruction_source.rs: +pub enum PickMode {
+src/store/instruction_source.rs: +pub fn pick<T: Clone>(
+src/store/instruction_source.rs: +pub fn resolve_scope_in(
+src/store/mod.rs: +pub mod history;
+
+seam beads:
+├── ✓ hg-45e.1 P2 task Seam contract: GraphId (IdKind::Graph)
+├── ✓ hg-zmi.1 P2 task Seam contract: crate scaffold, core model types and port traits
+├── ✓ hg-blw.7 P2 task Seam contract: inspect module — Scope, View output envelope, Inventory, CLI group stubs
+
+## deferred minors
+
+Task 1 (hg-blw.7): minor (deferred): [tdd-not-red-first] report admits tests and code were written in one pass with no RED run retained (brief asked for failing tests first)
+Task 1 (hg-blw.7): minor (deferred): [dangling-parent-scope] src/inspect/inventory.rs:726 dangling-parent integrity check runs over all seats and clones regardless of scope, so a corrupt unrelated record fails a narrowly scoped view (reported as a deliberate assumption)
+Task 1 (hg-blw.7): minor (deferred): [cleanup-inspection] stop-run-processes --check could not complete in the sandbox; only the project pgrep check (0) backs the no-leak claim
+Task 1 (hg-blw.7): minor (deferred): [missing-evidence] report supplies no structured evidence records; test run is described in prose only
+Task 5 (hg-blw.8): minor (deferred): [exit-code-ordering] src/cli/ops.rs:154-180 --seat/--teamspace resolve against the graph before the daemon call, so with the daemon down an unknown name exits 1 and a missing instance exits 2 rather than 5 (documented in tests/daemon_free_reads.rs)
+Task 5 (hg-blw.8): minor (deferred): [missing-edge-case-test] no CLI-level test of a filtered ops call with the daemon down or with a retired seat name via --seat; only list_ops-level coverage
+Task 5 (hg-blw.8): minor (deferred): [missing-evidence] report's test run was on tree c2eb13a, not the committed HEAD tree, and no structured evidence records were supplied
+Task 3 (hg-blw.3): minor (deferred): [brittle-source-scan-test] src/inspect/sessions.rs transcript_fallback_from_inventory greps its own source text for list_transcripts; fragile but harmless
+Task 3 (hg-blw.3): minor (deferred): [swallowed-error] src/inspect/sessions.rs word() maps a serialize error to an empty string; unreachable for unit enums
+Task 2 (hg-blw.1): minor (deferred): [text-form-gap] src/inspect/roster.rs clone_line/state_word: text cannot show `retired(reversible)` as in the spec sample (no field carries reversibility); disclosed in report
+Task 2 (hg-blw.1): minor (deferred): [noisy-error-rows] src/inspect/roster.rs build: render_instructions runs for retired seats under --all and any StoreError becomes an instructions error row, which may be noisy
+Task 2 (hg-blw.1): minor (deferred): [swallowed-error] src/inspect/roster.rs build: effective_manager errors are dropped via .ok().flatten(), so an integrity error in the manager chain shows manager null
+Task 4 (hg-blw.5): minor (deferred): [perf-risk] src/inspect/log.rs:~70 LogQuery::matches calls Scope::paths_at (layout::locate, folder lookups) for every scanned commit under non-instance scopes; may be slow near the 5000 cap on large instances (implementer noted it)
+Task 4 (hg-blw.5): minor (deferred): [test-hygiene-tooling] report: stop-run-processes --check failed (rc 4, git worktree inventory); leak check done manually, count 0
+Task 4 (hg-blw.5): minor (deferred): [missing-evidence] report gives no structured evidence records (command/tree/outcome); prose commands and pass counts only
+Task 4 (hg-blw.5): minor (deferred): [preexisting-failure] cli::tests::inspect_stubs_not_implemented fails at base f68b77e per report (run at base shown in throwaway worktree); owned by earlier roster/sessions beads, not this task
+Task 7 (hg-blw.6): minor (deferred): [formatting-noise] tests/daemon_composed.rs: unrelated rustfmt re-wrapping of imports and tuples mixed into the change
+Task 7 (hg-blw.6): minor (deferred): [unverified-cli-degraded-text] degraded live first-line text is checked at overlay/render level and in-process daemon level, not through the CLI binary (needs a Herdr-less daemon)
+Task 7 (hg-blw.6): minor (deferred): [additive-field] CloneLive gains binding_from_earlier_server beyond the brief's shape (justified by spec text needing a typed field)
+Task 8 (hg-blw.9): minor (deferred): [weak-assertion] src/inspect/roster.rs reserved_slots_serialize: last_change assertion loosened to is_object()||is_null(), asserts little
+Task 8 (hg-blw.9): minor (deferred): [synthetic-test-setup] src/inspect/roster.rs none_after_root drives fill_last_changes directly with a ghost seat rather than the public build path
+Metrics: completions — review clean 7 · after fix pass 0 · parked 0 · re-entry closes 0 · dispatched early 3 · cancelled 1
+Task 6 (hg-blw.2): minor (deferred): [test-loosened-justified] src/cli/mod.rs inspect_stubs_not_implemented: `sessions` dropped from the loop; justified (sessions is implemented at base) but the report's claim that it failed at base was never measured, and mod.rs is outside the brief's file list
+Task 6 (hg-blw.2): minor (deferred): [non-hermetic-test] src/cli/instructions.rs stack_is_read_only: stack() reads UserDirs::from_env() so it stats the real HOME/CLAUDE_CONFIG_DIR files (no assertion depends on it)
+Task 6 (hg-blw.2): minor (deferred): [fragile-control-flow] src/cli/instructions.rs run(): early return for Stack plus unreachable!("handled above") arm
+Task 6 (hg-blw.2): minor (deferred): [single-note-field] src/inspect/harness_files.rs: an AGENTS.md both Codex-shadowed and Claude-fallback shows only `shadowed` (documented choice)
+Task 9 (hg-blw.12): minor (deferred): [missing-edge-case-test] src/cli/setup.rs codex_trust_note: re-trust notice (Installed/Updated vs Unchanged) has no test; brief named setup_codex_retrust_notice
+Task 9 (hg-blw.12): minor (deferred): [simulated-dependency] tests/inspect_loaded.rs Graph::occupant_lands commits the occupant directly instead of via the daemon session.report path the brief specified (disclosed)
+Task 9 (hg-blw.12): minor (deferred): [missing-unit-test] src/cli/seat.rs: hook_text_identical_with_and_without_flag unit test absent; covered by integration flag_and_no_flag_print_identical_bytes
+Task 9 (hg-blw.12): minor (deferred): [missing-evidence] report gives tree hash and commands in prose only, no structured evidence records or locations
+
+## amendments
+
+- hg-blw.5: sp:demoted-by-session: promotion reviewer said PROMOTE; session split it into three leaves instead (hg-blw.5 log, hg-blw.8 ops filters, hg-blw.9 roster last_change), spec §2.4 fully specifies each.
+- hg-blw.12: Hold until hg-blw.19 (review, fix and merge of hg-blw.2) has merged; then re-dispatch on the integration branch, not on the old hg-blw.2 stack.
+- hg-blw.10: Re-dispatch only after hg-blw.20 (review, fix and merge of hg-blw.12) has merged; cut the task worktree from integration HEAD with no stack parent.
+

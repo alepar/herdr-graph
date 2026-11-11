@@ -1,0 +1,33 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md
+new file mode 100644
+index 0000000..5e0d092
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-4.md
+@@ -0,0 +1,27 @@
++# Final review, cluster 4 (src-herdr), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 6eb6cec786cde8ca070fbf9aed46bb0609ff63ac (both verified with `git rev-parse --verify <sha>^{commit}`). Review source bound in the ledger (bind-review-source exit 0). Caller checkout observed at HEAD 6eb6cec, working tree clean, before and during review.
++
++## Scope of the cluster
++
++One file, `src/herdr/fake.rs` (slice 000028.diff, +9 lines). It adds a `snapshots: AtomicUsize` field to `FakeHerdr`, increments it at the top of `HerdrApi::snapshot` (before the fault check, so faulted calls count), and exposes `snapshot_calls()`. It is a test double change only; no production Herdr client path changes.
++
++## Analysis
++
++- Purpose against the spec: design §2.2 and §3 promise that `roster --live` takes exactly one Herdr snapshot, and that a failed snapshot is reported rather than folded into "no agent". The counter is what lets `src/daemon/roster_live.rs` tests assert `snapshot_calls() == 1` on success and on an injected `Fault::Unavailable`, and `== 0` with no Herdr client. Counting faulted calls is the right semantics for that assertion: it shows the handler did not retry after a failure.
++- Correctness: `fetch_add` with SeqCst runs before the state lock, so there is no lock-ordering interaction with `state` or `events`. `FakeHerdr` has a single struct literal at the head (`src/herdr/fake.rs:245`), which initialises the field with `Default::default()`, so no constructor was left stale. This review did not build or run tests: `toolbox run -c hg-build` failed with "unable to find user alepar: no matching entries in passwd file", the same toolbox wedge the task reports record.
++- Completeness of the "one snapshot" proof: the counter covers only `snapshot()`, not `agent()` or `process_info()`, which also read live Herdr state. I traced the `roster.live` handler at the head (`src/daemon/roster_live.rs:60-90`): it calls `snapshot()` once and no other `HerdrApi` method, so the assertion is sufficient today. That trace leaves this cluster; the daemon cluster reviewer owns it.
++- Requirement baseline: this cluster delivers no baseline row on its own. It is test infrastructure supporting B8 (`roster --live`). Delivery of B8 from the production entry point (CLI `roster --live` to the daemon `roster.live` handler and the real Herdr client) is the seam and daemon reviewers' to trace.
++- Style: `rustfmt --edition 2024 --check` on the head blob of `src/herdr/fake.rs` passes. The fully qualified `std::sync::atomic::...` paths, instead of a `use`, are a cosmetic choice and not worth a change.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- none
++
++## Deferred OK
++- none

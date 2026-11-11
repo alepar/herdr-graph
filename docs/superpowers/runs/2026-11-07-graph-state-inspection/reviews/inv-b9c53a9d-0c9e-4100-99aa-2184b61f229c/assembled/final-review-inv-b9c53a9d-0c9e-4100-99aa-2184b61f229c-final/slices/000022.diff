@@ -1,0 +1,54 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md
+new file mode 100644
+index 0000000..917f0bc
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-4b650ab2-a313-4bcb-9196-17e40854f3ab/final-review-inv-4b650ab2-a313-4bcb-9196-17e40854f3ab.cluster-3.md
+@@ -0,0 +1,48 @@
++# Final review, cluster 3 (src-daemon), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 6eb6cec786cde8ca070fbf9aed46bb0609ff63ac (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD 6eb6cec, clean, before and during the review. Review source binding recorded in the ledger via `bind-review-source` (exit 0).
++
++## Scope and method
++
++Cluster files: `src/daemon/compose.rs` (registration of `roster.live` in `compose_with`), `src/daemon/mod.rs` (module export), `src/daemon/roster_live.rs` (new handler plus unit tests). Read from slices 000025-000027 and `git show 6eb6cec:<path>`. Spec: `bd show hg-blw --json` and the design doc `docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md` at head (§2.1, §2.2, §2.6, Key abstractions, Unchanged behavior, Requirement baseline). Opened outside the cluster only to trace named risks: `src/daemon/compose.rs` lazy seat map (`LazyMap::inspect`), `src/observe/step.rs` (`observe_seats`, `track_refusals`), `src/inspect/roster.rs` (`overlay`, `ThreadsRead`), `src/inspect/scope.rs` (`Scope::resolve` error type), `src/inspect/mod.rs` (`fail`), `src/cli/daemon_error.rs`, `src/cli/roster.rs` (`live`), `tests/inspect_live.rs`. No tests were run (read-only review; the hg-build toolbox was reported wedged by task 9).
++
++## Requirement baseline trace
++
++- B8 ("roster --live is in scope now"): production path is `herdr-graph roster --live` -> `cli::roster::live` -> `call_daemon("roster.live", ..., NoEnsure)` -> handler registered by `compose_with`, which the production `compose` (via `Services::from_env`) calls. The handler pins HEAD once inside the daemon, builds the roster with the shared `inspect::roster::build_with_bindings` (no second roster), takes exactly one `snapshot()` and reports its failure instead of swallowing it, and adds no commit. Delivered for the Herdr side. The threads side of the degraded-state contract is not met in one condition (see below); that is a spec §2.2 requirement under B8, not a separate baseline row.
++- S1 (`--unmanaged` only enumerates): the handler passes the flag through to `build_with_bindings`/`overlay`; the enumeration shape itself lives in `src/inspect/roster.rs` (another cluster). The cross-cluster composition is the seam reviewer's to trace.
++- B1-B7: no part of them lives in this cluster.
++
++## Analysis of the handler
++
++Correct and well placed:
++- Git work (pin, parse, resolve, build) runs in `spawn_blocking`, keeping the async runtime free.
++- `live_pane_matches` uses the snapshot's own incarnation (`overlay` at `src/inspect/roster.rs:440`), which is the daemon's current server, matching the `Incarnation::same_server` rule.
++- Snapshot failure and a missing client both become `live_unavailable.herdr` with every clone `live: null`, and `unmanaged` becomes null; covered by unit tests.
++- Clone scope and unknown names are rejected as `BadRequest` (exit 1 via `daemon_error`), consistent with the daemon-free roster's exit 1 for usage/unknown target.
++
++Threads degraded state. Spec §2.2: "threads seat view not running: `seat_refusals`/`seat_lost` are null and `live_unavailable.threads` names the reason", and "The overlay is never silently empty". The handler decides availability solely from `seat_view_error`. That slot is written only in `LazyMap::inspect` (`src/daemon/compose.rs` ~1104-1120): cleared on success, set on `Rejected`/`Unsupported`, and left unchanged on every other error (`Disconnected`, transport failure, discovery failure), which is exactly the "threads not running" case. The observer turns that error into an internal `ThreadsRead::Unavailable` (`src/observe/step.rs` ~620-632) but publishes it nowhere. Result: with the threads service down on a fresh daemon, `roster.live` returns `threads_live: {seat_refusals: {}, seat_lost: []}` and `live_unavailable: null`; with threads going down after earlier reads, it returns the stale refusals from the last successful read as if current. The text form prints no `live data unavailable` line. The fix belongs where the observer already knows the read failed: record the last read's outcome (success, or the error text for any failure) in a slot the handler reads, and map any failure to `ThreadsRead::Unavailable(reason)`.
++
++Integrity mapping. `Scope::resolve` returns `InstructionError`, whose `Store(StoreError)` variant carries integrity failures. The handler maps every `InstructionError` to `bad_request`, so an integrity failure during scope resolution exits 1 under `--live`, while the daemon-free roster maps the same error to exit 6 (`inspect::fail`). Spec §2.1 and Unchanged behavior keep exit 6 for integrity failures that leave nothing to show. Low reach (needs a corrupt record on the resolve path) and a one-line fix (route `InstructionError::Store(e)` through `CommandError::from_store`).
++
++Smaller notes: `herdr: Option<...>` exists only so tests can model "no herdr client"; production always passes `Some`, and an absent Herdr server surfaces as a snapshot error instead, which the spec accepts. The threads slots are read after the snapshot, so the two are not from the same instant; harmless for an inspection view. The CLI sends `scope` as an array of strings, and the handler silently drops non-string entries, which only a malformed client could send.
++
++## Findings
++
++- src/daemon/roster_live.rs:64-82: threads availability is taken only from `seat_view_error`, which is never set when the threads service is unreachable (Disconnected/transport/discovery errors leave it unchanged), so `roster --live` reports `live_unavailable: null` with empty or stale `seat_refusals`/`seat_lost` while threads is down, contrary to spec §2.2 ("threads seat view not running ... live_unavailable.threads names the reason"; "never silently empty").
++- src/daemon/roster_live.rs:50-51: `Scope::resolve` errors, including `InstructionError::Store(StoreError::Integrity)`, all map to `bad_request` (exit 1), while the daemon-free roster exits 6 for the same integrity failure (spec §2.1, Unchanged behavior "Exit 6 for an integrity failure").
++
++## Verdict
++not ready (roster --live reports threads as fully read when the threads service is unreachable, violating spec §2.2 degraded-state rule)
++
++## Must fix before landing
++- src/daemon/roster_live.rs:64-82 with src/daemon/compose.rs LazyMap::inspect and src/observe/step.rs observe_seats: when the threads seat read fails for any reason other than Rejected/Unsupported (service down, transport, discovery), roster.live must return seat_refusals/seat_lost null and live_unavailable.threads naming the reason, instead of empty or stale values with live_unavailable null; add a unit test that models a Disconnected seat read.
++
++## Untested scope
++- No test covers roster.live while the threads service is unreachable (Disconnected); the only threads-degraded test sets seat_view_error directly.
++- No test covers an integrity StoreError during scope resolution in roster.live and its exit code.
++- roster.live with a non-empty scope (seat or teamspace) or with all:true is not exercised at the handler level; only the empty scope and two rejected scopes are.
++- tests/inspect_live.rs asserts live_unavailable null without establishing that a threads service is running in the private rig, so it may encode the threads-down defect rather than detect it.
++
++## Deferred OK
++- src/daemon/roster_live.rs:50-51: map InstructionError::Store through CommandError::from_store so an integrity failure during scope resolution exits 6 under --live as it does daemon-free.
++- src/daemon/roster_live.rs:36-41: non-string scope words are dropped silently rather than rejected as a bad request; only a malformed client can send them.

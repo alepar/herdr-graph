@@ -1,0 +1,95 @@
+diff --git a/src/daemon/doctor.rs b/src/daemon/doctor.rs
+index 883e6bd..7222eff 100644
+--- a/src/daemon/doctor.rs
++++ b/src/daemon/doctor.rs
+@@ -248,6 +248,32 @@ pub fn harness_gate_checks(claude: Option<&Path>, codex: Option<&Path>) -> Vec<C
+     out
+ }
+ 
++/// harness_hook: per harness with an owned SessionStart hook, whether the installed command is the current one
++/// (an older one runs but cannot record the loaded session), and for Codex that a changed hook needs a fresh
++/// trust. Graph cannot read Codex trust and never writes it.
++pub fn harness_hook_checks(claude: Option<&Path>, codex: Option<&Path>) -> Vec<Check> {
++    use crate::bootstrap::setup_claude::{CLAUDE, CODEX, owned_hook_current};
++    let mut out = Vec::new();
++    for (name, target, dir) in [("claude", &CLAUDE, claude), ("codex", &CODEX, codex)] {
++        let Some(dir) = dir else { continue };
++        let label = format!("harness_hook {name}");
++        match owned_hook_current(target, dir) {
++            Ok(None) => {}
++            Err(e) => out.push(warn_check(&label, e.to_string())),
++            Ok(Some(false)) => out.push(warn_check(
++                &label,
++                format!("outdated herdr-graph hook; run herdr-graph setup {name}"),
++            )),
++            Ok(Some(true)) if name == "codex" => out.push(warn_check(
++                &label,
++                "Codex runs a changed hook only after you trust it in /hooks; graph cannot check Codex trust",
++            )),
++            Ok(Some(true)) => out.push(check(&label, true, "current")),
++        }
++    }
++    out
++}
++
+ /// instruction_files (spec §2.2a, §4.1): every part of every live seat's render that the renderer replaces
+ /// with the placeholder, found through the renderer's own part list.
+ pub(crate) fn instruction_files_check(tree: &dyn TreeRead) -> Vec<Check> {
+@@ -470,6 +496,7 @@ pub fn doctor(env: &Env) -> DoctorReport {
+     let claude = setup_claude::config_dir(env.claude_config_dir.as_deref(), env.home.as_deref());
+     let codex = setup_claude::codex_dir(env.codex_home.as_deref(), env.home.as_deref());
+     checks.extend(harness_gate_checks(claude.as_deref(), codex.as_deref()));
++    checks.extend(harness_hook_checks(claude.as_deref(), codex.as_deref()));
+     let Some((root, source)) = crate::config::locate_instance(env, &plugin_config_dir_via_herdr)
+     else {
+         checks.push(check(
+@@ -1040,6 +1067,49 @@ mod tests {
+         assert!(checks.iter().all(|k| k.ok && !k.warn), "{checks:?}");
+     }
+ 
++    #[test]
++    fn doctor_flags_outdated_hook() {
++        use crate::bootstrap::setup_claude::{CLAUDE, CODEX, install_for};
++        let (_t, c, x) = harness_dirs();
++        let bin = Path::new("/opt/herdr-graph");
++        assert!(harness_hook_checks(Some(&c), Some(&x)).is_empty());
++        install_for(&CLAUDE, &c, bin).unwrap();
++        install_for(&CODEX, &x, bin).unwrap();
++        let checks = harness_hook_checks(Some(&c), Some(&x));
++        assert_eq!(checks[0].name, "harness_hook claude");
++        assert!(checks[0].ok && !checks[0].warn, "{checks:?}");
++        assert!(
++            checks[1].warn && checks[1].detail.contains("/hooks"),
++            "{checks:?}"
++        );
++        // the hooks as an earlier setup wrote them
++        let old = |dir: &Path, file: &str, cmd: &str| {
++            let doc = json!({"hooks": {"SessionStart": [
++                {"matcher": "", "hooks": [{"type": "command", "command": cmd}]}]}});
++            std::fs::write(dir.join(file), serde_json::to_vec(&doc).unwrap()).unwrap();
++        };
++        old(
++            &c,
++            "settings.json",
++            "/opt/herdr-graph seat --hook-prompt; /opt/herdr-graph session-report --from-hook claude # herdr-graph-owned",
++        );
++        old(
++            &x,
++            "hooks.json",
++            "/opt/herdr-graph seat --hook-prompt --codex # herdr-graph-owned",
++        );
++        let checks = harness_hook_checks(Some(&c), Some(&x));
++        assert_eq!(checks.len(), 2);
++        assert_eq!(
++            checks[0].detail,
++            "outdated herdr-graph hook; run herdr-graph setup claude"
++        );
++        assert_eq!(
++            checks[1].detail,
++            "outdated herdr-graph hook; run herdr-graph setup codex"
++        );
++    }
++
+     #[test]
+     fn harness_gate_warns_when_gate_missing() {
+         use crate::bootstrap::setup_claude::{CLAUDE, CODEX, install_for};

@@ -1,0 +1,25 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-2.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-2.md
+new file mode 100644
+index 0000000..78285ff
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-2.md
+@@ -0,0 +1,19 @@
++requirements:
++R1 → hg-blw.1, hg-blw.7
++R2 → hg-blw.6
++R3 → hg-blw.6
++R4 → hg-blw.2, hg-blw.5
++R5 → hg-blw.2
++R6 → hg-blw.4
++R7 → hg-blw.5
++R8 → hg-blw.8
++R9 → hg-blw.9
++R10 → hg-blw.3, hg-blw.7
++R11 → hg-blw.7, hg-blw.11
++R12 → hg-blw.11
++R13 → hg-blw.10
++R14 → hg-blw.11, hg-blw.4
++R-new: harness files listed are the ones that seat's harness would load, from its own environment and per-clone cwd → hg-blw.2
++R-new: instructions stack is registered and covered by every_spec_command_parses → (unmapped)
++
++Findings (summary of reviewer 2, round 2): GAP B2/R5 user-level paths from the inspector env, not the agent's; GAP B2/R5 no per-harness field; GAP B2/R5 per-clone cwd; UNOWNED-SEAM stack clones[].loaded slot; UNOWNED-SEAM instructions stack registration; UNOWNED-SEAM docs deps on view flags; GAP R14 both views asserted; GAP B3 latest change per teamspace/global; GAP B3 non-committed activity; GAP R8/R11 ops JSON head source. NEEDS-SPEC: hg-blw.2 (whether launch env/cwd is recorded). No ORPHAN.
