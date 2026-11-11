@@ -1,0 +1,36 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-2.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-2.md
+new file mode 100644
+index 0000000..3a084ca
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-1-review-2.md
+@@ -0,0 +1,30 @@
++requirements:
++R1 → hg-blw.1, hg-blw.7
++R2 → hg-blw.6, hg-blw.1
++R3 → hg-blw.6
++R4 → hg-blw.2, hg-blw.9
++R5 → hg-blw.2
++R6 → hg-blw.4, hg-blw.1, hg-blw.2
++R7 → hg-blw.5, hg-blw.7
++R8 → hg-blw.8
++R9 → hg-blw.9
++R10 → hg-blw.3, hg-blw.7
++R11 → hg-blw.1, hg-blw.2, hg-blw.3, hg-blw.5, hg-blw.6, hg-blw.7, hg-blw.8
++R-new: users and agents can find the new commands (help text, README or skill docs) → (unmapped)
++R-new: one end-to-end production path: a real hook injection writes the loaded record, roster/stack show current, a committed part edit makes them stale, and log shows that edit → (unmapped)
++R-new: no inspection view creates a Git commit or changes the work tree, as a tested property → (unmapped)
++
++Findings (summary of reviewer 2, round 1):
++
++F1 · GAP · B2/B7/R5 — harness file set too narrow: ~/.claude/CLAUDE.md or $CLAUDE_CONFIG_DIR/CLAUDE.md, ./.claude/CLAUDE.md, CLAUDE.local.md, .claude/rules/, $CODEX_HOME/AGENTS.md; @-imports cannot be followed under B7 and the output should say so. Fix: extend hg-blw.2 with those locations and an origin field.
++F2 · GAP · R4/R6 — last-changing-commit source (HistoryWalker, hg-blw.5) is not upstream of hg-blw.2 or hg-blw.4. Fix: add hg-blw.5 to their deps, or leave changed null and let hg-blw.9 fill it; name hg-blw.4's last-touch source.
++F3 · GAP · R11 — only hg-blw.4 asserts no Git write. Fix: integration sweep runs every view and asserts HEAD, index and work tree unchanged.
++F4 · GAP · end-to-end thin path — no task runs hook → record → roster/stack current → committed edit → stale → log. Fix: Seam integration leaf depending on hg-blw.4, .5, .9.
++F5 · UNOWNED-SEAM · Inventory full sessions[] + per-session transcript resolution + tombstones (hg-blw.7 → hg-blw.3); timestamps not named in hg-blw.3 acceptance. Fix: extend Inventory contract; add timestamps to hg-blw.3.
++F6 · GAP · R1 — manager and reload_required missing from hg-blw.1 acceptance. Fix: add them.
++F7 · UNOWNED-SEAM · Roster struct fields filled by hg-blw.4/.6/.9 collide in parallel. Fix: hg-blw.1 reserves instructions, last_change and live fields up front.
++F8 · GAP · B3 "global" — log global vs omitted scope not stated or tested. Fix: hg-blw.5 acceptance states and tests both.
++F9 · GAP · discoverability — no README/help/skill docs task. Fix: a docs leaf.
++F10 · UNOWNED-SEAM · roster.live RPC (hg-blw.6) and extended ops.list request fields (hg-blw.8) have no owner. Fix: owns: lines on hg-blw.6 and hg-blw.8.
++
++No ORPHAN findings.

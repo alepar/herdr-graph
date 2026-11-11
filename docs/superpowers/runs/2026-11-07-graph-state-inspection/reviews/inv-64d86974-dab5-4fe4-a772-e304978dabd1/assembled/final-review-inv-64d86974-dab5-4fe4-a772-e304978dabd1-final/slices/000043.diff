@@ -1,0 +1,41 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-6.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-6.md
+new file mode 100644
+index 0000000..fe96657
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-6.md
+@@ -0,0 +1,35 @@
++# Final review: cluster 6 (src-root), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD 2dfa656c7f98715fe66ca53c253de19f369a857d with a clean status. Review source bound to the ledger before writing this file (bind-review-source exit 0).
++
++## Scope of this cluster
++
++The cluster holds one file, `src/lib.rs`, and one slice (`slices/000058.diff`). The whole change is a single added line, `pub mod inspect;`, placed in alphabetical order between `pub mod herdr;` and `pub mod ipc;`, matching the file's existing ordering and visibility convention (every crate module is `pub mod`).
++
++## Analysis
++
++- The declaration resolves to `src/inspect/mod.rs` at head, which declares `harness_files`, `inventory`, `loaded`, `log`, `output`, `roster`, `scope`, `sessions`, `stack` as `pub mod` and `fixture` as `#[cfg(test)] pub(crate) mod`. The test-only fixture therefore does not leak into the public library surface or the release build.
++- `src/main.rs` at head does not redeclare `mod inspect`, so there is no duplicate module tree between the bin and lib targets; the CLI handlers (`src/cli/instructions.rs`, `log.rs`, `ops.rs`, `roster.rs`, `seat.rs`, `sessions.rs`) reach it as `crate::inspect::...` from inside the library crate.
++- The pre-existing `#[cfg(all(test, feature = "test-support"))] extern crate self as herdr_graph;` alias is untouched; nothing in this cluster changes feature gating.
++- No Git writes, daemon calls or I/O are introduced in this file; the "no new Git writes" epic constraint is unaffected by this cluster.
++
++## Requirement baseline trace
++
++- The design doc at head has a `## Requirement baseline` with rows B1-B8 and human scope change S1. This cluster's line is the module-tree hook that makes every inspection view reachable from the production CLI, which is necessary for all rows, but none of the rows' behavior lives in `src/lib.rs`. The delivery path of each row (roster/active seats for B1 and B8 with S1, instruction stack and loaded files for B2 and B7, log for B3 and B6, sessions for B4, staleness rendering for B5) leaves this cluster through `src/cli/*` and `src/inspect/*`; tracing those end to end is the inspect-module, CLI and seam reviewers' job.
++- Within this cluster, nothing blocks or weakens any baseline row.
++
++## Findings
++
++- none
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- none
++
++## Deferred OK
++- none

@@ -1,0 +1,44 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-4.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-4.md
+new file mode 100644
+index 0000000..93e92fb
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-4.md
+@@ -0,0 +1,38 @@
++# Final review: cluster 4 (herdr), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD 2dfa656c7f98715fe66ca53c253de19f369a857d with a clean status before the review; no caller files were read through the working tree beyond git objects at head.
++
++## Scope reviewed
++
++- Cluster inputs: `slices/000046.diff` (`src/herdr/fake.rs`, +9 lines), plus `digest.md` for context.
++- Spec: `bd show hg-blw --json` and `docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md` at head (Requirement baseline B1 to B8, human scope change S1; §2.2 `roster --live`).
++- Opened beyond the diff to check the one named risk (how the counter is consumed): `src/daemon/roster_live.rs` at head.
++
++## Change summary
++
++`FakeHerdr` gains a `snapshots: AtomicUsize` field, initialised to 0 in `FakeHerdr::new`, incremented with `fetch_add(1, SeqCst)` as the first statement of `HerdrApi::snapshot`, and exposed through `pub fn snapshot_calls(&self) -> usize`. The doc comment says faulted calls are counted, and they are: the increment precedes the fault lookup, so every early return (`Unavailable`, `Timeout`/`LostResponse`/`Hang`, `Rejected`, and the passthrough faults) is counted.
++
++## Analysis
++
++- Correctness: the counter is per-instance, counts only trait-level `snapshot()` calls, and nothing inside the fake calls `snapshot()` internally, so scripted setup (for example `create_workspace` in the `roster_live` rig) leaves it at 0. The count is therefore an exact measure of how many snapshots the code under test requested.
++- Design choice: a separate atomic rather than a `FakeCall::Snapshot` variant keeps `calls()` limited to mutating calls, so the many existing assertions over `calls()` sequences are unaffected. That is the right trade for a read-only call. Using an atomic outside the state mutex is harmless; `SeqCst` is stronger than needed but costs nothing in a test fake.
++- Consumers: `src/daemon/roster_live.rs` tests assert `snapshot_calls() == 1` for a successful call and for an `Unavailable`-faulted call, and `== 0` when the daemon has no Herdr client. These directly pin the spec §2.2 rule "The daemon takes one Herdr snapshot" and the "no herdr client" degraded path.
++- Production exposure: `src/herdr/mod.rs` declares `pub mod fake` unconditionally, so the fake (and now this accessor) compiles into the library. That predates this branch and the addition does not widen it in any way that matters.
++
++## Requirement baseline trace
++
++- The root spec has a Requirement baseline section. This cluster contains only test-support code; it delivers no baseline row by itself and removes none.
++- B8 (`roster --live` is in scope now) and S1 (`--unmanaged` enumeration): the fake's counter is what lets the daemon tests prove the "exactly one snapshot" property of the production handler `roster.live`. Tracing B8 from the CLI entry point through the daemon registration to `roster_live::handle` leaves this cluster and is the seam and daemon reviewers' to trace; this review makes no delivery claim either way for B8.
++- B1 to B7 do not touch `src/herdr/`.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- none
++
++## Deferred OK
++- none

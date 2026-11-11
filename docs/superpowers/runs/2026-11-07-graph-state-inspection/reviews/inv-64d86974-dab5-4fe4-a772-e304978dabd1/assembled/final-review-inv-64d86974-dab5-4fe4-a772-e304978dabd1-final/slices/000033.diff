@@ -1,0 +1,74 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-11.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-11.md
+new file mode 100644
+index 0000000..a22a800
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-11.md
+@@ -0,0 +1,68 @@
++# Final review, cluster 11 (docs-1), invocation inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify`). Caller checkout was on head with a clean status when the review started.
++
++Cluster files:
++- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md (slice 000001)
++- docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back-keys.txt (slice 000002)
++
++## Scope of this review
++
++The cluster is the approved design itself: the Goal and Requirement baseline sections (B1-B8, S1), the 2026-11-08 redesign cycle 1 (loaded record keyed by native session id, hook-only writer), the roast round 2 punch list, Key abstractions and Unchanged behavior. The keys file is a plain list of roast round 1 finding anchors. It quotes the pre-redesign wording it refers to, and its anchors match the text the redesign replaced.
++
++The design was last changed in c7eb809 (2026-11-08). It has not been edited since the previous final review (inv-4b650ab2), although hg-blw.2, hg-blw.6 and hg-blw.12 have landed since then. So this review checks the text against itself and against what the reviewed head actually ships.
++
++## Baseline rows
++
++- The baseline quotes match their sources. B5 to B8 quote §4 decisions 1 to 4 word for word, and S1 quotes the user decision relayed in herdr-threads message mnSGMfHi7SMe and states that it affects B8.
++- This cluster delivers no behavior, so each row's production path belongs to the code clusters and the seam reviewer. A spot check at head finds that the spec's typed fields and texts exist in src: `--stdin-payload`, `.graph-local/loaded`, `live data unavailable`, `binding from earlier herdr server`, `unmanaged`, `harness_files_note`, `imports_followed`, `older than scan`, `path last touched`, `env: inspector`, `ClaudeOnlyWithoutClaudeMd`, `tombstones` and the sessions `showing N of total` footer. I did not trace any row end to end here. I am not calling any row undelivered.
++
++## Spec text against the shipped hook chain
++
++§2.3 prescribes this Claude hook command: `p=$(cat); printf '%s' "$p" | <bin> seat --hook-prompt --stdin-payload; printf '%s' "$p" | <bin> session-report --from-hook claude`. The shipped code follows it exactly (src/bootstrap/setup_claude.rs:208-213). The shell `cat` has no size or time bound, and it runs before the binary prints anything.
++
++Three statements disagree with that command:
++- the spec's own Unchanged behavior: "The hook still never fails or blocks its session";
++- hg-blw.12 acceptance: "stdin read is bounded: non-TTY only, size- and time-bounded; a held-open stdin still prints and exits within the budget";
++- the bounded read in src/cli/seat.rs:201, which only protects the binary when it is run on its own.
++
++tests/inspect_loaded.rs:485 `held_open_stdin_still_prints_and_exits` runs `seat --hook-prompt --stdin-payload` directly. It never runs the installed `hook_command`. So the promise is tested on a path production never takes. In the installed chain, a held-open stdin blocks the `/seat` prompt until Claude's 10 s hook timeout kills it.
++
++This is a regression. Before the redesign, the prompt printed before anything read stdin (§2.3 cites setup_claude.rs:168-172 at v0.3.0). The previous final review raised this exact contradiction as a Must fix. The design was not reconciled.
++
++Claude Code normally writes the payload and closes stdin, so in practice the risk is low. But the spec contradicts itself and its bead, and the test that claims the property does not cover the production path.
++
++## Spec shapes against the landed code
++
++The previous review asked for the spec to be synced "when hg-blw.12 lands". It has landed, and the sync was not done:
++- The §2.3 record shape has no `stdin_payload`, but the code writes it (src/inspect/loaded.rs:60), and hg-blw.12 acceptance requires `stdin_payload false` plus the notice "hook predates --stdin-payload; rerun setup".
++- The §2.2 and §2.3 `instructions` object has no `note` slot. The code carries `note` (src/inspect/output.rs:127-129) for both the flagless-hook notice and "codex session id form differs". §2.1 requires every text notice to have a named, typed field "in the shapes below".
++- §2.3 says hg-blw.12 "records which form a real or documented Codex payload uses". The design records no outcome. The code instead adds a form-differs heuristic that only sets the note, while the status stays `unknown` (src/inspect/loaded.rs:226-236).
++- The §2.2 JSON sample does not show where the live overlay goes: no `threads_live: {seat_refusals, seat_lost}` envelope field (src/inspect/roster.rs:47-49,153-154), no per-clone `live` shape with `binding_from_earlier_server` (roster.rs:132), and no `unmanaged`. §5 gives the `unmanaged` shape but not its position in the document.
++- The §2.2 text sample still shows `retired(reversible)`, but no field carries reversibility. That contradicts the §2.1 typed-field rule, and the implementation cannot render it (hg-blw.1 deferred minor).
++- In Key abstractions, LoadedInstructions says `note` is a single slot, and harness_files says `note` is "null or one of `shadowed` and `claude-only-without-claude-md`". Neither says which note wins when both apply. The code picks `shadowed` (src/inspect/harness_files.rs:46).
++
++hg-blw.10 (README and CLI help) is still open. Its description takes much of its text from the design, so this drift will spread into user docs unless the design is fixed first.
++
++## Findings
++
++- §2.3 prescribes an unbounded shell read (`p=$(cat)`) before the hook binary prints. This contradicts the design's own Unchanged behavior ("never fails or blocks its session") and hg-blw.12's held-open-stdin acceptance. The shipped hook_command (src/bootstrap/setup_claude.rs:208-213) copies it, and the only held-open test (tests/inspect_loaded.rs:485) bypasses the installed chain. This was raised by the previous final review and is still unreconciled.
++- The design's JSON shapes trail the landed code: the §2.3 record lacks `stdin_payload`, the `instructions` object lacks `note`, the §2.2 sample omits the `threads_live`, per-clone `live` (`binding_from_earlier_server`) and `unmanaged` placement, and the promised Codex payload-form record is absent.
++- The §2.2 text sample `retired(reversible)` has no backing JSON field, which contradicts §2.1 (carried over from the previous review).
++- The harness_files `note` precedence when both `shadowed` and `claude-only-without-claude-md` apply is unspecified. The code picks `shadowed`.
++
++## Verdict
++not ready (spec §2.3 prescribes an unbounded `p=$(cat)` hook read that contradicts its own never-blocks guarantee and hg-blw.12; unreconciled since the previous final review)
++
++## Must fix before landing
++- Reconcile design §2.3 with Unchanged behavior and hg-blw.12: either prescribe a bounded payload read in the installed Claude hook command (size- and time-bounded, so a held-open stdin still lets `/seat` print within the budget), or explicitly drop the held-open guarantee with its rationale. The production hook_command (src/bootstrap/setup_claude.rs:208-213) and a test that runs the installed command with held-open stdin belong to the code cluster and seam reviewer.
++
++## Untested scope
++- No test runs the installed Claude `hook_command` chain (`p=$(cat); …`) with a held-open stdin; tests/inspect_loaded.rs:485 exercises only the bare binary.
++
++## Deferred OK
++- Sync the §2.3 record shape with `stdin_payload` and the §2.2/§2.3 `instructions` object with `note` (flagless-hook and codex-form notices), before hg-blw.10 copies the design into the README.
++- Add the `threads_live {seat_refusals, seat_lost}`, per-clone `live` (`binding_from_earlier_server`) and `unmanaged` placement to the §2.2 JSON sample.
++- Record the Codex payload session-id form outcome that §2.3 says hg-blw.12 would record, or reword §2.3 to describe the shipped form-differs note heuristic.
++- Remove `retired(reversible)` from the §2.2 text sample, or add a typed field for reversibility.
++- State the harness_files `note` precedence (`shadowed` wins) in §2.3.

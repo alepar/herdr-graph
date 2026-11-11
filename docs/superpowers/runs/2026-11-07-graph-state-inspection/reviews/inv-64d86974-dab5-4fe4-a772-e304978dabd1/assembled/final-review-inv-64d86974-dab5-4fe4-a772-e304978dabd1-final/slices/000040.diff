@@ -1,0 +1,66 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-3.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-3.md
+new file mode 100644
+index 0000000..49da9f6
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-3.md
+@@ -0,0 +1,60 @@
++# Final review, cluster 3 (daemon), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD 2dfa656, clean, at the start of the review. The review source binding was recorded in the ledger via `bind-review-source` (exit 0) before this file was written.
++
++## Scope and method
++
++Cluster files: `src/daemon/compose.rs` (registration of `roster.live` in `compose_with`), `src/daemon/doctor.rs` (new `harness_hook_checks` and its wiring into `doctor`), `src/daemon/mod.rs` (module export), `src/daemon/roster_live.rs` (new handler plus unit tests). Read from slices 000042-000045 and `git show 2dfa656:<path>`. Spec: `bd show hg-blw --json` and the design doc `docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md` at head (Requirement baseline, §2.1, §2.2, §2.3 Honest limits, §2.6, Key abstractions, Unchanged behavior). Opened outside the cluster only to trace named risks: `src/daemon/compose.rs` `LazyMap::inspect` and `Endpoint::locate`, `src/observe/step.rs` `observe_seats`, `src/inspect/roster.rs` `overlay` and the 6eb6cec..2dfa656 change to `build_inner`, `src/inspect/scope.rs` `Scope::resolve`, `src/inspect/mod.rs` `fail`, `src/bootstrap/setup_claude.rs` `owned_hook_current`. Compared against the previous invocation's cluster-3 review (head 6eb6cec): between 6eb6cec and 2dfa656 the only changes in or around this cluster are `doctor.rs` (+70) and `src/inspect/roster.rs` (loaded-record wiring); `roster_live.rs` and `LazyMap::inspect` are byte-identical. No tests were run: the review is read-only and a fresh review worktree would need a full rebuild in hg-build.
++
++## Requirement baseline trace
++
++- B8 ("roster --live is in scope now"): production path is `herdr-graph roster --live` -> `cli::roster::live` -> `call_daemon("roster.live", ...)` -> the handler that the production `compose` (via `compose_with`) registers. The handler pins HEAD once inside the daemon, builds the roster with the shared `inspect::roster::build_with_bindings` (no second roster; at this head the roster's `instructions` objects now come from `loaded::clone_view`, read-only), takes exactly one `snapshot()` and reports a failure instead of swallowing it, and adds no commit. The Herdr half is delivered. The threads half of the §2.2 degraded-state contract is still not met when the threads service is unreachable (analysis below). This is a spec requirement under B8 rather than a separate baseline row; B8 itself is delivered, so the issue is a Must fix on spec grounds, not an undelivered row.
++- S1 (`--unmanaged` only enumerates): the handler passes the flag through to `build_with_bindings`/`overlay`; the enumeration shape lives in `src/inspect/roster.rs`, another cluster. Composition is the seam reviewer's to trace.
++- B2/B5 via doctor: §2.3 Honest limits says `doctor` reports an untrusted-after-change Codex hook as a warning it cannot fix. `doctor` -> `harness_hook_checks` delivers that from the production `doctor(env)` entry point (see below).
++- B1, B3, B4, B6, B7: no part of them lives in this cluster.
++
++## Analysis of roster.live
++
++Correct and well placed:
++- Git work (pin, parse, resolve, build) runs in `spawn_blocking`.
++- `live_pane_matches` uses the snapshot's own incarnation in `overlay`, matching the `Incarnation::same_server` rule.
++- Snapshot failure and a missing client both become `live_unavailable.herdr`, every clone `live: null`, `unmanaged: null`; covered by unit tests.
++- Clone scope and unknown names are rejected as `BadRequest`.
++
++Threads degraded state (unchanged from the previous invocation, re-verified at 2dfa656). Spec §2.2: "threads seat view not running: `seat_refusals`/`seat_lost` are null and `live_unavailable.threads` names the reason", and "The overlay is never silently empty". The handler takes availability only from `seat_view_error` (`roster_live.rs:64-82`). That slot is written only in `LazyMap::inspect` (`compose.rs` ~1104-1120): cleared on success, set on `Rejected`/`Unsupported`, and deliberately left unchanged on every other error ("transient transport errors leave it as it was"). `Endpoint::locate` maps a missing or unresolvable threads state dir to `ThreadsError::Disconnected` (`compose.rs` ~743-755), so "threads not running" is exactly the case that never sets the slot. The observer converts the error into an internal `ThreadsRead::Unavailable` (`observe/step.rs` ~620-632) and publishes it nowhere the handler reads. Result: on a fresh daemon with threads down, `roster.live` returns `threads_live: {seat_refusals: {}, seat_lost: []}` and `live_unavailable: null`; with threads going down after earlier good reads, it returns the stale refusals from the last successful read as current. The only test of the threads-degraded branch writes `seat_view_error` directly, so the production producer of that state is untested.
++
++Integrity mapping. `Scope::resolve` returns `InstructionError`, whose `Store` variant carries integrity failures; the handler maps all of them to `bad_request` (exit 1), while the daemon-free roster maps the same error to exit 6 (`inspect::fail`, tested by `fail_maps_integrity_to_6`). Unchanged behavior keeps exit 6 for an integrity failure. Low reach, one-line fix.
++
++Smaller notes: `herdr: Option<...>` exists only so tests can model "no herdr client"; production always passes `Some`. Threads slots are read after the snapshot, so they are not from the same instant; harmless for an inspection view. Non-string scope words are dropped silently.
++
++## Analysis of doctor harness_hook
++
++`harness_hook_checks` is wired into the production `doctor(env)` after `harness_gate_checks`, using the same config-dir resolution. Per harness with an owned SessionStart hook it reports ok/current, a warning naming `herdr-graph setup <name>` for an older hook shape, or (Codex, current shape) a warning that Codex needs a re-trust in `/hooks` and graph cannot check it. `owned_hook_current` keys "current" on the `--stdin-payload` command shape, which matches the §2.3 rewrite, and returns `None` when no owned hook exists, so uninstalled harnesses produce no row. Warnings do not fail the report (`warning_does_not_fail_the_report`). The unit test covers absent, current and both older shapes for both harnesses.
++
++Observations: the Codex warning is unconditional while the hook is current, so a Codex install that was re-trusted long ago warns on every `doctor` run forever. That follows from graph not being able to read trust and matches the spec's "a warning it cannot fix", but it is permanent noise rather than a "changed hook" signal. A malformed settings file yields the same error twice, once from `harness_gate` and once from `harness_hook`. Neither is a spec violation.
++
++## Findings
++
++- src/daemon/roster_live.rs:64-82: threads availability is taken only from `seat_view_error`, which `LazyMap::inspect` never sets for Disconnected/transport/discovery failures (the threads-not-running case), so `roster --live` reports `live_unavailable: null` with empty or stale `seat_refusals`/`seat_lost` while threads is down, contrary to spec §2.2; unchanged since the previous invocation's review.
++- src/daemon/roster_live.rs:51-52: every `Scope::resolve` error, including `InstructionError::Store` integrity failures, maps to `bad_request` (exit 1), while the daemon-free roster exits 6 for the same failure (Unchanged behavior, exit 6).
++- src/daemon/doctor.rs:267-270: the Codex re-trust warning fires on every doctor run whenever the current hook is installed, regardless of whether it changed recently; consistent with the spec's limit but permanent noise.
++
++## Verdict
++not ready (roster --live still reports threads as fully read when the threads service is unreachable, violating spec §2.2 degraded-state rule)
++
++## Must fix before landing
++- src/daemon/roster_live.rs:64-82 with src/daemon/compose.rs LazyMap::inspect: when the threads seat read fails for any reason other than Rejected/Unsupported (service down, Disconnected, transport, discovery), roster.live must return seat_refusals/seat_lost null and live_unavailable.threads naming the reason instead of empty or stale values with live_unavailable null (spec §2.2); record the last read outcome in a slot the handler reads, and add a test that drives a Disconnected seat read rather than writing seat_view_error directly.
++
++## Untested scope
++- No test covers roster.live while the threads service is unreachable (Disconnected); the only threads-degraded test sets seat_view_error by hand.
++- No test covers an integrity StoreError during scope resolution in roster.live and its exit code.
++- roster.live with a non-empty seat or teamspace scope, or with all:true, is not exercised at the handler level.
++- roster.live with a loaded record present (the instructions object now produced by loaded::clone_view inside the daemon) is not exercised at the handler level.
++- harness_hook_checks with an unreadable or malformed settings file (the Err arm) has no test.
++- No cluster tests were run in this review; pass status at 2dfa656 is taken from the ledger's merge check, not measured here.
++
++## Deferred OK
++- src/daemon/roster_live.rs:51-52: route InstructionError::Store through CommandError::from_store so an integrity failure during scope resolution exits 6 under --live as it does daemon-free.
++- src/daemon/roster_live.rs:36-41: non-string scope words are dropped silently rather than rejected; only a malformed client can send them.
++- src/daemon/doctor.rs:267-270: the Codex re-trust warning is permanent once the current hook is installed; consider limiting it to a recently changed hook if graph ever records when setup rewrote it.
++- src/daemon/doctor.rs:262: a malformed settings file is reported twice (harness_gate and harness_hook); cosmetic.

@@ -1,0 +1,62 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-12.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-12.md
+new file mode 100644
+index 0000000..4211a43
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-12.md
+@@ -0,0 +1,56 @@
++# Final review: cluster 12 (docs-2)
++
++Invocation: inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c. Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify <sha>^{commit}`). The source binding was recorded with `bind-review-source` (exit 0). The caller checkout was at head 2dfa656 with a clean status when the review began, and it was not switched or modified.
++
++## Scope of this cluster
++
++Two new files, both run records for the design roast phase. Neither contains code or acceptance criteria:
++
++- `docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1.md` (slice 000004): the super-roast round-1 report on the design at d1eef2a. Verdict Blocking, 16 confirmed findings, plus the rejected and spot-checked items.
++- `docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-08-graph-state-inspection-roast-design-1-step-back.md` (slice 000003): the step-back decision `redesign`. It binds the loaded-instructions record to the native session id, makes the hook the only writer, and splits the other findings into three sweep clusters.
++
++## Accuracy of the records
++
++- Count: the report lists exactly 16 confirmed findings (1 Blocking, 9 Should-fix, 6 Nit). That matches its header line.
++- Evidence spot-checks against d1eef2a, the commit the report reviewed: `src/bootstrap/setup_claude.rs` `hook_command` really does run `seat --hook-prompt; session-report --from-hook claude`, which is the basis of the Blocking finding. `src/store/instruction_source.rs` `pick` really does return `InstructionError::Retired` when only retired objects match, which is the basis of the Scope Nit. The cited evidence is faithful.
++- Internal consistency: the step-back's `dissolves` and `remains` lists together cover all 16 confirmed findings. The three named clusters (json-contract, harness-discovery, single-snapshot-reads) map onto the findings that `remains` lists.
++- `run.md` at head points to both files (the `roast-design` line, plus `redesign-design-1: round 1 … state applied`), so the records are traceable from the run log.
++
++## Were the round-1 outcomes carried into the approved design at head
++
++I checked this so the records do not describe changes the design never received. The design at head (`2026-11-07-graph-state-inspection-design.md`) reflects every one of them:
++
++- The redesign: the record carries `native_session_id`, `InjectionSource` is `Hook | HookCodex` only, the status rule is identity first and then content, with no `at` versus `since` comparison, and the end-to-end test starts from a clone with no occupant and runs the real hook chain. Design lines 240, 255-273, 452, 502-506.
++- The sweeps:
++  - typed JSON for every notice: `scan`, `last_change_scanned`, `tombstones`, `live_unavailable`, `parts`, `error` rows (line 163);
++  - an incarnation-aware `live_pane_matches` and unmanaged detection (lines 198, 478);
++  - Codex discovery bounded at the Git root, with the override and `$CODEX_HOME` (line 299);
++  - undo state read at the pinned HEAD (line 333);
++  - `--by` as an AND filter (lines 342, 523);
++  - a retired-allowed `pick` mode (line 492).
++- The step-back left one option open: a clone with no occupant would show `pending`, or `unknown` with the session id. The design picked `unknown` and still shows `loaded_session`/`loaded_rev`/`loaded_at` (line 272). That is within what the step-back allowed.
++
++## Requirement baseline
++
++The design has a `## Requirement baseline` section (B1–B8). These two files are historical run records and deliver no behaviour, so no baseline row can be delivered or broken by this cluster. Whether B1–B8 are delivered from production entry points is for the code clusters and the seam reviewer to trace. Nothing in this cluster weakens any row: both records push the design toward the stricter behaviour that B2 and B5 need. The B2 and B5 claim is that staleness is reported by session identity rather than inferred from timestamps.
++
++## Observations (non-blocking)
++
++- One item in the round-1 rejected list predates the redesign. Line 150 of the roast report says "`since` rule still guards" for the reused-clone-id case, but that rule no longer exists at head, where identity is the session id. This is correct for a dated record of round 1; no edit is warranted.
++- The step-back's `remains` list is a single long comma-joined line. It reads poorly but is machine-shaped output of the roast tooling. It is not a defect.
++
++## Findings
++
++- none
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- none
++
++## Deferred OK
++- Roast round-1 report line 150 cites the pre-redesign "`since` rule" as a guard; accurate as a dated record of round 1, no edit needed.

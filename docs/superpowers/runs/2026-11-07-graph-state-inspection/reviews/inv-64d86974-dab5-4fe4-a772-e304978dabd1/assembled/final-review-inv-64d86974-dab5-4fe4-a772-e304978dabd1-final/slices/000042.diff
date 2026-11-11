@@ -1,0 +1,77 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-5.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-5.md
+new file mode 100644
+index 0000000..b5d5767
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-5.md
+@@ -0,0 +1,71 @@
++# Final review: cluster 5 (inspect), epic hg-blw
++
++Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d. I verified both with `git rev-parse --verify <sha>^{commit}`. The bind-review-source command exited 0. The caller checkout was at HEAD 2dfa656 with a clean status when I started and when I finished. Nothing was switched or restored.
++
++Inputs: slices 000047-000057 (src/inspect/{fixture,harness_files,inventory,loaded,log,mod,output,roster,scope,sessions,stack}.rs), digest.md, `bd show hg-blw`, and the design doc docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md (Requirement baseline, sections 2.1-2.6). I read these only to check named risks: src/cli/seat.rs (the hook writer), src/bootstrap/instructions.rs `fit_hook`, src/bootstrap/setup_claude.rs (hook command strings), src/observe/sessions.rs, src/observe/matcher.rs, src/herdr/wire.rs and src/herdr/tests.rs (the Codex occupant id form), and the earlier invocation's cluster-5 review.
++
++The earlier review (invocation 4b650ab2, at head 6eb6cec) returned not ready because B2, B5 and B7 were undelivered. Since then hg-blw.2 (stack, harness_files) and hg-blw.12 (loaded record, status rule) have merged. Within this cluster, the only changes since 6eb6cec are new harness_files.rs, loaded.rs and stack.rs, the roster wiring and `StalePart.path_last_touched`.
++
++## Dynamic evidence
++
++- `toolbox run -c hg-build true` now succeeds. I made a review-owned detached worktree at 2dfa656, seeded its target/debug by reflink, and ran the tests there.
++- `cargo test --lib inspect::`: 89 existing tests passed. A review-only probe test failed; it shows the harness-file origin defect below (`PROBE origin=Ancestor env=None`).
++- `cargo test --test inspect_loaded --test inspect_stack --test inspect_roster`: 11, 3 and 3 passed. These include `hook_chain_reaches_current_once_the_occupant_lands`, which drives the real setup hook command through `sh -c` and checks that roster and stack read `current` and then `stale`, with `path_last_touched`.
++- The leak check printed 0 after each run, and no `/tmp/hg-*` dirs remained. I reverted the probe and removed the review worktree and its target.
++
++## Requirement baseline trace
++
++- B1 (which seats are active): delivered. The path is `herdr-graph roster` -> cli/roster.rs -> `inspect::roster::build` -> `Inventory::load`, which shows lifecycle, availability, pane, occupant and threads state per clone. The `--live` overlay (`roster::overlay`) is pure and in this cluster. Its daemon producer (daemon/roster_live.rs) is the seam reviewer's to trace.
++- B2 (which files are loaded into context per clone): delivered.
++  - Producer: the SessionStart hook. setup_claude.rs:211 and :219 emit `seat --hook-prompt [--codex] --stdin-payload`. cli/seat.rs `hook_prompt` calls `loaded::record` after printing. This writer is in the cli/bootstrap clusters; the seam reviewer owns its composition.
++  - Readers: roster.rs:321-331 and stack.rs:151-164 call `loaded::clone_view`. The JSON `instructions.parts` and `omitted` carry the delivered labels. `instructions stack` prints the HEAD manifest, the hook-cap simulation and harness files.
++  - The CLI integration test passes end to end.
++- B3 (latest modifications: global, space, seat): delivered by `log` (log.rs `LogQuery`, `HistoryWalker`) and roster `last_change`. Both are unchanged since the earlier review.
++- B4 (all sessions by space, seat or clone, newest first): delivered by sessions.rs. Unchanged.
++- B5 (staleness is shown, not notified): delivered for Claude.
++  - loaded.rs `status` implements the identity-then-content rule with `fit_hook` over HEAD at cap 9000. Roster and stack show current, stale (with stale_parts) and unknown. No notice is added.
++  - For Codex, a payload id in a different form from the occupant's is an accepted `unknown`. But the spec's required note does not fire in the realistic form difference (Must fix below).
++- B6 (log hides bookkeeping by default): delivered. Unchanged.
++- B7 (harness-native files: presence, size and mtime, never read content): delivered. harness_files.rs uses only `metadata` and `read_dir`, and `content_never_opened` passes on a mode-000 file. One labelling defect affects origin and env, but not presence, size, mtime or the no-read property (Must fix below).
++- B8, as changed by S1 (`roster --live`, unmanaged objects only enumerated): the overlay and `unmanaged_of` in this cluster list only ids and labels. The daemon side is a seam path.
++
++## LoadedInstructions and status rule
++
++- `delivered()` assumes two things: omitted parts are a prefix of the render order, and the cut part is the last part. `fit_hook` (bootstrap/instructions.rs:451-518) guarantees both. It drops parts from the front, and it only cuts when even the last part alone overflows. In that case `omitted` is every earlier label.
++- `cut_body_bytes` ends on a `\n` boundary, so `body.get(..n)` never falls back to the whole body.
++- The status comparison matches by label. It treats a digest or delivery-mode change as modified, and handles added and removed parts as the spec says. Omitted parts are never compared.
++- Read failures, corrupt JSON and other schemas all map to `unknown`. Write failures are swallowed.
++- `clone_view` walks history only when a clone is stale. A walk error only drops the commit column.
++
++## Stack view
++
++- Every field in the stack JSON is present: `harness_files_note`, `imports_followed: false`, `hook {cap, kept, omitted, cut}`, and a per-clone `instructions` object that is the same as the roster's.
++- A failed render becomes the seat's `error` row, and its clones read `error`.
++- `manifest()` propagates a `last_touches` failure as a whole-command error. The roster swallows the same failure. The two are inconsistent but harmless, because the walker is lenient on malformed records.
++
++## Harness files
++
++- Discovery follows the spec table. Codex is bounded by the Git root, the override shadows `AGENTS.md`, and the user files are `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. Claude walks every ancestor, with `.claude/rules/**/*.md` and the `AGENTS.md` fallback gated on no `CLAUDE.md`/`CLAUDE.local.md` at or above the cwd.
++- The merge keeps the first insertion's origin and env. The Claude ancestor walk runs before the user-level add, and that ordering causes the defect below.
++
++## Verdict
++not ready (user-level ~/.claude/CLAUDE.md mislabelled as ancestor without env: inspector; Codex "session id form differs" note cannot fire for Herdr's rollout-path form)
++
++## Must fix before landing
++- src/inspect/harness_files.rs:217-248 (spec 2.3, harness_files `origin` and `env: inspector`): when the cwd is under $HOME and CLAUDE_CONFIG_DIR is unset (the default setup), the ancestor walk inserts $HOME/.claude/CLAUDE.md first with origin `ancestor` and env None. The user-level add then hits the existing entry, so the user file is reported as `origin: ancestor` without `env: inspector`. A review probe test (cwd home/proj, user.claude = home/.claude) printed `origin=Ancestor env=None`. Fix: run the user-level adds before the ancestor walk, or let a user-level add override origin and env on an existing entry.
++- src/inspect/loaded.rs:229-236 (spec 2.3, Codex `note: "codex session id form differs"`): the occupant's Codex id is already a file stem (observe/sessions.rs:38-45 stems a Herdr `AgentSession::Path`; the herdr wire test uses a rollout `.jsonl` path). A Codex rollout stem is `rollout-<timestamp>-<uuid>`, while the SessionStart payload `session_id` is the bare uuid. `stem(loaded) == stem(occupant)` therefore never holds for this form difference: the clone reads `unknown` with no note, which is the silent degraded state that spec 2.1 forbids. The spec also asks hg-blw.12 to record which form a real or documented payload uses, and nothing in this cluster records it. Fix: detect the form difference (for example, the occupant stem ends with `-<payload id>`) for the note only, without treating the ids as a match, and add a test with a rollout-path occupant.
++
++## Untested scope
++- No test uses a Codex occupant whose native id came from a Herdr rollout path together with a uuid payload id. `codex_form_differs_note` only covers a full path against the bare stem, which production never produces.
++- No test runs harness-file discovery with a cwd under the user's home, which is the default layout and the one that triggers the origin and env collision.
++- `instructions stack` has no test where `HistoryWalker::last_touches` fails, which ends the whole command rather than dropping the `path last touched` column.
++- Roster and stack instruction status for retired seats and clones under `--all` (render against an archived seat) is not exercised.
++- Roster and log behavior when a historical commit's tree holds an unparseable record still has no test (carried over from the earlier review).
++- Roster `last_change` cost near the 5000-commit cap with many seats has no measurement (carried over).
++
++## Deferred OK
++- Roster text (roster.rs `instructions_text`) shows the status and a truncated flag but not the spec 2.2 "count of parts loaded"; the JSON `parts` array carries it.
++- Stack text lists the loaded record's omitted labels but not its delivered part labels for a stale or unknown clone; the JSON `instructions.parts` carries them.
++- stack.rs `manifest()` fails the whole command on a `last_touches` error, while roster `clone_view` swallows the same failure; this is inconsistent but rare.
++- `loaded::clone_view` builds a fresh HistoryWalker per stale clone; that cost is acceptable at current instance sizes.
++- The earlier deferred minors for this cluster (dangling-parent check scope, swallowed manager error, noisy error rows for retired seats, brittle source-scan test, log `paths_at` cost) still apply unchanged.

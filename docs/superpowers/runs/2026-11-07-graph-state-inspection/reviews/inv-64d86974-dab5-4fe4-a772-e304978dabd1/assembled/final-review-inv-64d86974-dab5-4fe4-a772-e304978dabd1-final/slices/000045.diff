@@ -1,0 +1,64 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-8.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-8.md
+new file mode 100644
+index 0000000..175007b
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-8.md
+@@ -0,0 +1,58 @@
++# Final review: cluster 8 (store), epic hg-blw
++
++Captured source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d (both verified with `git rev-parse --verify <sha>^{commit}`). The review-source binding was recorded first (`bind-review-source`, exit 0). Caller checkout observed at HEAD 2dfa656, clean status, before and after the review.
++
++Inputs: slices 000060 (src/store/history.rs), 000061 (src/store/instruction_source.rs), 000062 (src/store/mod.rs) from clusters.json `store`; digest.md; `bd show hg-blw --json`; the approved design doc docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md (Requirement baseline, §2.1, §2.3, §2.4, Key abstractions: HistoryWalker, Scope, `instruction_source`).
++
++The three store files are byte-identical to the head 6eb6cec reviewed by the earlier cluster-8 pass (`git diff --stat 6eb6cec..2dfa656 -- src/store` is empty). What has changed since then is the surroundings: the toolbox works again, and `last_touches` now has production callers.
++
++## Verification run
++
++- Ran in a review-owned detached worktree at 2dfa656 (.worktrees/review-c8-b9c53a9d, target reflinked from the caller's warm build): `toolbox run -c hg-build cargo test --lib -- store::history inspect::scope store::instruction_source writer::recovery` gave 22 passed, 0 failed. These were all 8 `store::history` tests and all 14 `inspect::scope` tests, including `pick_live_only_keeps_retired_error`, `pick_retired_allowed_rule` and `instructions_show_still_rejects_retired_name`.
++- `toolbox run -c hg-build cargo test --lib -- writer:: instructions` gave 104 passed, 0 failed. This covers the recovery path that now calls the shared `parse_trailers`.
++- The leak check (`/tmp/hg-*` cwd count) printed 0 afterwards. The review worktree and its target/ were removed.
++
++## What the cluster delivers
++
++- `store::history::HistoryWalker` is the spec's HistoryWalker. It walks newest-first along the first parent from a given `CommitId`, never from HEAD it resolves itself, so the one-pinned-HEAD rule of §2.1 holds. It reads the `Graph-Op`/`Graph-Action` trailers through one `parse_trailers`, the `OperationRecord` and `ActionRecord` from each commit's own tree, and the changed paths against the first parent (every file for a root commit). It applies a scan cap with a `ScanReport {scanned, max_scan, stopped_early}`, a one-pass `last_touches`, and `action_at_head` for the undone column, which is read at the pinned HEAD and not at the commit (§2.4).
++- `stopped_early` semantics match §2.4: true only when the cap was reached with older commits left. A cap equal to the history length is not an early stop, and a callback `Break` is not one either. All three cases are tested.
++- Malformed records match §2.1 and the HistoryWalker Errors paragraph. A trailer whose record does not parse, or is missing from the commit's diff, gives `operation`/`action` = None plus `malformed` naming it, and the walk continues. The init commit comes through as an unattributed `Change`.
++- The trailer parser was extracted, not duplicated: `writer::recovery::trailers_since` now calls `store::history::parse_trailers`. The parser's behavior is identical to the inline loop it replaces: last occurrence wins, and an unparsable value becomes None.
++- Record lookup in an undo commit is correct. The undo writes two action records (the new undo action, plus the original's `undone_by`, `src/undo/compensate.rs:254-276`). `read_record` picks the file whose stem equals the trailer's id, so it gets the undo action and not the original.
++- `instruction_source::pick` gains `PickMode`. Under `LiveOnly` the match arms reduce to the old ones: no matches gives UnknownTarget, retired-only gives Retired, several live gives Ambiguous. `resolve_scope` delegates with `LiveOnly`, so `instructions show` resolution and its `Retired` error are unchanged, as the Unchanged-behavior list requires. Under `RetiredAllowed` the rule is the Scope rule from Key abstractions. One live match wins. Several live matches are ambiguous. With no live match, one retired match resolves and several are ambiguous, and the error lists every id. An id resolves whatever its lifecycle, and `list_teamspaces`/`all_seats` include `archive/`. The error wording is shared through `ambiguous()`.
++
++## Requirement baseline trace
++
++- B3 ("state activity, latest modifications: global, space, seat"): the store half is delivered. The production entry `herdr-graph log` calls `HistoryWalker::new(store, &head, a.max_scan)` at src/cli/log.rs:112. `inspect::log` reads `action_at_head` at src/inspect/log.rs:227, and roster `last_change` walks at src/inspect/roster.rs:554. Scope matching, `--by`, the bookkeeping filter and the text/JSON shape live in LogQuery/roster (other clusters). Whether the full chain delivers the row is for the seam reviewer, not for this cluster.
++- B2 ("which files are loaded … per each"): the store half is delivered. `last_touches` feeds `path last touched` from src/inspect/stack.rs:199 and src/inspect/loaded.rs:296 (`clone_view`). The rest of the row is outside this cluster and goes to the seam reviewer.
++- B1, B4 and the `log --by` resolution need `RetiredAllowed` name-or-id resolution. That is delivered here and used by src/inspect/scope.rs:127 and :279. The view chains go to the seam reviewer.
++- B5–B8 and S1 do not touch this cluster.
++
++## Design notes
++
++- `store::history` imports `crate::undo::candidates::read_action`, so a store module depends on the undo module. It works and stays within the crate. `action_at_head` could read the record through `layout::locate` and `read_toml` directly; this is cosmetic.
++- `last_touches` returns no `ScanReport`. A path missing from the map can mean "never touched" or "touched before the cap", and `path_last_touched: null` cannot tell the two apart. §2.3 does not require the distinction for this column.
++- `Sort::TOPOLOGICAL` in `commits()` is checked against the vendored libgit2 1.9.7 source (libgit2-sys 0.18.8, revwalk.c). `git_revwalk_sorting` sets `walk->limited = 1` for any sort other than NONE, and `prepare_walk` then runs `limit_list` over the whole reachable first-parent chain before it yields the first id. So every `walk`/`last_touches` call costs O(full history) commit parses, whatever the cap. The cost is one commit-header parse per commit, not a tree diff, and output is unaffected. The writer only ever makes single-parent commits, so `Sort::NONE` with `simplify_first_parent` would give the same newest-first order. This compounds with `inspect::loaded::clone_view`, which builds a fresh walker per stale clone; that call pattern belongs to the inspect cluster.
++
++## Concerns
++
++- `HistoryWalker::commits` uses `Sort::TOPOLOGICAL`, which makes libgit2 walk the whole first-parent chain before yielding the first commit. The spec's §2.4 cost model ("one commit read and one tree diff per scanned commit", bounded by `--max-scan`) is therefore not strictly met for long histories. The output is correct.
++- `last_touches` early exit compares the number of distinct paths found with the input length. Duplicate input paths therefore scan to the cap. This affects performance only.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- No HistoryWalker test with a merge commit on `main` to pin first-parent behavior (the writer never makes merge commits, so this is latent).
++- No test of a trailer whose record is absent from the commit's diff; only unparsable records are covered (`malformed_records_flagged`).
++- No test of record selection in an undo-shaped commit that changes two action records (`action_at_head_reads_undone` commits the undo without trailers).
++- No test that pins the walk cost independent of history length (the `Sort::TOPOLOGICAL` full-chain preparation).
++
++## Deferred OK
++- `Sort::TOPOLOGICAL` in `HistoryWalker::commits` makes revwalk preparation O(full history) despite the scan cap (verified in libgit2 1.9.7 revwalk.c); a performance issue only, and `Sort::NONE` with first-parent gives the same order on the writer's linear history.
++- `last_touches` scans to the cap when given duplicate input paths; a performance issue only.
++- `last_touches` cannot tell "never touched" from "beyond the cap" (no ScanReport); §2.3 does not require it for `path last touched`.
++- `store::history` depends on `undo::candidates::read_action` (store importing undo); a cosmetic layering point.

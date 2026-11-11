@@ -1,0 +1,48 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-16.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-16.md
+new file mode 100644
+index 0000000..a613f19
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.cluster-16.md
+@@ -0,0 +1,42 @@
++# Final review — cluster 16 (docs-6), epic hg-blw
++
++## Scope and method
++
++- Cluster: `docs/superpowers/runs/2026-11-07-graph-state-inspection/run.md` (slice 000030.diff, new file, 66 lines).
++- Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d, both verified with `git rev-parse --verify <sha>^{commit}`. Read via `git show 2dfa656c:<path>`; no worktree was needed. Caller checkout at review time: HEAD 2dfa656c, status clean.
++- Spec: `bd show hg-blw --json` points at `2026-11-07-graph-state-inspection-design.md`, which has a `## Requirement baseline` (B1–B8, scope change S1).
++
++## What the file is
++
++run.md is the super-auto run-state log, not product code or user docs. It records flags, phase, approvals (root-acceptance snapshots, review collection, finding-source records), parked items, codeBuckets and a session-switch checkpoint. No baseline row (B1–B8) is delivered through this file. Every row is delivered (or not) by the code clusters, and tracing them is for those reviewers and the seam reviewer. So the cluster is judged on whether the log is accurate and well-formed, against the run-state grammar in super-auto `run-state.md` and the parser in `scripts/report-status`.
++
++## Accuracy checks at head
++
++- Recorded SHAs resolve. sourceTree 1d48d061 and 7820517f are trees. lastGood 131d2fb, and 48dfe5f and 9bf2777 (hg-blw.2), are commits. 0810f37 (the hg-blw.2 merge) is on the branch.
++- The checkpoint says the stale task-hg-blw.12 worktree @534d92d was set aside for a re-cut. That matches the history: 534d92d is not an ancestor of head, and head 2dfa656 merges a fresh task-hg-blw.12 (4409f1b, edf93a2, d1e9ffb).
++- Invocation 1's not-ready verdict, finding-source records and the review-collection settlement agree with each other. The second root-acceptance snapshot records the lost-tmpfs check-evidence gap openly rather than inventing records.
++- Some state is behind head. codeBuckets still lists `escalated: hg-blw.2` and leaves hg-blw.12 out of `completed`. `review:` still cites the stale `inspect_stubs_not_implemented` test, which d1e9ffb removes. The checkpoint still says "Next: hg-blw.12". This is expected while invocation inv-b9c53a9d is unsettled: run-state.md item 6 says codeBuckets is overwritten at each phase 3→4 transition. The file is accurate as a record of invocation 1 and the checkpoint, not of the head tree.
++
++## Format checks
++
++- Line 64 (`- hg-blw.2 escalation · degraded-verdict · "BLOCKED [cause: build/test container unusable] …"`) is a parked-grammar record, but it sits after the `codeBuckets:` block, not under `parked:`. In `report-status`, `block` is still `cb` there, and the `cb` rule needs an indented `key:` line. So the record is silently ignored: its degraded-verdict qualifier is never counted.
++- Line 31 is a blank line inside the `approvals:` list. report-status does not parse approvals, so it has no effect there.
++- The file has absolute home paths, seat ids and message ids. Sibling run logs in the same directory do this too (19–42 `/var/home` occurrences each), so it matches the repo's convention.
++
++## Concerns
++
++- run.md:64: the hg-blw.2 `degraded-verdict` record sits after `codeBuckets:` instead of under `parked:`. `scripts/report-status` reads only `parked:`-block lines as parked records, so it skips this one. The phase 6 status line and the report's Remaining section could leave out the "BLOCKED [cause: build/test container unusable]" qualifier, or never show it resolved. Since hg-blw.2 has merged (0810f37), the coordinator should move it under `parked:` or record its resolution when it next writes run state.
++- run.md:55-63 and :66: codeBuckets (`escalated: hg-blw.2`, `completed` without hg-blw.12, `review:` citing the removed stale test) and the checkpoint's "Next: hg-blw.12" are behind head 2dfa656. This is expected for an unsettled invocation. Anyone reading the file as current state will be misled until the phase 3→4 rewrite.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- No tool run validates run.md at head. `scripts/report-status` was not run against it; the line-64 parse gap is inferred from reading the awk rules in report-status (lines 709-735).
++
++## Deferred OK
++- Move the run.md:64 hg-blw.2 degraded-verdict record under `parked:` (or record its resolution now that 0810f37 merged it) when the coordinator next writes run state.
++- Rewrite codeBuckets and the checkpoint at the invocation inv-b9c53a9d phase 3→4 transition so they reflect hg-blw.2 and hg-blw.12 merged and the stale-test cause removed (d1e9ffb).

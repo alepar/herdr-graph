@@ -1,0 +1,82 @@
+diff --git a/README.md b/README.md
+index ed88b1a..2a4d9f4 100644
+--- a/README.md
++++ b/README.md
+@@ -81,6 +81,68 @@ herdr-graph undo
+ 
+ `herdr-graph ops` lists operations; `cancel`, `reassign`, `check-instruction` and `--supersedes` manage them.
+ 
++## Inspection
++
++Read-only views of graph state. None of them writes to the graph repository.
++
++**Scope grammar.** `roster`, `log` and `sessions` take an optional scope: `global`, `teamspace <t>` or `seat <s>` (name or id; retired targets resolve too). Omitted means the whole instance. `global` means the global paths only: `graph.toml`, `rules/`, `templates/`, `applications/` and `threads-namespace.json`. `clone <c>` is accepted by `sessions` alone; elsewhere it is a usage error.
++
++**Daemon needs.** `roster`, `instructions stack`, `log` and `sessions` read the committed head and the local `.graph-local/` files without a daemon. `roster --live` and `ops` go through the daemon and exit 5 when it is down; they never start one.
++
++**`--json`.** Every view takes it. stdout carries exactly one JSON document with `schema: 1` and the `head` commit it was computed from; each invocation pins HEAD once, so the document describes that one commit. A notice with no JSON field (the `log` pointer to `ops`, a warning about a skipped record) goes to stderr. In text mode the same notices are part of the output. A value that can be absent is `null`; a degraded state has its own field (`live_unavailable`, `scan`, `tombstones`, `imports_followed`, a per-row `error`). One bad object (a seat whose instruction stack does not resolve, a commit whose record does not parse) becomes that row's error state, not a failed command.
++
++### roster
++
++`herdr-graph roster [<scope>] [--all] [--live [--unmanaged]] [--json]` lists every non-retired teamspace, seat and clone with lifecycle, pane, occupant (harness, native session id, transcript path or `unresolved`), threads seat and state, manager, last change and instruction status. `--all` adds retired objects. Each seat's last change comes from one walk of the history and is `null` when none is found within the scan cap (`last_change_scanned: false` means older history was not searched).
++
++`--live` makes one daemon call and adds, per clone, the Herdr agent kind and status and whether the committed pane binding still matches the live snapshot, plus the threads refusals and lost-seat state the daemon holds. `--unmanaged` lists Herdr workspaces, tabs and panes graph does not manage (ids and labels only).
++
++- A partial failure exits 0. When the Herdr snapshot or the threads view is unavailable, the committed roster is still printed, every clone's `live` is `null`, and `live_unavailable` names each reason (`herdr`, `threads`); the text starts with `live data unavailable: <reason>`.
++- A pane binding recorded under an earlier Herdr server is never matched against the new server's ids, even when they coincide. It is reported as `binding from earlier herdr server`.
++- Only a down daemon is an error (exit 5).
++
++### instructions stack
++
++`herdr-graph instructions stack <seat> [--clone <c>] [--json]` works for any seat, not only the caller's. It prints the instruction manifest at HEAD: each part's label, path, bytes, digest and the commit that last touched its path, which parts the 9000-byte hook would keep, and, per clone, the loaded status that `roster` also shows. The commit column is `path last touched`, not "changed": a seat section lives in a whole record file, so it can name an unrelated edit to that record. Staleness is decided by digest and never by that column.
++
++Harness files (`CLAUDE.md`, `AGENTS.md`, their `.local`, override and `.claude/rules` variants, and the user-level files) are listed with path, size and mtime, marked not graph-managed. Their content is never read. They are **present, not necessarily loaded**: a harness setting can switch a file off, Codex caps project docs by size and Claude loads subdirectory files on demand. User-level paths are resolved from the inspecting process's environment, which may differ from the agent's. Because content is not read, `@`-imports are not followed (`imports_followed: false`).
++
++**What the loaded record can and cannot say.** The SessionStart hook writes `.graph-local/loaded/<clone>.json`: the parts it injected into one native session, whole or cut, with the digest of the delivered bytes, and the labels the cap omitted. `seat --instructions` and `seat --json` never write it. The status is:
++
++| Status | Meaning |
++| --- | --- |
++| `current` | the record's native session id equals the clone's occupant and the hook would deliver the same parts now |
++| `stale` | same session, different delivery; `stale_parts` lists each part as `modified`, `added` or `removed` |
++| `unknown` | no record, or it cannot be tied to the occupant (below) |
++| `error` | the seat's stack does not resolve at HEAD; `message` says why |
++
++`truncated` is a flag beside the status, set when the record has omitted or cut parts. The record says what graph injected, not what the model retained.
++
++Limits, all reading `unknown`:
++
++- Until the next injection after an upgrade there is no record.
++- Codex seats read `unknown` when the hook payload carries no `session_id`; the record is still shown (`session not identified`). Graph does not guess one from timestamps. If Codex's id form differs from the occupant's, the note is `codex session id form differs`.
++- A hook installed before `--stdin-payload` records `native_session_id: null` and reads `unknown` with `hook predates --stdin-payload; rerun setup`.
++- Rerun `herdr-graph setup claude` or `setup codex` to rewrite the owner-marked hooks. Codex records trust against the hook's hash, so after the command changes Codex skips the hook until you trust it again in `/hooks`; `setup codex` prints that notice when it changes the command.
++
++### sessions
++
++`herdr-graph sessions [<scope> | clone <c>] [--since <time>] [--limit N] [--json]` lists every native session of the scoped clones, newest `started` first, with the transcript path (`unresolved` when none is recorded, always so for Codex today). Retired clones, seats and teamspaces are included. `--since` takes RFC 3339, `YYYY-MM-DD` or a duration such as `2d`; `--limit` defaults to 50. JSON: `{schema, head, tombstones, total, rows}`, `total` counting sessions after `--since`. A purged clone leaves only a tombstone with no sessions; the count is `tombstones`, and the text footer reports it.
++
++### log
++
++`herdr-graph log [<scope>] [--since <time>] [--limit N] [--by <seat>] [--all] [--max-scan N] [--json]` lists committed history only, newest first: who asked for what and which objects it touched. Operations that never committed (rejected, failed, in flight) are in the journal; use `ops` for them, and `sessions` for sessions. The text ends with a pointer to `ops`.
++
++- The latest modification to global, a teamspace or a seat is `log <scope> --limit 1` (`log global --limit 1`, `log teamspace proj --limit 1`, `log seat foreman --limit 1`).
++- `--by <seat>` is an AND filter with the scope: `log seat a --by b` is the changes to `a` that `b` requested. Commits with no requester (observed, bookkeeping, reconciler) never match it.
++- Bookkeeping commits are hidden unless `--all`.
++- A scoped query scans up to `--max-scan` commits (default 5000). `scan.stopped_early` and the text line `scanned N commits, older history not searched` tell "nothing found" from "cap reached". `--limit` defaults to 30.
++- A row's `undone` state is read from HEAD, not from the commit that created the action.
++
++### ops filters
++
++`herdr-graph ops [--unresolved] [--seat <s>] [--teamspace <t>] [--limit N] [--json]` is the journal listing. `--seat` and `--teamspace` filter on the requester (retired seats included) and combine with AND. It goes through the daemon (exit 5 when down), so it also lists rejected, failed and in-flight operations that `log` cannot show.
++
+ ## Exit codes
+ 
+ | Code | Meaning |
+@@ -166,6 +228,8 @@ podman exec -u root hg-build dnf install -y gcc make pkgconf-pkg-config zlib-ng-
+ toolbox run -c hg-build cargo test
+ ```
+ 
++The inspection views add one tier-3 test, `tests/inspect_live.rs` (`roster --live` against a private Herdr server: `cargo test --features private-herdr --test inspect_live -- --test-threads=1`). `tests/inspect_loaded.rs` (the real hook chain writing the loaded record) runs in tier 1 through `TestRoot`.
++
+ Tier 5 against the installed threads daemon instead of the pinned build: add `HG_TEST_THREADS_BINARY=~/.local/share/herdr-threads/bin/herdr-threads`.
+ 
+ Tiers 3 and 5 build the pinned `third_party/herdr-threads` into `target/threads-bin` (a no-op when current) and fail if the herdr-threads binary, `HG_TEST_THREADS_BINARY` included, does not report the submodule's version; matrix mode requires the override and never runs a nested Cargo.

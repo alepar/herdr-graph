@@ -1,0 +1,136 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.md
+new file mode 100644
+index 0000000..bf7356b
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/reviews/inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c/final-review-inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c.md
+@@ -0,0 +1,130 @@
++# Final seam review, epic hg-blw, integration branch super-auto/graph-state-inspection
++
++Invocation inv-b9c53a9d-0c9e-4100-99aa-2184b61f229c. Source: base bfeb8f3104dd3783d67a46570c9f272e935012b5, head 2dfa656c7f98715fe66ca53c253de19f369a857d. Both were verified with `git rev-parse --verify <sha>^{commit}`. `bind-review-source` exited 0 before this file was written, and the file did not exist before then. The caller checkout was at HEAD 2dfa656 with a clean `git status --short` at the start and at the end of the review. It was not switched, restored or edited.
++
++## Inputs and method
++
++- I read the sixteen cluster reviews of this invocation, clusters.json, `bd show hg-blw --json` and `bd list --parent hg-blw --all`.
++- The epic points at the approved design doc, docs/superpowers/runs/2026-11-07-graph-state-inspection/2026-11-07-graph-state-inspection-design.md. Its `## Requirement baseline` section (B1-B8, human scope change S1) is the acceptance standard I used.
++- The review is static. It reads `git show 2dfa656:<path>` across the cluster seams. I made no worktree and no build. The cluster 5, 8 and 10 reviewers already ran the relevant test tiers at this head in review-owned worktrees, and they reported leak check 0.
++- Seams traced across clusters:
++  - the hook writer chain: bootstrap `hook_command`/`codex_hook_command` → cli `seat --hook-prompt --stdin-payload` → inspect `loaded::record`, built on bootstrap `fit_hook`/`cut_body_bytes`/`part_digest`;
++  - the reader chain: inspect `roster::build_inner` and `stack` → `loaded::clone_view` → store `HistoryWalker::last_touches`;
++  - the occupant id producers: transcripts `report_args` (Claude) and observe `sessions` with model `harness::CODEX` (Codex);
++  - `roster --live`: cli `roster::live` → daemon `roster_live::handle` → inspect `build_with_bindings`/`overlay`, with compose `LazyMap::inspect` as the threads-state producer;
++  - `ops`: cli `ops` → plan `ops.list`;
++  - `doctor`: daemon `harness_hook_checks` → bootstrap `owned_hook_current`.
++
++## Requirement baseline trace
++
++- B1 (which seats are active) is delivered. The path is `herdr-graph roster [<scope>] [--all] [--json]` → `cli::roster::run` (HEAD pinned once) → `inspect::roster::build` → `Inventory::load`. It shows lifecycle, availability, pane, occupant with native id and transcript, threads state, manager and reload_required for each clone. It is daemon-free. `--live` adds the agent kind and status (B8).
++- B2 (which files are loaded into context per seat) is delivered.
++  - Producer: `herdr-graph setup claude|codex` installs commands that carry `--stdin-payload` (setup_claude.rs:208-219). At SessionStart, `cli::seat::hook_prompt` prints first, then calls `loaded::record` with the same `RenderedInstructions` and `HookFit` it printed.
++  - Readers: `roster --json` `clones[].instructions.parts`/`omitted` and `instructions stack <seat>` (manifest, hook-cap simulation, per-clone record) both go through `loaded::clone_view`.
++  - The writer and the reader compute the delivered set with the same `delivered(r, fit_hook(r, HOOK_RENDER_CAP))`. That rules out disagreement about which parts were cut or omitted.
++  - The writer keys the record by the `Resolution::Bound` clone at the instance root found by `locate_instance`. The readers open it at `GitStore::root()` with the clone record's id. These agree for the CLI and for the daemon.
++  - The record's parts are shown whatever the status, including `unknown`. So B2 is delivered for Codex too.
++  - tests/inspect_loaded.rs runs the exact installed command strings end to end.
++- B3 (state activity and latest modifications at global, space and seat) is delivered.
++  - `herdr-graph log [<scope>] [--since] [--limit] [--by] [--all] [--json]` → `HistoryWalker` + `LogQuery`.
++  - Roster `last_change` uses the same `LogQuery::matches` with `Scope::Seat`, `all: false`, in one walker pass.
++  - The journal side goes through `ops --seat/--teamspace/--limit/--json`. The CLI resolves names to ids at a pinned HEAD and sends `seat`/`teamspace` ids. `plan::ops` parses exactly those keys and filters on `Requester.seat`/`Requester.teamspace`. Production fills both through `requester_for`.
++- B4 (all sessions by space, seat or clone, with timestamps, newest first) is delivered.
++  - `herdr-graph sessions [<scope> | clone <c>]` → `Inventory::load` (live and archive) → `inspect::sessions::build`.
++  - Rows are sorted by `started` descending with an ns-id tiebreak, carry `total` and `tombstones`, and fall back to the transcript record.
++- B5 (staleness is shown, not notified) is delivered for Claude.
++  - The Claude occupant's native id comes from `session.report`, whose `capture.native_session_id` is the payload `session_id` (transcripts/capture.rs `report_args`). The observer path stems the Claude transcript path, which is `<session_id>.jsonl`. Both producers therefore agree with the id the hook records, and the identity-then-content rule reaches `current` and `stale`. `hook_chain_reaches_current_once_the_occupant_lands` covers this.
++  - No notice and no commit is added.
++  - For Codex, the occupant id is the file stem of Herdr's `agent_session` path (observe/sessions.rs:36-46), while the payload `session_id` is a bare id. §2.3 accepts `unknown` for a form difference, but only with the `codex session id form differs` note. That note cannot fire for this form (cluster 5 Must fix, carried below). The row is delivered under the spec's own Codex limit, with that labelling defect.
++- B6 (log hides bookkeeping by default) is delivered. `--all` defaults to false into `LogQuery.all`, and roster `last_change` also passes `all: false`.
++- B7 (harness-native files: presence, size and mtime, content never read) is delivered.
++  - harness_files.rs uses only metadata and read_dir. `content_never_opened` passes on a mode-000 file.
++  - There is one labelling defect: `origin`/`env` for `~/.claude/CLAUDE.md` when the cwd is under $HOME (cluster 5 Must fix, carried below).
++- B8 (`roster --live` in scope now) and S1 (unmanaged objects only enumerated) are delivered.
++  - `cli::roster::live` → `roster.live`, registered by the production `compose_with` → one `pin_head`, the same `build_with_bindings` builder, exactly one `snapshot()`, and `overlay` with `unmanaged_of` listing only ids and labels.
++  - Daemon down exits 5.
++  - Tier 3 runs against a private Herdr and passed in cluster 10's run.
++  - The §2.2 threads-degraded rule is not met when the threads service is unreachable (cluster 3 Must fix, carried below). That is a spec defect inside B8's delivered path, not an undelivered row.
++- No baseline row is undelivered. No human scope change row is needed to cover a gap.
++
++## Cross-cluster composition
++
++- Hook chain: the bounded read in cli is defeated by the shell command in bootstrap. Cluster 2 judged `read_stdin_payload` correct: a 64 KiB cap, a 2 s timeout, after printing. Cluster 1 judged `hook_command` correct against §2.3. Composed, they are not. The installed Claude command starts with `p=$(cat)`, an unbounded shell read that runs before the binary prints anything. So the bounded read never protects the production chain, and a held-open stdin blocks `/seat` until Claude's 10 s hook timeout kills the whole hook. That contradicts Unchanged behavior ("never fails or blocks its session") and the hg-blw.12 held-open acceptance. The only held-open test (tests/inspect_loaded.rs `held_open_stdin_still_prints_and_exits`) runs the bare binary, not the installed command. Claude Code closes stdin after writing the payload, so the practical reach is low. But the guarantee is claimed and tested on a path production never takes. This is cluster 11's Must fix, carried with the code-side evidence.
++- Codex identity seam: observe (stem of the Herdr rollout path) and the hook (payload `session_id`) produce different forms. loaded.rs compares `stem(loaded) == stem(occupant)`, which cannot detect a prefixed rollout stem. The design asked hg-blw.12 to record which form a real or documented payload uses, and no such record exists at head. When Herdr reports a bare id, or the id comes from the `resume <id>` argv, the forms agree and Codex reaches `current`/`stale`.
++- roster.live threads state: `LazyMap::inspect` (compose.rs ~1104-1120) updates `seat_view_error` only on Ok, Rejected and Unsupported. A `map()` failure (Disconnected, discovery) returns through `?` inside the async block and leaves the slot unchanged. The handler (roster_live.rs:64-82) reads only that slot. With threads down it therefore reports `live_unavailable: null` and empty or stale refusals. I re-verified this at head.
++- Integrity exit under `--live`: the daemon-free roster maps an integrity `StoreError` during scope resolution to exit 6 (`inspect::fail`). The daemon handler maps every `Scope::resolve` error to `bad_request`, which is exit 1. Both use the same Scope resolver, so the two modes disagree. Reach is low, and cluster 3 deferred it.
++- `ops` upgrade skew: cli `ops` now requires `head` in the `ops.list` reply, which only the new plan handler sends, and IPC_VERSION is unchanged. Plain `ops` therefore errors against a daemon still running the old binary until it restarts. The failure is safe. Cluster 2 deferred it.
++- `instructions stack --clone <name>`: cli resolves the clone name across the whole instance, while inspect `stack::build` requires that clone to belong to the seat. A same-named clone in another seat makes the name form ambiguous. Cluster 2 deferred it.
++- Doctor and setup agree on what "current" means. Both key on the `--stdin-payload` command shape through `owned_hook_current`, so `setup` rewrites exactly what `doctor` flags as outdated.
++- Envelope and live roster: the CLI deserializes the daemon's `roster` into the same `Roster` type and wraps it in the shared envelope. The daemon never builds a second roster. That matches the Roster key abstraction.
++- Open beads: hg-blw.10 (README and CLI help) and hg-blw.11 (integration sweep) are still open at head. README has no change in the diff. No baseline row depends on them alone, because the commands carry clap help. Cluster 11 notes that hg-blw.10 copies the design text, so the design drift it lists would spread into the README if hg-blw.10 lands first.
++
++## Findings
++
++- src/bootstrap/setup_claude.rs:208-213 with src/cli/seat.rs:201: the installed Claude hook begins with an unbounded `p=$(cat)` before the binary prints, so the binary's bounded stdin read never protects the production chain; this contradicts the design's Unchanged behavior and hg-blw.12's held-open acceptance, and the held-open test bypasses the installed command (carried from cluster 11, confirmed as a seam defect).
++- src/inspect/loaded.rs:229-236 against src/observe/sessions.rs:36-46: the Codex occupant id is a Herdr rollout-path stem and the hook records the bare payload id; the stem comparison cannot detect that form, so the required form-differs note never fires (carried from cluster 5).
++- src/daemon/roster_live.rs:64-82 against src/daemon/compose.rs LazyMap::inspect: threads unreachable leaves `seat_view_error` unset, so `roster --live` reports `live_unavailable: null` with empty or stale refusals (carried from cluster 3, re-verified).
++- src/inspect/harness_files.rs:217-248: the Claude ancestor walk registers `$HOME/.claude/CLAUDE.md` as `origin: ancestor` before the user-level add, so the user file loses `origin: user` and `env: inspector` in the default layout (carried from cluster 5).
++- src/daemon/roster_live.rs:51-52 against src/inspect/mod.rs `fail`: an integrity error during scope resolution exits 1 under `--live` and 6 daemon-free.
++
++## Verdict
++not ready (roster --live threads-degraded state, Codex form-differs note, harness-file user origin, and the unbounded hook stdin read vs the never-blocks guarantee remain open)
++
++## Must fix before landing
++- src/daemon/roster_live.rs:64-82 with src/daemon/compose.rs LazyMap::inspect: when the threads seat read fails for any reason other than Rejected/Unsupported (service down, Disconnected, transport, discovery), roster.live must return seat_refusals/seat_lost null and live_unavailable.threads naming the reason (spec §2.2); record the last read outcome in a slot the handler reads and add a test that drives a Disconnected read instead of writing seat_view_error directly (cluster 3).
++- src/inspect/harness_files.rs:217-248: with the cwd under $HOME and CLAUDE_CONFIG_DIR unset, `$HOME/.claude/CLAUDE.md` is reported as `origin: ancestor` without `env: inspector`; run the user-level adds before the ancestor walk or let a user-level add override origin and env, and add a test with a cwd under the user's home (cluster 5).
++- src/inspect/loaded.rs:229-236: the `codex session id form differs` note never fires for Herdr's rollout-path occupant stem (`rollout-<ts>-<uuid>`) against the bare payload `session_id`, leaving a silent `unknown` (spec §2.1/§2.3); detect that form difference for the note only, without treating the ids as a match, record the payload form hg-blw.12 was to record, and test with a rollout-path occupant (cluster 5).
++- Design §2.3 vs Unchanged behavior and hg-blw.12, with src/bootstrap/setup_claude.rs:208-213: the installed Claude hook's unbounded `p=$(cat)` runs before the prompt prints, so a held-open stdin blocks `/seat` until the 10 s hook timeout; either bound the payload read in the installed command (size and time) or explicitly drop the held-open guarantee in the design with its rationale, and test the installed command, not only the bare binary, with a held-open stdin (cluster 11, confirmed as a cross-cluster seam).
++
++## Untested scope
++- No test runs the installed Claude `hook_command` chain (`p=$(cat); …`) with a held-open stdin; tests/inspect_loaded.rs exercises only the bare binary.
++- No test covers roster.live while the threads service is unreachable (Disconnected); the only threads-degraded test sets seat_view_error by hand.
++- No test uses a Codex occupant whose native id came from a Herdr rollout path with a bare-uuid payload id, at unit or integration level.
++- No test runs harness-file discovery with a cwd under the user's home.
++- No test covers an integrity StoreError during roster.live scope resolution and its exit code.
++- roster.live with a non-empty scope, `all: true`, or a loaded record present is not exercised at the handler level.
++- Tier-3 `roster --live` covers only the happy path: agent kind and status, refusals and lost contents, an earlier-server binding and the degraded herdr text line are not exercised against a real Herdr through the binary.
++- No binary-level test lists populated `sessions` or `log` results (ordering, `clone <c>` on a real clone, `--by`, bookkeeping hidden and `--all`); only src/inspect unit tests cover them.
++- No integration test drives a truncated injection end to end (`cut` part, `omitted` labels, a cap-boundary move turning the record stale).
++- No end-to-end test runs `ops --seat/--teamspace --json` against a live daemon with requester-attributed ops.
++- `instructions stack --clone <c>` has only clap-level tests; no test resolves a clone through the CLI, including a same-named clone in another seat.
++- `instructions stack` has no test where `HistoryWalker::last_touches` fails.
++- `read_stdin_payload` timeout path with the bare binary is covered, but `codex_trust_note` in setup has no test.
++- `owned_hook_current` and `harness_hook_checks` error paths (unreadable or malformed settings) have no test.
++- `fit_hook` with a cut part that delivers zero body bytes has no test.
++- Roster and stack instruction status for retired seats and clones under `--all` is not exercised.
++- Roster and log behavior when a historical commit's tree holds an unparseable record has no test.
++- No HistoryWalker test pins first-parent behavior on a merge commit, a trailer whose record is absent from the diff, or record selection in an undo-shaped commit.
++- Roster `last_change` and HistoryWalker cost near the 5000-commit cap is unmeasured (Sort::TOPOLOGICAL prepares the full chain).
++- This seam review ran no build or tests; pass status at 2dfa656 is taken from the cluster 5, 8 and 10 runs in review-owned worktrees.
++- run.md at head was not validated with scripts/report-status.
++
++## Deferred OK
++- src/daemon/roster_live.rs:51-52: route InstructionError::Store through CommandError::from_store so an integrity failure during scope resolution exits 6 under --live as it does daemon-free.
++- src/daemon/roster_live.rs:36-41: non-string scope words are dropped silently rather than rejected.
++- src/daemon/doctor.rs:267-270: the Codex re-trust warning is permanent once the current hook is installed.
++- src/daemon/doctor.rs:262: a malformed settings file is reported twice (harness_gate and harness_hook).
++- src/cli/instructions.rs: resolve `--clone` among the named seat's clones instead of instance-wide.
++- src/cli/ops.rs: plain `ops` errors against a pre-upgrade daemon whose `ops.list` reply has no `head`; consider an IPC version bump or tolerating a missing head in text mode.
++- src/cli/roster.rs: parse `roster --live` scope words client-side so usage errors precede the daemon call.
++- src/cli/ops.rs: `--seat/--teamspace` resolve before the daemon call, so an unknown name exits 1 rather than 5 with the daemon down.
++- src/cli/instructions.rs: early return for Stack plus an `unreachable!` arm, and `stack_is_read_only` stats the real HOME through `UserDirs::from_env()`.
++- src/bootstrap/instructions.rs: derive the cut header length from `block` instead of a second format string, and return `cut_body_bytes: None` when not even the cut header fits.
++- src/inspect/roster.rs: roster text omits the spec's count of parts loaded; JSON `parts` carries it.
++- src/inspect/stack.rs: stack text omits the loaded record's delivered labels for stale or unknown clones; JSON carries them.
++- src/inspect/stack.rs `manifest()`: fails the whole command on a `last_touches` error while roster swallows it.
++- src/inspect/loaded.rs `clone_view`: a fresh HistoryWalker per stale clone.
++- src/store/history.rs: `Sort::TOPOLOGICAL` makes revwalk preparation O(full history) despite the scan cap; `Sort::NONE` with first-parent gives the same order on the writer's linear history.
++- src/store/history.rs: `last_touches` scans to the cap on duplicate input paths and cannot tell never-touched from beyond-the-cap.
++- src/store/history.rs: depends on `undo::candidates::read_action` (store importing undo).
++- src/plan/ops.rs: reword the `list_json` doc comment so `head` is the store head read before the journal listing, and reject wrong-typed `limit`/`unresolved` with bad_request.
++- tests/inspect_loaded.rs: pin `seat --json` exit as 0, check reader and final re-injection exit codes, and spawn git through the rig rather than with the real HOME gitconfig.
++- tests/inspect_loaded.rs `codex_hook_records_the_payload_session`: uses a Claude-harness occupant for a hook-codex record.
++- Earlier inspect deferred minors (dangling-parent check scope, swallowed manager error, noisy retired error rows, brittle source-scan test, log `paths_at` cost) still apply.
++- Design doc: sync §2.3 record shape with `stdin_payload`, the `instructions` object with `note`, and the §2.2 sample with `threads_live`, per-clone `live` and `unmanaged` placement, before hg-blw.10 copies it into the README.
++- Design doc: remove `retired(reversible)` from the §2.2 text sample or add a typed field, and state that harness_files `shadowed` wins over `claude-only-without-claude-md`.
++- hg-blw.10 (README and CLI help) and hg-blw.11 (integration sweep) are still open beads at head; land hg-blw.10 after the design sync above.
++- Run records: mark the four round-2 design findings resolved in findings-ledger-design.md, add superseded pointers to coverage-amend-design-1-dispositions.md P1 and coverage-ledger.md C16/C20, and add a run.md pointer from the archived inv-4b650ab2 reviews to the superseding review.
++- Run records: the archived inv-4b650ab2 cluster-8 report duplicates its terminal sections, so run.md line 41 double-counts its items.
++- run.md:64: move the hg-blw.2 degraded-verdict record under `parked:` or record its resolution, and rewrite codeBuckets and the checkpoint at the phase 3 to 4 transition.
++- Archived reviews and friction.md quote the host account name; redact if the run records are published outside the repo.

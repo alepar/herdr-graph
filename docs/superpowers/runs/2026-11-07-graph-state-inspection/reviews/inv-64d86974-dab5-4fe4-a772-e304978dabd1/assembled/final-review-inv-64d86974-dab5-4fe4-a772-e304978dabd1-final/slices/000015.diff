@@ -1,0 +1,26 @@
+diff --git a/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-1.md b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-1.md
+new file mode 100644
+index 0000000..5a72e14
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-07-graph-state-inspection/coverage-round-2-review-1.md
+@@ -0,0 +1,20 @@
++requirements:
++R1 → hg-blw.7, hg-blw.1
++R2 → hg-blw.6
++R3 → hg-blw.6
++R4 → hg-blw.2, hg-blw.5
++R5 → hg-blw.2
++R6 → hg-blw.4
++R7 → hg-blw.5
++R8 → hg-blw.8
++R9 → hg-blw.9
++R10 → hg-blw.7, hg-blw.3
++R11 → hg-blw.7, hg-blw.11
++R12 → hg-blw.11
++R13 → hg-blw.10
++R14 → hg-blw.11
++R-new: writing the loaded record leaves the Git index and work tree clean → hg-blw.4
++R-new: roster answers B2 for every active seat at once (loaded file labels per clone) → hg-blw.1, hg-blw.4
++R-new: harness-native files are found from each clone's own cwd → hg-blw.2
++
++Findings (summary of reviewer 1, round 2): UNOWNED-SEAM stack clones[].loaded slot (.2↔.4); GAP B2 per-seat files in one view; GAP R5 per-clone cwd; GAP R6/R12 loaded write must keep the tree clean; GAP R14 both views asserted; UNOWNED-SEAM occupant/runtime from Inventory (.7↔.1); UNOWNED-SEAM ops requester resolution (ids, retired seats); GAP R13 docs written before shapes exist; GAP B5 staleness in text output; GAP R6 hg-blw.4 consumes occupant.since. No ORPHAN.
