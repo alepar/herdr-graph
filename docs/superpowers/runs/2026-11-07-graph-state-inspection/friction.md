@@ -10,3 +10,4 @@
 - [2026-11-11] code roast r3: same provenance result; bounded direct review; rung: Workflow
 - [2026-11-11] report format repair: 2026-11-11-graph-state-inspection-roast-pr-3.md → 2026-11-11-graph-state-inspection-roast-pr-3-format-repair.md — none marker has finding text in Escalations (stray --- separators)
 - [2026-11-11] step-back not dispatched for code round 3 (2 Nits at the cap); recorded as a deviation
+- [2026-11-11] DEVIATION: report-verdict --repair-check rejected the round-3 format repair with '(ii) header lines differ' although the repair only drops two stray '---' lines (diff: lines 1 and 66); the original cannot be extracted (--complete exit 4), so the run uses the repair as the round's report path. Suspected checker defect: a leading separator line shifts header positions.
