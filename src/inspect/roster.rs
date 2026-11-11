@@ -265,6 +265,8 @@ fn build_inner(
     max_scan: usize,
 ) -> Result<(Roster, Bindings), StoreError> {
     let mut bindings = Bindings::default();
+    let history = loaded::HistoryPaths::default();
+    let mut heads: BTreeMap<SeatId, RenderedInstructions> = BTreeMap::new();
     let inv = Inventory::load(store, at, &q.scope)?;
     let view = CommitView {
         store: store as &dyn Store,
@@ -321,12 +323,12 @@ fn build_inner(
                     let instructions = match &rendered {
                         Ok(head) => loaded::clone_view(
                             store,
-                            at,
                             &r.id,
                             occupant
                                 .as_ref()
                                 .and_then(|o| o.native_session_id.as_deref()),
                             head,
+                            &history.recorder(),
                         ),
                         Err(e) => InstructionsView::error(e.to_string()),
                     };
@@ -342,6 +344,9 @@ fn build_inner(
                     }
                 })
                 .collect();
+            if let Ok(head) = rendered {
+                heads.insert(s.record.id.clone(), head);
+            }
             seats.push(RosterSeat {
                 id: s.record.id.clone(),
                 name: s.record.name.clone(),
@@ -379,6 +384,29 @@ fn build_inner(
                     if c.record.lifecycle != CloneLifecycle::Retired {
                         bindings.all.extend(c.record.runtime.bound.clone());
                     }
+                }
+            }
+        }
+    }
+    // One history pass for every stale part of every clone, under the caller's cap.
+    let touches =
+        history.resolve(&|paths| HistoryWalker::new(store, at, max_scan).last_touches(paths));
+    if !touches.is_empty() {
+        for seat in teamspaces.iter_mut().flat_map(|t| t.seats.iter_mut()) {
+            let Some(head) = heads.get(&seat.id) else {
+                continue;
+            };
+            for c in &mut seat.clones {
+                if c.instructions.status == InstructionsStatus::Stale {
+                    c.instructions = loaded::clone_view(
+                        store,
+                        &c.id,
+                        c.occupant
+                            .as_ref()
+                            .and_then(|o| o.native_session_id.as_deref()),
+                        head,
+                        &|_| touches.clone(),
+                    );
                 }
             }
         }
@@ -525,8 +553,9 @@ fn unmanaged_of(snap: &HerdrSnapshot, bound: &[Binding]) -> Unmanaged {
     out
 }
 
-/// One `HistoryWalker` pass for every listed seat; matching is `LogQuery::matches` on the seat's scope.
-/// `None` (no pass) when no seat is listed.
+/// One `HistoryWalker` pass for every listed seat; matching is `LogQuery::matches_with` on the seat's scope,
+/// with the seats' paths resolved once per commit tree. A commit whose tree cannot be read counts as "no match"
+/// for every seat on that commit, never as a failed roster. `None` (no pass) when no seat is listed.
 fn fill_last_changes(
     store: &GitStore,
     at: &CommitId,
@@ -550,11 +579,15 @@ fn fill_last_changes(
     if pending.is_empty() {
         return Ok(None);
     }
-    let mut failed: Option<StoreError> = None;
     let report = HistoryWalker::new(store, at, max_scan).walk(|c| {
-        for (seat, q) in pending.iter_mut().filter(|(s, _)| s.last_change.is_none()) {
-            match q.matches(store, c) {
-                Ok(true) => {
+        let open: Vec<usize> = (0..pending.len())
+            .filter(|&i| pending[i].0.last_change.is_none())
+            .collect();
+        let ids: Vec<SeatId> = open.iter().map(|&i| pending[i].0.id.clone()).collect();
+        if let Ok(paths) = Scope::seat_paths_at(&store.at(&c.commit), &ids) {
+            for (&i, paths) in open.iter().zip(&paths) {
+                let (seat, q) = &mut pending[i];
+                if q.matches_with(store, c, paths).unwrap_or(false) {
                     seat.last_change = Some(LastChange {
                         at: c.at,
                         op: c.trailers.op.clone(),
@@ -564,21 +597,14 @@ fn fill_last_changes(
                             .map_or_else(|| c.summary.clone(), |o| o.summary.clone()),
                     });
                 }
-                Ok(false) => {}
-                Err(e) => {
-                    failed.get_or_insert(e);
-                }
             }
         }
-        if failed.is_some() || pending.iter().all(|(s, _)| s.last_change.is_some()) {
+        if pending.iter().all(|(s, _)| s.last_change.is_some()) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
         }
     })?;
-    if let Some(e) = failed {
-        return Err(e);
-    }
     for (seat, _) in &mut pending {
         seat.last_change_scanned = Some(seat.last_change.is_some() || !report.stopped_early);
     }
@@ -762,6 +788,7 @@ mod tests {
         Availability, Binding, HerdrPaneId, HerdrTabId, HerdrWorkspaceId, Incarnation, MemberId,
         Runtime, TemplateId,
     };
+    use crate::ports::store::RepoPath;
     use serde_json::json;
 
     fn roster(fx: &Fx, scope: Scope, all: bool) -> Roster {
@@ -1124,6 +1151,119 @@ mod tests {
         let out = text(&r);
         assert!(out.contains("last change 2026-11-05 13:00Z new a"), "{out}");
         assert!(out.contains("last change 2026-11-05 12:00Z new b"), "{out}");
+    }
+
+    #[test]
+    fn roster_last_change_degrades_on_unparseable_historical_tree() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let a = fx.seat(&t, "alpha", Lifecycle::Active);
+        let b = fx.seat(&t, "beta", Lifecycle::Active);
+        fx.set_time("2026-11-05T10:00:00Z");
+        fx.commit("init");
+        fx.set_time("2026-11-05T11:00:00Z");
+        // beta's newest change sits in a tree with a record that does not parse
+        fx.put_file(
+            RepoPath::new("teamspaces/zz-bad/teamspace.toml").unwrap(),
+            b"{not toml".to_vec(),
+        );
+        touch(&mut fx, &b, "beta while broken");
+        fx.set_time("2026-11-05T12:00:00Z");
+        fx.delete_file(RepoPath::new("teamspaces/zz-bad/teamspace.toml").unwrap());
+        touch(&mut fx, &a, "alpha after repair");
+        let r = roster(&fx, Scope::Instance, false);
+        let la = seat_of(&r, &a).last_change.clone().unwrap();
+        assert_eq!(la.summary, "alpha after repair");
+        // beta: the unreadable tree is skipped, so its newest readable match is the init commit
+        let sb = seat_of(&r, &b);
+        assert_eq!(sb.last_change.as_ref().unwrap().summary, "init");
+        assert_eq!(sb.last_change_scanned, Some(true));
+    }
+
+    #[test]
+    fn shared_tree_resolution_matches_single_seat_runs() {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let a = fx.seat(&t, "alpha", Lifecycle::Active);
+        let b = fx.seat(&t, "beta", Lifecycle::Active);
+        fx.set_time("2026-11-05T10:00:00Z");
+        fx.commit("init");
+        fx.set_time("2026-11-05T11:00:00Z");
+        touch(&mut fx, &b, "b");
+        fx.set_time("2026-11-05T12:00:00Z");
+        touch(&mut fx, &a, "a");
+        fx.set_time("2026-11-05T13:00:00Z");
+        touch(&mut fx, &a, "a again");
+        let both = roster(&fx, Scope::Instance, false);
+        for id in [&a, &b] {
+            let single = roster(&fx, Scope::Seat(id.clone()), false);
+            let (one, two) = (seat_of(&single, id), seat_of(&both, id));
+            assert!(one.last_change.is_some());
+            assert_eq!(one.last_change, two.last_change);
+            assert_eq!(one.last_change_scanned, two.last_change_scanned);
+        }
+    }
+
+    /// A seat with one clone whose loaded record is of `rules/a.md` at "a1", then `rules/a.md` changes
+    /// (commit `touched`) and an unrelated commit lands on top.
+    fn stale_world() -> (Fx, SeatId, CloneId, CommitId) {
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let seat = fx.seat(&t, "foreman", Lifecycle::Active);
+        let sess = session(Harness::Claude, "s-1", "2026-11-01T10:00:00Z", None, None);
+        let occ = sess.id.clone();
+        let clone = fx.clone_rec(&seat, "main", CloneLifecycle::Active, vec![sess], Some(occ));
+        let rules = RepoPath::new("rules/a.md").unwrap();
+        fx.put_file(rules.clone(), b"a1\n".to_vec());
+        let loaded_at = fx.commit("rules a1");
+        let view = CommitView {
+            store: &fx.store as &dyn Store,
+            at: loaded_at.clone(),
+        };
+        let head = render_instructions(&view, &loaded_at, &seat).unwrap();
+        let fit = crate::bootstrap::instructions::fit_hook(
+            &head,
+            crate::bootstrap::instructions::HOOK_RENDER_CAP,
+        );
+        loaded::record(
+            fx.store.root(),
+            &clone,
+            &head,
+            &fit,
+            loaded::InjectionSource::Hook,
+            Some("s-1".into()),
+            true,
+            ts("2026-11-01T11:00:00Z"),
+        );
+        fx.put_file(rules, b"a2\n".to_vec());
+        let touched = fx.commit("rules a2");
+        fx.put_file(RepoPath::new("unrelated.md").unwrap(), b"x".to_vec());
+        fx.commit("elsewhere");
+        (fx, seat, clone, touched)
+    }
+
+    #[test]
+    fn stale_part_walk_honours_the_callers_cap() {
+        let (fx, seat, clone, touched) = stale_world();
+        let at = pin_head(&fx.store).unwrap();
+        let q = RosterQuery {
+            scope: Scope::Instance,
+            all: false,
+        };
+        let stale_commit = |r: &Roster| {
+            let c = seat_of(r, &seat)
+                .clones
+                .iter()
+                .find(|c| c.id == clone)
+                .unwrap();
+            assert_eq!(c.instructions.status, InstructionsStatus::Stale);
+            c.instructions.stale_parts[0].path_last_touched.clone()
+        };
+        let full = build_with_cap(&fx.store, &at, &q, 100).unwrap();
+        assert_eq!(stale_commit(&full), Some(touched.0));
+        // The cap of one commit excludes the touching commit: the column is null, not a wider walk.
+        let capped = build_with_cap(&fx.store, &at, &q, 1).unwrap();
+        assert_eq!(stale_commit(&capped), None);
     }
 
     #[test]

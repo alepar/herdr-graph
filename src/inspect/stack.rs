@@ -17,7 +17,7 @@ use crate::bootstrap::instructions::{
 use crate::inspect::harness_files::{HarnessFile, HarnessName, UserDirs, discover};
 use crate::inspect::inventory::Inventory;
 use crate::inspect::loaded;
-use crate::inspect::output::{InstructionsView, View};
+use crate::inspect::output::{InstructionsStatus, InstructionsView, View};
 use crate::inspect::roster::instructions_text;
 use crate::inspect::scope::Scope;
 use crate::model::effective::resolve_in;
@@ -100,6 +100,22 @@ pub fn build(
     user: &UserDirs,
     instance: &Path,
 ) -> anyhow::Result<StackView> {
+    build_with(store, at, seat, clone, user, instance, &|paths| {
+        HistoryWalker::new(store, at, HistoryWalker::DEFAULT_MAX_SCAN).last_touches(paths)
+    })
+}
+
+/// [`build`] with the one history lookup (manifest parts and every clone's stale parts, one batched call)
+/// supplied by the caller. A failed lookup leaves `changed` and `path_last_touched` null.
+fn build_with(
+    store: &GitStore,
+    at: &CommitId,
+    seat: &SeatId,
+    clone: Option<&CloneId>,
+    user: &UserDirs,
+    instance: &Path,
+    lookup: &loaded::HistoryLookup<'_>,
+) -> anyhow::Result<StackView> {
     let inv = Inventory::load(store, at, &Scope::Seat(seat.clone()))?;
     let (ts, entry) = inv
         .teamspaces
@@ -133,35 +149,57 @@ pub fn build(
     let harness_files = discover(&cwd, user);
 
     let rendered = render_instructions(&tree, at, seat);
-    let (error, parts, hook) = match &rendered {
-        Err(e) => (Some(e.to_string()), vec![], None),
-        Ok(r) => {
-            let (parts, hook) = manifest(store, at, r)?;
-            (None, parts, Some(hook))
-        }
-    };
-    let clones = entry
+    let history = loaded::HistoryPaths::default();
+    if let Ok(r) = &rendered {
+        history.add(&manifest_paths(r)?);
+    }
+    let kept: Vec<_> = entry
         .clones
         .iter()
         .filter(|c| clone.is_none_or(|id| c.record.id == *id))
-        .map(|c| StackClone {
+        .collect();
+    let view_of = |c: &&crate::inspect::inventory::CloneEntry,
+                   touches: &dyn Fn(&[RepoPath]) -> BTreeMap<RepoPath, Touch>| {
+        match &rendered {
+            Err(e) => InstructionsView::error(e.to_string()),
+            Ok(head) => loaded::clone_view(
+                store,
+                &c.record.id,
+                c.record
+                    .occupant
+                    .as_ref()
+                    .and_then(|_| c.current())
+                    .map(|e| e.session.native_session_id.as_str()),
+                head,
+                touches,
+            ),
+        }
+    };
+    let mut views: Vec<InstructionsView> = kept
+        .iter()
+        .map(|c| view_of(c, &history.recorder()))
+        .collect();
+    let touches = history.resolve(lookup);
+    let (error, parts, hook) = match &rendered {
+        Err(e) => (Some(e.to_string()), vec![], None),
+        Ok(r) => {
+            let (parts, hook) = manifest(r, &touches);
+            (None, parts, Some(hook))
+        }
+    };
+    for (c, v) in kept.iter().zip(&mut views) {
+        if v.status == InstructionsStatus::Stale {
+            *v = view_of(c, &|_| touches.clone());
+        }
+    }
+    let clones = kept
+        .iter()
+        .zip(views)
+        .map(|(c, instructions)| StackClone {
             id: c.record.id.clone(),
             name: c.record.name.clone(),
             lifecycle: c.record.lifecycle,
-            instructions: match &rendered {
-                Err(e) => InstructionsView::error(e.to_string()),
-                Ok(head) => loaded::clone_view(
-                    store,
-                    at,
-                    &c.record.id,
-                    c.record
-                        .occupant
-                        .as_ref()
-                        .and_then(|_| c.current())
-                        .map(|e| e.session.native_session_id.as_str()),
-                    head,
-                ),
-            },
+            instructions,
         })
         .collect();
     Ok(StackView {
@@ -182,12 +220,8 @@ pub fn build(
     })
 }
 
-fn manifest(
-    store: &GitStore,
-    at: &CommitId,
-    r: &RenderedInstructions,
-) -> anyhow::Result<(Vec<StackPart>, HookView)> {
-    let fit = fit_hook(r, HOOK_RENDER_CAP);
+/// The manifest's distinct part paths, for the one batched history lookup.
+fn manifest_paths(r: &RenderedInstructions) -> anyhow::Result<Vec<RepoPath>> {
     let mut paths: Vec<RepoPath> = Vec::new();
     for p in &r.parts {
         let rp = RepoPath::new(&p.path)?;
@@ -195,8 +229,14 @@ fn manifest(
             paths.push(rp);
         }
     }
-    let touches: BTreeMap<RepoPath, Touch> =
-        HistoryWalker::new(store, at, HistoryWalker::DEFAULT_MAX_SCAN).last_touches(&paths)?;
+    Ok(paths)
+}
+
+fn manifest(
+    r: &RenderedInstructions,
+    touches: &BTreeMap<RepoPath, Touch>,
+) -> (Vec<StackPart>, HookView) {
+    let fit = fit_hook(r, HOOK_RENDER_CAP);
     let parts = r
         .parts
         .iter()
@@ -216,7 +256,7 @@ fn manifest(
         .iter()
         .map(|p| p.label.clone())
         .collect();
-    Ok((
+    (
         parts,
         HookView {
             cap: HOOK_RENDER_CAP,
@@ -224,7 +264,7 @@ fn manifest(
             omitted: fit.omitted,
             cut: fit.cut,
         },
-    ))
+    )
 }
 
 /// `loaded <rev> into <id> via hook at HH:MMZ`, when the clone has a record.
@@ -391,7 +431,7 @@ mod tests {
     use crate::inspect::fixture::Fx;
     use crate::model::Lifecycle;
     use crate::model::SeatId;
-    use crate::ports::store::RepoPath;
+    use crate::ports::store::{RepoPath, StoreError};
 
     fn user() -> UserDirs {
         UserDirs::default()
@@ -560,5 +600,80 @@ mod tests {
             .to_string();
         assert!(e.contains("is not a clone of seat foreman"), "{e}");
         let _ = clone;
+    }
+
+    #[test]
+    fn one_history_pass_and_a_failed_lookup_degrades() {
+        use crate::inspect::fixture::{session, ts};
+        use crate::ports::store::Store;
+        let mut fx = Fx::new();
+        let t = fx.teamspace("proj", Lifecycle::Active);
+        let seat = fx.seat(&t, "foreman", Lifecycle::Active);
+        let mut clones = vec![];
+        for (name, native) in [("main", "s-1"), ("alt", "s-2")] {
+            let sess = session(Harness::Claude, native, "2026-11-01T10:00:00Z", None, None);
+            let occ = sess.id.clone();
+            clones.push((
+                fx.clone_rec(&seat, name, CloneLifecycle::Active, vec![sess], Some(occ)),
+                native,
+            ));
+        }
+        file(&mut fx, "rules/a.md", "a1\n");
+        let first = fx.commit("rules a1");
+        let view = CommitView {
+            store: &fx.store as &dyn Store,
+            at: first.clone(),
+        };
+        let r = render_instructions(&view, &first, &seat).unwrap();
+        let fit = fit_hook(&r, HOOK_RENDER_CAP);
+        for (clone, native) in &clones {
+            loaded::record(
+                fx.store.root(),
+                clone,
+                &r,
+                &fit,
+                loaded::InjectionSource::Hook,
+                Some((*native).into()),
+                true,
+                ts("2026-11-01T11:00:00Z"),
+            );
+        }
+        file(&mut fx, "rules/a.md", "a2\n");
+        let touched = fx.commit("rules a2");
+        let at = fx.store.head().unwrap();
+        let run = |lookup: &loaded::HistoryLookup<'_>| {
+            build_with(
+                &fx.store,
+                &at,
+                &seat,
+                None,
+                &user(),
+                Path::new("/nonexistent-instance"),
+                lookup,
+            )
+            .unwrap()
+        };
+        let calls = std::cell::Cell::new(0);
+        let v = run(&|paths| {
+            calls.set(calls.get() + 1);
+            HistoryWalker::new(&fx.store, &at, 100).last_touches(paths)
+        });
+        assert_eq!(calls.get(), 1, "manifest and both clones share one pass");
+        assert_eq!(v.parts[0].changed.as_ref().unwrap().commit, touched);
+        for c in &v.clones {
+            assert_eq!(c.instructions.status, InstructionsStatus::Stale);
+            assert_eq!(
+                c.instructions.stale_parts[0].path_last_touched.as_deref(),
+                Some(touched.0.as_str())
+            );
+        }
+        // A failing lookup: still a view, every history column null.
+        let v = run(&|_| Err(StoreError::Git("boom".into())));
+        assert!(v.error.is_none());
+        assert!(v.parts.iter().all(|p| p.changed.is_none()));
+        for c in &v.clones {
+            assert_eq!(c.instructions.status, InstructionsStatus::Stale);
+            assert_eq!(c.instructions.stale_parts[0].path_last_touched, None);
+        }
     }
 }

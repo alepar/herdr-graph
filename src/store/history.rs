@@ -6,7 +6,7 @@ use crate::model::{ActionId, CommitId, OpId, Timestamp};
 use crate::ports::store::{RepoPath, StoreError};
 use crate::store::GitStore;
 use crate::undo::candidates::read_action;
-use git2::{Delta, Oid, Repository, Sort};
+use git2::{Delta, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
@@ -47,6 +47,9 @@ pub struct ScanReport {
 pub enum Malformed {
     Operation,
     Action,
+    /// `log` could not resolve the scope at this commit's tree (an unreadable record there), so whether the
+    /// commit matches is unknown. Set by `LogQuery`, never by the walker.
+    Tree,
 }
 
 /// One commit as the walker reads it.
@@ -119,7 +122,8 @@ impl<'s> HistoryWalker<'s> {
         self.max_scan
     }
 
-    /// Up to `max_scan` commit ids newest first, and whether older ones were left. Ids only, so the repo lock
+    /// Up to `max_scan` commit ids newest first (first-parent, lazily: no sort that would force the whole
+    /// history to be read before the first id), and whether older ones were left. Ids only, so the repo lock
     /// is not held while a caller's callback reads the store.
     fn commits(&self) -> Result<(Vec<Oid>, bool), StoreError> {
         let from = Oid::from_str(&self.from.0)
@@ -127,7 +131,6 @@ impl<'s> HistoryWalker<'s> {
         let cap = self.max_scan;
         self.store.with_repo(|repo| {
             let mut walk = repo.revwalk()?;
-            walk.set_sorting(Sort::TOPOLOGICAL)?;
             walk.simplify_first_parent()?;
             walk.push(from)?;
             let mut ids = Vec::new();
@@ -546,6 +549,24 @@ mod tests {
             .last_touches(&[rp("rules/a.md")])
             .unwrap();
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn last_touches_on_a_deleted_path() {
+        let mut fx = Fx::new();
+        fx.put_file(rp("rules/gone.md"), b"1".to_vec());
+        let added = fx.commit("add");
+        fx.delete_file(rp("rules/gone.md"));
+        let deleted = fx.commit("delete");
+        fx.put_file(rp("other.md"), b"1".to_vec());
+        fx.commit("elsewhere");
+        let head = fx.store.head().unwrap();
+        let t = HistoryWalker::new(&fx.store, &head, 100)
+            .last_touches(&[rp("rules/gone.md"), rp("rules")])
+            .unwrap();
+        assert_eq!(t[&rp("rules/gone.md")].commit, deleted);
+        assert_eq!(t[&rp("rules")].commit, deleted);
+        assert_ne!(t[&rp("rules/gone.md")].commit, added);
     }
 
     #[test]
