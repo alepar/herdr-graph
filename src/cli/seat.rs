@@ -25,6 +25,7 @@ use std::process::ExitCode;
 pub enum Commands {
     /// Resolve and show the calling seat.
     Seat {
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
         /// Print only this seat's instruction render (committed revision; no daemon).

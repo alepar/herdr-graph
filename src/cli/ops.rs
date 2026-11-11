@@ -18,6 +18,7 @@ use std::process::ExitCode;
 pub enum Commands {
     /// List operations.
     Ops {
+        /// Only operations that are not yet resolved.
         #[arg(long)]
         unresolved: bool,
         /// Only ops requested by this seat (name or id; retired seats included).
@@ -29,6 +30,7 @@ pub enum Commands {
         /// Maximum rows.
         #[arg(long, default_value_t = 200)]
         limit: usize,
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
     },

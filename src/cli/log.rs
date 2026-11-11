@@ -34,6 +34,7 @@ pub enum Commands {
         /// Commits to scan before stopping (default 5000).
         #[arg(long, default_value_t = 5000)]
         max_scan: usize,
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
     },

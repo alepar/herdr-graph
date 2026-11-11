@@ -26,9 +26,12 @@ pub enum InstructionsAction {
     },
     /// The seat's instruction manifest at HEAD, hook-cap fit, harness files and per-clone loaded status (no daemon).
     Stack {
+        /// Seat (name or id) whose instruction stack to show; any seat, not only the caller's.
         seat: String,
+        /// Only this clone's loaded status (name or id).
         #[arg(long)]
         clone: Option<String>,
+        /// Print one JSON document (schema 1) on stdout; notices go to stderr.
         #[arg(long)]
         json: bool,
     },
