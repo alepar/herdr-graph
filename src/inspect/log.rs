@@ -265,7 +265,7 @@ fn requester_view(o: &OperationRecord) -> RequesterView {
 }
 
 fn kind_word(id: &AnyId) -> String {
-    format!("{:?}", id.kind()).to_lowercase()
+    crate::inspect::roster::serde_word(&id.kind())
 }
 
 /// The object's name in the commit's tree (else the parent's, for an object the commit deleted); its id when
@@ -322,7 +322,10 @@ impl View for LogView {
                 if let Some(who) = who {
                     out.push_str(&format!("  by {who}"));
                     if let Some(c) = &r.confirmation {
-                        out.push_str(&format!(" ({})", format!("{:?}", c.mode).to_lowercase()));
+                        out.push_str(&format!(
+                            " ({})",
+                            crate::inspect::roster::serde_word(&c.mode)
+                        ));
                     }
                 }
             }
@@ -914,5 +917,11 @@ mod tests {
         assert!(t.starts_with("2026-11-05 09:07Z  op_"), "{t}");
         assert!(t.contains("  seat_create  made seat  by st_"), "{t}");
         assert!(t.trim_end().ends_with(&format!("{act} undone")), "{t}");
+    }
+
+    #[test]
+    fn native_session_kind_is_the_serde_word() {
+        let id = crate::model::ids::NsId::new().to_any();
+        assert_eq!(kind_word(&id), "native_session");
     }
 }

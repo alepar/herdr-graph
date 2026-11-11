@@ -585,7 +585,7 @@ fn fill_last_changes(
     Ok(Some(report))
 }
 
-fn word<T: Serialize>(v: &T) -> String {
+pub(crate) fn serde_word<T: Serialize>(v: &T) -> String {
     match serde_json::to_value(v) {
         Ok(serde_json::Value::String(s)) => s,
         _ => "?".into(),
@@ -645,7 +645,7 @@ fn clone_line(c: &RosterClone) -> String {
                 .map_or("unresolved".to_owned(), |t| t.path.display().to_string());
             format!(
                 "{} {} ({native}, {transcript}) since {}",
-                word(&o.harness),
+                serde_word(&o.harness),
                 o.native_session,
                 o.since.format("%H:%MZ")
             )
@@ -662,7 +662,7 @@ fn clone_line(c: &RosterClone) -> String {
         "{} ({})  {}  {}  {}  threads {}  {}  instructions: {}",
         c.name,
         c.id,
-        word(&rt.availability),
+        serde_word(&rt.availability),
         pane,
         occupant,
         tseat,
@@ -673,7 +673,7 @@ fn clone_line(c: &RosterClone) -> String {
         line.push_str("  ");
         line.push_str(
             &match (&l.agent, l.live_pane_matches, l.binding_from_earlier_server) {
-                (Some(a), _, _) => format!("agent {} {}", a.kind, word(&a.status)),
+                (Some(a), _, _) => format!("agent {} {}", a.kind, serde_word(&a.status)),
                 (None, true, _) => "no agent".to_owned(),
                 (None, false, true) => "binding from earlier herdr server".to_owned(),
                 (None, false, false) => "no live pane".to_owned(),
@@ -697,9 +697,9 @@ impl View for Roster {
             let _ = writeln!(out, "live data unavailable: {}", parts.join("; "));
         }
         for t in &self.teamspaces {
-            let _ = writeln!(out, "{} ({}) {}", t.name, t.id, word(&t.lifecycle));
+            let _ = writeln!(out, "{} ({}) {}", t.name, t.id, serde_word(&t.lifecycle));
             for s in &t.seats {
-                let mut line = format!("  {} ({}) {}", s.name, s.id, word(&s.lifecycle));
+                let mut line = format!("  {} ({}) {}", s.name, s.id, serde_word(&s.lifecycle));
                 if let Some(m) = &s.manager {
                     let _ = write!(line, "  manager: {}", m.name);
                 }
