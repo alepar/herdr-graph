@@ -132,10 +132,36 @@ pub struct RuntimeLoop {
     refused_since: Mutex<BTreeMap<ThreadsSeatRef, Timestamp>>,
     /// Seats refused beyond `SEAT_LOST_AFTER`, for the `threads` status component.
     seat_lost: SeatLost,
+    /// What the last full seat read left behind, for `roster --live`; written only by `observe_seats`.
+    seat_read: SeatReadState,
 }
 
 /// Seats refused beyond the staleness window: `{clone, seat, error, since, remedy}` entries.
 pub type SeatLost = Arc<Mutex<Vec<serde_json::Value>>>;
+
+/// Why threads refused `seat`: the seat view's message, else a generic one.
+fn refusal_message(messages: &BTreeMap<ThreadsSeatRef, String>, seat: &ThreadsSeatRef) -> String {
+    messages
+        .get(seat)
+        .cloned()
+        .unwrap_or_else(|| "refused by threads".into())
+}
+
+/// What the last full seat read left behind, for `roster --live`. One value under one lock, so a reader never
+/// pairs one read's outcome with another read's refusals.
+#[derive(Default, Clone)]
+pub struct SeatReadSnapshot {
+    /// `None` until the first observe cycle (counted as unavailable); `Err` carries the failure reason of
+    /// the last read, of any kind (a refusal, a transport error, threads not located).
+    pub last: Option<Result<(), String>>,
+    /// Per-seat refusals of the last successful read; empty after a failed one or with no seated clone.
+    pub refusals: BTreeMap<String, String>,
+}
+
+/// The slot `observe_seats` writes once per step (the empty seated set included); a one-seat read such as the
+/// reconciler's finalize never writes it. Unlike `SeatViewError` (the `status` slot) it is set by transient
+/// failures too and never keeps a stale success.
+pub type SeatReadState = Arc<Mutex<SeatReadSnapshot>>;
 
 fn bookkeeping(args: serde_json::Value) -> ChangeRequest {
     ChangeRequest {
@@ -438,12 +464,18 @@ impl RuntimeLoop {
             seat_refusals: Default::default(),
             refused_since: Default::default(),
             seat_lost: Default::default(),
+            seat_read: Default::default(),
         })
     }
 
     /// The slot this loop publishes lost seats to.
     pub fn seat_lost(&self) -> SeatLost {
         self.seat_lost.clone()
+    }
+
+    /// The slot this loop publishes its last full seat read to.
+    pub fn seat_read(&self) -> SeatReadState {
+        self.seat_read.clone()
     }
 
     /// Where the seat view keeps the message of each per-seat refusal, for the log and the lost-seat entries.
@@ -615,9 +647,36 @@ impl RuntimeLoop {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clear();
+            // Nothing seated, nothing to read: healthy and empty.
+            *self.seat_read.lock().unwrap_or_else(|e| e.into_inner()) = SeatReadSnapshot {
+                last: Some(Ok(())),
+                refusals: BTreeMap::new(),
+            };
             return Default::default();
         }
-        let read = match self.seat_view.inspect(&seats).await {
+        let result = self.seat_view.inspect(&seats).await;
+        // One snapshot per full read, from this read's own outcome, while the step lock is held.
+        {
+            let snapshot = match &result {
+                Ok(statuses) => {
+                    let messages = self.refusal_messages();
+                    SeatReadSnapshot {
+                        last: Some(Ok(())),
+                        refusals: seats
+                            .iter()
+                            .filter(|s| !statuses.contains_key(*s))
+                            .map(|s| (s.0.clone(), refusal_message(&messages, s)))
+                            .collect(),
+                    }
+                }
+                Err(e) => SeatReadSnapshot {
+                    last: Some(Err(e.to_string())),
+                    refusals: BTreeMap::new(),
+                },
+            };
+            *self.seat_read.lock().unwrap_or_else(|e| e.into_inner()) = snapshot;
+        }
+        let read = match result {
             Ok(statuses) => ThreadsRead::Statuses(statuses),
             Err(e) => {
                 // Threads being down changes no binding; a protocol problem is logged once.
@@ -645,6 +704,16 @@ impl RuntimeLoop {
         )
     }
 
+    /// The per-seat refusal messages the seat view kept from its last read.
+    fn refusal_messages(&self) -> BTreeMap<ThreadsSeatRef, String> {
+        self.seat_refusals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     /// Track the seats this read omitted (a per-seat refusal). A seat refused for longer than
     /// `SEAT_LOST_AFTER` is returned as lost and published to the status slot. A failed read leaves the
     /// tracking as it was: it says nothing about any seat.
@@ -657,13 +726,7 @@ impl RuntimeLoop {
         let ThreadsRead::Statuses(statuses) = read else {
             return BTreeSet::new();
         };
-        let messages = self
-            .seat_refusals
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let messages = self.refusal_messages();
         let mut since = self.refused_since.lock().unwrap_or_else(|e| e.into_inner());
         let mut lost = BTreeSet::new();
         let mut entries = Vec::new();
@@ -672,10 +735,7 @@ impl RuntimeLoop {
             if statuses.contains_key(&seat) {
                 continue;
             }
-            let message = messages
-                .get(&seat)
-                .cloned()
-                .unwrap_or_else(|| "refused by threads".into());
+            let message = refusal_message(&messages, &seat);
             let first = *since.entry(seat.clone()).or_insert_with(|| {
                 eprintln!(
                     "herdr-graph: observe: threads refused seat {} of clone {clone}: {message}",

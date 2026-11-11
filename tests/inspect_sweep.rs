@@ -440,17 +440,16 @@ fn spec_keys_and_flags_reach_their_views() {
         ],
     );
 
+    // the sweep rig seats no clone in threads, so after the observe loop's first cycle neither half is degraded
+    rig.wait_until("the observe loop's first seat read", |r| {
+        r.json(&["roster", "--live"]).0["live_unavailable"].is_null()
+    });
     let (live, _) = rig.json(&["roster", "--live", "--unmanaged"]);
     assert_eq!(
         live["live"], true,
         "roster.live registered and answered: {live}"
     );
-    // the sweep rig has no threads service: only the threads half is degraded
-    assert_eq!(live["live_unavailable"]["herdr"], Value::Null, "{live}");
-    assert!(
-        live["live_unavailable"]["threads"].is_string(),
-        "threads degraded without a threads service: {live}"
-    );
+    assert_eq!(live["live_unavailable"], Value::Null, "{live}");
     assert_keys("roster --unmanaged", &live, &["unmanaged"]);
     assert!(
         rig.cli(&["roster", "--unmanaged"]).status.code() != Some(0),

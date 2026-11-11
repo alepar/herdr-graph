@@ -196,21 +196,21 @@ fn roster_live_matches_the_graph_pane_and_lists_only_unbound_objects() {
         .to_owned();
 
     rig.settle();
+    // No clone is seated in threads, so once the observe loop has made its first cycle the threads half is
+    // healthy and empty (before that it is unavailable).
+    rig.wait_until("the observe loop's first seat read", |r| {
+        r.roster_json(&[])["live_unavailable"].is_null()
+    });
     let commits = rig.commit_count();
     let v = rig.roster_json(&["--unmanaged"]);
     assert_eq!(v["schema"], 1);
     assert_eq!(v["live"], true);
-    // no threads service is reachable in this rig: the roster says so instead of an empty healthy report
-    assert_eq!(v["live_unavailable"]["herdr"], json!(null), "{v}");
-    assert!(
-        v["live_unavailable"]["threads"].is_string(),
-        "threads degraded without a threads service: {v}"
-    );
+    assert_eq!(v["live_unavailable"], json!(null), "{v}");
     let clone = &v["teamspaces"][0]["seats"][0]["clones"][0];
     assert_eq!(clone["live"]["live_pane_matches"], true, "{v}");
     assert_eq!(clone["live"]["binding_from_earlier_server"], false);
-    assert_eq!(v["threads_live"]["seat_refusals"], json!(null), "{v}");
-    assert_eq!(v["threads_live"]["seat_lost"], json!(null), "{v}");
+    assert_eq!(v["threads_live"]["seat_refusals"], json!({}), "{v}");
+    assert_eq!(v["threads_live"]["seat_lost"], json!([]), "{v}");
     let panes: Vec<&str> = v["unmanaged"]["panes"]
         .as_array()
         .unwrap()
@@ -234,10 +234,9 @@ fn roster_live_matches_the_graph_pane_and_lists_only_unbound_objects() {
     let plain = rig.roster_json(&[]);
     assert!(!plain.as_object().unwrap().contains_key("unmanaged"));
 
-    // text form works and names the degraded threads read
+    // text form works and reports nothing degraded
     let text = rig.cli_ok(&["roster", "--live", "--unmanaged"]);
-    assert!(text.contains("live data unavailable: threads:"), "{text}");
-    assert!(!text.contains("herdr:"), "{text}");
+    assert!(!text.contains("live data unavailable"), "{text}");
     assert!(text.contains("unmanaged:"), "{text}");
 
     assert_eq!(rig.commit_count(), commits, "roster --live adds no commit");
