@@ -1,0 +1,6 @@
+[Should-fix] src/inspect/roster.rs:587; src/inspect/roster.rs:588
+[Should-fix] src/daemon/roster_live.rs:76; src/daemon/roster_live.rs:79; src/daemon/roster_live.rs:78; src/daemon/roster_live.rs:80
+[Should-fix] src/daemon/compose.rs:1143
+[Nit] src/inspect/log.rs:136; src/inspect/log.rs:118
+[Nit] src/inspect/sessions.rs:59; src/inspect/stack.rs:376
+[FYI] src/daemon/compose.rs:1137
