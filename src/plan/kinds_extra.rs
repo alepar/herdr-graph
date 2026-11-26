@@ -533,7 +533,10 @@ impl OrgKind for SeatOverride {
         if let Some(c) = &a.set.cwd
             && !c.is_dir()
         {
-            warnings.push(format!("cwd {} is not an existing directory yet", c.display()));
+            warnings.push(format!(
+                "cwd {} is not an existing directory yet",
+                c.display()
+            ));
         }
         let summary = format!("override seat {} config", f.rec.name);
         let mut out = body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary);
@@ -952,10 +955,21 @@ pub(crate) mod testkit {
 
     /// `fx` with `extra` kinds registered after the core and extra ones (undo needs the template kinds first).
     pub fn fx_with(extra: impl FnOnce(&mut KindRegistry)) -> Fx {
+        fx_build(true, extra)
+    }
+
+    /// `fx_with` on a pristine graph: no node manager is named, so the first seat becomes it.
+    pub fn fx_fresh_with(extra: impl FnOnce(&mut KindRegistry)) -> Fx {
+        fx_build(false, extra)
+    }
+
+    fn fx_build(opt_out: bool, extra: impl FnOnce(&mut KindRegistry)) -> Fx {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("inst");
         init_instance(&root).unwrap();
-        crate::plan::managers::testing::opt_out(&root);
+        if opt_out {
+            crate::plan::managers::testing::opt_out(&root);
+        }
         let mut kinds = KindRegistry::default();
         register_core_kinds(&mut kinds);
         register_kinds(&mut kinds);
@@ -1377,7 +1391,10 @@ mod tests {
         let sp = plan(&fx, &cmd);
         assert_eq!(kinds_of(&sp), vec!["seat.override"]);
         assert!(
-            sp.plan.warnings.iter().any(|w| w.contains("next agent launch")),
+            sp.plan
+                .warnings
+                .iter()
+                .any(|w| w.contains("next agent launch")),
             "{:?}",
             sp.plan.warnings
         );
@@ -1390,7 +1407,10 @@ mod tests {
         commit(&fx, "seat create one --teamspace alpha");
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("not-yet");
-        let sp = plan(&fx, &format!("seat override one --cwd {}", missing.display()));
+        let sp = plan(
+            &fx,
+            &format!("seat override one --cwd {}", missing.display()),
+        );
         assert!(
             sp.plan
                 .warnings
@@ -1399,7 +1419,10 @@ mod tests {
             "{:?}",
             sp.plan.warnings
         );
-        let sp = plan(&fx, &format!("seat override one --cwd {}", dir.path().display()));
+        let sp = plan(
+            &fx,
+            &format!("seat override one --cwd {}", dir.path().display()),
+        );
         assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
     }
 
@@ -1426,8 +1449,8 @@ mod tests {
             (p, src),
             (std::path::PathBuf::from("/abs/wt"), CwdSource::SeatOverride)
         );
-        let d = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance)
-            .unwrap();
+        let d =
+            crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
         let tab = d.tabs.iter().find(|t| t.seat == s.id).expect("desired tab");
         assert_eq!(tab.cwd, std::path::PathBuf::from("/abs/wt"));
     }

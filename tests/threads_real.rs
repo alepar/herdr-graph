@@ -687,3 +687,59 @@ async fn production_discovery_reaches_real_threads_daemon() {
         "normal post-reconnect component probe: {component}"
     );
 }
+
+/// `seat adopt` takes the pane's threads seat from ResolveSeat (`seat_for`): for a checked-in agent that is the
+/// seat its session is bound to, stable across calls, and resolving allocates no second seat.
+#[tokio::test(flavor = "multi_thread")]
+async fn adopt_resolves_the_checked_in_seat() {
+    if !enabled() {
+        support::skip("set HG_REAL_THREADS=1");
+        return;
+    }
+    let herdr = match PrivateHerdr::start_without_credentials() {
+        Ok(h) => h,
+        Err(e) if support::herdr_binary().is_none() => {
+            support::skip(&format!("{e}"));
+            return;
+        }
+        Err(e) => panic!("private herdr failed to start: {e:#}"),
+    };
+    let daemon = ThreadsDaemon::start(&herdr, threads_binary());
+    let found = discover(&daemon.state, &herdr.socket).expect("daemon published its endpoint");
+    let map = ThreadsSeatMap::new(
+        found.socket.clone(),
+        found.instance,
+        Arc::new(herdr_threads::app::SystemClock::new()),
+        herdr_threads::protocol::ids::HostLocator::parse(herdr.socket.to_str().unwrap()).unwrap(),
+    );
+    let created = herdr
+        .client()
+        .create_workspace(CreateWorkspace {
+            label: "adopt-real".into(),
+            cwd: herdr.root.join("home"),
+            env: vec![],
+        })
+        .await
+        .expect("workspace");
+    let pane = created.pane.clone().expect("first pane");
+
+    daemon.register_agent(&pane);
+    let seat = poll("the checked-in agent's seat binding", async || {
+        let s = map.seat_for(&pane).await.ok().flatten()?;
+        let out = daemon.cli(None, &["--json", "seat", "inspect", &s.0]);
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        (!v.to_string().contains("\"open_binding\":null")).then_some(s)
+    })
+    .await;
+    assert_eq!(map.seat_for(&pane).await.unwrap(), Some(seat.clone()));
+    let list = daemon.cli(None, &["--json", "seat", "list", "--include-retired"]);
+    ok("seat list", &list);
+    let v: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    let ids: Vec<&str> = v["result"]["data"]["items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no seat items: {v}"))
+        .iter()
+        .filter_map(|s| s["seat"].as_str())
+        .collect();
+    assert_eq!(ids, [seat.0.as_str()], "resolving allocated an extra seat");
+}

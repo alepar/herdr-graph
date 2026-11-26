@@ -4,7 +4,7 @@
 //! graph has no service operation for them, so the CLI adds them from the user's threads CLI.
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};
 use crate::model::IdKind;
-use crate::model::harness::{Harness, profile};
+use crate::model::harness::for_agent_kind;
 use crate::observe::sessions::capture_session;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, PaneInfo, ProcessInfo, TabInfo, WorkspaceInfo};
 use crate::ports::threads::{ThreadsSeatRef, ThreadsSeatView};
@@ -85,12 +85,6 @@ fn git_toplevel(cwd: &Path) -> Option<String> {
     (!s.is_empty()).then(|| s.to_owned())
 }
 
-fn harness_of(kind: &str) -> Option<Harness> {
-    [Harness::Claude, Harness::Codex]
-        .into_iter()
-        .find(|h| profile(*h).agent_kind == Some(kind))
-}
-
 async fn threads_facts(d: &AdoptInspectDeps, pane: &PaneInfo) -> Value {
     if pane.agent.is_none() {
         return json!({ "seat": null, "seat_note": "no agent in pane; not resolved" });
@@ -122,7 +116,7 @@ async fn pane_facts(d: &AdoptInspectDeps, pane: &PaneInfo) -> Value {
             .flatten(),
         None => None,
     };
-    let harness = pane.agent.as_ref().and_then(|a| harness_of(&a.kind));
+    let harness = pane.agent.as_ref().and_then(|a| for_agent_kind(&a.kind));
     let (process, process_error): (Option<ProcessInfo>, Option<String>) = match &d.herdr {
         Some(h) => match h.process_info(&pane.id).await {
             Ok(p) => (Some(p), None),

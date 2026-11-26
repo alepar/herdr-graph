@@ -4,7 +4,8 @@ use super::store::PlanStore;
 use super::types::{Plan, PlanEffect, PlanRequest, Reserved};
 use crate::daemon::registry::CallerInfo;
 use crate::model::change::{ReliedOn, RequestKind};
-use crate::model::{CommitId, PlanId, Timestamp};
+use crate::model::{CommitId, HerdrPaneId, PlanId, Timestamp};
+use crate::ports::herdr::{HerdrSnapshot, ProcessInfo};
 use crate::ports::store::StoreError;
 use crate::store::tree::TreeRead;
 use crate::writer::{Applied, MutationCx, MutationError, MutationRegistry};
@@ -19,6 +20,25 @@ pub struct PlanCx<'a> {
     pub caller: &'a CallerInfo,
     pub now: Timestamp,
     pub instance: &'a Path,
+}
+
+/// Plan-time live inputs: one Herdr snapshot, plus process info and the threads seat (ResolveSeat) of each pane
+/// `live_panes` named. Errors are kept per pane so the kind decides what is fatal.
+#[derive(Debug, Clone)]
+pub struct LiveFacts {
+    pub snap: HerdrSnapshot,
+    pub processes: BTreeMap<HerdrPaneId, Result<ProcessInfo, String>>,
+    pub seats: BTreeMap<HerdrPaneId, Result<Option<String>, String>>,
+}
+
+impl LiveFacts {
+    pub fn new(snap: HerdrSnapshot) -> Self {
+        Self {
+            snap,
+            processes: BTreeMap::new(),
+            seats: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -65,6 +85,28 @@ pub trait OrgKind: Send + Sync {
         _snap: &crate::ports::herdr::HerdrSnapshot,
     ) -> Result<serde_json::Value, PlanError> {
         Ok(args)
+    }
+    /// Panes whose process info (and, when flagged, threads seat) `plan.create` reads before `bind_live_facts`.
+    /// Parsed args and the snapshot decide which.
+    fn live_panes(
+        &self,
+        _args: &serde_json::Value,
+        _snap: &HerdrSnapshot,
+    ) -> Vec<(HerdrPaneId, bool)> {
+        vec![]
+    }
+    /// `bind_live` with the per-pane facts `live_panes` asked for.
+    fn bind_live_facts(
+        &self,
+        args: serde_json::Value,
+        live: &LiveFacts,
+    ) -> Result<serde_json::Value, PlanError> {
+        self.bind_live(args, &live.snap)
+    }
+    /// Panes whose threads seat `plan.apply` resolves at admission into `extra.threads_seats`; the mutation
+    /// compares them with the plan's seats.
+    fn admission_seat_panes(&self, _args: &serde_json::Value) -> Vec<HerdrPaneId> {
+        vec![]
     }
     /// Writer side: perform the confirmed change on the overlay. `plan` is the confirmed plan.
     fn mutate(
