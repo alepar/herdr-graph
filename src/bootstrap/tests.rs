@@ -989,7 +989,7 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     let config = dir.path().join("claude");
     let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
     assert_eq!(report.hook, HookChange::Installed);
-    assert_eq!(report.skills_written, ["seat", "graph"]);
+    assert_eq!(report.skills_written, ["seat", "graph", "adopt"]);
 
     let settings: serde_json::Value =
         serde_json::from_slice(&std::fs::read(config.join("settings.json")).unwrap()).unwrap();
@@ -1023,6 +1023,9 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     let graph = std::fs::read_to_string(config.join("skills/graph/SKILL.md")).unwrap();
     assert_eq!(seat, include_str!("../../skills/seat/SKILL.md"));
     assert_eq!(graph, include_str!("../../skills/graph/SKILL.md"));
+    let adopt = std::fs::read_to_string(config.join("skills/adopt/SKILL.md")).unwrap();
+    assert_eq!(adopt, include_str!("../../skills/adopt/SKILL.md"));
+    assert!(adopt.starts_with("---\nname: adopt\n"), "{adopt}");
     assert!(seat.starts_with("---\nname: seat\n"), "{seat}");
     assert!(graph.starts_with("---\nname: graph\n"), "{graph}");
     for needle in [
@@ -1055,7 +1058,7 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
 
     let report = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
     assert_eq!(report.hook, HookChange::Installed);
-    assert_eq!(report.skills_written, ["seat", "graph"]);
+    assert_eq!(report.skills_written, ["seat", "graph", "adopt"]);
     assert!(!config.join("settings.json").exists());
     let hooks: serde_json::Value =
         serde_json::from_slice(&std::fs::read(config.join("hooks.json")).unwrap()).unwrap();
@@ -1075,6 +1078,10 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
         )
     );
     assert!(config.join("skills/seat/SKILL.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(config.join("skills/adopt/SKILL.md")).unwrap(),
+        include_str!("../../skills/adopt/SKILL.md")
+    );
 
     let again = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
     assert_eq!(again.hook, HookChange::Unchanged);
@@ -1087,6 +1094,70 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
         original
     );
     assert!(!config.join("skills/seat").exists());
+    assert!(!config.join("skills/adopt").exists());
+}
+
+#[test]
+fn adopt_skill_names_only_real_commands() {
+    use crate::cli::Cli;
+    use clap::Parser;
+    let skill = include_str!("../../skills/adopt/SKILL.md");
+    let mut kinds = crate::plan::kind::KindRegistry::default();
+    register_core_kinds(&mut kinds);
+    crate::templates::register_kinds(&mut kinds);
+    crate::undo::register_kinds(&mut kinds);
+    crate::plan::kinds_extra::register_kinds(&mut kinds);
+
+    // Every backticked `herdr-graph plan --json <words>` resolves to a registered kind.
+    let mut plans = 0;
+    for span in skill.split('`').skip(1).step_by(2) {
+        let Some(rest) = span.strip_prefix("herdr-graph plan --json ") else {
+            continue;
+        };
+        if rest.starts_with('<') {
+            continue; // generic placeholder, not a concrete change
+        }
+        let words: Vec<String> = rest.split_whitespace().map(str::to_owned).collect();
+        kinds
+            .resolve(&words)
+            .unwrap_or_else(|e| panic!("`{span}` does not resolve: {e:?}"));
+        plans += 1;
+    }
+    assert!(
+        plans >= 5,
+        "teamspace adopt, seat adopt, instructions set x2, manager set: {plans}"
+    );
+    // Bare pointer examples inside the proposal steps.
+    for span in skill.split('`').skip(1).step_by(2) {
+        for lead in ["manager set ", "node-manager set "] {
+            if span.starts_with(lead) {
+                let words: Vec<String> = span.split_whitespace().map(str::to_owned).collect();
+                kinds
+                    .resolve(&words)
+                    .unwrap_or_else(|e| panic!("`{span}` does not resolve: {e:?}"));
+            }
+        }
+    }
+    for argv in [
+        &["herdr-graph", "adopt", "inspect", "tab-1"][..],
+        &["herdr-graph", "roster", "--live", "--unmanaged"],
+        &["herdr-graph", "roster"],
+        &["herdr-graph", "status"],
+        &["herdr-graph", "list", "seats"],
+        &["herdr-graph", "show", "seat-1"],
+        &["herdr-graph", "instructions", "show", "seat", "s"],
+        &[
+            "herdr-graph",
+            "apply",
+            "p",
+            "--confirm",
+            "h",
+            "--confirmed-by",
+            "user-relay",
+        ],
+    ] {
+        Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+    }
 }
 
 #[test]
@@ -1215,7 +1286,7 @@ fn setup_claude_uninstall_restores_settings() {
     );
     let report = setup_claude::uninstall(&config).unwrap();
     assert!(report.hook_removed);
-    assert_eq!(report.skills_removed, ["seat", "graph"]);
+    assert_eq!(report.skills_removed, ["seat", "graph", "adopt"]);
     assert_eq!(
         std::fs::read_to_string(config.join("settings.json")).unwrap(),
         original,
