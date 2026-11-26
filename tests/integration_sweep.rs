@@ -1585,6 +1585,7 @@ mod wiring {
             K::TeamspaceRename,
             K::TeamspaceRetire,
             K::TeamspaceResurrect,
+            K::TeamspaceAdopt,
             K::SeatCreate,
             K::SeatActivate,
             K::SeatDeactivate,
@@ -1616,7 +1617,8 @@ mod wiring {
                 K::TeamspaceCreate
                 | K::TeamspaceRename
                 | K::TeamspaceRetire
-                | K::TeamspaceResurrect => {}
+                | K::TeamspaceResurrect
+                | K::TeamspaceAdopt => {}
                 K::SeatCreate
                 | K::SeatActivate
                 | K::SeatDeactivate

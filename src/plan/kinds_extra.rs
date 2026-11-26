@@ -947,6 +947,11 @@ pub(crate) mod testkit {
     }
 
     pub fn fx() -> Fx {
+        fx_with(|_| {})
+    }
+
+    /// `fx` with `extra` kinds registered after the core and extra ones (undo needs the template kinds first).
+    pub fn fx_with(extra: impl FnOnce(&mut KindRegistry)) -> Fx {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("inst");
         init_instance(&root).unwrap();
@@ -954,6 +959,7 @@ pub(crate) mod testkit {
         let mut kinds = KindRegistry::default();
         register_core_kinds(&mut kinds);
         register_kinds(&mut kinds);
+        extra(&mut kinds);
         let kinds = Arc::new(kinds);
         let plans = Arc::new(PlanStore::new(root.join(".graph-local/plans")));
         let mut reg = MutationRegistry::default();

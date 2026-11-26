@@ -176,7 +176,10 @@ impl OrgKind for UndoKind {
                     Inverse::Ready(args) => kind.plan(cx, &args, reserved)?,
                 }
             }
-            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
+            ActionKind::ThreadsReconnect
+            | ActionKind::Resurrect
+            | ActionKind::Undo
+            | ActionKind::Adopt => {
                 unreachable!("{:?} is not undoable", orig.kind)
             }
         };
@@ -230,7 +233,10 @@ impl OrgKind for UndoKind {
                     }
                 }
             }
-            ActionKind::ThreadsReconnect | ActionKind::Resurrect | ActionKind::Undo => {
+            ActionKind::ThreadsReconnect
+            | ActionKind::Resurrect
+            | ActionKind::Undo
+            | ActionKind::Adopt => {
                 return Err(MutationError::Bug(format!(
                     "{:?} is not undoable",
                     orig.kind

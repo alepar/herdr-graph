@@ -53,6 +53,19 @@ pub trait OrgKind: Send + Sync {
         args: &serde_json::Value,
         reserved: &mut Reserved,
     ) -> Result<PlanBody, PlanError>;
+    /// Kinds that resolve live Herdr objects when the plan is created (adoption). `plan.create` takes one
+    /// snapshot for such a kind and passes it to `bind_live`, whose result replaces the parsed args: the resolved
+    /// ids are part of the confirmed plan, so the writer's recompute needs no Herdr.
+    fn needs_live(&self) -> bool {
+        false
+    }
+    fn bind_live(
+        &self,
+        args: serde_json::Value,
+        _snap: &crate::ports::herdr::HerdrSnapshot,
+    ) -> Result<serde_json::Value, PlanError> {
+        Ok(args)
+    }
     /// Writer side: perform the confirmed change on the overlay. `plan` is the confirmed plan.
     fn mutate(
         &self,
