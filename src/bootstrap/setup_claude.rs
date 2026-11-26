@@ -1,5 +1,5 @@
-//! `herdr-graph setup claude|codex [--uninstall]` (spec §9): an owned SessionStart hook group plus the `seat`
-//! and `graph` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}` (`settings.json`) or `${CODEX_HOME:-~/.codex}`
+//! `herdr-graph setup claude|codex [--uninstall]` (spec §9): an owned SessionStart hook group plus the `seat`,
+//! `graph` and `adopt` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}` (`settings.json`) or `${CODEX_HOME:-~/.codex}`
 //! (`hooks.json`, which has the same `hooks.SessionStart` shape). Both harnesses fire SessionStart on startup,
 //! resume, clear and compact, so the `/seat` prompt comes back after every context reset.
 //!
@@ -9,7 +9,7 @@
 //! changes nothing. Install never overwrites a rules file it did not write (it refuses instead), and
 //! anything it would own that already exists byte-identical (hook group, ask entries, rules file) is recorded
 //! as pre-existing: uninstall leaves those in place until a later run writes them. Uninstall removes what setup
-//! added (and the two skill directories) and leaves pre-existing artifacts in place. When
+//! added (and the skill directories) and leaves pre-existing artifacts in place. When
 //! `settings.json` is still byte-for-byte what the installer wrote, it is restored to its exact prior bytes
 //! (or removed when the installer created it); when someone edited it since, only the owned group is taken
 //! out of the parsed document and every other hook and setting stays.
@@ -24,6 +24,7 @@ const MANIFEST: &str = "herdr-graph-setup.json";
 const SKILLS: &[(&str, &str)] = &[
     ("seat", include_str!("../../skills/seat/SKILL.md")),
     ("graph", include_str!("../../skills/graph/SKILL.md")),
+    ("adopt", include_str!("../../skills/adopt/SKILL.md")),
 ];
 
 /// How a harness asks the user before `herdr-graph apply` runs (spec §3).
