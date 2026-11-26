@@ -297,6 +297,8 @@ struct OverrideSet {
     summaries: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     instructions_sections: Option<Vec<InstructionSection>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cwd: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -314,6 +316,7 @@ const CLEARABLE: &[&str] = &[
     "args",
     "summaries",
     "instructions_sections",
+    "cwd",
 ];
 
 fn canonical_field(f: &str) -> Option<&'static str> {
@@ -335,6 +338,7 @@ fn apply_override(rec: &mut SeatRecord, a: &SeatOverrideArgs) -> Result<(), Plan
             Some("args") => o.args = None,
             Some("summaries") => o.summaries = None,
             Some("instructions_sections") => o.instructions_sections.clear(),
+            Some("cwd") => o.cwd = None,
             _ => {
                 return Err(PlanError::Invalid(format!(
                     "cannot clear {f:?}; one of {}",
@@ -355,6 +359,9 @@ fn apply_override(rec: &mut SeatRecord, a: &SeatOverrideArgs) -> Result<(), Plan
     }
     if let Some(b) = s.summaries {
         o.summaries = Some(b);
+    }
+    if let Some(c) = &s.cwd {
+        o.cwd = Some(c.clone());
     }
     for sec in s.instructions_sections.iter().flatten() {
         match o
@@ -395,7 +402,7 @@ impl OrgKind for SeatOverride {
         let usage = || {
             PlanError::Usage(
                 "seat override <seat> [--harness h] [--model m] [--args \"<a b>\"] [--summaries true|false] \
-                 [--section <name>=<file>]… [--clear <field>]…"
+                 [--section <name>=<file>]… [--cwd <path>] [--clear <field>]…"
                     .into(),
             )
         };
@@ -421,6 +428,20 @@ impl OrgKind for SeatOverride {
                     )));
                 }
             });
+        }
+        if let Some(c) = flag(words, "--cwd") {
+            let mut path = std::path::PathBuf::from(&c);
+            if path.is_relative()
+                && let Some(base) = &caller.cwd
+            {
+                path = base.join(path);
+            }
+            if !path.is_absolute() {
+                return Err(PlanError::Usage(format!(
+                    "--cwd needs an absolute path (no caller cwd to resolve {c:?} against)"
+                )));
+            }
+            set.cwd = Some(path);
         }
         let mut sections = Vec::new();
         for spec in flags(words, "--section") {
@@ -465,6 +486,7 @@ impl OrgKind for SeatOverride {
             "model" => set.model.is_some(),
             "args" => set.args.is_some(),
             "summaries" => set.summaries.is_some(),
+            "cwd" => set.cwd.is_some(),
             _ => set.instructions_sections.is_some(),
         };
         if let Some(c) = clear.iter().find(|c| touched(c)) {
@@ -492,12 +514,30 @@ impl OrgKind for SeatOverride {
             f.rec.id.clone(),
             json!({ "set": a.set, "clear": a.clear }),
         )];
+        let mut warnings = Vec::new();
         if f.rec.lifecycle == Lifecycle::Active {
             let clones: Vec<CloneRecord> = f.clones.iter().map(|(_, c)| c.clone()).collect();
             effects.extend(session_replacements(&f.rec, &clones, &old, &new));
+            let cwd_touched = a.set.cwd.is_some() || a.clear.iter().any(|c| c == "cwd");
+            if cwd_touched
+                && clones
+                    .iter()
+                    .any(|c| c.lifecycle == CloneLifecycle::Active && c.occupant.is_some())
+            {
+                warnings.push(
+                    "the running session keeps its cwd; the new cwd applies at the next agent launch in a new pane"
+                        .to_owned(),
+                );
+            }
+        }
+        if let Some(c) = &a.set.cwd
+            && !c.is_dir()
+        {
+            warnings.push(format!("cwd {} is not an existing directory yet", c.display()));
         }
         let summary = format!("override seat {} config", f.rec.name);
         let mut out = body(effects, vec![rev_of(f.rec.id.clone(), f.rec.rev)], summary);
+        out.warnings.extend(warnings);
         if a.set.instructions_sections.is_some()
             || a.clear
                 .iter()
@@ -1275,6 +1315,115 @@ mod tests {
         // A summaries-only override does not change the run shape.
         let sp = plan(&fx, "seat override one --summaries false");
         assert_eq!(kinds_of(&sp), vec!["seat.override"]);
+    }
+
+    #[test]
+    fn seat_override_cwd_sets_an_absolute_path_and_clears() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        commit(&fx, "seat override one --model m1 --cwd /abs/wt");
+        let o = seat(&fx, "one").overrides;
+        assert_eq!(o.cwd.as_deref(), Some(std::path::Path::new("/abs/wt")));
+        commit(&fx, "seat override one --clear cwd");
+        let o = seat(&fx, "one").overrides;
+        assert_eq!(o.cwd, None);
+        assert_eq!(o.model.as_deref(), Some("m1"), "untouched field stays");
+    }
+
+    #[test]
+    fn seat_override_cwd_joins_a_relative_path_to_the_caller_cwd() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        let dir = tempfile::tempdir().unwrap();
+        let caller = CallerInfo {
+            cwd: Some(dir.path().into()),
+            ..Default::default()
+        };
+        let sp = plan_as(&fx, &caller, "seat override one --cwd wt");
+        assert_eq!(apply_plan(&fx, &sp).state, OpState::Committed);
+        assert_eq!(seat(&fx, "one").overrides.cwd, Some(dir.path().join("wt")));
+    }
+
+    #[test]
+    fn seat_override_cwd_needs_an_absolute_path_without_caller_cwd() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        let e = create_plan_err(&fx, "seat override one --cwd wt");
+        assert!(e.contains("--cwd needs an absolute path"), "{e}");
+    }
+
+    #[test]
+    fn seat_override_cwd_schedules_no_replacement() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha --active");
+        let clone = clones_of(&fx, &seat(&fx, "one").id).remove(0);
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = format!("seat override one --cwd {}", dir.path().display());
+        // No occupant: no warning about a running session.
+        let sp = plan(&fx, &cmd);
+        assert_eq!(kinds_of(&sp), vec!["seat.override"]);
+        assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+        occupy(&fx, &clone.id, true, None);
+        let sp = plan(&fx, &cmd);
+        assert_eq!(kinds_of(&sp), vec!["seat.override"]);
+        assert!(
+            sp.plan.warnings.iter().any(|w| w.contains("next agent launch")),
+            "{:?}",
+            sp.plan.warnings
+        );
+    }
+
+    #[test]
+    fn seat_override_cwd_warns_on_a_missing_directory() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not-yet");
+        let sp = plan(&fx, &format!("seat override one --cwd {}", missing.display()));
+        assert!(
+            sp.plan
+                .warnings
+                .iter()
+                .any(|w| w.contains("not an existing directory")),
+            "{:?}",
+            sp.plan.warnings
+        );
+        let sp = plan(&fx, &format!("seat override one --cwd {}", dir.path().display()));
+        assert!(sp.plan.warnings.is_empty(), "{:?}", sp.plan.warnings);
+    }
+
+    #[test]
+    fn seat_override_cwd_set_and_clear_conflict() {
+        let fx = fx();
+        commit(&fx, "teamspace create alpha");
+        commit(&fx, "seat create one --teamspace alpha");
+        let e = create_plan_err(&fx, "seat override one --cwd /a --clear cwd");
+        assert!(e.contains("cwd is both set and cleared"), "{e}");
+    }
+
+    #[test]
+    fn seat_override_cwd_reaches_the_launch_cwd() {
+        use crate::model::launch::{CwdSource, resolve_cwd};
+        let fx = fx();
+        commit(&fx, "teamspace create alpha --active");
+        commit(&fx, "seat create one --teamspace alpha --active");
+        commit(&fx, "seat override one --cwd /abs/wt");
+        let s = seat(&fx, "one");
+        let cfg = crate::model::effective::resolve_in(&view(&fx), &s).unwrap();
+        let (p, src) = resolve_cwd(cfg.cwd.as_deref(), None, &fx.deps.instance, &s.id);
+        assert_eq!(
+            (p, src),
+            (std::path::PathBuf::from("/abs/wt"), CwdSource::SeatOverride)
+        );
+        let d = crate::reconcile::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance)
+            .unwrap();
+        let tab = d.tabs.iter().find(|t| t.seat == s.id).expect("desired tab");
+        assert_eq!(tab.cwd, std::path::PathBuf::from("/abs/wt"));
     }
 
     #[test]
