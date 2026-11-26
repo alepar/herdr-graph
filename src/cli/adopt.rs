@@ -73,7 +73,7 @@ fn add_memberships(reply: &mut Value, bin: &Path) {
 /// for memberships, so this is the one place that shells out; a failure is an error string, never "no threads".
 fn memberships_with(bin: &Path, seat: &str) -> Result<Value, String> {
     let mut child = Command::new(bin)
-        .args(["--json", "thread", "list", "--seat", seat, "--all"])
+        .args(["--json", "thread", "list", "--seat", seat])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -130,7 +130,7 @@ mod tests {
         let bin = script(d.path(), "ok", r#"printf '{"items":[],"argv":"%s"}' "$*""#);
         let v = memberships_with(&bin, "s1").unwrap();
         assert_eq!(v["items"], json!([]));
-        assert_eq!(v["argv"], json!("--json thread list --seat s1 --all"));
+        assert_eq!(v["argv"], json!("--json thread list --seat s1"));
     }
 
     #[test]

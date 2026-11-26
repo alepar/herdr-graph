@@ -89,6 +89,8 @@ Adopted clones are keyless: graph reserves no herdr-threads continuity key for t
 
 - `plan seat release <seat>` and `plan teamspace release <teamspace>` mark the records retired with the mechanism `released` (history and transcripts kept) and drop their bindings. They have no Herdr effect: the tab, panes and agents keep running, the threads seat keeps its memberships, and only graph's own channel invitations are released. Graph ignores a released object's token left on the panes.
 - Undo of an adoption is a release; it never closes a tab.
+- The node manager can be released, or its adoption undone, only while it is the graph's only live seat: the release then clears the node manager back to unassigned (a plan effect), and the next seat adopted or created becomes the node manager. With any other live seat the release is refused; move the role first with `plan node-manager set <seat>`. `teamspace release` of the teamspace holding the node manager follows the same rule: allowed only if no live seat exists outside what it releases.
+- A release removes the released objects' adopt actions from the `undo` list.
 - Only adopted objects can be released. A seat graph created, or one with a clone graph added, is refused ("was created by graph, not adopted; use `seat retire`, which closes its tab"); graph-created seats leave by `plan seat retire`.
 
 ### Other adoption tools

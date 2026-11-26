@@ -516,7 +516,10 @@ impl OrgKind for SeatAdopt {
         warnings.push("the seat is keyless: closing its tab and undoing that gives the pane a fresh threads seat; memberships graph does not own are not restored".to_owned());
         if node_manager {
             warnings.push(
-                "this seat becomes the node manager: graph reopens it when it is closed".to_owned(),
+                format!(
+                    "this seat becomes the node manager: graph reopens it when it is closed; it can be released while it is the graph's only live seat, otherwise move the role first with {}",
+                    crate::plan::managers::NODE_MANAGER_SET_USAGE
+                ),
             );
         }
         for p in a.panes.iter().filter(|p| !p.adopt) {
