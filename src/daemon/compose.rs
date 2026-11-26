@@ -337,6 +337,7 @@ pub async fn compose_with(
         &journal,
         &herdr,
         &threads,
+        &pane_seat_map,
         paths.root.clone(),
     );
     transcripts.register_commands(reg);
@@ -404,6 +405,7 @@ fn register_commands(
     journal: &Arc<Journal>,
     herdr: &Arc<dyn HerdrApi>,
     _threads: &Arc<dyn ThreadsPort>,
+    pane_seat_map: &Arc<dyn PaneSeatMap>,
     instance: PathBuf,
 ) {
     let plan_deps = |instance: &PathBuf| PlanDeps {
@@ -414,10 +416,13 @@ fn register_commands(
         clock: clock.clone(),
         instance: instance.clone(),
     };
-    crate::plan::commands::register_commands_with_herdr(
+    crate::plan::commands::register_commands_live(
         reg,
         plan_deps(&instance),
-        Some(herdr.clone()),
+        crate::plan::commands::LiveSources {
+            herdr: Some(herdr.clone()),
+            seats: Some(pane_seat_map.clone()),
+        },
     );
     crate::plan::ops::register_commands(
         reg,

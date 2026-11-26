@@ -131,6 +131,66 @@ impl HarnessProfile {
     }
 }
 
+/// The harness whose agent kind is `kind` (`agent.start` kind, Herdr's pane `agent.kind`).
+pub fn for_agent_kind(kind: &str) -> Option<Harness> {
+    [Harness::Claude, Harness::Codex]
+        .into_iter()
+        .find(|h| profile(*h).agent_kind == Some(kind))
+}
+
+impl HarnessProfile {
+    /// The inverse of `argv` for a running agent's foreground argv: `(model, args)` after the agent token (its
+    /// file name equals `agent_kind`, so `node …/claude` works) with the launch args, the resume prefix and
+    /// session id, and the model flag and value removed. `None` when no agent token is found.
+    pub fn observed_run(&self, argv: &[String]) -> Option<(Option<String>, Vec<String>)> {
+        let kind = self.agent_kind?;
+        let at = argv
+            .iter()
+            .position(|t| Path::new(t).file_name().is_some_and(|n| n == kind))?;
+        let mut model = None;
+        let mut rest = Vec::new();
+        let mut it = argv[at + 1..].iter().peekable();
+        while let Some(tok) = it.next() {
+            if self.launch_args.contains(&tok.as_str()) {
+                continue;
+            }
+            if self.harness == Harness::Claude {
+                if matches!(tok.as_str(), "--continue" | "-c") || tok.starts_with("--resume=") {
+                    continue;
+                }
+                if matches!(tok.as_str(), "--resume" | "-r") {
+                    it.next();
+                    continue;
+                }
+            }
+            if let Some(prefix) = self.resume_prefix
+                && self.harness == Harness::Codex
+                && tok.as_str() == prefix[0]
+            {
+                it.next();
+                continue;
+            }
+            let model_flag = self
+                .model_flag
+                .into_iter()
+                .chain(["--model"])
+                .find(|f| tok.as_str() == *f);
+            if model_flag.is_some() {
+                if let Some(v) = it.next() {
+                    model = Some(v.clone());
+                }
+                continue;
+            }
+            if let Some(v) = tok.strip_prefix("--model=") {
+                model = Some(v.to_owned());
+                continue;
+            }
+            rest.push(tok.clone());
+        }
+        Some((model, rest))
+    }
+}
+
 /// Claude project slug: every char not `[A-Za-z0-9]` becomes `-`.
 pub fn claude_project_slug(cwd: &Path) -> String {
     cwd.to_string_lossy()
@@ -179,4 +239,87 @@ pub enum StartOutcome {
     NeedsRevision { reason: String },
     /// Timeout: inspect a snapshot before any retry.
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn agent_kinds_map_to_harnesses() {
+        assert_eq!(for_agent_kind("claude"), Some(Harness::Claude));
+        assert_eq!(for_agent_kind("codex"), Some(Harness::Codex));
+        assert_eq!(for_agent_kind("x"), None);
+        assert_eq!(for_agent_kind(""), None);
+    }
+
+    #[test]
+    fn observed_run_inverts_argv() {
+        for h in [Harness::Claude, Harness::Codex] {
+            let p = profile(h);
+            let mut argv = vec![p.agent_kind.unwrap().to_owned()];
+            argv.extend(p.argv(Some("m"), Some("id"), &v(&["--x"])));
+            assert_eq!(
+                p.observed_run(&argv),
+                Some((Some("m".to_owned()), v(&["--x"]))),
+                "{h:?}"
+            );
+            let mut bare = vec!["/usr/bin/".to_owned() + p.agent_kind.unwrap()];
+            bare.extend(p.argv(None, None, &[]));
+            assert_eq!(p.observed_run(&bare), Some((None, vec![])), "{h:?}");
+        }
+    }
+
+    #[test]
+    fn observed_run_reads_claude_forms() {
+        let p = profile(Harness::Claude);
+        let got = p.observed_run(&v(&[
+            "node",
+            "/usr/lib/claude",
+            "--model=opus",
+            "--resume=abc",
+            "--dangerously-skip-permissions",
+            "-c",
+        ]));
+        assert_eq!(
+            got,
+            Some((Some("opus".into()), v(&["--dangerously-skip-permissions"])))
+        );
+        let got = p.observed_run(&v(&["claude", "-r", "abc", "--model", "m", "--verbose"]));
+        assert_eq!(got, Some((Some("m".into()), v(&["--verbose"]))));
+        assert_eq!(
+            p.observed_run(&v(&["claude", "--continue"])),
+            Some((None, vec![]))
+        );
+    }
+
+    #[test]
+    fn observed_run_needs_an_agent_token() {
+        let p = profile(Harness::Claude);
+        assert_eq!(
+            p.observed_run(&v(&["node", "/usr/lib/claude/cli.js"])),
+            None
+        );
+        assert_eq!(p.observed_run(&[]), None);
+        assert_eq!(profile(Harness::Shell).observed_run(&v(&["bash"])), None);
+    }
+
+    #[test]
+    fn observed_run_drops_codex_launch_args_and_resume() {
+        let p = profile(Harness::Codex);
+        let got = p.observed_run(&v(&[
+            "codex",
+            "--no-daemon",
+            "resume",
+            "sid",
+            "-m",
+            "gpt",
+            "--yolo",
+        ]));
+        assert_eq!(got, Some((Some("gpt".into()), v(&["--yolo"]))));
+    }
 }

@@ -1,7 +1,7 @@
 //! IPC handlers `plan.create`, `plan.show`, `plan.apply` (spec §3.3, §10). There is no bypass: apply needs the
 //! plan's own hash, and `mode: "tty"` is accepted only from a caller that is on a terminal.
 use super::hash::plan_hash;
-use super::kind::{KindRegistry, PlanCx, PlanError, make_plan};
+use super::kind::{KindRegistry, LiveFacts, OrgKind, PlanCx, PlanError, make_plan};
 use super::store::PlanStore;
 use super::types::{Plan, Reserved, StoredPlan};
 use crate::daemon::budget;
@@ -18,6 +18,7 @@ use crate::ports::writer::{Writer, WriterError};
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::CommitView;
+use crate::threads::mapping::PaneSeatMap;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -171,16 +172,27 @@ pub fn create_plan_live(
     words: Vec<String>,
     live: Option<&HerdrSnapshot>,
 ) -> Result<Value, CommandError> {
+    let facts = live.map(|snap| LiveFacts::new(snap.clone()));
+    create_plan_facts(deps, caller, words, facts.as_ref())
+}
+
+/// `create_plan_live` with the per-pane facts (`gather_live`) a kind asked for through `OrgKind::live_panes`.
+pub fn create_plan_facts(
+    deps: &PlanDeps,
+    caller: &CallerInfo,
+    words: Vec<String>,
+    live: Option<&LiveFacts>,
+) -> Result<Value, CommandError> {
     let (words, supersedes) = take_supersedes(words)?;
     let (kind, rest) = deps.kinds.resolve(&words).map_err(plan_err)?;
     let mut args = kind.parse(&rest, caller).map_err(plan_err)?;
     if kind.needs_live() {
-        let snap = live.ok_or_else(|| {
+        let facts = live.ok_or_else(|| {
             CommandError::unavailable(
                 "this change reads live Herdr state and the daemon has no Herdr snapshot",
             )
         })?;
-        args = kind.bind_live(args, snap).map_err(plan_err)?;
+        args = kind.bind_live_facts(args, facts).map_err(plan_err)?;
     }
     let at = deps
         .store
@@ -354,41 +366,129 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(|v| v.as_str())
 }
 
-/// Registers `plan.create`, `plan.show` and `plan.apply`.
-pub fn register_commands(reg: &mut Registry, deps: PlanDeps) {
-    register_commands_with_herdr(reg, deps, None);
+/// What `plan.create` and `plan.apply` read live: the Herdr handle (one snapshot, process info) and the
+/// pane-to-threads-seat map (ResolveSeat). A source the daemon lacks makes the kinds that need it unavailable.
+#[derive(Default, Clone)]
+pub struct LiveSources {
+    pub herdr: Option<Arc<dyn HerdrApi>>,
+    pub seats: Option<Arc<dyn PaneSeatMap>>,
 }
 
-/// `register_commands`, plus the Herdr handle `plan.create` takes one snapshot from for a live-binding kind.
-pub fn register_commands_with_herdr(
-    reg: &mut Registry,
-    deps: PlanDeps,
-    herdr: Option<Arc<dyn HerdrApi>>,
-) {
+/// One snapshot, then process info and (when flagged) the threads seat of each pane `kind.live_panes` names.
+pub async fn gather_live(
+    src: &LiveSources,
+    kind: &dyn OrgKind,
+    args: &Value,
+) -> Result<LiveFacts, CommandError> {
+    let herdr = src.herdr.as_ref().ok_or_else(|| {
+        CommandError::unavailable(
+            "this change reads live Herdr state and the daemon has no Herdr snapshot",
+        )
+    })?;
+    let snap = herdr
+        .snapshot()
+        .await
+        .map_err(|e| CommandError::unavailable(format!("herdr snapshot: {e}")))?;
+    let panes = kind.live_panes(args, &snap);
+    let mut facts = LiveFacts::new(snap);
+    for (pane, resolve) in panes {
+        facts.processes.insert(
+            pane.clone(),
+            herdr.process_info(&pane).await.map_err(|e| e.to_string()),
+        );
+        if resolve {
+            let seats = src.seats.as_ref().ok_or_else(|| {
+                CommandError::unavailable(
+                    "this change reads threads seats and the daemon has no threads connection",
+                )
+            })?;
+            facts.seats.insert(
+                pane.clone(),
+                seats
+                    .seat_for(&pane)
+                    .await
+                    .map(|s| s.map(|s| s.0))
+                    .map_err(|e| e.to_string()),
+            );
+        }
+    }
+    Ok(facts)
+}
+
+/// `plan.create` end to end: resolve the kind and parse the words (pure), gather the live facts the kind
+/// needs, then plan on a blocking thread.
+pub async fn create_plan_async(
+    deps: Arc<PlanDeps>,
+    src: &LiveSources,
+    caller: CallerInfo,
+    words: Vec<String>,
+) -> Result<Value, CommandError> {
+    let (clean, _) = take_supersedes(words.clone())?;
+    let (kind, rest) = deps.kinds.resolve(&clean).map_err(plan_err)?;
+    let facts = if kind.needs_live() {
+        let args = kind.parse(&rest, &caller).map_err(plan_err)?;
+        Some(gather_live(src, &*kind, &args).await?)
+    } else {
+        None
+    };
+    tokio::task::spawn_blocking(move || create_plan_facts(&deps, &caller, words, facts.as_ref()))
+        .await
+        .map_err(|e| CommandError::internal(e.to_string()))?
+}
+
+/// The threads seats `plan.apply` hands the mutation as observed facts: one `seat_for` per pane the kind names.
+async fn admission_seats(
+    src: &LiveSources,
+    panes: Vec<crate::model::HerdrPaneId>,
+) -> Result<serde_json::Map<String, Value>, CommandError> {
+    let mut extra = serde_json::Map::new();
+    if panes.is_empty() {
+        return Ok(extra);
+    }
+    let seats = src.seats.as_ref().ok_or_else(|| {
+        CommandError::unavailable(
+            "this change reads threads seats and the daemon has no threads connection",
+        )
+    })?;
+    let mut by_pane = serde_json::Map::new();
+    for pane in panes {
+        match seats.seat_for(&pane).await {
+            Ok(Some(seat)) => {
+                by_pane.insert(pane.0.clone(), json!(seat.0));
+            }
+            Ok(None) => {
+                return Err(CommandError::unavailable(format!(
+                    "threads seat for pane {pane}: threads maps no seat to it"
+                )));
+            }
+            Err(e) => {
+                return Err(CommandError::unavailable(format!(
+                    "threads seat for pane {pane}: {e}"
+                )));
+            }
+        }
+    }
+    extra.insert("threads_seats".into(), Value::Object(by_pane));
+    Ok(extra)
+}
+
+/// Registers `plan.create`, `plan.show` and `plan.apply`.
+pub fn register_commands(reg: &mut Registry, deps: PlanDeps) {
+    register_commands_live(reg, deps, LiveSources::default());
+}
+
+/// `register_commands`, plus the live sources `plan.create` and `plan.apply` read for a live-binding kind.
+pub fn register_commands_live(reg: &mut Registry, deps: PlanDeps, src: LiveSources) {
     let deps = Arc::new(deps);
     let d = deps.clone();
+    let src = Arc::new(src);
+    let s = src.clone();
     reg.command("plan.create", move |cx: CommandCtx, args: Value| {
         let d = d.clone();
-        let herdr = herdr.clone();
+        let src = s.clone();
         async move {
             let words = words_of(&args)?;
-            let wants_live = d
-                .kinds
-                .resolve(&take_supersedes(words.clone())?.0)
-                .is_ok_and(|(k, _)| k.needs_live());
-            let snap = match (&herdr, wants_live) {
-                (Some(h), true) => Some(
-                    h.snapshot()
-                        .await
-                        .map_err(|e| CommandError::unavailable(format!("herdr snapshot: {e}")))?,
-                ),
-                _ => None,
-            };
-            tokio::task::spawn_blocking(move || {
-                create_plan_live(&d, &cx.caller, words, snap.as_ref())
-            })
-            .await
-            .map_err(|e| CommandError::internal(e.to_string()))?
+            create_plan_async(d, &src, cx.caller.clone(), words).await
         }
     });
     let d = deps.clone();
@@ -403,17 +503,34 @@ pub fn register_commands_with_herdr(
     let d = deps;
     reg.command("plan.apply", move |cx: CommandCtx, args: Value| {
         let d = d.clone();
+        let src = src.clone();
         async move {
             let plan = str_arg(&args, "plan")
                 .ok_or_else(|| CommandError::bad_request("plan.apply needs {plan}"))?
                 .to_owned();
             let confirm = str_arg(&args, "confirm").map(str::to_owned);
             let mode = str_arg(&args, "mode").unwrap_or("relay").to_owned();
+            let panes = {
+                let d = d.clone();
+                let plan = plan.clone();
+                tokio::task::spawn_blocking(move || {
+                    let stored = load_plan(&d, &plan)?;
+                    Ok::<_, CommandError>(
+                        d.kinds
+                            .get(stored.plan.request.kind)
+                            .map(|k| k.admission_seat_panes(&stored.plan.request.args))
+                            .unwrap_or_default(),
+                    )
+                })
+                .await
+                .map_err(|e| CommandError::internal(e.to_string()))??
+            };
+            let extra = admission_seats(&src, panes).await?;
             let op = {
                 let d = d.clone();
                 let caller = cx.caller.clone();
                 tokio::task::spawn_blocking(move || {
-                    admit_apply(&d, &caller, &plan, confirm.as_deref(), &mode)
+                    admit_apply_with(&d, &caller, &plan, confirm.as_deref(), &mode, extra)
                 })
                 .await
                 .map_err(|e| CommandError::internal(e.to_string()))??

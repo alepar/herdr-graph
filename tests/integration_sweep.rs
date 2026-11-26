@@ -1592,6 +1592,7 @@ mod wiring {
             K::SeatRename,
             K::SeatRetire,
             K::SeatResurrect,
+            K::SeatAdopt,
             K::SeatOverride,
             K::ManagerEdit,
             K::NodeManagerSet,
@@ -1625,6 +1626,7 @@ mod wiring {
                 | K::SeatRename
                 | K::SeatRetire
                 | K::SeatResurrect
+                | K::SeatAdopt
                 | K::SeatOverride
                 | K::ManagerEdit
                 | K::NodeManagerSet => {}
