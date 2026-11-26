@@ -4,7 +4,6 @@ use super::*;
 use crate::daemon::registry::{CallerInfo, CommandError};
 use crate::ipc::IpcErrorCode;
 use crate::journal::{Journal, OpRow};
-use crate::model::CommitId;
 use crate::model::b64::{b64_decode, b64_encode};
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
 use crate::model::clone::{Invitation, InvitationState, InviteConstraint, ThreadsLink};
@@ -15,15 +14,22 @@ use crate::model::native_session::NativeSession;
 use crate::model::operation::OpState;
 use crate::model::seat::SeatRecord;
 use crate::model::template::Startup;
-use crate::model::{AnyId, HerdrPaneId, NsId, SeatId, TeamspaceId};
-use crate::plan::commands::{PlanDeps, admit_apply};
+use crate::model::{
+    AnyId, HerdrPaneId, HerdrTabId, HerdrTerminalId, HerdrWorkspaceId, Incarnation, NsId, SeatId,
+    TeamspaceId,
+};
+use crate::model::{CommitId, PlanId};
+use crate::plan::commands::{PlanDeps, admit_apply, create_plan};
 use crate::plan::core_kinds::register_core_kinds;
 use crate::plan::kind::KindRegistry;
 use crate::plan::kinds_extra::register_kinds as register_extra_kinds;
 use crate::plan::store::PlanStore;
 use crate::plan::types::StoredPlan;
 use crate::ports::clock::ManualClock;
-use crate::ports::herdr::{AgentInfo, AgentSession, AgentStatus, PaneInfo};
+use crate::ports::herdr::{
+    AgentInfo, AgentSession, AgentStatus, HerdrSnapshot, PaneInfo, ProcessInfo, TabInfo,
+    WorkspaceInfo,
+};
 use crate::ports::store::{Store, StoreError};
 use crate::store::GitStore;
 use crate::store::init::init_instance;
@@ -207,6 +213,7 @@ fn fx_with(prepare: impl FnOnce(&Path)) -> Fx {
             plan,
             journal,
             herdr: None,
+            seats: None,
         },
         w,
         store,
@@ -424,7 +431,7 @@ fn first_bind_of_an_unseated_clone_still_resolves() {
         "{r:?}"
     );
     // No rebind (or any other) proposal: adoption is the clone's first bind, resolved once.
-    assert_eq!(proposal_words(&view(&fx), &c, None, &r), None);
+    assert_eq!(proposal_words(&view(&fx), &c, None, None, &r), None);
     assert!(r.proposal().is_none());
     // A fresh binding needs no proposal either.
     let fresh = CallerInfo {
@@ -437,7 +444,7 @@ fn first_bind_of_an_unseated_clone_still_resolves() {
         matches!(&r, Resolution::Bound { via, .. } if via == "binding"),
         "{r:?}"
     );
-    assert_eq!(proposal_words(&view(&fx), &fresh, None, &r), None);
+    assert_eq!(proposal_words(&view(&fx), &fresh, None, None, &r), None);
 }
 
 #[test]
@@ -494,7 +501,7 @@ fn resolve_unbound_proposes_create() {
         matches!(&r, Resolution::Unbound { candidates, .. } if candidates.is_empty()),
         "{r:?}"
     );
-    let words = proposal_words(&view(&fx), &c, Some(&pane), &r).expect("a create proposal");
+    let words = proposal_words(&view(&fx), &c, Some(&pane), None, &r).expect("a create proposal");
     assert_eq!(
         words,
         [
@@ -511,8 +518,186 @@ fn resolve_unbound_proposes_create() {
     );
     // Without anything identifying a teamspace there is nothing to propose.
     assert_eq!(
-        proposal_words(&view(&fx), &caller("p2"), Some(&pane), &r),
+        proposal_words(&view(&fx), &caller("p2"), Some(&pane), None, &r),
         None
+    );
+}
+
+// --- adopting proposals (design G6) -----------------------------------------------------------
+
+fn herdr_pane(id: &str) -> PaneInfo {
+    PaneInfo {
+        id: HerdrPaneId(id.into()),
+        terminal_id: Some(HerdrTerminalId(format!("t-{id}"))),
+        label: None,
+        cwd: Some("/w/legacy".into()),
+        metadata: BTreeMap::new(),
+        agent: Some(AgentInfo {
+            kind: "claude".into(),
+            status: AgentStatus::Idle,
+            session: None,
+        }),
+    }
+}
+
+/// Workspace `w1` ("legacy") with one tab `t1` holding pane `p1`.
+fn legacy_snap() -> HerdrSnapshot {
+    HerdrSnapshot {
+        incarnation: Incarnation {
+            generation: 1,
+            server_pid: Some(42),
+            server_started: None,
+        },
+        workspaces: vec![WorkspaceInfo {
+            id: HerdrWorkspaceId("w1".into()),
+            label: "legacy".into(),
+            metadata: BTreeMap::new(),
+            tabs: vec![TabInfo {
+                id: HerdrTabId("t1".into()),
+                label: "work".into(),
+                panes: vec![herdr_pane("p1")],
+            }],
+        }],
+    }
+}
+
+fn legacy_facts() -> crate::plan::kind::LiveFacts {
+    let mut f = crate::plan::kind::LiveFacts::new(legacy_snap());
+    let p = HerdrPaneId("p1".into());
+    f.processes.insert(
+        p.clone(),
+        Ok(ProcessInfo {
+            foreground_pid: Some(7),
+            foreground_argv: vec!["claude".into()],
+            is_shell: false,
+        }),
+    );
+    f.seats.insert(p, Ok(Some("s7".into())));
+    f
+}
+
+/// Adopt workspace `w1` as a teamspace, the way the user would after the proposal.
+fn adopt_legacy_workspace(fx: &Fx) {
+    let v = crate::plan::commands::create_plan_live(
+        &fx.deps.plan,
+        &CallerInfo::default(),
+        words("teamspace adopt legacy"),
+        Some(&legacy_snap()),
+    )
+    .unwrap();
+    let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
+    let sp = fx.deps.plan.plans.get(&id).unwrap().unwrap();
+    let op = admit_apply(
+        &fx.deps.plan,
+        &CallerInfo::default(),
+        sp.plan.id.as_str(),
+        Some(&sp.hash),
+        "relay",
+    )
+    .unwrap();
+    fx.w.drain().unwrap();
+    assert_eq!(
+        fx.w.journal().get(&op).unwrap().unwrap().state,
+        OpState::Committed
+    );
+}
+
+fn unbound(fx: &Fx, c: &CallerInfo) -> Resolution {
+    let r = resolve_caller(&view(fx), c, None);
+    assert!(matches!(&r, Resolution::Unbound { .. }), "{r:?}");
+    r
+}
+
+#[test]
+fn proposal_adopts_the_callers_tab_in_an_adopted_workspace() {
+    let fx = fx();
+    adopt_legacy_workspace(&fx);
+    let snap = legacy_snap();
+    let (ws, tab) = (&snap.workspaces[0], &snap.workspaces[0].tabs[0]);
+    let c = caller("p1");
+    let r = unbound(&fx, &c);
+    assert_eq!(
+        proposal_words(&view(&fx), &c, None, Some((ws, tab)), &r).unwrap(),
+        ["seat", "adopt", "t1"]
+    );
+}
+
+#[test]
+fn proposal_adopts_the_workspace_first() {
+    let fx = fx();
+    // A teamspace whose project_repo contains the caller's cwd: the old rule would have created a seat in it.
+    commit(&fx, "teamspace create alpha --active --project-repo /w");
+    commit(&fx, "seat create one --teamspace alpha --active");
+    let snap = legacy_snap();
+    let (ws, tab) = (&snap.workspaces[0], &snap.workspaces[0].tabs[0]);
+    let c = CallerInfo {
+        pane_id: Some("p1".into()),
+        cwd: Some("/w/legacy".into()),
+        ..Default::default()
+    };
+    let r = unbound(&fx, &c);
+    assert_eq!(
+        proposal_words(&view(&fx), &c, None, Some((ws, tab)), &r).unwrap(),
+        ["teamspace", "adopt", "w1"]
+    );
+}
+
+#[test]
+fn proposal_without_a_place_keeps_seat_create() {
+    let fx = fx();
+    commit(&fx, "teamspace create alpha --active --project-repo /w");
+    commit(&fx, "seat create one --teamspace alpha --active");
+    let c = CallerInfo {
+        pane_id: Some("p1".into()),
+        cwd: Some("/w/legacy".into()),
+        ..Default::default()
+    };
+    let r = unbound(&fx, &c);
+    let words = proposal_words(&view(&fx), &c, None, None, &r).unwrap();
+    assert_eq!(words[..2], ["seat", "create"], "{words:?}");
+}
+
+#[test]
+fn proposal_resurrect_and_clone_add_rules_still_win() {
+    let fx = fx();
+    let (seat, _) = bound_seat(&fx, "p1");
+    commit(&fx, "seat retire one");
+    let snap = legacy_snap();
+    let place = Some((&snap.workspaces[0], &snap.workspaces[0].tabs[0]));
+    let c = CallerInfo {
+        pane_id: Some("p1".into()),
+        graph_seat: Some(seat.id.to_string()),
+        ..Default::default()
+    };
+    let r = unbound(&fx, &c);
+    assert_eq!(
+        proposal_words(&view(&fx), &c, None, place, &r).unwrap(),
+        ["seat", "resurrect", seat.id.as_str()]
+    );
+}
+
+#[test]
+fn seat_reply_live_attaches_a_seat_adopt_proposal() {
+    let fx = fx();
+    adopt_legacy_workspace(&fx);
+    let c = caller("p1");
+    let facts = legacy_facts();
+    let reply = seat_reply_live(&fx.deps, &c, None, Some(&facts), None).unwrap();
+    let p = &reply["resolution"]["proposal"];
+    assert_eq!(p["words"], json!(["seat", "adopt", "t1"]), "{reply}");
+    let rendered = p["rendered"].as_str().unwrap();
+    assert!(rendered.contains("keyless"), "G5 warnings: {rendered}");
+    assert!(reply.get("proposal_error").is_none(), "{reply}");
+
+    // The facts could not be gathered: an error, never a fall back to `seat create`.
+    let reply = seat_reply_live(&fx.deps, &c, None, Some(&facts), Some("threads is down")).unwrap();
+    assert!(reply["resolution"]["proposal"].is_null(), "{reply}");
+    assert!(
+        reply["proposal_error"]
+            .as_str()
+            .unwrap()
+            .contains("threads is down"),
+        "{reply}"
     );
 }
 
@@ -539,7 +724,7 @@ fn resolve_ambiguous_lists_candidates() {
         other => panic!("expected ambiguous, got {other:?}"),
     }
     assert_eq!(
-        proposal_words(&view(&fx), &caller("p1"), None, &r),
+        proposal_words(&view(&fx), &caller("p1"), None, None, &r),
         None,
         "the user decides which clone this is"
     );
@@ -569,7 +754,7 @@ fn resolve_moved_pane_reload_required_candidate() {
         other => panic!("expected unbound, got {other:?}"),
     }
     assert_eq!(
-        proposal_words(&view(&fx), &c, None, &r),
+        proposal_words(&view(&fx), &c, None, None, &r),
         None,
         "a moved clone is never offered a rebind"
     );
@@ -591,7 +776,7 @@ fn resolve_retired_seat_proposes_resurrect() {
         "{r:?}"
     );
     assert_eq!(
-        proposal_words(&view(&fx), &c, None, &r).unwrap(),
+        proposal_words(&view(&fx), &c, None, None, &r).unwrap(),
         ["seat", "resurrect", seat.id.as_str()]
     );
 }
@@ -922,6 +1107,7 @@ fn content_write_has_no_daemon_command_and_no_mutation() {
             plan: fx.deps.plan.clone(),
             journal: fx.deps.journal.clone(),
             herdr: None,
+            seats: None,
         },
     );
     let names = reg.command_kinds();

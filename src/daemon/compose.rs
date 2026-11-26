@@ -451,6 +451,7 @@ fn register_commands(
             plan: Arc::new(plan_deps(&instance)),
             journal: journal.clone(),
             herdr: Some(herdr.clone()),
+            seats: Some(pane_seat_map.clone()),
         },
     );
 }

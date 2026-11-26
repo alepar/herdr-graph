@@ -10,8 +10,9 @@ use crate::model::launch::parse_nonce_label;
 use crate::model::seat::SeatRecord;
 use crate::model::teamspace::TeamspaceRecord;
 use crate::model::{CloneId, NsId, PlanId, SeatId, TeamspaceId};
-use crate::ports::herdr::{AgentSession, PaneInfo};
+use crate::ports::herdr::{AgentSession, PaneInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::StoreError;
+use crate::reconcile::planner::token_of;
 use crate::store::layout;
 use crate::store::tree::TreeRead;
 use serde::Serialize;
@@ -285,6 +286,25 @@ fn teamspace_by_cwd(all: &[Fact], caller: &CallerInfo) -> Option<TeamspaceId> {
     (hits.len() == 1).then(|| hits.remove(0))
 }
 
+/// Whether `ws` belongs to a live teamspace: bound by id, or stamped with its token.
+fn workspace_is_teamspace(tree: &dyn TreeRead, ws: &WorkspaceInfo) -> bool {
+    let stamped = token_of(&ws.metadata).and_then(|id| TeamspaceId::try_from(id).ok());
+    layout::list_teamspaces(tree)
+        .map(|all| {
+            all.into_iter().any(|(_, ts)| {
+                ts.lifecycle != Lifecycle::Retired
+                    && (stamped.as_ref() == Some(&ts.id)
+                        || ts
+                            .runtime
+                            .bound
+                            .as_ref()
+                            .and_then(|b| b.workspace_id.as_ref())
+                            == Some(&ws.id))
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn pane_name(caller: &CallerInfo, pane: Option<&PaneInfo>) -> String {
     let label = pane
         .and_then(|p| p.label.as_deref())
@@ -308,11 +328,14 @@ fn pane_name(caller: &CallerInfo, pane: Option<&PaneInfo>) -> String {
 
 /// The plan words that would fix `res`, for `plan.create`:
 /// a retired seat the env names → `seat resurrect <st>`; a retired clone of a live seat → `clone add <st>`;
-/// nothing identifiable → `seat create <name> --teamspace <ts>` when a teamspace is identifiable.
+/// the caller's place in Herdr known (`place`: its workspace and tab) → `seat adopt <tab>` when the workspace is
+/// a live teamspace, else `teamspace adopt <workspace>` first (the user runs `/seat` again afterwards);
+/// no place → `seat create <name> --teamspace <ts>` when a teamspace is identifiable.
 pub fn proposal_words(
     tree: &dyn TreeRead,
     caller: &CallerInfo,
     snapshot_pane: Option<&PaneInfo>,
+    place: Option<(&WorkspaceInfo, &TabInfo)>,
     res: &Resolution,
 ) -> Option<Vec<String>> {
     let all = facts(tree).ok()?;
@@ -354,6 +377,13 @@ pub fn proposal_words(
                 if clone_retired {
                     return Some(w(&["clone", "add", seat.id.as_str()]));
                 }
+            }
+            if let Some((ws, tab)) = place {
+                return if workspace_is_teamspace(tree, ws) {
+                    Some(w(&["seat", "adopt", &tab.id.to_string()]))
+                } else {
+                    Some(w(&["teamspace", "adopt", &ws.id.to_string()]))
+                };
             }
             let ts = named_seat
                 .as_ref()
