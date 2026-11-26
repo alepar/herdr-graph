@@ -1,5 +1,5 @@
 //! `herdr-graph setup claude|codex [--uninstall]` (spec §9): an owned SessionStart hook group plus the `seat`,
-//! `graph` and `adopt` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}` (`settings.json`) or `${CODEX_HOME:-~/.codex}`
+//! `graph`, `adopt` and `template-capture` skills, in `${CLAUDE_CONFIG_DIR:-~/.claude}` (`settings.json`) or `${CODEX_HOME:-~/.codex}`
 //! (`hooks.json`, which has the same `hooks.SessionStart` shape). Both harnesses fire SessionStart on startup,
 //! resume, clear and compact, so the `/seat` prompt comes back after every context reset.
 //!
@@ -25,6 +25,10 @@ const SKILLS: &[(&str, &str)] = &[
     ("seat", include_str!("../../skills/seat/SKILL.md")),
     ("graph", include_str!("../../skills/graph/SKILL.md")),
     ("adopt", include_str!("../../skills/adopt/SKILL.md")),
+    (
+        "template-capture",
+        include_str!("../../skills/template-capture/SKILL.md"),
+    ),
 ];
 
 /// How a harness asks the user before `herdr-graph apply` runs (spec §3).
