@@ -1175,7 +1175,7 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     let config = dir.path().join("claude");
     let report = setup_claude::install(&config, Path::new(BIN)).unwrap();
     assert_eq!(report.hook, HookChange::Installed);
-    assert_eq!(report.skills_written, ["seat", "graph", "adopt"]);
+    assert_eq!(report.skills_written, ["seat", "graph", "adopt", "template-capture"]);
 
     let settings: serde_json::Value =
         serde_json::from_slice(&std::fs::read(config.join("settings.json")).unwrap()).unwrap();
@@ -1212,6 +1212,9 @@ fn setup_claude_installs_hook_and_skills_in_temp_config_dir() {
     let adopt = std::fs::read_to_string(config.join("skills/adopt/SKILL.md")).unwrap();
     assert_eq!(adopt, include_str!("../../skills/adopt/SKILL.md"));
     assert!(adopt.starts_with("---\nname: adopt\n"), "{adopt}");
+    let capture = std::fs::read_to_string(config.join("skills/template-capture/SKILL.md")).unwrap();
+    assert_eq!(capture, include_str!("../../skills/template-capture/SKILL.md"));
+    assert!(capture.starts_with("---\nname: template-capture\n"), "{capture}");
     assert!(seat.starts_with("---\nname: seat\n"), "{seat}");
     assert!(graph.starts_with("---\nname: graph\n"), "{graph}");
     for needle in [
@@ -1244,7 +1247,7 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
 
     let report = setup_claude::install_for(&setup_claude::CODEX, &config, Path::new(BIN)).unwrap();
     assert_eq!(report.hook, HookChange::Installed);
-    assert_eq!(report.skills_written, ["seat", "graph", "adopt"]);
+    assert_eq!(report.skills_written, ["seat", "graph", "adopt", "template-capture"]);
     assert!(!config.join("settings.json").exists());
     let hooks: serde_json::Value =
         serde_json::from_slice(&std::fs::read(config.join("hooks.json")).unwrap()).unwrap();
@@ -1281,13 +1284,14 @@ fn setup_codex_installs_hook_in_hooks_json_and_uninstalls_exactly() {
     );
     assert!(!config.join("skills/seat").exists());
     assert!(!config.join("skills/adopt").exists());
+    assert!(!config.join("skills/template-capture").exists());
 }
 
-#[test]
-fn adopt_skill_names_only_real_commands() {
+/// Every concrete command a skill names resolves: backticked `herdr-graph plan --json <words>` to a registered
+/// plan kind, and the read and apply commands to a parsing CLI invocation.
+fn assert_skill_commands_real(skill: &str, min_plans: usize) {
     use crate::cli::Cli;
     use clap::Parser;
-    let skill = include_str!("../../skills/adopt/SKILL.md");
     let mut kinds = crate::plan::kind::KindRegistry::default();
     register_core_kinds(&mut kinds);
     crate::templates::register_kinds(&mut kinds);
@@ -1309,10 +1313,7 @@ fn adopt_skill_names_only_real_commands() {
             .unwrap_or_else(|e| panic!("`{span}` does not resolve: {e:?}"));
         plans += 1;
     }
-    assert!(
-        plans >= 5,
-        "teamspace adopt, seat adopt, instructions set x2, manager set: {plans}"
-    );
+    assert!(plans >= min_plans, "{plans} < {min_plans} concrete plans");
     // Bare pointer examples inside the proposal steps.
     for span in skill.split('`').skip(1).step_by(2) {
         for lead in ["manager set ", "node-manager set "] {
@@ -1344,6 +1345,34 @@ fn adopt_skill_names_only_real_commands() {
     ] {
         Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
     }
+}
+
+#[test]
+fn adopt_skill_names_only_real_commands() {
+    assert_skill_commands_real(include_str!("../../skills/adopt/SKILL.md"), 5);
+}
+
+#[test]
+fn template_capture_skill_names_only_real_commands() {
+    assert_skill_commands_real(include_str!("../../skills/template-capture/SKILL.md"), 3);
+}
+
+#[test]
+fn template_capture_example_parses() {
+    use crate::model::template::TemplateKind;
+    use crate::templates::document::TemplateDocument;
+    let skill = include_str!("../../skills/template-capture/SKILL.md");
+    let blocks: Vec<&str> = skill
+        .split("```toml\n")
+        .skip(1)
+        .map(|b| b.split("```").next().unwrap())
+        .collect();
+    assert_eq!(blocks.len(), 1, "one toml example expected");
+    let doc = TemplateDocument::parse(blocks[0]).expect("example parses and validates");
+    assert_eq!(doc.kind, TemplateKind::Team);
+    assert_eq!(doc.members.len(), 2);
+    assert_eq!(doc.relationships.len(), 1);
+    assert!(doc.members[0].agents_md.is_some() && doc.agents_md.is_some());
 }
 
 #[test]
@@ -1472,7 +1501,7 @@ fn setup_claude_uninstall_restores_settings() {
     );
     let report = setup_claude::uninstall(&config).unwrap();
     assert!(report.hook_removed);
-    assert_eq!(report.skills_removed, ["seat", "graph", "adopt"]);
+    assert_eq!(report.skills_removed, ["seat", "graph", "adopt", "template-capture"]);
     assert_eq!(
         std::fs::read_to_string(config.join("settings.json")).unwrap(),
         original,
