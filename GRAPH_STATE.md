@@ -66,7 +66,9 @@ Templates with omitted `kind` remain team templates. Legacy `role` fields read a
 
 Keep using the upgraded binary for these instances. Older binaries cannot discover new-layout records, and no downgrade migration is supplied. Git graph-change summaries contain committed mutations; the SQLite journal remains authoritative for live, rejected, failed and cancelled operation lifecycle. Preserve both the Git repository and local journal when backing up or moving an instance.
 
-Clone records written by this version may carry `threads_seat`, `threads_seat_history`, `seat_intent` and `seat_fact`, and `clone purge` deletes retired clone records; older binaries do not know these fields and downgrade is not supported.
+Clone records written by this version may carry `threads_seat`, `threads_seat_history`, `seat_intent`, `seat_fact` and `keyless`, and `clone purge` deletes retired clone records; older binaries do not know these fields and downgrade is not supported.
+
+Adoption records two action kinds, `adopt` and `release` (undoable actions under `mutations/undoable-actions/`). A release writes the retirement mechanism `released` on the seat, clone or teamspace record: the history stays, graph ignores the object afterwards, and no Herdr or threads effect is recorded. Undo of an `adopt` action is such a release. Older binaries do not know the mechanism or the action kinds.
 
 ## Threads node boundaries
 

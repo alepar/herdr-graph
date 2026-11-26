@@ -11,11 +11,13 @@ Organizational changes are never made directly. They go plan, user confirmation,
 
 1. Build a plan: `herdr-graph plan --json <change...>`, for example
    `herdr-graph plan --json seat create reviewer --teamspace alpha --active`.
-   Other changes: `teamspace create|rename|retire|resurrect`,
-   `seat create|activate|deactivate|rename|retire|resurrect|override`,
+   Other changes: `teamspace create|rename|retire|resurrect|adopt|release`,
+   `seat create|activate|deactivate|rename|retire|resurrect|override|adopt|release`,
    `clone add|retire|purge`, `participation join|leave`, `template create|edit|copy`,
    `application apply|retire`, `manager set|clear <seat|teamspace> [<manager-seat>]`,
    `node-manager set <seat>`, `undo`.
+   To bring an existing Herdr tab under the graph, or to capture a template from adopted
+   teamspaces, use the `adopt` and `template-capture` skills; they build these plans for you.
    The node manager cannot be retired or deactivated, and its teamspace cannot be retired;
    such plans are refused. To hand the role on, plan `node-manager set <seat>` first.
 2. Show the plan to the user verbatim: the `rendered` text, including warnings and any diff.

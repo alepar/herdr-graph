@@ -30,11 +30,13 @@ herdr-graph setup claude [--uninstall]   # ${CLAUDE_CONFIG_DIR:-~/.claude}/setti
 herdr-graph setup codex [--uninstall]    # ${CODEX_HOME:-~/.codex}/hooks.json
 ```
 
-Each installs a SessionStart hook and the `seat` and `graph` skills. Herdr manifests do not declare harness skills or hooks, so these commands do it. In a graph pane the hook tells the session to run the seat skill. Both harnesses fire SessionStart on startup, resume, clear and compaction, so a session whose context was reset or compacted reloads its seat role. Codex runs a new or changed hook only after you trust it in an interactive session (the startup review or `/hooks`); setup never writes that trust.
+Each installs a SessionStart hook and the `seat`, `graph`, `adopt` and `template-capture` skills. Herdr manifests do not declare harness skills or hooks, so these commands do it. In a graph pane the hook tells the session to run the seat skill. Both harnesses fire SessionStart on startup, resume, clear and compaction, so a session whose context was reset or compacted reloads its seat role. Codex runs a new or changed hook only after you trust it in an interactive session (the startup review or `/hooks`); setup never writes that trust.
 
 ## /seat
 
 `/seat` (in a Claude or Codex session started by herdr-graph) shows or sets the session's seat identity. The `graph` skill documents the CLI for agents.
+
+In a pane graph does not manage yet, `/seat` proposes adopting the caller's own tab (`seat adopt <tab>`) instead of creating a second one; when the tab's workspace is not a teamspace it proposes `teamspace adopt <workspace>` first, and you run `/seat` again after applying it. See [Adopting existing Herdr spaces](#adopting-existing-herdr-spaces).
 
 ## Plan, confirm, relay
 
@@ -54,6 +56,48 @@ herdr-graph plan node-manager set <seat>
 ```
 
 Every seat has a manager it escalates lifecycle issues to: its own `manager`, else its teamspace's default, else the node manager. The node manager is the first seat created on a graph; it is always kept open, the role moves only with `plan node-manager set`, and when its pane is moved in Herdr into a tab no other seat uses, the seat follows it there (with a warning). While no node manager is assigned, every graph command prints a warning on stderr pointing at `plan node-manager set`.
+
+## Adopting existing Herdr spaces
+
+Graph can take over live Herdr workspaces and tabs without relaunching their agents. The unit of adoption is a tab, inside an adopted workspace; one space is migrated one tab at a time, and tabs you do not adopt stay unmanaged and untouched.
+
+```sh
+herdr-graph plan teamspace adopt <workspace-id|label> [--name <name>] [--project-repo <path>]
+herdr-graph plan seat adopt <tab-id|label> [--teamspace <ts>] [--name <name>] [--harness <h>]
+herdr-graph plan seat release <seat>
+herdr-graph plan teamspace release <teamspace>
+herdr-graph adopt inspect <tab|pane>
+```
+
+### Migration path for one space
+
+1. `herdr-graph roster --live --unmanaged` lists the Herdr workspaces, tabs and panes graph does not manage (ids and labels only).
+2. Pick one session and run the `adopt` skill in an agent pane. It reads `adopt inspect`, the native transcript, the pane's threads history and the existing graph, and proposes the following as ordinary plans, each shown to you and applied only after your yes.
+3. `teamspace adopt` when the session's workspace is not a teamspace yet. It writes a teamspace bound to that workspace and adopts no tabs.
+4. `seat adopt` for the tab. It records the observed harness, model and args as a seat override, takes the pane's existing threads seat, and relaunches nothing. A tab with a shell pane is adopted with the `shell` harness; a pane without an agent in an agent tab stays unmanaged inside the seat's tab (the plan says so).
+5. Instructions: `plan instructions set seat <seat> AGENTS.md --from <draft>` and teamspace `rules/<name>.md`, drafted from the transcript under `<instance>/.graph-local/adopt/`. Repo `AGENTS.md` and `CLAUDE.md` load natively and are not copied.
+6. Hierarchy: the first adopted seat of a graph becomes the node manager, as the first created seat does. Later seats get `manager set` proposals with the evidence quoted.
+7. The adopted agent runs `/seat` (prompted by its seat-channel invitation or its next SessionStart) and picks up its graph instructions.
+
+The adoption plan prints what changes once a space is managed: closing the tab or a pane retires the seat or clone (undoable); renaming the tab in Herdr renames the seat and renaming the seat relabels the tab; if the agent exits with the pane kept, graph starts one in it, resuming the last captured session; the node manager is reopened when closed.
+
+### Keyless seats
+
+Adopted clones are keyless: graph reserves no herdr-threads continuity key for them, links none and puts none in the launch environment. Threads' own continuity keeps the seat: a new agent or `/clear` in the same pane, a live `herdr update --handoff`, and a resumed session after a Herdr restart all reattach to the same threads seat, with its memberships (psa-global, pair channels, topic threads). Graph adds only its own seat and team channel invitations and does not import existing memberships into participation intent. The cost: when a keyless seat's tab is closed and the closure undone, the pane gets a fresh threads seat, and memberships graph does not own are not restored. A fresh (non-resume) agent start after a Herdr restart is held by threads until an operator rebinds it.
+
+### Way back out
+
+- `plan seat release <seat>` and `plan teamspace release <teamspace>` mark the records retired with the mechanism `released` (history and transcripts kept) and drop their bindings. They have no Herdr effect: the tab, panes and agents keep running, the threads seat keeps its memberships, and only graph's own channel invitations are released. Graph ignores a released object's token left on the panes.
+- Undo of an adoption is a release; it never closes a tab.
+- Only adopted objects can be released. A seat graph created, or one with a clone graph added, is refused ("was created by graph, not adopted; use `seat retire`, which closes its tab"); graph-created seats leave by `plan seat retire`.
+
+### Other adoption tools
+
+- `herdr-graph adopt inspect <tab|pane>` prints read-only JSON for the skill: ids, labels, cwd, git toplevel, agent kind and argv, native session and transcript path, threads seat, status and memberships. It plans and changes nothing.
+- `plan seat override <seat> --cwd <path>` sets the directory a seat's agent is launched in, so per-worker worktrees can be expressed. A relative path resolves against the caller's cwd, and a missing directory draws a plan warning. It does not move a running agent.
+- The `template-capture` skill reviews one or two adopted teamspaces and drafts a team template, seat templates, member `AGENTS.md` files and `manager set` plans (a template cannot declare member managers) under `<instance>/.graph-local/template-capture/<name>/`. Apply the result with `plan template create <name> --from <file.toml>`; attaching the source seats with `application apply --reuse` is a separate, optional plan.
+
+Both skills are installed by `setup claude|codex`, beside `seat` and `graph`; rerun setup after upgrading to get them.
 
 ## Reusable templates and state paths
 
@@ -228,6 +272,8 @@ toolbox create -c hg-build --distro fedora --release 44
 podman exec -u root hg-build dnf install -y gcc make pkgconf-pkg-config zlib-ng-compat-devel git
 toolbox run -c hg-build cargo test
 ```
+
+Adoption adds the tier-3 tests in `tests/adopt_private_herdr.rs` (a live tab with a checked-in agent keeps its threads seat and memberships across a daemon restart, release leaves the tab and agent running, unmanaged tabs in an adopted workspace are left alone: `cargo test --features private-herdr --test adopt_private_herdr -- --test-threads=1`) and the tier-5 test `adopt_resolves_the_checked_in_seat` in `tests/threads_real.rs` (run it with the tier-5 command above).
 
 The inspection views add two tier-3 tests: `tests/inspect_live.rs` (`roster --live` against a private Herdr server: `cargo test --features private-herdr --test inspect_live -- --test-threads=1`) and `tests/inspect_sweep.rs` (the end-to-end read-only sweep, requirement R14, through the setup hook: `cargo test --features private-herdr --test inspect_sweep -- --test-threads=1`). `tests/inspect_loaded.rs` (the real hook chain writing the loaded record) runs in tier 1 through `TestRoot`.
 

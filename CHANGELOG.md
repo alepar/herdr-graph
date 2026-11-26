@@ -4,7 +4,24 @@
 
 ### Added
 
+- **Adoption.** `herdr-graph plan teamspace adopt <workspace> [--name] [--project-repo]` and `plan seat adopt <tab> [--teamspace] [--name] [--harness]` bring a live Herdr workspace and tab under graph without relaunching the agent. The seat takes the pane's existing threads seat (so its memberships are kept); the observed harness, model and args are recorded as a seat override. The first adopted seat of a graph becomes the node manager. See README "Adopting existing Herdr spaces".
+- **Keyless clones.** Adopted clones are keyless: no continuity key is reserved, linked or put in the launch environment; herdr-threads' own continuity keeps the seat. `CloneRecord.keyless` records the choice.
+- **Release.** `plan seat release <seat>` and `plan teamspace release <teamspace>` retire adopted records with mechanism `released` (history kept), drop their bindings and release graph's own channel invitations. The tab, panes, agents and threads seat keep running. Graph-created seats are refused and leave by `seat retire`.
+- **Undo of adoption.** Undo of an adoption is a release and never closes a tab.
+- **`herdr-graph adopt inspect <tab|pane>`.** Read-only JSON of ids, labels, cwd, git toplevel, agent kind and argv, native session and transcript path, threads seat, status and memberships.
+- **`plan seat override <seat> --cwd <path>`.** Sets the seat's launch directory.
+- **`adopt` and `template-capture` skills.** `adopt` proposes teamspace adoption, seat adoption, instruction drafts and hierarchy changes for one session at a time, each as an ordinary plan. `template-capture` drafts a team template, seat templates, member `AGENTS.md` and `manager set` plans from one or two adopted teamspaces. Both are installed by `setup claude|codex`.
+
 - **`software-factory` template.** A shipped team template for a project teamspace following [the software factory vision](SOFTWARE-FACTORY-VISION.md). The foreman starts active. The secretary, lead researcher (`researcher` seat template), designer (`designer`) and engineer (`engineer`) start deferred. All members share a `project` thread. The template's `AGENTS.md` is the factory rulebook, rendered for every member, and each member has role instructions. The rulebook is guidance only: graph does not enforce evidence, acceptance, budgets or retirement handoffs. New instances get it from `init --with-examples`. For an existing instance, CREATING_NEW_GRAPH.md describes loading it with `plan template create`.
+
+### Changed
+
+- **`/seat` in an unmanaged pane.** The proposal is now `seat adopt <tab>` for the caller's own tab (`teamspace adopt <workspace>` first when its workspace is not a teamspace) instead of `seat create`, which opened a second tab with a new agent.
+
+### Migration
+
+- Rerun `herdr-graph setup claude` and `setup codex` to install the `adopt` and `template-capture` skills and the updated `seat` and `graph` skills.
+- Clone records written by this version may carry `keyless`, and retirements may carry the mechanism `released`; older binaries do not know either.
 
 ## v0.3.0 — 2026-11-07
 
