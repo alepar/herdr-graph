@@ -4,6 +4,7 @@ pub mod kinds_extra;
 pub mod ops;
 pub mod reminders;
 
+pub mod adopt;
 pub mod apply;
 pub mod commands;
 pub mod core_kinds;

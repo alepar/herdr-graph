@@ -11,6 +11,7 @@ pub enum RequestKind {
     TeamspaceRename,
     TeamspaceRetire,
     TeamspaceResurrect,
+    TeamspaceAdopt,
     SeatCreate,
     SeatActivate,
     SeatDeactivate,

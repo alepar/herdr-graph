@@ -42,6 +42,8 @@ pub enum ActionKind {
     ApplicationRetire,
     ThreadsReconnect,
     Undo,
+    /// An existing Herdr workspace bound to a new teamspace (`teamspace adopt`). Not undoable yet.
+    Adopt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

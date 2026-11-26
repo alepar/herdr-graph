@@ -162,6 +162,10 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
             )
         }
         ActionKind::Undo => "undo".into(),
+        ActionKind::Adopt => format!(
+            "adopted teamspace {}",
+            names.of_str(comp_str(a, "teamspace"))
+        ),
     }
 }
 

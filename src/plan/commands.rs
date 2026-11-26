@@ -12,6 +12,7 @@ use crate::model::operation::{ConfirmMode, Confirmation, OpState};
 use crate::model::seat::SeatRecord;
 use crate::model::{CloneId, OpId, PlanId, SeatId};
 use crate::ports::clock::Clock;
+use crate::ports::herdr::{HerdrApi, HerdrSnapshot};
 use crate::ports::store::Store;
 use crate::ports::writer::{Writer, WriterError};
 use crate::store::layout;
@@ -159,9 +160,28 @@ pub fn create_plan(
     caller: &CallerInfo,
     words: Vec<String>,
 ) -> Result<Value, CommandError> {
+    create_plan_live(deps, caller, words, None)
+}
+
+/// `create_plan` with the one Herdr snapshot a live-binding kind (`OrgKind::needs_live`) resolves its objects
+/// against; kinds that do not ask for one ignore it.
+pub fn create_plan_live(
+    deps: &PlanDeps,
+    caller: &CallerInfo,
+    words: Vec<String>,
+    live: Option<&HerdrSnapshot>,
+) -> Result<Value, CommandError> {
     let (words, supersedes) = take_supersedes(words)?;
     let (kind, rest) = deps.kinds.resolve(&words).map_err(plan_err)?;
-    let args = kind.parse(&rest, caller).map_err(plan_err)?;
+    let mut args = kind.parse(&rest, caller).map_err(plan_err)?;
+    if kind.needs_live() {
+        let snap = live.ok_or_else(|| {
+            CommandError::unavailable(
+                "this change reads live Herdr state and the daemon has no Herdr snapshot",
+            )
+        })?;
+        args = kind.bind_live(args, snap).map_err(plan_err)?;
+    }
     let at = deps
         .store
         .head()
@@ -336,15 +356,39 @@ fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 
 /// Registers `plan.create`, `plan.show` and `plan.apply`.
 pub fn register_commands(reg: &mut Registry, deps: PlanDeps) {
+    register_commands_with_herdr(reg, deps, None);
+}
+
+/// `register_commands`, plus the Herdr handle `plan.create` takes one snapshot from for a live-binding kind.
+pub fn register_commands_with_herdr(
+    reg: &mut Registry,
+    deps: PlanDeps,
+    herdr: Option<Arc<dyn HerdrApi>>,
+) {
     let deps = Arc::new(deps);
     let d = deps.clone();
     reg.command("plan.create", move |cx: CommandCtx, args: Value| {
         let d = d.clone();
+        let herdr = herdr.clone();
         async move {
             let words = words_of(&args)?;
-            tokio::task::spawn_blocking(move || create_plan(&d, &cx.caller, words))
-                .await
-                .map_err(|e| CommandError::internal(e.to_string()))?
+            let wants_live = d
+                .kinds
+                .resolve(&take_supersedes(words.clone())?.0)
+                .is_ok_and(|(k, _)| k.needs_live());
+            let snap = match (&herdr, wants_live) {
+                (Some(h), true) => Some(
+                    h.snapshot()
+                        .await
+                        .map_err(|e| CommandError::unavailable(format!("herdr snapshot: {e}")))?,
+                ),
+                _ => None,
+            };
+            tokio::task::spawn_blocking(move || {
+                create_plan_live(&d, &cx.caller, words, snap.as_ref())
+            })
+            .await
+            .map_err(|e| CommandError::internal(e.to_string()))?
         }
     });
     let d = deps.clone();

@@ -40,6 +40,7 @@ use std::sync::Arc;
 pub fn register_core_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(crate::threads::reconnect::Reconnect));
     reg.register(Arc::new(TeamspaceCreate));
+    reg.register(Arc::new(crate::plan::adopt::TeamspaceAdopt));
     reg.register(Arc::new(TeamspaceRetire));
     reg.register(Arc::new(TeamspaceResurrect));
     reg.register(Arc::new(SeatCreate));

@@ -414,7 +414,11 @@ fn register_commands(
         clock: clock.clone(),
         instance: instance.clone(),
     };
-    crate::plan::commands::register_commands(reg, plan_deps(&instance));
+    crate::plan::commands::register_commands_with_herdr(
+        reg,
+        plan_deps(&instance),
+        Some(herdr.clone()),
+    );
     crate::plan::ops::register_commands(
         reg,
         OpsDeps {
