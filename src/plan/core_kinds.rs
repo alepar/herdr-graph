@@ -259,6 +259,7 @@ pub(crate) fn new_clone_record(seat: &SeatId, name: &str, id: CloneId) -> CloneR
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     }
 }
 

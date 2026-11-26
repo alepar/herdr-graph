@@ -96,6 +96,7 @@ fn clone_rec(seat: &SeatRecord, name: &str, sessions: Vec<NativeSession>) -> Clo
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     }
 }
 

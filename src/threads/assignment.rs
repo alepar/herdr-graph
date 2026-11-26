@@ -114,6 +114,7 @@ pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<C
         seat_intent: Some(seat_intent),
         seat_fact: None,
         key_reservation: None,
+        keyless: rec.keyless,
     })
 }
 

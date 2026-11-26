@@ -479,9 +479,10 @@ fn verified_pane(g: &Graph, c: &CloneRecord) -> Option<HerdrPaneId> {
         .flatten()
 }
 
-/// An active clone with no recorded key reservation: the reserve-key want reserves its key, seatless (§16.5).
+/// An active, keyed clone with no recorded key reservation: the reserve-key want reserves its key, seatless
+/// (§16.5). A keyless (adopted) clone is never reserved.
 fn reservable(g: &Graph, c: &CloneRecord) -> bool {
-    g.clone_active(c) && !c.is_tombstone() && c.key_reservation.is_none()
+    g.clone_active(c) && !c.is_tombstone() && !c.keyless && c.key_reservation.is_none()
 }
 
 /// The key-link want's `(key, target seat)` (spec §14.12): the clone is active, its reservation is recorded and
@@ -489,7 +490,7 @@ fn reservable(g: &Graph, c: &CloneRecord) -> bool {
 /// `threads_seat`. A pending Restore whose threads step is not done has a retired seat, which threads refuses a
 /// seat-bearing reserve; the succession or unretire want moves it first.
 pub(crate) fn key_link_target(g: &Graph, c: &CloneRecord) -> Option<(String, String)> {
-    if !g.clone_active(c) || c.is_tombstone() {
+    if !g.clone_active(c) || c.is_tombstone() || c.keyless {
         return None;
     }
     let reservation = c.key_reservation.as_ref()?;

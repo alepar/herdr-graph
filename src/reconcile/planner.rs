@@ -694,11 +694,11 @@ pub fn launched_before(intent: &Option<SeatIntent>, changed_at: Timestamp) -> bo
 
 /// The ordinary start rule: only a clone no resume trigger covers and with no pending Restore intent. Every
 /// keyed launch waits for the clone's recorded key reservation (spec §5, §14.4); a held-back clone is retried
-/// next pass.
+/// next pass. A keyless clone launches without one.
 fn start_needed(journal: &Journal, p: &DesiredPane, has_agent: bool) -> bool {
     let any = p.clone.to_any();
     p.harness != crate::model::harness::Harness::Shell
-        && p.key_reservation.is_some()
+        && (p.key_reservation.is_some() || p.keyless)
         && !matches!(p.seat_intent, Some(SeatIntent::Restore { .. }))
         && !restart_covered(p)
         && p.occupant.is_none()
@@ -1065,10 +1065,12 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 ..
             }) = &p.seat_intent
             // The key must be bound to the Restore's seat before the restore launch (spec §14.4, §16.1): no
-            // reservation, or one bound elsewhere, holds the launch back without spending the epoch's attempt.
-            && p.key_reservation
-                .as_ref()
-                .is_some_and(|r| r.seat.as_deref() == Some(restore_seat.as_str()))
+            // reservation, or one bound elsewhere, holds the launch back without spending the epoch's attempt. A
+            // keyless clone has no key to bind; its restore launch takes the seat threads hands the pane.
+            && (p.keyless
+                || p.key_reservation
+                    .as_ref()
+                    .is_some_and(|r| r.seat.as_deref() == Some(restore_seat.as_str())))
         {
             if pane.as_ref().is_some_and(|lp| lp.pane.agent.is_none()) {
                 // One launch per epoch is enforced by the launch mark, not by the effect identity: the identity
@@ -1085,7 +1087,7 @@ fn plan_resume(o: &mut Out<'_>, idx: &LiveIndex<'_>, journal: &Journal) {
                 );
             }
         } else if startable
-            && p.key_reservation.is_some()
+            && (p.key_reservation.is_some() || p.keyless)
             && let Some(changed) = changed_at
             && (p.seat_intent.is_none() || launched_before(&p.seat_intent, changed))
             // A seated clone waits for a threads fact read after the restart; an unseated one has none, so it

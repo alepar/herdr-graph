@@ -178,6 +178,9 @@ impl Mutation for TestSeatState {
         if a.get("unknown").is_some() {
             rec.runtime.availability = crate::model::common::Availability::Unknown;
         }
+        if a.get("keyless").is_some() {
+            rec.keyless = true;
+        }
         if a.get("drop_reservation").is_some() {
             rec.key_reservation = None;
         }
@@ -5094,4 +5097,106 @@ async fn fresh_path_key_conflict_never_launches() {
     step(&fx).await;
     assert_eq!(relaunch_rows(&fx), 0);
     assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+// -------------------------------------------------------------------------------------------------
+// keyless clones (hg-ihi.2; spec G4): launch gates do not wait for a key reservation
+// -------------------------------------------------------------------------------------------------
+
+/// An active claude seat whose one clone is marked keyless, its pane created, no reservation recorded.
+async fn keyless_claude(fx: &Fx, keyless: bool) -> CloneRecord {
+    activate(fx, "claude");
+    step_unreserved(fx).await;
+    let c = only_clone(fx, "foreman");
+    if keyless {
+        seat_state(fx, &c.id, json!({ "keyless": true }));
+    }
+    only_clone(fx, "foreman")
+}
+
+#[tokio::test]
+async fn keyless_clone_starts_without_a_reservation_and_without_the_key_env() {
+    let fx = fx();
+    let c = keyless_claude(&fx, true).await;
+    assert!(c.keyless && c.key_reservation.is_none());
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert!(!has_key(&starts[0].env), "{:?}", starts[0].env);
+    assert!(
+        starts[0].env.iter().any(|(k, _)| k == "HERDR_GRAPH_CLONE"),
+        "{:?}",
+        starts[0].env
+    );
+    assert!(only_clone(&fx, "foreman").key_reservation.is_none());
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "exactly one launch");
+}
+
+#[tokio::test]
+async fn keyed_clone_without_a_reservation_still_waits() {
+    let fx = fx();
+    let c = keyless_claude(&fx, false).await;
+    assert!(!c.keyless);
+    for _ in 0..3 {
+        step_unreserved(&fx).await;
+    }
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn keyless_restore_launches_without_a_key() {
+    for keyless in [true, false] {
+        let fx = fx();
+        let c = keyless_claude(&fx, keyless).await;
+        step_unreserved(&fx).await;
+        let pane = pane_of(&fx, &c);
+        fx.herdr.set_agent(&pane, None);
+        let epoch = OpId::new();
+        seat_state(
+            &fx,
+            &c.id,
+            json!({
+                "threads_seat": "seat-1",
+                "intent": restore_intent("seat-1", &epoch, true, false),
+                "drop_reservation": true,
+            }),
+        );
+        fx.herdr.clear_calls();
+        step_unreserved(&fx).await;
+        let n = start_calls(&fx).len();
+        assert_eq!(n, usize::from(keyless), "keyless={keyless}: {:?}", calls(&fx));
+        if keyless {
+            assert!(!has_key(&start_calls(&fx)[0].env));
+        }
+    }
+}
+
+#[tokio::test]
+async fn keyless_restart_resumes_after_grace() {
+    let fx = fx();
+    let c = keyless_claude(&fx, true).await;
+    step_unreserved(&fx).await;
+    end_session(&fx, &c, "abc", "claude");
+    fx.herdr.restart(true, true);
+    step_unreserved(&fx).await;
+    let pane = token_pane(&fx, &c.id).await;
+    fx.herdr.set_agent(&pane, None);
+    keep_pane_id(&fx, &c.id, &pane);
+    seat_state(
+        &fx,
+        &c.id,
+        json!({ "threads_seat": "seat-abc", "fact": unresolved("seat-abc", fx.clock.now()) }),
+    );
+    fx.herdr.clear_calls();
+    assert!(the_clone(&fx, &c.id).key_reservation.is_none());
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "inside the 90 s grace");
+    fx.clock.advance(chrono::Duration::seconds(91));
+    step_unreserved(&fx).await;
+    let starts = start_calls(&fx);
+    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
+    assert_eq!(starts[0].args, ["--resume", "abc"]);
+    assert_eq!(starts[0].env, agent_env(&c.id, false));
+    assert!(!has_key(&starts[0].env));
 }

@@ -64,6 +64,8 @@ pub struct DesiredPane {
     pub seat_intent: Option<SeatIntent>,
     /// The continuity key reserved for the clone: every agent launch waits for it (spec §5, §14.4).
     pub key_reservation: Option<KeyReservation>,
+    /// Adopted clone (spec G4): no key is reserved, linked or launched; launch gates do not wait for one.
+    pub keyless: bool,
     /// The clone has (or had) an agent: it has a native session on record.
     pub had_agent: bool,
 }
@@ -214,6 +216,7 @@ impl DesiredRuntime {
                     seat_fact: c.seat_fact.clone(),
                     seat_intent: c.seat_intent.clone(),
                     key_reservation: c.key_reservation.clone(),
+                    keyless: c.keyless,
                     had_agent: !c.sessions.is_empty(),
                 });
             }

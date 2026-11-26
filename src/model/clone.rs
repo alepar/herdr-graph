@@ -49,6 +49,10 @@ pub struct CloneRecord {
     /// ThreadsSeatAssignment (`RecordReservation`); a succession leaves it in place (§16.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_reservation: Option<KeyReservation>,
+    /// Adopted clone (spec G4): graph never reserves or links a continuity key for it and never launches it
+    /// with one; threads' own continuity keeps its seat.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub keyless: bool,
 }
 
 /// A continuity key reserved for a clone. `seat` is the reservation's recorded binding: the seat threads last
