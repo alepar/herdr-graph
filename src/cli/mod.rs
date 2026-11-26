@@ -3,6 +3,7 @@
 use clap::{Parser, Subcommand};
 use std::process::ExitCode;
 
+pub mod adopt;
 pub mod content;
 pub mod daemon;
 pub mod daemon_error;
@@ -71,6 +72,8 @@ pub enum Command {
     Sessions(sessions::Commands),
     #[command(flatten)]
     Log(log::Commands),
+    #[command(flatten)]
+    Adopt(adopt::Commands),
 }
 
 pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
@@ -92,6 +95,7 @@ pub fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Roster(c) => roster::run(c),
         Command::Sessions(c) => sessions::run(c),
         Command::Log(c) => log::run(c),
+        Command::Adopt(c) => adopt::run(c),
     }
 }
 
@@ -222,6 +226,12 @@ mod tests {
     #[test]
     fn unmanaged_requires_live() {
         assert!(Cli::try_parse_from(["herdr-graph", "roster", "--unmanaged"]).is_err());
+    }
+
+    #[test]
+    fn adopt_inspect_parses_and_needs_a_target() {
+        Cli::try_parse_from(["herdr-graph", "adopt", "inspect", "t1"]).unwrap();
+        assert!(Cli::try_parse_from(["herdr-graph", "adopt", "inspect"]).is_err());
     }
 
     #[test]
