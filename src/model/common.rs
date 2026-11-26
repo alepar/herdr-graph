@@ -157,6 +157,8 @@ pub enum RetireMechanism {
     ObservedWorkspaceClose,
     ApplicationWithdrawal,
     Undo,
+    /// Adoption undone or released: graph forgot the object; its Herdr objects and threads seat keep running.
+    Released,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +168,13 @@ pub struct Retirement {
     pub action: Option<ActionId>,
     pub at: Timestamp,
     pub mechanism: RetireMechanism,
+}
+
+impl Retirement {
+    /// Graph forgot the object without touching its Herdr objects (`RetireMechanism::Released`).
+    pub fn released(&self) -> bool {
+        self.mechanism == RetireMechanism::Released
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

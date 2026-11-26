@@ -377,6 +377,7 @@ pub async fn compose_with(
             seats: pane_seat_map.clone(),
             seat_view,
             claude_root: ctx.claude_root.clone(),
+            store: Some(store.clone()),
         },
     );
     register_threads_connection_with(

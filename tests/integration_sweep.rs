@@ -1586,6 +1586,7 @@ mod wiring {
             K::TeamspaceRetire,
             K::TeamspaceResurrect,
             K::TeamspaceAdopt,
+            K::TeamspaceRelease,
             K::SeatCreate,
             K::SeatActivate,
             K::SeatDeactivate,
@@ -1593,6 +1594,7 @@ mod wiring {
             K::SeatRetire,
             K::SeatResurrect,
             K::SeatAdopt,
+            K::SeatRelease,
             K::SeatOverride,
             K::ManagerEdit,
             K::NodeManagerSet,
@@ -1619,7 +1621,8 @@ mod wiring {
                 | K::TeamspaceRename
                 | K::TeamspaceRetire
                 | K::TeamspaceResurrect
-                | K::TeamspaceAdopt => {}
+                | K::TeamspaceAdopt
+                | K::TeamspaceRelease => {}
                 K::SeatCreate
                 | K::SeatActivate
                 | K::SeatDeactivate
@@ -1627,6 +1630,7 @@ mod wiring {
                 | K::SeatRetire
                 | K::SeatResurrect
                 | K::SeatAdopt
+                | K::SeatRelease
                 | K::SeatOverride
                 | K::ManagerEdit
                 | K::NodeManagerSet => {}

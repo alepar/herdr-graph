@@ -49,11 +49,13 @@ pub fn refuse_node_manager_retirement(
     for e in effects {
         match (e.kind.as_str(), &e.object) {
             ("seat.retire", o) if *o == seat => return refuse("retired"),
+            ("seat.release", o) if *o == seat => return refuse("released"),
             ("seat.deactivate", o) if *o == seat => return refuse("deactivated"),
             ("runtime.close_tab", o) if *o == seat => return refuse("moved or closed"),
             ("teamspace.retire" | "runtime.close_workspace", o) if *o == ts => {
                 return refuse("moved or closed");
             }
+            ("teamspace.release", o) if *o == ts => return refuse("released"),
             _ => {}
         }
     }

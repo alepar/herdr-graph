@@ -149,6 +149,16 @@ impl Mutation for SeatFixture {
                 rec.retired = None;
             }
             "keyless" => rec.keyless = true,
+            "release" => {
+                rec.lifecycle = CloneLifecycle::Retired;
+                rec.retired = Some(crate::model::common::Retirement {
+                    op: cx.op.clone(),
+                    action: None,
+                    at: cx.now,
+                    mechanism: crate::model::common::RetireMechanism::Released,
+                });
+                rec.runtime = crate::model::common::Runtime::default();
+            }
             "fact" => {
                 rec.seat_fact = Some(crate::model::clone::SeatFact {
                     seat: cx.request.args["seat"].as_str().unwrap().into(),
@@ -3593,6 +3603,49 @@ async fn keyless_clone_gets_no_reserve_key_want() {
 }
 
 #[tokio::test]
+async fn released_clone_releases_its_required_invitations() {
+    let fx = fx();
+    let c = keyless_base(&fx).await;
+    steps(&fx, 2).await;
+    let st = thread_of_seat(&fx, "foreman");
+    write_required(&fx, &c.id, &st, "accepted", "seat-A");
+    let other = ThreadRef("th-ordinary".into());
+    bookkeeping(
+        &fx,
+        "invitation",
+        json!({
+            "clone": c.id, "thread": other.0, "constraint": "ordinary", "state": "accepted",
+            "link": { "seat": "seat-A" },
+        }),
+    );
+    seat_the_clone(&fx, &c, "seat-A");
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": c.id, "op": "release" }),
+    );
+    assert!(clone_rec(&fx, &c.id).retired.is_some_and(|r| r.released()));
+    steps(&fx, 4).await;
+    later(&fx).await;
+    steps(&fx, 3).await;
+    assert_eq!(
+        fx.threads.call_count("release_requirement"),
+        1,
+        "exactly the Required row"
+    );
+    assert_eq!(fx.threads.call_count("invite"), 0);
+    let rec = clone_rec(&fx, &c.id);
+    assert_eq!(inv(&rec, &st).state, InvitationState::Released);
+    assert!(
+        rec.invitations
+            .iter()
+            .any(|i| i.thread == other.0 && i.constraint == InviteConstraint::Ordinary),
+        "the ordinary row is kept"
+    );
+    assert_eq!(rec.threads_seat.as_deref(), Some("seat-A"));
+}
+
+#[tokio::test]
 async fn keyless_clone_with_a_seat_still_gets_graph_invitations() {
     let fx = fx();
     let c = keyless_base(&fx).await;
@@ -4899,7 +4952,10 @@ async fn close_then_undo_keeps_pending_invitations_pending() {
     steps(&fx, 6).await;
     let held = clone_rec(&fx, &clone.id).invitations;
     assert_eq!(held.len(), 2, "{held:?}");
-    assert!(held.iter().all(|i| i.state == InvitationState::Pending), "{held:?}");
+    assert!(
+        held.iter().all(|i| i.state == InvitationState::Pending),
+        "{held:?}"
+    );
     let kind = fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
     assert_eq!(kind, RetirementKind::Reversible);
     let invites = fx.threads.call_count("invite");
@@ -4917,7 +4973,11 @@ async fn close_then_undo_keeps_pending_invitations_pending() {
     steps(&fx, 5).await;
     later(&fx).await;
     assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
-    assert_eq!(clone_rec(&fx, &clone.id).invitations, held, "same invitations");
+    assert_eq!(
+        clone_rec(&fx, &clone.id).invitations,
+        held,
+        "same invitations"
+    );
     assert_eq!(fx.threads.call_count("invite"), invites, "no re-invitation");
     assert_eq!(fx.threads.call_count("release_requirement"), 0);
 }
