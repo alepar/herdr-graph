@@ -11,14 +11,16 @@ use crate::model::common::CloneLifecycle;
 use crate::model::manager::Pointers;
 use crate::model::seat::SeatRecord;
 use crate::model::{CloneId, CommitId, PlanId, SeatId};
-use crate::plan::commands::{PlanDeps, create_plan};
+use crate::plan::commands::{LiveSources, PlanDeps, create_plan_facts, gather_live};
+use crate::plan::kind::LiveFacts;
 use crate::plan::ops::pending_for;
-use crate::ports::herdr::{HerdrApi, PaneInfo};
+use crate::ports::herdr::{HerdrApi, HerdrSnapshot, PaneInfo, TabInfo, WorkspaceInfo};
 use crate::ports::store::{RepoPath, Store, StoreError, unresolved};
 use crate::store::instruction_source::{FolderKind, PathClass, classify};
 use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::{CommitView, TreeRead};
+use crate::threads::mapping::PaneSeatMap;
 use crate::threads::pending_invitations;
 use crate::writer::worktree::{read_dirty, view_rev};
 use resolve::{Proposal, Resolution, proposal_words, resolve_caller};
@@ -41,6 +43,9 @@ pub struct BootstrapDeps {
     pub journal: Arc<Journal>,
     /// Herdr snapshot source for the caller pane's agent session id; `None` skips that resolution step.
     pub herdr: Option<Arc<dyn HerdrApi>>,
+    /// Pane-to-threads-seat map, for the live facts a seat adoption proposal reads; `None` makes that proposal
+    /// unavailable rather than falling back to `seat create`.
+    pub seats: Option<Arc<dyn PaneSeatMap>>,
 }
 
 fn internal(e: impl std::fmt::Display) -> CommandError {
@@ -54,22 +59,106 @@ pub fn register_commands(reg: &mut Registry, deps: BootstrapDeps) {
     reg.command("seat.resolve", move |cx: CommandCtx, _args: Value| {
         let d = d.clone();
         async move {
-            let pane = snapshot_pane(&d, &cx.caller).await;
-            tokio::task::spawn_blocking(move || seat_reply(&d, &cx.caller, pane.as_ref()))
-                .await
-                .map_err(internal)?
+            let snap = snapshot(&d).await;
+            let caller = cx.caller;
+            let pane = snap
+                .as_ref()
+                .and_then(|s| pane_in(s, &caller))
+                .map(|(_, _, p)| p.clone());
+            let Some(snap) = snap else {
+                return tokio::task::spawn_blocking(move || seat_reply(&d, &caller, pane.as_ref()))
+                    .await
+                    .map_err(internal)?;
+            };
+            // The proposal's words first (a blocking read of the head), then the live facts its kind needs.
+            let (d1, c1, p1, s1) = (d.clone(), caller.clone(), pane.clone(), snap.clone());
+            let words = tokio::task::spawn_blocking(move || {
+                proposal_words_at(&d1, &c1, p1.as_ref(), Some(&s1))
+            })
+            .await
+            .map_err(internal)??;
+            let mut facts = LiveFacts::new(snap);
+            let mut gather_error = None;
+            if let Some(words) = words {
+                match live_facts_for(&d, &caller, &words).await {
+                    Ok(Some(f)) => facts = f,
+                    Ok(None) => {}
+                    Err(e) => gather_error = Some(e.message),
+                }
+            }
+            tokio::task::spawn_blocking(move || {
+                seat_reply_live(
+                    &d,
+                    &caller,
+                    pane.as_ref(),
+                    Some(&facts),
+                    gather_error.as_deref(),
+                )
+            })
+            .await
+            .map_err(internal)?
         }
     });
 }
 
-async fn snapshot_pane(d: &BootstrapDeps, caller: &CallerInfo) -> Option<PaneInfo> {
-    let (herdr, pane) = (d.herdr.as_ref()?, caller.pane_id.as_deref()?);
-    let snap = herdr.snapshot().await.ok()?;
-    snap.workspaces
-        .into_iter()
-        .flat_map(|w| w.tabs)
-        .flat_map(|t| t.panes)
-        .find(|p| p.id.0 == pane)
+async fn snapshot(d: &BootstrapDeps) -> Option<HerdrSnapshot> {
+    d.herdr.as_ref()?.snapshot().await.ok()
+}
+
+/// The caller's workspace, tab and pane in `snap`.
+fn pane_in<'a>(
+    snap: &'a HerdrSnapshot,
+    caller: &CallerInfo,
+) -> Option<(&'a WorkspaceInfo, &'a TabInfo, &'a PaneInfo)> {
+    let id = caller.pane_id.as_deref()?;
+    snap.workspaces.iter().find_map(|w| {
+        w.tabs
+            .iter()
+            .find_map(|t| t.panes.iter().find(|p| p.id.0 == id).map(|p| (w, t, p)))
+    })
+}
+
+/// The proposal words for the caller as the head stands now (no plan is created).
+fn proposal_words_at(
+    d: &BootstrapDeps,
+    caller: &CallerInfo,
+    pane: Option<&PaneInfo>,
+    snap: Option<&HerdrSnapshot>,
+) -> Result<Option<Vec<String>>, CommandError> {
+    let store: &dyn Store = &*d.plan.store;
+    let view = CommitView {
+        store,
+        at: store.head().map_err(internal)?,
+    };
+    let resolution = resolve_caller(&view, caller, pane);
+    let place = snap
+        .and_then(|s| pane_in(s, caller))
+        .map(|(w, t, _)| (w, t));
+    Ok(proposal_words(&view, caller, pane, place, &resolution))
+}
+
+/// The live facts the kind of `words` needs; `None` when it needs none.
+async fn live_facts_for(
+    d: &BootstrapDeps,
+    caller: &CallerInfo,
+    words: &[String],
+) -> Result<Option<LiveFacts>, CommandError> {
+    let (kind, rest) = d
+        .plan
+        .kinds
+        .resolve(words)
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    if !kind.needs_live() {
+        return Ok(None);
+    }
+    let args = kind
+        .parse(&rest, caller)
+        .map_err(|e| CommandError::internal(e.to_string()))?;
+    let src = LiveSources {
+        herdr: d.herdr.clone(),
+        seats: d.seats.clone(),
+    };
+    gather_live(&src, &*kind, &args).await.map(Some)
 }
 
 fn abs(root: &Path, p: &RepoPath) -> String {
@@ -289,6 +378,19 @@ pub fn seat_reply(
     caller: &CallerInfo,
     pane: Option<&PaneInfo>,
 ) -> Result<Value, CommandError> {
+    seat_reply_live(d, caller, pane, None, None)
+}
+
+/// `seat_reply` with the live Herdr facts: the snapshot places the caller (its tab and workspace), and kinds that
+/// read live state plan against `live`. A `gather_error` (the facts the proposal needs could not be read) becomes
+/// the proposal error; it never falls back to another proposal.
+pub fn seat_reply_live(
+    d: &BootstrapDeps,
+    caller: &CallerInfo,
+    pane: Option<&PaneInfo>,
+    live: Option<&LiveFacts>,
+    gather_error: Option<&str>,
+) -> Result<Value, CommandError> {
     let store: &dyn Store = &*d.plan.store;
     let head = store.head().map_err(internal)?;
     let view = CommitView {
@@ -299,8 +401,15 @@ pub fn seat_reply(
 
     let mut resolution = resolve_caller(&view, caller, pane);
     let mut proposal_error = None;
-    if let Some(words) = proposal_words(&view, caller, pane, &resolution) {
-        match create_plan(&d.plan, caller, words.clone()) {
+    let place = live
+        .and_then(|l| pane_in(&l.snap, caller))
+        .map(|(w, t, _)| (w, t));
+    if let Some(words) = proposal_words(&view, caller, pane, place, &resolution) {
+        let created = match gather_error {
+            Some(e) => Err(CommandError::unavailable(e.to_owned())),
+            None => create_plan_facts(&d.plan, caller, words.clone(), live),
+        };
+        match created {
             Ok(v) => {
                 let plan_id = v["plan_id"].as_str().and_then(|s| s.parse::<PlanId>().ok());
                 match plan_id {
