@@ -2109,6 +2109,7 @@ mod effective {
             seat_intent: None,
             seat_fact: None,
             key_reservation: None,
+            keyless: false,
         }
     }
 

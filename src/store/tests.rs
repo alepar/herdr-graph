@@ -78,6 +78,7 @@ fn clone_rec(name: &str, seat: &SeatId) -> CloneRecord {
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     }
 }
 

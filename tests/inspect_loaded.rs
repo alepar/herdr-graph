@@ -127,6 +127,7 @@ impl Graph {
             seat_intent: None,
             seat_fact: None,
             key_reservation: None,
+            keyless: false,
         };
         let mut e = EditSet::default();
         e.put(

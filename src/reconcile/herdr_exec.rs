@@ -1007,6 +1007,7 @@ mod tests {
                 last_refusal: None,
             }),
             key_reservation: None,
+            keyless: false,
             had_agent: false,
         });
         let tab_row = create_tab_row(&seat);

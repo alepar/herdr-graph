@@ -129,6 +129,7 @@ fn two_seats_with_main_clones(root: &TestRoot) -> (String, String) {
             seat_intent: None,
             seat_fact: None,
             key_reservation: None,
+            keyless: false,
         };
         e.put(
             layout::seat_record(&seat_dir),

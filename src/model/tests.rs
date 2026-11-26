@@ -390,6 +390,7 @@ fn clone_record_roundtrip() {
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     });
     toml_rt(&CloneRecord {
         schema: 1,
@@ -411,6 +412,7 @@ fn clone_record_roundtrip() {
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     });
     let epoch = OpId::new();
     for intent in [
@@ -453,6 +455,7 @@ fn clone_record_roundtrip() {
             seat_intent: Some(intent),
             seat_fact: None,
             key_reservation: None,
+            keyless: false,
         };
         toml_rt(&rec);
     }
@@ -497,6 +500,7 @@ fn clone_record_seat_fact_roundtrip() {
                 read_at: ts(),
             }),
             key_reservation: None,
+            keyless: false,
         });
     }
 }
@@ -1293,6 +1297,7 @@ fn key_reservation_round_trips_and_defaults_absent() {
         seat_intent: None,
         seat_fact: None,
         key_reservation: None,
+        keyless: false,
     };
     // Absent: nothing is written, and a record without the field reads back absent.
     let text = toml::to_string(&rec).unwrap();
@@ -1349,4 +1354,37 @@ fn manager_fields_round_trip() {
     let s = toml::to_string(&g).unwrap();
     assert!(s.contains(&format!("node_manager_seat = \"{m}\"")), "{s}");
     toml_rt(&g);
+}
+
+#[test]
+fn keyless_clone_round_trips_and_defaults_to_false() {
+    let mut c = CloneRecord {
+        schema: 1,
+        id: CloneId::new(),
+        rev: 1,
+        seat: SeatId::new(),
+        name: "c".into(),
+        name_history: vec![],
+        lifecycle: CloneLifecycle::Active,
+        retired: None,
+        runtime: minimal_runtime(),
+        occupant: None,
+        sessions: vec![],
+        opt_outs: vec![],
+        invitations: vec![],
+        reload_required: false,
+        threads_seat: None,
+        threads_seat_history: vec![],
+        seat_intent: None,
+        seat_fact: None,
+        key_reservation: None,
+        keyless: true,
+    };
+    toml_rt(&c);
+    assert!(toml::to_string(&c).unwrap().contains("keyless = true"));
+    c.keyless = false;
+    let s = toml::to_string(&c).unwrap();
+    assert!(!s.contains("keyless"), "false is not serialized:\n{s}");
+    let back: CloneRecord = toml::from_str(&s).unwrap();
+    assert!(!back.keyless, "an absent key deserializes to false");
 }

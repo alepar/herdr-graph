@@ -148,6 +148,7 @@ impl Mutation for SeatFixture {
                 rec.lifecycle = CloneLifecycle::Active;
                 rec.retired = None;
             }
+            "keyless" => rec.keyless = true,
             "fact" => {
                 rec.seat_fact = Some(crate::model::clone::SeatFact {
                     seat: cx.request.args["seat"].as_str().unwrap().into(),
@@ -3555,6 +3556,83 @@ async fn reserve_key_reserves_an_active_clone_seatless_and_records_it() {
     steps(&fx, 3).await;
     later(&fx).await;
     assert_eq!(fx.threads.reserve_calls().len(), 1);
+}
+
+/// A teamspace `alpha` with the active shell seat `foreman`, its one clone marked keyless before any pass runs.
+async fn keyless_base(fx: &Fx) -> CloneRecord {
+    plan_and_apply(fx, "teamspace create alpha");
+    plan_and_apply(
+        fx,
+        "seat create foreman --teamspace alpha --active --harness shell",
+    );
+    let s = seat(fx, "foreman");
+    let cs = clones_of(fx, &s.id);
+    assert_eq!(cs.len(), 1);
+    bookkeeping(
+        fx,
+        "test_seat_fixture",
+        json!({ "clone": cs[0].id, "op": "keyless" }),
+    );
+    steps(fx, 3).await;
+    let c = clone_rec(fx, &cs[0].id);
+    assert!(c.keyless);
+    c
+}
+
+#[tokio::test]
+async fn keyless_clone_gets_no_reserve_key_want() {
+    let fx = fx();
+    let c = keyless_base(&fx).await;
+    occupy(&fx, &c, "seat-A").await;
+    steps(&fx, 4).await;
+    later(&fx).await;
+    assert!(reserve_rows(&fx).is_empty(), "{:?}", reserve_rows(&fx));
+    assert!(kind_rows(&fx, super::effects::KEY_LINK_KIND).is_empty());
+    assert!(fx.threads.reserve_calls().is_empty());
+    assert_eq!(clone_rec(&fx, &c.id).key_reservation, None);
+}
+
+#[tokio::test]
+async fn keyless_clone_with_a_seat_still_gets_graph_invitations() {
+    let fx = fx();
+    let c = keyless_base(&fx).await;
+    occupy(&fx, &c, "seat-A").await;
+    steps(&fx, 2).await;
+    let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
+    for t in [&st, &ts] {
+        let m = fx
+            .threads
+            .member(t, &seat_ref("seat-A"))
+            .unwrap_or_else(|| panic!("seat-A not invited to {}", t.0));
+        assert_eq!(m.constraint, InviteConstraint::Required);
+    }
+    assert_eq!(clone_rec(&fx, &c.id).invitations.len(), 2);
+    assert!(reserve_rows(&fx).is_empty());
+}
+
+#[tokio::test]
+async fn keyless_succession_runs_without_a_key_link() {
+    let fx = fx();
+    let c = keyless_base(&fx).await;
+    occupy(&fx, &c, "seat-A").await;
+    steps(&fx, 2).await;
+    let (st, ts) = (thread_of_seat(&fx, "foreman"), thread_of_ts(&fx));
+    fx.threads.accept(&st, &seat_ref("seat-A"));
+    fx.threads.accept(&ts, &seat_ref("seat-A"));
+    later(&fx).await;
+    let epoch = OpId::new();
+    write_restore(&fx, &c.id, &epoch);
+    seat_fact(&fx, &c.id, "seat-A", retired_final());
+    fx.map.set(&pane_of(&clone_rec(&fx, &c.id)), "seat-B");
+    steps(&fx, 6).await;
+    let after = clone_rec(&fx, &c.id);
+    assert_eq!(after.threads_seat.as_deref(), Some("seat-B"), "succeeded");
+    assert_eq!(after.seat_intent, restore("seat-B", &epoch, true, false));
+    assert_eq!(after.key_reservation, None);
+    assert!(after.keyless);
+    assert!(kind_rows(&fx, super::effects::KEY_LINK_KIND).is_empty());
+    assert!(reserve_rows(&fx).is_empty());
+    assert!(fx.threads.reserve_calls().is_empty());
 }
 
 #[tokio::test]

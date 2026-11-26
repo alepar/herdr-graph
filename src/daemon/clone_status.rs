@@ -184,6 +184,7 @@ mod tests {
                 read_at: Timestamp::UNIX_EPOCH,
             }),
             key_reservation: None,
+            keyless: false,
         }
     }
 
