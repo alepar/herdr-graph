@@ -95,6 +95,19 @@ Template root/member instruction changes require reviewed `template edit`, inclu
 - Integrity errors and exit codes: a reference that does not resolve (previously dropped silently) now fails with `StoreError::Integrity`, carried as `IpcErrorCode::Integrity` by `seat.resolve`, `who` and plan creation; only `seat_reply` adds the node manager to report it to. Plan-time hook-size warnings (`cap_warning`) turn it into a warning so a broken seat never blocks unrelated or repairing plans. `cli::daemon_error` maps every daemon-calling command: exit 2 (no instance configured, or not inside a Herdr pane), 5 (graph daemon unavailable, including still starting or version mismatch; retry later), 6 (graph integrity error; not transient, report it to the node manager), 1 for other rejections. For `/seat`, 5 and 6 add that the seat context is not loaded.
 - Daemon-free fallbacks removed from `who`, `ops`, `request` and `undo`: an unreachable daemon is exit 5, not a direct read of the graph. `status` keeps its own fallback as the operator's diagnostic. `show`, `list`, `path`, `instructions show` and `seat --hook-prompt` remain daemon-free readers by design; `show` maps a manager-chain integrity failure to the same exit-6 text.
 
+## Adoption and release — 2026-11-25
+
+Design: [onboarding existing spaces](docs/superpowers/specs/2026-11-07-onboarding-existing-spaces-design.md).
+
+- The unit of adoption is a tab, inside an adopted workspace. `teamspace adopt` binds a workspace and adopts no tabs; `seat adopt` binds one tab and one clone per agent pane. Unmanaged tabs in an adopted workspace are never closed, renamed or reused.
+- Live facts (workspace, tab, pane ids, observed harness, model and args, the pane's threads seat) are gathered at admission and carried in the plan args. The mutation rechecks at apply that the pane still has the same owner, and refuses a seat already held by another clone.
+- Adopted clones are keyless: no `threads.reserve_key` want, no key link and no key in the launch environment. The start and restore gates in the planner and the threads effects treat `keyless` as launchable without a reservation; the seat comes from what threads hands the pane.
+- A mixed tab is allowed: a pane with no agent stays unmanaged inside the seat's tab, and the plan warns that closing the tab closes it. Agent panes of different harnesses, or a `--harness` that contradicts the agents, are refused.
+- Release is a retirement with mechanism `released` and has no Herdr effect. The reconciler skips a released teamspace's workspace and ignores a released object's token, and the threads wants of a released clone are empty: its Required invitations are released and nothing else in threads is touched.
+- Only adopted objects can be released (checked against the live `adopt` action). Undo of an adoption is a release.
+- Adoption and release use only `ResolveSeat` and `SeatInspect`; no new threads service operation. Resurrecting a closed keyless seat is out of scope (herdr-threads ht-eu3v).
+- Templates cannot declare member managers: a template has no manager field and its only relationship kind is `thread_participation`. `template-capture` emits `manager set` plans beside the template.
+
 ## Post-Implementation Notes
 
 2026-10-07 — The agreed fixes now implement the October 5 design. Shared `TemplateId` values with explicit team/seat kinds replace the previously unresolved reusable-reference design; typed member references and responsibility expose live reusable instructions, application specialization and seat context through `/seat`. `SystemDuty`/`system_duty` replaces operational role terminology while retaining serialized/CLI aliases. Root/member instruction edits use reviewed template edit so revisions, immediate session effects and undo remain consistent.
