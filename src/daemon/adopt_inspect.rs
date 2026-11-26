@@ -4,13 +4,18 @@
 //! graph has no service operation for them, so the CLI adds them from the user's threads CLI.
 use crate::daemon::registry::{CommandCtx, CommandError, Registry};
 use crate::model::IdKind;
+use crate::model::common::CloneLifecycle;
 use crate::model::harness::for_agent_kind;
 use crate::observe::sessions::capture_session;
 use crate::ports::herdr::{HerdrApi, HerdrSnapshot, PaneInfo, ProcessInfo, TabInfo, WorkspaceInfo};
+use crate::ports::store::Store;
 use crate::ports::threads::{ThreadsSeatRef, ThreadsSeatView};
 use crate::reconcile::planner::token_of;
+use crate::store::layout;
+use crate::store::tree::CommitView;
 use crate::threads::mapping::PaneSeatMap;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,6 +24,9 @@ pub struct AdoptInspectDeps {
     pub seats: Arc<dyn PaneSeatMap>,
     pub seat_view: Arc<dyn ThreadsSeatView>,
     pub claude_root: PathBuf,
+    /// The committed graph, to tell a live clone's token from a released or unknown one. None: every clone
+    /// token counts as managed.
+    pub store: Option<Arc<dyn Store>>,
 }
 
 /// Registers `adopt.inspect`. Request `{target}`; reply is the schema-1 document of the design.
@@ -168,10 +176,34 @@ async fn handle(d: &Arc<AdoptInspectDeps>, args: &Value) -> Result<Value, Comman
         .await
         .map_err(|e| CommandError::unavailable(e.to_string()))?;
     let (ws, tab, panes) = resolve(&snap, target)?;
-    if let Some((p, cl)) = panes
-        .iter()
-        .find_map(|p| managed_clone(&p.metadata).map(|c| (p, c)))
-    {
+    // A token naming a clone that is retired in the committed head (a released adoption) or unknown to it
+    // leaves the pane unmanaged, so a released tab can be inspected and adopted again.
+    let live = match &d.store {
+        Some(store) => {
+            let at = store
+                .head()
+                .map_err(|e| CommandError::unavailable(e.to_string()))?;
+            let view = CommitView {
+                store: store.as_ref(),
+                at,
+            };
+            let clones =
+                layout::all_clones(&view).map_err(|e| CommandError::unavailable(e.to_string()))?;
+            Some(
+                clones
+                    .into_iter()
+                    .filter(|(_, c)| c.lifecycle != CloneLifecycle::Retired)
+                    .map(|(_, c)| c.id.as_str().to_owned())
+                    .collect::<BTreeSet<String>>(),
+            )
+        }
+        None => None,
+    };
+    if let Some((p, cl)) = panes.iter().find_map(|p| {
+        managed_clone(&p.metadata)
+            .filter(|c| live.as_ref().is_none_or(|l| l.contains(c)))
+            .map(|c| (p, c))
+    }) {
         return Err(CommandError::bad_request(format!(
             "pane {} is managed by graph (clone {cl})",
             p.id
@@ -323,6 +355,7 @@ mod tests {
                 seats: map.clone(),
                 seat_view: view,
                 claude_root: repo.path().join("claude-root"),
+                store: None,
             },
         );
         Rig {
@@ -443,6 +476,78 @@ mod tests {
             "{}",
             e.message
         );
+    }
+
+    #[tokio::test]
+    async fn inspect_treats_a_released_clone_token_as_unmanaged() {
+        use crate::model::common::CloneLifecycle;
+        use crate::plan::kinds_extra::testkit::{commit, fx_with};
+        use crate::store::layout;
+        use crate::store::tree::CommitView;
+        let fx = fx_with(|_| {});
+        commit(&fx, "teamspace create t");
+        commit(
+            &fx,
+            "seat create live --teamspace t --active --harness shell",
+        );
+        commit(
+            &fx,
+            "seat create gone --teamspace t --active --harness shell",
+        );
+        commit(&fx, "seat retire gone");
+        let head = crate::ports::store::Store::head(&*fx.store).unwrap();
+        let clones = layout::all_clones(&CommitView {
+            store: &*fx.store,
+            at: head,
+        })
+        .unwrap();
+        let id_of = |lifecycle| {
+            clones
+                .iter()
+                .find(|(_, c)| c.lifecycle == lifecycle)
+                .map(|(_, c)| c.id.to_string())
+                .unwrap()
+        };
+        let (live, retired) = (
+            id_of(CloneLifecycle::Active),
+            id_of(CloneLifecycle::Retired),
+        );
+
+        let mut r = rig().await;
+        r.reg = Registry::default();
+        register(
+            &mut r.reg,
+            AdoptInspectDeps {
+                herdr: Some(r.fake.clone() as Arc<dyn HerdrApi>),
+                seats: r.map.clone(),
+                seat_view: Arc::new(FakeThreadsSeatView::new()),
+                claude_root: r.repo.path().join("claude-root"),
+                store: Some(fx.store.clone()),
+            },
+        );
+        // Control: a live clone's token still makes the pane managed.
+        r.fake
+            .report_pane_metadata(&r.managed, "hg", &format!("hg={live}"))
+            .await
+            .unwrap();
+        let e = call(&r, &r.managed.0).await.unwrap_err();
+        assert!(
+            e.message.contains(&format!("clone {live}")),
+            "{}",
+            e.message
+        );
+        // A retired (released) clone's token, and one the graph does not know, leave the pane unmanaged.
+        r.fake
+            .report_pane_metadata(&r.managed, "hg", &format!("hg={retired}"))
+            .await
+            .unwrap();
+        let v = call(&r, &r.managed.0).await.unwrap();
+        assert_eq!(v["panes"][0]["id"], json!(r.managed.0));
+        r.fake
+            .report_pane_metadata(&r.managed, "hg", "hg=cl_01HYYYYYYYYYYYYYYYYYYYYYYY")
+            .await
+            .unwrap();
+        call(&r, &r.managed.0).await.unwrap();
     }
 
     #[tokio::test]

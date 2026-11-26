@@ -22,8 +22,8 @@ pub struct Candidate {
 }
 
 /// Closure cascades, retirements, hydrations, template edits, instruction edits and
-/// application retirements can be undone;
-/// resurrections and undos are history only.
+/// application retirements and adoptions (undone as a release) can be undone;
+/// resurrections, releases and undos are history only.
 pub fn is_undoable(kind: ActionKind) -> bool {
     matches!(
         kind,
@@ -33,6 +33,7 @@ pub fn is_undoable(kind: ActionKind) -> bool {
             | ActionKind::TemplateEdit
             | ActionKind::InstructionsEdit
             | ActionKind::ApplicationRetire
+            | ActionKind::Adopt
     )
 }
 
@@ -162,6 +163,13 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
             )
         }
         ActionKind::Undo => "undo".into(),
+        ActionKind::Release => match comp_str(a, "seat") {
+            Some(seat) => format!("released seat {}", names.of_str(Some(seat))),
+            None => format!(
+                "released teamspace {}",
+                names.of_str(comp_str(a, "teamspace"))
+            ),
+        },
         ActionKind::Adopt => match comp_str(a, "seat") {
             Some(seat) => format!("adopted seat {}", names.of_str(Some(seat))),
             None => format!(

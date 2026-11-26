@@ -968,11 +968,20 @@ async fn planner_uses_the_seat_observation_binding_not_a_rematch() {
             .iter()
             .flat_map(|w| &w.tabs)
             .flat_map(|t| &t.panes)
-            .any(|p| p.metadata.get("hg").is_some_and(|v| *v == format!("hg={}", a.id))),
+            .any(|p| p
+                .metadata
+                .get("hg")
+                .is_some_and(|v| *v == format!("hg={}", a.id))),
         "A's token pane is live"
     );
-    assert!(idx.pane(&a.id).is_none(), "no token re-match for a seated clone");
-    assert!(idx.pane(&b.id).is_some(), "the seatless clone keeps its token");
+    assert!(
+        idx.pane(&a.id).is_none(),
+        "no token re-match for a seated clone"
+    );
+    assert!(
+        idx.pane(&b.id).is_some(),
+        "the seatless clone keeps its token"
+    );
 }
 
 /// A seatless clone follows its preserved pane id into a new incarnation, but never onto a pane that carries
@@ -988,8 +997,7 @@ async fn planner_locates_a_seatless_clone_by_its_preserved_pane_id() {
     let (a, b) = (cs.remove(0), cs.remove(0));
     let (pa, pb) = (pane_of(&fx, &a), pane_of(&fx, &b));
     let find = |a: &CloneId, snap: &crate::ports::herdr::HerdrSnapshot| {
-        let desired =
-            super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+        let desired = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
         super::planner::LiveIndex::new(snap, &desired, &fx.journal)
             .pane(a)
             .map(|l| (l.pane.id.clone(), l.stamped))
@@ -5165,7 +5173,12 @@ async fn keyless_restore_launches_without_a_key() {
         fx.herdr.clear_calls();
         step_unreserved(&fx).await;
         let n = start_calls(&fx).len();
-        assert_eq!(n, usize::from(keyless), "keyless={keyless}: {:?}", calls(&fx));
+        assert_eq!(
+            n,
+            usize::from(keyless),
+            "keyless={keyless}: {:?}",
+            calls(&fx)
+        );
         if keyless {
             assert!(!has_key(&start_calls(&fx)[0].env));
         }
@@ -5199,4 +5212,75 @@ async fn keyless_restart_resumes_after_grace() {
     assert_eq!(starts[0].args, ["--resume", "abc"]);
     assert_eq!(starts[0].env, agent_env(&c.id, false));
     assert!(!has_key(&starts[0].env));
+}
+
+/// Close effects planned over the live fixture once its records are retired in memory with `mech`: the clone
+/// only (`whole == false`) or the whole teamspace with its seats and clones.
+async fn closes_after_retiring(
+    mech: crate::model::common::RetireMechanism,
+    whole: bool,
+) -> Vec<EffectKind> {
+    use crate::model::common::{CloneLifecycle, Retirement};
+    let fx = fx();
+    activate(&fx, "claude");
+    step(&fx).await;
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let mut d = super::desired::DesiredRuntime::load(&view(&fx), &fx.deps.instance).unwrap();
+    assert!(
+        !d.panes.is_empty() && !d.workspaces.is_empty(),
+        "the fixture is live"
+    );
+    let retirement = Retirement {
+        op: OpId::new(),
+        action: None,
+        at: t0(),
+        mechanism: mech,
+    };
+    for c in d.clones.values_mut() {
+        c.lifecycle = CloneLifecycle::Retired;
+        c.retired = Some(retirement.clone());
+    }
+    d.panes.clear();
+    if whole {
+        for s in d.seats.values_mut() {
+            s.lifecycle = Lifecycle::Retired;
+            s.retired = Some(retirement.clone());
+        }
+        for t in d.teamspaces.values_mut() {
+            t.lifecycle = Lifecycle::Retired;
+            t.retired = Some(retirement.clone());
+        }
+        d.tabs.clear();
+        d.workspaces.clear();
+    }
+    super::planner::plan_effects(&d, &snap, &fx.journal, fx.clock.now())
+        .into_iter()
+        .map(|p| p.record.kind)
+        .filter(|k| {
+            matches!(
+                k,
+                EffectKind::ClosePane | EffectKind::CloseTab | EffectKind::CloseWorkspace
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn released_clone_pane_and_teamspace_workspace_are_never_closed() {
+    use crate::model::common::RetireMechanism as M;
+    // Controls: a user retirement closes the pane, and the workspace of a retired teamspace.
+    assert!(
+        closes_after_retiring(M::UserCli, false)
+            .await
+            .iter()
+            .any(|k| matches!(k, EffectKind::ClosePane | EffectKind::CloseTab))
+    );
+    assert!(
+        closes_after_retiring(M::UserCli, true)
+            .await
+            .contains(&EffectKind::CloseWorkspace)
+    );
+    // Released: graph forgot them, so nothing in Herdr closes.
+    assert_eq!(closes_after_retiring(M::Released, false).await, vec![]);
+    assert_eq!(closes_after_retiring(M::Released, true).await, vec![]);
 }

@@ -50,6 +50,8 @@ pub fn register_core_kinds(reg: &mut KindRegistry) {
     reg.register(Arc::new(SeatRetire));
     reg.register(Arc::new(SeatResurrect));
     reg.register(Arc::new(crate::plan::seat_adopt::SeatAdopt));
+    reg.register(Arc::new(crate::plan::release::SeatRelease));
+    reg.register(Arc::new(crate::plan::release::TeamspaceRelease));
     reg.register(Arc::new(CloneAdd));
     reg.register(Arc::new(CloneRetire));
     reg.register(Arc::new(ClonePurge));
@@ -877,6 +879,12 @@ impl OrgKind for TeamspaceResurrect {
         if ts.rec.lifecycle != Lifecycle::Retired {
             return Err(PlanError::Invalid(format!("teamspace {id} is not retired")));
         }
+        if ts.rec.retired.as_ref().is_some_and(Retirement::released) {
+            return Err(PlanError::Invalid(format!(
+                "teamspace {} was released; adopt its workspace again with `teamspace adopt`",
+                ts.rec.name
+            )));
+        }
         let _act: ActionId = reserved.get_or_mint("act");
         let action = ts.rec.retired.as_ref().and_then(|r| r.action.clone());
         let set = retired_by(cx.tree, action.as_ref())?;
@@ -1655,6 +1663,12 @@ impl OrgKind for SeatResurrect {
         let f = read_seat(cx.tree, &id)?;
         if f.rec.lifecycle != Lifecycle::Retired {
             return Err(PlanError::Invalid(format!("seat {id} is not retired")));
+        }
+        if f.rec.retired.as_ref().is_some_and(Retirement::released) {
+            return Err(PlanError::Invalid(format!(
+                "seat {} was released; adopt its tab again with `seat adopt`",
+                f.rec.name
+            )));
         }
         ensure_ts_live(&f.ts)?;
         let _act: ActionId = reserved.get_or_mint("act");

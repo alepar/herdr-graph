@@ -572,3 +572,96 @@ fn adopted_seat_keeps_its_threads_seat_and_memberships_across_a_daemon_restart()
         "nothing launched or closed"
     );
 }
+
+/// The tabs of the workspace labeled `label` with their pane ids, sorted: what a release must leave alone.
+fn layout_of(rig: &Rig, label: &str) -> Vec<(String, String, Vec<String>)> {
+    let mut t = tabs_of(&rig.snapshot(), label);
+    t.sort();
+    t
+}
+
+#[test]
+fn release_leaves_the_tab_and_agent_running() {
+    let Some(rig) = Rig::start() else { return };
+    let cwd = rig.herdr.root.join("home");
+    let client = rig.herdr.client();
+    let ws = rig
+        .rt
+        .block_on(client.create_workspace(CreateWorkspace {
+            label: "legacy".into(),
+            cwd: cwd.clone(),
+            env: vec![],
+        }))
+        .expect("create workspace");
+    rig.rt
+        .block_on(client.create_tab(CreateTab {
+            workspace: ws.workspace.unwrap(),
+            label: "worker".into(),
+            cwd,
+            env: vec![],
+        }))
+        .expect("create tab");
+    let before = layout_of(&rig, "legacy");
+    assert!(before.iter().any(|t| t.1 == "worker"), "{before:?}");
+
+    // Adopt the workspace and the shell tab, release the seat, then the teamspace.
+    rig.plan_apply(&["teamspace", "adopt", "legacy"]);
+    rig.plan_apply(&["seat", "adopt", "worker"]);
+    rig.wait_until("the adopted clone bound to its pane", |r| {
+        r.clone_records().len() == 1
+    });
+    rig.settle();
+    assert_eq!(layout_of(&rig, "legacy"), before, "adoption changed Herdr");
+
+    rig.plan_apply(&["seat", "release", "worker"]);
+    rig.settle();
+    rig.settle();
+    assert_eq!(
+        layout_of(&rig, "legacy"),
+        before,
+        "seat release closed or moved something"
+    );
+    let recs = rig.clone_records();
+    assert_eq!(recs.len(), 1, "{recs:?}");
+    let retired = recs[0].1.get("retired").and_then(|r| r.as_table());
+    assert_eq!(
+        retired
+            .and_then(|r| r.get("mechanism"))
+            .and_then(|m| m.as_str()),
+        Some("released"),
+        "{:?}",
+        recs[0].1
+    );
+
+    rig.plan_apply(&["teamspace", "release", "legacy"]);
+    rig.settle();
+    rig.settle();
+    assert_eq!(
+        layout_of(&rig, "legacy"),
+        before,
+        "teamspace release closed or moved something"
+    );
+
+    // A fresh adoption of the same tab, undone: the undo is a release and the tab survives.
+    rig.plan_apply(&["teamspace", "adopt", "legacy"]);
+    rig.plan_apply(&["seat", "adopt", "worker"]);
+    rig.settle();
+    let listed: Value = serde_json::from_str(&rig.cli_ok(&["undo", "--json"])).unwrap();
+    let act = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["kind"] == "adopt" && c["summary"].as_str().unwrap().contains("seat"))
+        .unwrap_or_else(|| panic!("no seat adoption to undo: {listed}"))["act"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    rig.plan_apply(&["undo", &act]);
+    rig.settle();
+    rig.settle();
+    assert_eq!(
+        layout_of(&rig, "legacy"),
+        before,
+        "undo of an adoption closed something"
+    );
+}

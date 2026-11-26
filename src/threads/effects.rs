@@ -694,9 +694,12 @@ fn clone_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
         let threads_seat = g.membership_seat(c);
         let seat = g.seats.get(&c.seat);
 
-        // Desired memberships of the clone's threads seat.
+        // Desired memberships of the clone's threads seat. A released clone wants nothing: graph forgot it, so
+        // its Required invitations are released below and everything else is left alone.
+        let released = c.retired.as_ref().is_some_and(|r| r.released());
         let mut desired: Vec<(String, InviteConstraint, Option<AnyId>)> = Vec::new();
         if threads_seat.is_some()
+            && !released
             && let Some(seat) = seat
         {
             for owner in [seat.id.to_any(), seat.teamspace.to_any()] {

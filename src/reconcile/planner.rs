@@ -1196,6 +1196,10 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
         let Some(ts_rec) = d.teamspaces.get(&ts) else {
             continue;
         };
+        // A released teamspace's workspace keeps running: graph forgot it.
+        if ts_rec.retired.as_ref().is_some_and(|r| r.released()) {
+            continue;
+        }
         // (clone named by the token, its seat, pane id): a pane another clone's committed binding claims
         // is adopted (undo from a bound pane), so the token's clone no longer owns it.
         let graph_panes = |t: &TabInfo| -> Vec<(CloneId, SeatId, HerdrPaneId)> {
@@ -1203,7 +1207,12 @@ fn plan_closes(o: &mut Out<'_>, idx: &LiveIndex<'_>) {
                 .iter()
                 .filter_map(|p| Some((token_of(&p.metadata)?, p.id.clone())))
                 .filter_map(|(a, pid)| Some((CloneId::parse(a.as_str()).ok()?, pid)))
-                .filter_map(|(c, pid)| d.clones.get(&c).map(|r| (c, r.seat.clone(), pid)))
+                .filter_map(|(c, pid)| {
+                    d.clones
+                        .get(&c)
+                        .filter(|r| !r.retired.as_ref().is_some_and(|x| x.released()))
+                        .map(|r| (c, r.seat.clone(), pid))
+                })
                 .collect()
         };
         if d.workspace(&ts).is_none() {

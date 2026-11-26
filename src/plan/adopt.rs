@@ -478,19 +478,23 @@ mod tests {
     }
 
     #[test]
-    fn adopt_action_is_not_undoable_yet() {
+    fn undo_of_a_teamspace_adopt_action_plans_a_release() {
         let fx = fx_with(|kinds| {
             crate::templates::register_kinds(kinds);
             crate::undo::register_kinds(kinds);
         });
         let row = adopt_ok(&fx, "teamspace adopt legacy", &base_snap());
         let act = row.action.unwrap();
-        let e = create_plan(
+        let v = create_plan(
             &fx.deps,
             &CallerInfo::default(),
             words(&format!("undo {act}")),
         )
-        .unwrap_err();
-        assert!(e.message.contains("cannot be undone"), "{}", e.message);
+        .unwrap();
+        let id: PlanId = v["plan_id"].as_str().unwrap().parse().unwrap();
+        let sp = fx.deps.plans.get(&id).unwrap().unwrap();
+        let kinds: Vec<&str> = sp.plan.effects.iter().map(|e| e.kind.as_str()).collect();
+        assert!(kinds.contains(&"teamspace.release"), "{kinds:?}");
+        assert!(!kinds.contains(&"runtime.close_workspace"), "{kinds:?}");
     }
 }

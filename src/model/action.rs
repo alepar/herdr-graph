@@ -42,8 +42,11 @@ pub enum ActionKind {
     ApplicationRetire,
     ThreadsReconnect,
     Undo,
-    /// An existing Herdr workspace bound to a new teamspace (`teamspace adopt`). Not undoable yet.
+    /// An existing Herdr workspace or tab bound to a new teamspace or seat (`teamspace adopt`, `seat adopt`).
+    /// Undoing it is a release: graph forgets the objects and closes nothing.
     Adopt,
+    /// An adopted seat or teamspace released (`seat release`, `teamspace release`). History only.
+    Release,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

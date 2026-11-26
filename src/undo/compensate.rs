@@ -176,10 +176,11 @@ impl OrgKind for UndoKind {
                     Inverse::Ready(args) => kind.plan(cx, &args, reserved)?,
                 }
             }
+            ActionKind::Adopt => crate::plan::release::undo_plan(cx.tree, &orig, reserved)?,
             ActionKind::ThreadsReconnect
             | ActionKind::Resurrect
             | ActionKind::Undo
-            | ActionKind::Adopt => {
+            | ActionKind::Release => {
                 unreachable!("{:?} is not undoable", orig.kind)
             }
         };
@@ -233,10 +234,13 @@ impl OrgKind for UndoKind {
                     }
                 }
             }
+            ActionKind::Adopt => {
+                crate::plan::release::undo_mutate(cx, &orig, &act)?;
+            }
             ActionKind::ThreadsReconnect
             | ActionKind::Resurrect
             | ActionKind::Undo
-            | ActionKind::Adopt => {
+            | ActionKind::Release => {
                 return Err(MutationError::Bug(format!(
                     "{:?} is not undoable",
                     orig.kind
@@ -291,6 +295,7 @@ fn restamp(cx: &mut MutationCx<'_>, id: &AnyId, act: &ActionId) -> Result<(), Mu
                 && let Some(r) = rec.retired.as_mut()
                 && r.action.as_ref() == Some(act)
                 && r.mechanism != RetireMechanism::Undo
+                && !r.released()
             {
                 r.mechanism = RetireMechanism::Undo;
                 cx.tree.put_record(loc.record_path, &mut rec)?;
