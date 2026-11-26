@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod adopt_inspect;
 pub mod budget;
 pub mod client;
 pub mod clone_status;

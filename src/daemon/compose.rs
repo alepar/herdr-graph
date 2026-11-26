@@ -274,7 +274,7 @@ pub async fn compose_with(
         Duration::from_secs(60),
         Some(writer.subscribe()),
         ctx.claude_root.clone(),
-        seat_view,
+        seat_view.clone(),
     );
     runtime.set_seat_refusals(seat_refusals.clone());
     let transcripts = Transcripts::new(
@@ -367,6 +367,15 @@ pub async fn compose_with(
             herdr: Some(herdr.clone()),
             seat_read: runtime.seat_read(),
             lost: runtime.seat_lost(),
+        },
+    );
+    crate::daemon::adopt_inspect::register(
+        reg,
+        crate::daemon::adopt_inspect::AdoptInspectDeps {
+            herdr: Some(herdr.clone()),
+            seats: pane_seat_map.clone(),
+            seat_view,
+            claude_root: ctx.claude_root.clone(),
         },
     );
     register_threads_connection_with(
