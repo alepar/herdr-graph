@@ -21,7 +21,7 @@ Bring one live session under the graph. Nothing is relaunched. Every change is a
      and continue with threads history only. Find the task brief, the user's standing instructions
      and repeated corrections, who handed this session work, whom it reports to and whom it directs.
    - Threads history of the pane's seat: its memberships come from `adopt inspect`. Read recent
-     messages in its pair and handoff threads with `herdr-threads thread list --joined`,
+     messages in its pair and handoff threads with `herdr-threads thread list --seat <seat>`,
      `herdr-threads thread participants <thread>` and `herdr-threads read <thread>`.
      Reading never ACKs; do not ACK, accept or send anything.
    - The existing graph: `herdr-graph roster`, `herdr-graph list seats`, `herdr-graph show <seat>`,
@@ -47,7 +47,10 @@ Bring one live session under the graph. Nothing is relaunched. Every change is a
       Never copy a repo `AGENTS.md` or `CLAUDE.md` or the user's global rules: they load natively
       and importing them duplicates them.
    4. Hierarchy. The first adopted seat of a graph is the top: the graph makes it the node manager,
-      as with the first created seat. Say so and propose nothing. For each later seat propose
+      as with the first created seat. Say so and propose nothing. While it is the graph's only live seat it can still be released
+      (`plan seat release <seat>`) or its adoption undone, which leaves the graph without a node
+      manager; once other seats are live, the role must move first with `node-manager set <seat>`.
+      For each later seat propose
       `herdr-graph plan --json manager set <seat> <manager-seat>` and any change to existing pointers
       its role implies: `manager set <teamspace> <seat>` for the default manager,
       `manager set <earlier-seat> <this-seat>`, `node-manager set <seat>`. Each is its own plan,

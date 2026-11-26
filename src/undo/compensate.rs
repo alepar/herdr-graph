@@ -281,7 +281,9 @@ fn finalize(
         .tree
         .read_record(&loc.record_path)?
         .ok_or_else(|| MutationError::Bug(format!("action {} vanished", orig.id)))?;
-    o.undone_by.push(cx.op.clone());
+    if !o.undone_by.contains(&cx.op) {
+        o.undone_by.push(cx.op.clone());
+    }
     cx.tree.put_record(loc.record_path, &mut o)?;
     Ok(())
 }

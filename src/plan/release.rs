@@ -12,6 +12,8 @@ use super::core_kinds::{
 use super::grammar::{self, Scope, positional};
 use super::kind::{OrgKind, PlanBody, PlanCx, PlanError};
 use super::managers::reparent::reparent_effects;
+use super::managers::retire::release_clearing;
+use super::managers::set_node_manager;
 use super::types::{Plan, PlanEffect, Reserved};
 use crate::daemon::registry::CallerInfo;
 use crate::model::action::{ActionKind, ActionRecord};
@@ -47,6 +49,28 @@ pub(crate) fn adoption(
                 && a.compensation.get(key).and_then(|v| v.as_str()) == Some(want.as_str())
                 && (key == "seat" || !a.compensation.contains_key("seat"))
         }))
+}
+
+/// A release supersedes the live adopt action of what it releases: the action takes this op into `undone_by`,
+/// so it leaves the undo list and a direct undo is refused as already undone. When the release is an undo of
+/// that very action, `finalize` finds the op already there.
+fn supersede_adoption(cx: &mut MutationCx<'_>, id: &AnyId) -> Result<(), MutationError> {
+    let Some(a) = adoption(&cx.tree, id)? else {
+        return Ok(());
+    };
+    let loc = cx
+        .tree
+        .locate(&a.id.to_any())?
+        .ok_or_else(|| MutationError::Bug(format!("action {} vanished", a.id)))?;
+    let mut rec: ActionRecord = cx
+        .tree
+        .read_record(&loc.record_path)?
+        .ok_or_else(|| MutationError::Bug(format!("action {} vanished", a.id)))?;
+    if !rec.undone_by.contains(&cx.op) {
+        rec.undone_by.push(cx.op.clone());
+    }
+    cx.tree.put_record(loc.record_path, &mut rec)?;
+    Ok(())
 }
 
 /// Refuse a seat that graph created or added to, or that is already gone.
@@ -94,6 +118,8 @@ fn seat_effects(f: &SeatFacts) -> Vec<PlanEffect> {
     effects
 }
 
+const CLEARS_NODE_MANAGER: &str = "this is the node manager and the graph's only live seat: the node manager becomes unassigned";
+
 fn seat_warnings() -> Vec<String> {
     vec![
         "the Herdr tab, its panes and agents keep running; graph forgets them".to_owned(),
@@ -112,10 +138,17 @@ pub(crate) fn seat_plan(
     let _act: ActionId = reserved.get_or_mint("act");
     let mut effects = seat_effects(&f);
     effects.extend(reparent_effects(tree, std::slice::from_ref(&f.rec.id))?);
+    let mut relied_on = vec![rev_of(f.rec.id.clone(), f.rec.rev)];
+    let mut warnings = seat_warnings();
+    if let Some((e, g)) = release_clearing(tree, std::slice::from_ref(&f.rec.id))? {
+        effects.push(e);
+        relied_on.push(g);
+        warnings.push(CLEARS_NODE_MANAGER.to_owned());
+    }
     Ok(PlanBody {
         effects,
-        relied_on: vec![rev_of(f.rec.id.clone(), f.rec.rev)],
-        warnings: seat_warnings(),
+        relied_on,
+        warnings,
         repair_required: None,
         summary: format!("release seat {}", f.rec.name),
     })
@@ -160,9 +193,14 @@ pub(crate) fn seat_mutate(
 ) -> Result<Applied, MutationError> {
     let f = read_seat(&cx.tree, seat).map_err(mm)?;
     check_seat(&cx.tree, &f).map_err(mm)?;
+    let clear = release_clearing(&cx.tree, std::slice::from_ref(seat))?.is_some();
+    supersede_adoption(cx, &seat.to_any())?;
     let mut acc = Acc::default();
     do_retire_seat(cx, seat, act, RetireMechanism::Released, &mut acc, false)?;
     drop_bindings(cx, seat, act)?;
+    if clear {
+        set_node_manager(&mut cx.tree, None)?;
+    }
     let mut comp = toml::Table::new();
     comp.insert("seat".into(), toml::Value::String(seat.to_string()));
     write_action(cx, act, ActionKind::Release, acc, comp)?;
@@ -239,6 +277,11 @@ pub(crate) fn teamspace_plan(
     }
     effects.extend(reparent_effects(tree, &releasing)?);
     let mut warnings = seat_warnings();
+    if let Some((e, g)) = release_clearing(tree, &releasing)? {
+        effects.push(e);
+        relied_on.push(g);
+        warnings.push(CLEARS_NODE_MANAGER.to_owned());
+    }
     warnings[0] =
         "the Herdr workspace, its tabs, panes and agents keep running; graph forgets them"
             .to_owned();
@@ -260,6 +303,12 @@ pub(crate) fn teamspace_mutate(
     let seats = check_teamspace(&cx.tree, &ts).map_err(mm)?;
     let mut acc = Acc::default();
     acc.retiring = seats.iter().map(|f| f.rec.id.clone()).collect();
+    let releasing: Vec<SeatId> = acc.retiring.iter().cloned().collect();
+    let clear = release_clearing(&cx.tree, &releasing)?.is_some();
+    for f in &seats {
+        supersede_adoption(cx, &f.rec.id.to_any())?;
+    }
+    supersede_adoption(cx, &id.to_any())?;
     for f in &seats {
         do_retire_seat(
             cx,
@@ -291,6 +340,9 @@ pub(crate) fn teamspace_mutate(
         &ts.loc.folder,
         &layout::archived_teamspace_dir(basename(&ts.loc.folder), id),
     )?;
+    if clear {
+        set_node_manager(&mut cx.tree, None)?;
+    }
     let mut comp = toml::Table::new();
     comp.insert("teamspace".into(), toml::Value::String(id.to_string()));
     write_action(cx, act, ActionKind::Release, acc, comp)?;
@@ -741,14 +793,101 @@ mod tests {
         assert!(e.contains("use `teamspace retire`"), "{e}");
     }
 
+    fn node_manager(fx: &Fx) -> Option<SeatId> {
+        layout::read_graph(&view(fx)).unwrap().node_manager_seat
+    }
+
+    fn nm_effect(sp: &StoredPlan) -> &PlanEffect {
+        sp.plan
+            .effects
+            .iter()
+            .find(|e| e.kind == "graph.node_manager_seat")
+            .unwrap_or_else(|| panic!("no node manager effect in {:?}", kinds_of(sp)))
+    }
+
     #[test]
-    fn release_of_the_node_manager_is_refused() {
+    fn release_of_the_only_live_seat_clears_the_node_manager() {
         let (fx, _) = adopted_ts(true);
         adopt_seat(&fx);
-        let e = plan(&fx, "seat release legacy").unwrap_err();
-        assert!(e.contains("cannot be released"), "{e}");
-        let e = plan(&fx, "teamspace release legacy").unwrap_err();
-        assert!(e.contains("cannot be released"), "{e}");
+        let nm = node_manager(&fx).expect("first adopted seat is the node manager");
+        let sp = plan(&fx, "seat release legacy").unwrap();
+        let e = nm_effect(&sp);
+        assert_eq!(e.detail["from"], json!(nm));
+        assert!(e.detail["to"].is_null(), "{e:?}");
+        assert!(
+            sp.plan
+                .warnings
+                .iter()
+                .any(|w| w.contains("node manager becomes unassigned")),
+            "{:?}",
+            sp.plan.warnings
+        );
+        committed(&apply(&fx, &sp, &[]));
+        assert_eq!(node_manager(&fx), None);
+        assert_eq!(seat(&fx, "legacy").lifecycle, Lifecycle::Retired);
+    }
+
+    #[test]
+    fn teamspace_release_of_the_node_managers_teamspace_clears_it() {
+        let (fx, _) = adopted_ts(true);
+        adopt_seat(&fx);
+        let sp = plan(&fx, "teamspace release legacy").unwrap();
+        assert!(nm_effect(&sp).detail["to"].is_null());
+        committed(&apply(&fx, &sp, &[]));
+        assert_eq!(node_manager(&fx), None);
+        let ts = teamspace(&fx);
+        assert_eq!(ts.lifecycle, Lifecycle::Retired);
+        assert!(ts.retired.as_ref().unwrap().released());
+    }
+
+    #[test]
+    fn undo_of_the_first_adoption_clears_the_node_manager() {
+        let (fx, _) = adopted_ts(true);
+        let adopt = adopt_seat(&fx);
+        let sp = plan(&fx, &format!("undo {adopt}")).unwrap();
+        assert!(kinds_of(&sp).contains(&"seat.release"), "{:?}", kinds_of(&sp));
+        assert!(nm_effect(&sp).detail["to"].is_null());
+        committed(&apply(&fx, &sp, &[]));
+        assert_eq!(node_manager(&fx), None);
+        assert_eq!(action(&fx, &adopt).undone_by.len(), 1);
+        // The graph is back to pristine: the next adopted seat is the node manager again.
+        let released = clones(&fx)[0].id.clone();
+        let token = crate::model::launch::graph_token(&released.to_any());
+        let f = facts(snap(Some(token)), &[("p1", "s1")]);
+        committed(&apply(
+            &fx,
+            &plan_facts(&fx, "seat adopt legacy", &f).unwrap(),
+            &[("p1", "s1")],
+        ));
+        let live: Vec<_> = layout::all_seats(&view(&fx))
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s)
+            .filter(|s| s.lifecycle != Lifecycle::Retired)
+            .collect();
+        assert_eq!(live.len(), 1);
+        assert_eq!(node_manager(&fx), Some(live[0].id.clone()));
+    }
+
+    #[test]
+    fn release_of_the_node_manager_with_another_live_seat_is_refused() {
+        let (fx, _) = adopted_ts(true);
+        let adopt = adopt_seat(&fx);
+        let nm = node_manager(&fx);
+        commit(&fx, "teamspace create other");
+        commit(&fx, "seat create made --teamspace other");
+        for change in [
+            "seat release legacy".to_owned(),
+            "teamspace release legacy".to_owned(),
+            format!("undo {adopt}"),
+        ] {
+            let e = plan(&fx, &change).unwrap_err();
+            assert!(
+                e.contains("cannot be released") && e.contains("node-manager set"),
+                "{change}: {e}"
+            );
+        }
+        assert_eq!(node_manager(&fx), nm);
     }
 
     #[test]
@@ -797,7 +936,8 @@ mod tests {
             RetireMechanism::Released
         );
         assert!(s.runtime.bound.is_none());
-        assert!(!action(&fx, &adopt).undone_by.is_empty());
+        assert_eq!(action(&fx, &adopt).undone_by.len(), 1);
+        assert!(listed(&fx).iter().any(|c| c.act == adopt && c.undone));
     }
 
     #[test]
@@ -813,7 +953,54 @@ mod tests {
             RetireMechanism::Released
         );
         assert!(ts.runtime.bound.is_none());
-        assert!(!action(&fx, &adopt).undone_by.is_empty());
+        assert_eq!(action(&fx, &adopt).undone_by.len(), 1);
+        assert!(listed(&fx).iter().any(|c| c.act == adopt && c.undone));
+    }
+
+    fn listed(fx: &Fx) -> Vec<crate::undo::candidates::Candidate> {
+        crate::undo::candidates::list_candidates(
+            &view(fx),
+            crate::undo::candidates::DEFAULT_LIMIT,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn released_seat_adoption_is_no_longer_an_undo_candidate() {
+        let (fx, ts_adopt) = adopted_ts(false);
+        let adopt = adopt_seat(&fx);
+        let before = listed(&fx);
+        let c = before.iter().find(|c| c.act == adopt).unwrap();
+        assert!(!c.undone);
+        committed(&apply(&fx, &plan(&fx, "seat release legacy").unwrap(), &[]));
+        let after = listed(&fx);
+        assert!(after.iter().all(|c| c.act != adopt), "{after:?}");
+        assert!(after.iter().any(|c| c.act == ts_adopt && !c.undone));
+        assert!(
+            after.iter().enumerate().all(|(i, c)| c.index == i + 1),
+            "indexes stay dense: {after:?}"
+        );
+        let e = plan(&fx, &format!("undo {adopt}")).unwrap_err();
+        assert!(e.contains("already undone"), "{e}");
+        assert!(!e.contains("already retired"), "{e}");
+    }
+
+    #[test]
+    fn released_teamspace_adoptions_are_no_longer_undo_candidates() {
+        let (fx, ts_adopt) = adopted_ts(false);
+        let seat_adopt = adopt_seat(&fx);
+        committed(&apply(
+            &fx,
+            &plan(&fx, "teamspace release legacy").unwrap(),
+            &[],
+        ));
+        let after = listed(&fx);
+        assert!(
+            after
+                .iter()
+                .all(|c| c.act != ts_adopt && c.act != seat_adopt),
+            "{after:?}"
+        );
     }
 
     #[test]

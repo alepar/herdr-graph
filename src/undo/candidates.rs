@@ -6,7 +6,7 @@ use crate::store::layout;
 use crate::store::record::read_toml;
 use crate::store::tree::TreeRead;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const DEFAULT_LIMIT: usize = 20;
 
@@ -180,12 +180,21 @@ fn summarize(a: &ActionRecord, names: &Names) -> String {
     }
 }
 
-/// Up to `limit` undoable actions, newest first; already-undone ones are listed and marked.
+/// Up to `limit` undoable actions, newest first; already-undone ones are listed and marked. An adoption
+/// superseded by a release (`undone_by` set, but no undo action undoes it) is not listed: there is nothing left
+/// to undo.
 pub fn list_candidates(tree: &dyn TreeRead, limit: usize) -> Result<Vec<Candidate>, StoreError> {
-    let mut acts: Vec<ActionRecord> = layout::list_actions(tree)?
+    let all: Vec<ActionRecord> = layout::list_actions(tree)?
         .into_iter()
         .map(|(_, a)| a)
+        .collect();
+    let undone: BTreeSet<ActionId> = all.iter().filter_map(|a| a.undoes.clone()).collect();
+    let mut acts: Vec<ActionRecord> = all
+        .into_iter()
         .filter(|a| is_undoable(a.kind))
+        .filter(|a| {
+            a.kind != ActionKind::Adopt || a.undone_by.is_empty() || undone.contains(&a.id)
+        })
         .collect();
     acts.sort_by(|a, b| b.at.cmp(&a.at).then_with(|| b.id.cmp(&a.id)));
     acts.truncate(limit);
