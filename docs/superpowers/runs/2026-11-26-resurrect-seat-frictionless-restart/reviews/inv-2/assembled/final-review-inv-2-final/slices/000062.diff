@@ -1,0 +1,59 @@
+diff --git a/evidence/hg-lnw.11/final.log b/evidence/hg-lnw.11/final.log
+new file mode 100644
+index 0000000..fa2ca89
+--- /dev/null
++++ b/evidence/hg-lnw.11/final.log
+@@ -0,0 +1,53 @@
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.11)
++warning: field `herdr` is never read
++   --> src/threads/tests.rs:245:5
++    |
++237 | struct Fx {
++    |        -- field in this struct
++...
++245 |     herdr: Arc<FakeHerdr>,
++    |     ^^^^^
++    |
++    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
++
++warning: `herdr-graph` (lib test) generated 1 warning
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.08s
++     Running unittests src/lib.rs (target/debug/deps/herdr_graph-af06ac88911be9ca)
++
++running 33 tests
++test daemon::doctor::tests::attention_effects_none ... ok
++test daemon::clone_status::tests::key_conflicts_is_empty_without_a_conflict ... ok
++test daemon::clone_status::tests::status_shows_the_key_conflict_alert ... ok
++test daemon::clone_status::tests::status_names_the_key_conflict_pane_and_remedy ... ok
++test daemon::doctor::tests::attention_effects_listed_with_last_error ... ok
++test daemon::doctor::tests::harness_gate_skips_without_owned_hook ... ok
++test daemon::doctor::tests::restart_held_check_names_the_operator_remedy ... ok
++test daemon::doctor::tests::threads_check_connected_ok ... ok
++test daemon::doctor::tests::threads_check_daemon_disconnected_fails ... ok
++test daemon::doctor::tests::threads_check_not_found_warns_with_hint ... ok
++test daemon::doctor::tests::threads_check_not_found_with_disconnected_daemon_warns ... ok
++test daemon::doctor::tests::doctor_without_instance_fails_first_check ... ok
++test daemon::doctor::tests::warning_does_not_fail_the_report ... ok
++test daemon::doctor::tests::writer_check_absent ... ok
++test daemon::doctor::tests::worktree_dirty_check_lists_entries ... ok
++test daemon::doctor::tests::writer_check_halted_reason_fails ... ok
++test daemon::doctor::tests::worktree_dirty_parses_lines_and_skips_garbage ... ok
++test daemon::doctor::tests::writer_check_null_is_running ... ok
++test daemon::doctor::tests::harness_gate_warns_when_gate_missing ... ok
++test daemon::doctor::tests::harness_gate_ok_when_installed ... ok
++test daemon::doctor::tests::doctor_flags_outdated_hook ... ok
++test daemon::doctor::tests::instance_checks_without_journal_reports_none_yet ... ok
++test daemon::doctor::tests::instance_checks_with_journal_reports_attention_effects ... ok
++test daemon::doctor::tests::failed_ops_listed ... ok
++test daemon::doctor::tests::instruction_files_check_flags_inadmissible_files ... ok
++test daemon::doctor::tests::unknown_objects_listed ... ok
++test daemon::doctor::tests::undeliverable_requests_listed ... ok
++test reconcile::tests::no_restart_held_row_when_seat_resolves_by_itself ... ok
++test reconcile::tests::restart_held_row_after_grace_when_rebind_errors ... ok
++test reconcile::tests::no_restart_held_row_when_rebind_succeeds ... ok
++test reconcile::tests::restart_held_row_after_grace_when_rebind_refused ... ok
++test reconcile::tests::restart_held_row_after_grace_when_rebind_never_attempted ... ok
++test reconcile::tests::late_rebind_after_grace_places_the_seat ... ok
++
++test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 1463 filtered out; finished in 0.12s
++

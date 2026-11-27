@@ -1,0 +1,423 @@
+diff --git a/src/daemon/compose.rs b/src/daemon/compose.rs
+index 6a985f7..5394f3b 100644
+--- a/src/daemon/compose.rs
++++ b/src/daemon/compose.rs
+@@ -533,7 +533,9 @@ pub fn register_threads_connection_with(
+                         )
+                         .await
+                 }
+-                Err(e) => Err(crate::ports::threads::ThreadsError::Rejected(e.to_string())),
++                Err(e) => Err(crate::ports::threads::ThreadsError::Disconnected(format!(
++                    "graph-local: {e}"
++                ))),
+             };
+             let v = match result {
+                 Ok(c) => json!({ "connected": true, "capability": c }),
+@@ -729,6 +731,9 @@ mod lazy {
+     use crate::threads::discovery::resolve_state_dir;
+     use crate::threads::{Discovered, ServiceThreads, ThreadsSeatMap};
+ 
++    /// Every failure the endpoint itself raises (explicit config, namespace guard and bind, host claim, intent
++    /// dir) is graph-local: `Disconnected` with a `graph-local: ` prefix, so restore calls retry it in the same
++    /// incarnation. `Rejected` stays reserved for answers threads itself returned.
+     pub struct Endpoint {
+         inputs: DiscoveryInputs,
+         explicit: Result<Option<Discovered>, String>,
+@@ -756,7 +761,7 @@ mod lazy {
+             if let Some(d) = self
+                 .explicit
+                 .as_ref()
+-                .map_err(|e| ThreadsError::Rejected(e.clone()))?
++                .map_err(|e| ThreadsError::Disconnected(format!("graph-local: {e}")))?
+             {
+                 self.bind(d.instance)?;
+                 return Ok(d.clone());
+@@ -771,6 +776,10 @@ mod lazy {
+                 ));
+             };
+             let discovered = crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
++                // A daemon below the 3.6.0 floor is running: name the upgrade, retried after it.
++                if e.kind() == std::io::ErrorKind::Unsupported {
++                    return ThreadsError::Disconnected(e.to_string());
++                }
+                 ThreadsError::Disconnected(format!(
+                     "herdr-threads is not running (state dir {} from {source}): {e}",
+                     dir.display()
+@@ -780,15 +789,27 @@ mod lazy {
+             Ok(discovered)
+         }
+ 
++        /// The Herdr host locator of graph's panes. RuntimeContext canonicalizes the selected host parent
++        /// consistently with threads.
++        fn host(&self) -> Result<herdr_threads::protocol::ids::HostLocator, ThreadsError> {
++            herdr_threads::daemon::paths::RuntimeContext::explicit(
++                self.graph_root.clone(),
++                self.herdr_socket.clone(),
++                None,
++            )
++            .and_then(|context| context.claim_host())
++            .map_err(|e| ThreadsError::Disconnected(format!("graph-local: host claim: {e}")))
++        }
++
+         async fn guard(&self) -> Result<std::fs::File, ThreadsError> {
+             crate::threads::namespace::guard(&self.graph_root)
+                 .await
+-                .map_err(|e| ThreadsError::Rejected(e.to_string()))
++                .map_err(|e| ThreadsError::Disconnected(format!("graph-local: {e}")))
+         }
+ 
+         fn bind(&self, node: herdr_threads::node::NodeUuid) -> Result<(), ThreadsError> {
+             crate::threads::namespace::ensure(&self.intents, node, Some(&self.graph_root))
+-                .map_err(|e| ThreadsError::Rejected(e.to_string()))
++                .map_err(|e| ThreadsError::Disconnected(format!("graph-local: {e}")))
+         }
+     }
+ 
+@@ -848,18 +869,21 @@ mod lazy {
+                     Err(e)
+                 }
+             })
+-            .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
++            .map_err(|e| ThreadsError::Disconnected(format!("graph-local: intent dir: {e}")))?;
+             if let Some((cached, journal, t)) = &*slot {
+                 if cached == &d && journal == &intents {
+                     return Ok(t.clone());
+                 }
+             }
+             *slot = None;
+-            let t =
+-                ServiceThreads::with_system_clock(d.socket.clone(), intents.clone(), d.instance)
+-                    .map_err(|e| {
+-                        ThreadsError::Disconnected(format!("threads intent journal: {e}"))
+-                    })?;
++            let host = self.endpoint.host()?;
++            let t = ServiceThreads::with_system_clock(
++                d.socket.clone(),
++                intents.clone(),
++                d.instance,
++                host,
++            )
++            .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
+             let t = Arc::new(t);
+             *slot = Some((d, intents, t.clone()));
+             Ok(t)
+@@ -997,6 +1021,37 @@ mod lazy {
+             let _guard = self.endpoint.guard().await?;
+             self.get_async().await?.finalize_retirement(seat, op).await
+         }
++        async fn resurrect_seat(
++            &self,
++            seat: &ThreadsSeatRef,
++            pane: &HerdrPaneId,
++            replace: Option<&ThreadsSeatRef>,
++            op: &OpKey,
++        ) -> SeatRestoreOutcome {
++            let _guard = match self.endpoint.guard().await {
++                Ok(g) => g,
++                Err(e) => return SeatRestoreOutcome::from_error(&e),
++            };
++            match self.get_async().await {
++                Ok(t) => t.resurrect_seat(seat, pane, replace, op).await,
++                Err(e) => SeatRestoreOutcome::from_error(&e),
++            }
++        }
++        async fn rebind_held_seat(
++            &self,
++            seat: &ThreadsSeatRef,
++            pane: &HerdrPaneId,
++            op: &OpKey,
++        ) -> SeatRestoreOutcome {
++            let _guard = match self.endpoint.guard().await {
++                Ok(g) => g,
++                Err(e) => return SeatRestoreOutcome::from_error(&e),
++            };
++            match self.get_async().await {
++                Ok(t) => t.rebind_held_seat(seat, pane, op).await,
++                Err(e) => SeatRestoreOutcome::from_error(&e),
++            }
++        }
+         async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+             let _guard = self.endpoint.guard().await?;
+             self.get_async()
+@@ -1060,16 +1115,7 @@ mod lazy {
+                     *slot = None;
+                     let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
+                         Arc::new(herdr_threads::app::SystemClock::new());
+-                    // RuntimeContext canonicalizes the selected host parent consistently with threads.
+-                    let context = herdr_threads::daemon::paths::RuntimeContext::explicit(
+-                        me.endpoint.graph_root.clone(),
+-                        me.endpoint.herdr_socket.clone(),
+-                        None,
+-                    )
+-                    .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+-                    let host = context
+-                        .claim_host()
+-                        .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
++                    let host = me.endpoint.host()?;
+                     let m = Arc::new(ThreadsSeatMap::new(
+                         d.socket.clone(),
+                         d.instance,
+@@ -1203,14 +1249,47 @@ mod lazy {
+             assert_eq!(component["connected"], true, "{component}");
+         }
+ 
++        /// A threads stand-in that answers one `SeatInspect` with threads' own `Unsupported` refusal.
++        fn refusing_seat_inspect(socket: &std::path::Path) -> tokio::task::JoinHandle<()> {
++            use herdr_threads::daemon::transport::{read_frame, write_frame};
++            use herdr_threads::protocol::commands::Command;
++            use herdr_threads::protocol::results::{ApiError, ErrorCode};
++            use herdr_threads::protocol::wire::{PROTOCOL_VERSION, WireRequest, WireResponse};
++            let listener = tokio::net::UnixListener::bind(socket).unwrap();
++            tokio::spawn(async move {
++                let (mut stream, _) = listener.accept().await.unwrap();
++                let request: WireRequest =
++                    serde_json::from_slice(&read_frame(&mut stream).await.unwrap()).unwrap();
++                assert!(matches!(request.command, Command::SeatInspect(_)));
++                let response = WireResponse {
++                    version: PROTOCOL_VERSION,
++                    request_id: request.request_id,
++                    instance: request.expected_instance,
++                    daemon_boot: "123e4567-e89b-12d3-a456-426614174001".into(),
++                    result: Err(ApiError::constructor_for(ErrorCode::Unsupported)(
++                        "unsupported command",
++                    )),
++                };
++                write_frame(&mut stream, &serde_json::to_vec(&response).unwrap())
++                    .await
++                    .unwrap();
++            })
++        }
++
+         #[tokio::test]
+         async fn seat_view_rejection_is_visible_in_threads_status_and_records_nothing() {
+             use crate::ports::store::Store;
+             let dir = tempfile::tempdir().unwrap();
++            // A service this graph cannot use: threads itself answers the seat read `Unsupported`, as one
++            // older than the pin does. (A graph-local failure is retryable and never shows here.)
++            let socket = dir.path().join("old.sock");
++            let peer = refusing_seat_inspect(&socket);
+             let endpoint = Arc::new(Endpoint {
+                 inputs: DiscoveryInputs::default(),
+-                // A service this graph cannot use: every located call is refused, as by one older than the pin.
+-                explicit: Err("threads service does not support SeatInspect".into()),
++                explicit: Ok(Some(Discovered {
++                    socket,
++                    instance: herdr_threads::node::NodeUuid::from_bytes([1; 16]),
++                })),
+                 herdr_socket: dir.path().join("host.sock"),
+                 intents: dir.path().join("graph/.graph-local/threads-intents"),
+                 graph_root: dir.path().join("graph"),
+@@ -1239,7 +1318,8 @@ mod lazy {
+                 .inspect(&[ThreadsSeatRef("seat-a".into())])
+                 .await
+                 .unwrap_err();
+-            assert!(matches!(err, ThreadsError::Rejected(_)), "{err:?}");
++            assert!(matches!(err, ThreadsError::Unsupported), "{err:?}");
++            peer.await.unwrap();
+             let component = registry.status_components()["threads"].clone();
+             assert_eq!(
+                 component["seat_view_error"],
+@@ -1358,7 +1438,7 @@ mod lazy {
+                     std::fs::write(
+                         &paths.descriptor_path,
+                         serde_json::to_vec(&herdr_threads::daemon::ownership::EndpointDescriptor {
+-                            software_version: "2.0.3".into(),
++                            software_version: "3.6.0".into(),
+                             protocol_version: herdr_threads::protocol::wire::PROTOCOL_VERSION,
+                             node_uuid: node,
+                             boot_id: uuid::Uuid::new_v4(),
+@@ -1437,10 +1517,11 @@ mod lazy {
+                 )),
+             ));
+             publish(NodeUuid::from_bytes([2; 16]));
+-            assert!(matches!(lazy.get(), Err(ThreadsError::Rejected(_))));
++            // A namespace-bind refusal is graph-local: retryable, never a definitive threads answer.
++            assert!(matches!(lazy.get(), Err(ThreadsError::Disconnected(_))));
+             assert!(matches!(
+                 lazy_map.seat_for(&HerdrPaneId("w1:p1".into())).await,
+-                Err(ThreadsError::Rejected(_))
++                Err(ThreadsError::Disconnected(_))
+             ));
+             assert_eq!(
+                 std::fs::read(crate::threads::namespace::binding_path(&endpoint.intents)).unwrap(),
+@@ -1505,6 +1586,180 @@ mod lazy {
+                     .is_empty()
+             );
+         }
++
++        // --- graph-local failures on the restore path are retryable (hg-lnw.24) ---
++
++        const NODE_A: [u8; 16] = [1; 16];
++        const NODE_B: [u8; 16] = [2; 16];
++
++        /// An endpoint on `dir/graph` with the given explicit config; no service listens at any socket.
++        fn local_endpoint(
++            dir: &std::path::Path,
++            explicit: Result<Option<Discovered>, String>,
++            herdr_socket: PathBuf,
++        ) -> Arc<Endpoint> {
++            Arc::new(Endpoint {
++                inputs: DiscoveryInputs::default(),
++                explicit,
++                herdr_socket,
++                intents: dir.join("graph/.graph-local/threads-intents"),
++                graph_root: dir.join("graph"),
++            })
++        }
++
++        fn explicit(dir: &std::path::Path, node: [u8; 16]) -> Result<Option<Discovered>, String> {
++            Ok(Some(Discovered {
++                socket: dir.join("nobody-listens.sock"),
++                instance: herdr_threads::node::NodeUuid::from_bytes(node),
++            }))
++        }
++
++        /// Commit a namespace marker naming `node` (reached from `legacy`) under `epoch` on main.
++        fn commit_marker(root: &std::path::Path, node: [u8; 16], epoch: &str) {
++            let repo = git2::Repository::open(root).unwrap();
++            let parent = repo.head().unwrap().peel_to_commit().unwrap();
++            let marker = crate::threads::namespace::Transition {
++                version: 1,
++                node: herdr_threads::node::NodeUuid::from_bytes(node),
++                from: "legacy".into(),
++                previous_epoch: String::new(),
++                epoch: epoch.into(),
++                base_head: parent.id().to_string(),
++                op: epoch.into(),
++            };
++            let blob = repo.blob(&serde_json::to_vec(&marker).unwrap()).unwrap();
++            let mut builder = repo.treebuilder(Some(&parent.tree().unwrap())).unwrap();
++            builder
++                .insert(crate::threads::namespace::MARKER, blob, 0o100644)
++                .unwrap();
++            let tree = repo.find_tree(builder.write().unwrap()).unwrap();
++            let sig = git2::Signature::now("test", "test@example.invalid").unwrap();
++            repo.commit(Some("HEAD"), &sig, &sig, epoch, &tree, &[&parent])
++                .unwrap();
++        }
++
++        /// Both restore calls through the production port, under `epoch` when given: each must come back as the
++        /// retryable `Unreachable` refusal, so the executor retries it in the same incarnation.
++        async fn assert_restores_retryable(endpoint: &Arc<Endpoint>, epoch: Option<&str>) {
++            let lazy = LazyThreads::new(endpoint.clone());
++            let seat = ThreadsSeatRef("seat-a".into());
++            let pane = HerdrPaneId("w1:p1".into());
++            let calls = async {
++                (
++                    lazy.resurrect_seat(&seat, &pane, None, &OpKey("resurrect:o".into()))
++                        .await,
++                    lazy.rebind_held_seat(&seat, &pane, &OpKey("rebind:o".into()))
++                        .await,
++                )
++            };
++            let (resurrect, rebind) = match epoch {
++                Some(e) => {
++                    crate::threads::namespace::EXPECTED_EPOCH
++                        .scope(e.into(), calls)
++                        .await
++                }
++                None => calls.await,
++            };
++            let want = SeatRestoreOutcome::refused(SeatRestoreRefusal::Unreachable);
++            assert_eq!(resurrect, want, "resurrect_seat");
++            assert_eq!(rebind, want, "rebind_held_seat");
++        }
++
++        fn local_message<T>(r: Result<T, ThreadsError>) -> String {
++            match r {
++                Err(ThreadsError::Disconnected(m)) => {
++                    assert!(m.starts_with("graph-local: "), "{m}");
++                    m
++                }
++                Err(other) => panic!("expected a graph-local Disconnected, got {other:?}"),
++                Ok(_) => panic!("expected a graph-local Disconnected, got Ok"),
++            }
++        }
++
++        #[tokio::test]
++        async fn stale_snapshot_guard_is_a_retryable_restore_refusal() {
++            let dir = tempfile::tempdir().unwrap();
++            let endpoint = local_endpoint(
++                dir.path(),
++                explicit(dir.path(), NODE_A),
++                dir.path().join("host.sock"),
++            );
++            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
++            commit_marker(&endpoint.graph_root, NODE_A, "epoch_a");
++            // Outside the committed epoch's scope: the call snapshot is stale.
++            let m = local_message(endpoint.guard().await);
++            assert!(m.contains("stale external call snapshot"), "{m}");
++            assert_restores_retryable(&endpoint, None).await;
++            assert_restores_retryable(&endpoint, Some("epoch_old")).await;
++        }
++
++        #[tokio::test]
++        async fn namespace_bind_mismatch_is_a_retryable_restore_refusal() {
++            let dir = tempfile::tempdir().unwrap();
++            let endpoint = local_endpoint(
++                dir.path(),
++                explicit(dir.path(), NODE_B),
++                dir.path().join("host.sock"),
++            );
++            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
++            commit_marker(&endpoint.graph_root, NODE_A, "epoch_a");
++            // The guard passes under the committed epoch; the discovered node is not the committed one.
++            let m = crate::threads::namespace::EXPECTED_EPOCH
++                .scope("epoch_a".into(), async { local_message(endpoint.locate()) })
++                .await;
++            assert!(m.contains("committed node"), "{m}");
++            assert_restores_retryable(&endpoint, Some("epoch_a")).await;
++        }
++
++        #[tokio::test]
++        async fn lazy_host_claim_failure_is_a_retryable_restore_refusal() {
++            let dir = tempfile::tempdir().unwrap();
++            let endpoint = local_endpoint(
++                dir.path(),
++                explicit(dir.path(), NODE_A),
++                dir.path().join("no-such-dir/host.sock"),
++            );
++            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
++            endpoint.locate().unwrap();
++            let m = local_message(endpoint.host());
++            assert!(m.contains("host claim"), "{m}");
++            let lazy = LazyThreads::new(endpoint.clone());
++            assert!(local_message(lazy.get()).contains("host claim"));
++            assert_restores_retryable(&endpoint, None).await;
++        }
++
++        #[tokio::test]
++        async fn broken_graph_repo_intent_dir_is_a_retryable_restore_refusal() {
++            let dir = tempfile::tempdir().unwrap();
++            let endpoint = local_endpoint(
++                dir.path(),
++                explicit(dir.path(), NODE_A),
++                dir.path().join("host.sock"),
++            );
++            // A `.git` that is no repository: the committed namespace (read by the guard, the bind and the
++            // intent dir alike) cannot be read.
++            std::fs::create_dir_all(endpoint.graph_root.join(".git")).unwrap();
++            assert!(
++                crate::threads::namespace::intent_dir(&endpoint.intents, &endpoint.graph_root)
++                    .is_err()
++            );
++            local_message(LazyThreads::new(endpoint.clone()).get());
++            assert_restores_retryable(&endpoint, None).await;
++        }
++
++        #[tokio::test]
++        async fn explicit_config_error_is_a_retryable_restore_refusal() {
++            let dir = tempfile::tempdir().unwrap();
++            let endpoint = local_endpoint(
++                dir.path(),
++                Err("HERDR_GRAPH_THREADS_SOCKET and HERDR_GRAPH_THREADS_INSTANCE must be configured together".into()),
++                dir.path().join("host.sock"),
++            );
++            crate::store::init::init_instance(&endpoint.graph_root).unwrap();
++            let m = local_message(endpoint.locate());
++            assert!(m.contains("configured together"), "{m}");
++            assert_restores_retryable(&endpoint, None).await;
++        }
+     }
+ }
+ 

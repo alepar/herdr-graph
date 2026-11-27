@@ -1,0 +1,757 @@
+{
+ "changed": [
+  "CHANGELOG.md",
+  "CURRENT-DESIGN.md",
+  "Cargo.lock",
+  "Cargo.toml",
+  "README.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-format-repair.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-step-back.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.coverage.json",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.coverage.json",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-final-review-keys.txt",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-punch-list.txt",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-scope-filter.json",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-scope-keys.txt",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-step-back-keys.txt",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-step-back.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/amend-design-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-findings-round-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-findings-round-2.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-ledger.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-requirements.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-review-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-review-2.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger-design.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-overrides-design.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-overrides.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/friction.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/interim-status.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/profile-9b510293-b854-4149-b916-64e7b38c421d.json",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/profile-9b510293-b854-4149-b916-64e7b38c421d.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-10.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-11.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-12.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-13.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-14.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-15.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-16.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-17.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-18.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-19.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-2.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-20.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-3.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-4.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-5.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-6.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-7.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-8.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-9.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.md",
+  "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/run.md",
+  "docs/superpowers/specs/2026-11-07-onboarding-existing-spaces-design.md",
+  "docs/superpowers/specs/INDEX.md",
+  "docs/verification-matrix.md",
+  "evidence/hg-lnw.10/packaging-readme.log",
+  "evidence/hg-lnw.11/final.log",
+  "evidence/hg-lnw.11/related.log",
+  "evidence/hg-lnw.11/restart-held.log",
+  "evidence/hg-lnw.12/cargo-test.log",
+  "evidence/hg-lnw.12/check-all.log",
+  "evidence/hg-lnw.13/cargo-test-full.log",
+  "evidence/hg-lnw.13/lib-reconcile.log",
+  "evidence/hg-lnw.13/lib-threads.log",
+  "evidence/hg-lnw.13/red-mutation-gate-only.log",
+  "evidence/hg-lnw.13/red-mutation.log",
+  "evidence/hg-lnw.14/final.log",
+  "evidence/hg-lnw.14/focused-1.log",
+  "evidence/hg-lnw.14/focused-2.log",
+  "evidence/hg-lnw.14/lib.log",
+  "evidence/hg-lnw.15/lib-all.log",
+  "evidence/hg-lnw.15/threads-run1.log",
+  "evidence/hg-lnw.15/threads-run2.log",
+  "evidence/hg-lnw.15/threads-run3.log",
+  "evidence/hg-lnw.21/cargo-test-lib-rebased.log",
+  "evidence/hg-lnw.21/cargo-test-lib.log",
+  "evidence/hg-lnw.22/green-test_isolation.log",
+  "evidence/hg-lnw.22/rebased-test_isolation.log",
+  "evidence/hg-lnw.22/rebased-tier5-threads_real.log",
+  "evidence/hg-lnw.22/red-test_isolation.log",
+  "evidence/hg-lnw.22/tier5-threads_real.log",
+  "evidence/hg-lnw.23/cargo-test-rebased.log",
+  "evidence/hg-lnw.23/cargo-test.log",
+  "evidence/hg-lnw.23/tier3-adopted-unlabelled-rebased.log",
+  "evidence/hg-lnw.23/tier3-adopted-unlabelled.log",
+  "evidence/hg-lnw.24/check.log",
+  "evidence/hg-lnw.24/green-lib.exit",
+  "evidence/hg-lnw.24/green-lib.log",
+  "evidence/hg-lnw.24/rebased-lib.log",
+  "evidence/hg-lnw.24/red-namespace_tests.log",
+  "evidence/hg-lnw.25/cargo-check-all.log",
+  "evidence/hg-lnw.25/cargo-test-lib.log",
+  "evidence/hg-lnw.25/red-mutation.log",
+  "evidence/hg-lnw.25/threads-real.log",
+  "evidence/hg-lnw.28/integration-tip-production-discovery.log",
+  "evidence/hg-lnw.28/lib-clone-status.log",
+  "evidence/hg-lnw.28/mutation-red-operater.log",
+  "evidence/hg-lnw.28/rebased-lib-clone-status.log",
+  "evidence/hg-lnw.28/rebased-source-tree.txt",
+  "evidence/hg-lnw.28/rebased-tier5-threads-real.log",
+  "evidence/hg-lnw.28/tier5-threads-real.log",
+  "evidence/hg-lnw.29/red-production-discovery.log",
+  "evidence/hg-lnw.29/source-tree.txt",
+  "evidence/hg-lnw.29/tier5-threads-real.log",
+  "evidence/hg-lnw.3/green-summary.log",
+  "evidence/hg-lnw.3/red.log",
+  "evidence/hg-lnw.4/final-lib-repeat.log",
+  "evidence/hg-lnw.4/final-lib.log",
+  "evidence/hg-lnw.4/focused.log",
+  "evidence/hg-lnw.4/full.log",
+  "evidence/hg-lnw.4/undo.log",
+  "evidence/hg-lnw.6/build-all-features.log",
+  "evidence/hg-lnw.6/build.log",
+  "evidence/hg-lnw.6/check-all-targets-all-features.log",
+  "evidence/hg-lnw.6/test-isolation.log",
+  "evidence/hg-lnw.6/test-run1-compile-break.log",
+  "evidence/hg-lnw.6/test.log",
+  "evidence/hg-lnw.7/base.log",
+  "evidence/hg-lnw.7/check-all.log",
+  "evidence/hg-lnw.7/lib-final.log",
+  "evidence/hg-lnw.7/lib.log",
+  "evidence/hg-lnw.7/lib2.log",
+  "evidence/hg-lnw.7/tier5.log",
+  "evidence/hg-lnw.8/callers.log",
+  "evidence/hg-lnw.8/tier5-rebased.log",
+  "evidence/hg-lnw.8/tier5.log",
+  "evidence/hg-lnw.9/base-057ad4d-isolation-lint.log",
+  "evidence/hg-lnw.9/base-private_process_info_is_shell.log",
+  "evidence/hg-lnw.9/late-rebind-pinned-order.log",
+  "evidence/hg-lnw.9/tier3-final-rebased.log",
+  "evidence/hg-lnw.9/tier3-run2-summary.log",
+  "src/daemon/clone_status.rs",
+  "src/daemon/compose.rs",
+  "src/daemon/doctor.rs",
+  "src/herdr/client.rs",
+  "src/herdr/fake.rs",
+  "src/herdr/tests.rs",
+  "src/model/clone.rs",
+  "src/model/tests.rs",
+  "src/observe/seat_observation.rs",
+  "src/observe/tests.rs",
+  "src/plan/seat_adopt.rs",
+  "src/plan/tests.rs",
+  "src/ports/threads.rs",
+  "src/reconcile/herdr_exec.rs",
+  "src/reconcile/planner.rs",
+  "src/reconcile/tests.rs",
+  "src/threads/adapter.rs",
+  "src/threads/assignment.rs",
+  "src/threads/effects.rs",
+  "src/threads/fake.rs",
+  "src/threads/mapping.rs",
+  "src/threads/service_tests.rs",
+  "src/threads/tests.rs",
+  "src/undo/preview.rs",
+  "src/undo/tests.rs",
+  "tests/adopt_private_herdr.rs",
+  "tests/e2e_private_herdr.rs",
+  "tests/integration_sweep.rs",
+  "tests/support/agent_stub.rs",
+  "tests/support/mod.rs",
+  "tests/support/private_herdr.rs",
+  "tests/support/threads_bin.rs",
+  "tests/test_isolation.rs",
+  "tests/threads_real.rs",
+  "third_party/herdr-threads"
+ ],
+ "clusters": [
+  {
+   "name": "root-files",
+   "files": [
+    "CHANGELOG.md",
+    "CURRENT-DESIGN.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "README.md"
+   ],
+   "slices": [
+    "slices/000001.diff",
+    "slices/000002.diff",
+    "slices/000003.diff",
+    "slices/000004.diff",
+    "slices/000005.diff"
+   ]
+  },
+  {
+   "name": "docs-runs-2026-11-26-resurrect-seat-frictionless-restart",
+   "files": [
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-format-repair.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-step-back.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.coverage.json",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.coverage.json",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-final-review-keys.txt",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-punch-list.txt",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-scope-filter.json",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-scope-keys.txt",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-step-back-keys.txt",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-step-back.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/amend-design-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-findings-round-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-findings-round-2.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-ledger.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-requirements.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-review-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/coverage-round-1-review-2.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger-design.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-overrides-design.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-overrides.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/friction.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/interim-status.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/profile-9b510293-b854-4149-b916-64e7b38c421d.json",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/profile-9b510293-b854-4149-b916-64e7b38c421d.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-10.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-11.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-12.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-13.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-14.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-15.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-16.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-17.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-18.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-19.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-2.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-20.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-3.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-4.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-5.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-6.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-7.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-8.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-9.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.md",
+    "docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/run.md"
+   ],
+   "slices": [
+    "slices/000006.diff",
+    "slices/000007.diff",
+    "slices/000008.diff",
+    "slices/000009.diff",
+    "slices/000010.diff",
+    "slices/000011.diff",
+    "slices/000012.diff",
+    "slices/000013.diff",
+    "slices/000014.diff",
+    "slices/000015.diff",
+    "slices/000016.diff",
+    "slices/000017.diff",
+    "slices/000018.diff",
+    "slices/000019.diff",
+    "slices/000020.diff",
+    "slices/000021.diff",
+    "slices/000022.diff",
+    "slices/000023.diff",
+    "slices/000024.diff",
+    "slices/000025.diff",
+    "slices/000026.diff",
+    "slices/000027.diff",
+    "slices/000028.diff",
+    "slices/000029.diff",
+    "slices/000030.diff",
+    "slices/000031.diff",
+    "slices/000032.diff",
+    "slices/000033.diff",
+    "slices/000034.diff",
+    "slices/000035.diff",
+    "slices/000036.diff",
+    "slices/000037.diff",
+    "slices/000038.diff",
+    "slices/000039.diff",
+    "slices/000040.diff",
+    "slices/000041.diff",
+    "slices/000042.diff",
+    "slices/000043.diff",
+    "slices/000044.diff",
+    "slices/000045.diff",
+    "slices/000046.diff",
+    "slices/000047.diff",
+    "slices/000048.diff",
+    "slices/000049.diff",
+    "slices/000050.diff",
+    "slices/000051.diff",
+    "slices/000052.diff",
+    "slices/000053.diff",
+    "slices/000054.diff",
+    "slices/000055.diff",
+    "slices/000056.diff",
+    "slices/000057.diff"
+   ]
+  },
+  {
+   "name": "docs-specs",
+   "files": [
+    "docs/superpowers/specs/2026-11-07-onboarding-existing-spaces-design.md",
+    "docs/superpowers/specs/INDEX.md"
+   ],
+   "slices": [
+    "slices/000058.diff",
+    "slices/000059.diff"
+   ]
+  },
+  {
+   "name": "docs-docs",
+   "files": [
+    "docs/verification-matrix.md"
+   ],
+   "slices": [
+    "slices/000060.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-10",
+   "files": [
+    "evidence/hg-lnw.10/packaging-readme.log"
+   ],
+   "slices": [
+    "slices/000061.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-11",
+   "files": [
+    "evidence/hg-lnw.11/final.log",
+    "evidence/hg-lnw.11/related.log",
+    "evidence/hg-lnw.11/restart-held.log"
+   ],
+   "slices": [
+    "slices/000062.diff",
+    "slices/000063.diff",
+    "slices/000064.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-12",
+   "files": [
+    "evidence/hg-lnw.12/cargo-test.log",
+    "evidence/hg-lnw.12/check-all.log"
+   ],
+   "slices": [
+    "slices/000065.diff",
+    "slices/000066.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-13",
+   "files": [
+    "evidence/hg-lnw.13/cargo-test-full.log",
+    "evidence/hg-lnw.13/lib-reconcile.log",
+    "evidence/hg-lnw.13/lib-threads.log",
+    "evidence/hg-lnw.13/red-mutation-gate-only.log",
+    "evidence/hg-lnw.13/red-mutation.log"
+   ],
+   "slices": [
+    "slices/000067.diff",
+    "slices/000068.diff",
+    "slices/000069.diff",
+    "slices/000070.diff",
+    "slices/000071.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-14",
+   "files": [
+    "evidence/hg-lnw.14/final.log",
+    "evidence/hg-lnw.14/focused-1.log",
+    "evidence/hg-lnw.14/focused-2.log",
+    "evidence/hg-lnw.14/lib.log"
+   ],
+   "slices": [
+    "slices/000072.diff",
+    "slices/000073.diff",
+    "slices/000074.diff",
+    "slices/000075.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-15",
+   "files": [
+    "evidence/hg-lnw.15/lib-all.log",
+    "evidence/hg-lnw.15/threads-run1.log",
+    "evidence/hg-lnw.15/threads-run2.log",
+    "evidence/hg-lnw.15/threads-run3.log"
+   ],
+   "slices": [
+    "slices/000076.diff",
+    "slices/000077.diff",
+    "slices/000078.diff",
+    "slices/000079.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-21",
+   "files": [
+    "evidence/hg-lnw.21/cargo-test-lib-rebased.log",
+    "evidence/hg-lnw.21/cargo-test-lib.log"
+   ],
+   "slices": [
+    "slices/000080.diff",
+    "slices/000081.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-22",
+   "files": [
+    "evidence/hg-lnw.22/green-test_isolation.log",
+    "evidence/hg-lnw.22/rebased-test_isolation.log",
+    "evidence/hg-lnw.22/rebased-tier5-threads_real.log",
+    "evidence/hg-lnw.22/red-test_isolation.log",
+    "evidence/hg-lnw.22/tier5-threads_real.log"
+   ],
+   "slices": [
+    "slices/000082.diff",
+    "slices/000083.diff",
+    "slices/000084.diff",
+    "slices/000085.diff",
+    "slices/000086.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-23",
+   "files": [
+    "evidence/hg-lnw.23/cargo-test-rebased.log",
+    "evidence/hg-lnw.23/cargo-test.log",
+    "evidence/hg-lnw.23/tier3-adopted-unlabelled-rebased.log",
+    "evidence/hg-lnw.23/tier3-adopted-unlabelled.log"
+   ],
+   "slices": [
+    "slices/000087.diff",
+    "slices/000088.diff",
+    "slices/000089.diff",
+    "slices/000090.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-24",
+   "files": [
+    "evidence/hg-lnw.24/check.log",
+    "evidence/hg-lnw.24/green-lib.exit",
+    "evidence/hg-lnw.24/green-lib.log",
+    "evidence/hg-lnw.24/rebased-lib.log",
+    "evidence/hg-lnw.24/red-namespace_tests.log"
+   ],
+   "slices": [
+    "slices/000091.diff",
+    "slices/000092.diff",
+    "slices/000093.diff",
+    "slices/000094.diff",
+    "slices/000095.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-25",
+   "files": [
+    "evidence/hg-lnw.25/cargo-check-all.log",
+    "evidence/hg-lnw.25/cargo-test-lib.log",
+    "evidence/hg-lnw.25/red-mutation.log",
+    "evidence/hg-lnw.25/threads-real.log"
+   ],
+   "slices": [
+    "slices/000096.diff",
+    "slices/000097.diff",
+    "slices/000098.diff",
+    "slices/000099.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-28",
+   "files": [
+    "evidence/hg-lnw.28/integration-tip-production-discovery.log",
+    "evidence/hg-lnw.28/lib-clone-status.log",
+    "evidence/hg-lnw.28/mutation-red-operater.log",
+    "evidence/hg-lnw.28/rebased-lib-clone-status.log",
+    "evidence/hg-lnw.28/rebased-source-tree.txt",
+    "evidence/hg-lnw.28/rebased-tier5-threads-real.log",
+    "evidence/hg-lnw.28/tier5-threads-real.log"
+   ],
+   "slices": [
+    "slices/000100.diff",
+    "slices/000101.diff",
+    "slices/000102.diff",
+    "slices/000103.diff",
+    "slices/000104.diff",
+    "slices/000105.diff",
+    "slices/000106.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-29",
+   "files": [
+    "evidence/hg-lnw.29/red-production-discovery.log",
+    "evidence/hg-lnw.29/source-tree.txt",
+    "evidence/hg-lnw.29/tier5-threads-real.log"
+   ],
+   "slices": [
+    "slices/000107.diff",
+    "slices/000108.diff",
+    "slices/000109.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-3",
+   "files": [
+    "evidence/hg-lnw.3/green-summary.log",
+    "evidence/hg-lnw.3/red.log"
+   ],
+   "slices": [
+    "slices/000110.diff",
+    "slices/000111.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-4",
+   "files": [
+    "evidence/hg-lnw.4/final-lib-repeat.log",
+    "evidence/hg-lnw.4/final-lib.log",
+    "evidence/hg-lnw.4/focused.log",
+    "evidence/hg-lnw.4/full.log",
+    "evidence/hg-lnw.4/undo.log"
+   ],
+   "slices": [
+    "slices/000112.diff",
+    "slices/000113.diff",
+    "slices/000114.diff",
+    "slices/000115.diff",
+    "slices/000116.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-6",
+   "files": [
+    "evidence/hg-lnw.6/build-all-features.log",
+    "evidence/hg-lnw.6/build.log",
+    "evidence/hg-lnw.6/check-all-targets-all-features.log",
+    "evidence/hg-lnw.6/test-isolation.log",
+    "evidence/hg-lnw.6/test-run1-compile-break.log",
+    "evidence/hg-lnw.6/test.log"
+   ],
+   "slices": [
+    "slices/000117.diff",
+    "slices/000118.diff",
+    "slices/000119.diff",
+    "slices/000120.diff",
+    "slices/000121.diff",
+    "slices/000122.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-7",
+   "files": [
+    "evidence/hg-lnw.7/base.log",
+    "evidence/hg-lnw.7/check-all.log",
+    "evidence/hg-lnw.7/lib-final.log",
+    "evidence/hg-lnw.7/lib.log",
+    "evidence/hg-lnw.7/lib2.log",
+    "evidence/hg-lnw.7/tier5.log"
+   ],
+   "slices": [
+    "slices/000123.diff",
+    "slices/000124.diff",
+    "slices/000125.diff",
+    "slices/000126.diff",
+    "slices/000127.diff",
+    "slices/000128.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-8",
+   "files": [
+    "evidence/hg-lnw.8/callers.log",
+    "evidence/hg-lnw.8/tier5-rebased.log",
+    "evidence/hg-lnw.8/tier5.log"
+   ],
+   "slices": [
+    "slices/000129.diff",
+    "slices/000130.diff",
+    "slices/000131.diff"
+   ]
+  },
+  {
+   "name": "evidence-hg-lnw-9",
+   "files": [
+    "evidence/hg-lnw.9/base-057ad4d-isolation-lint.log",
+    "evidence/hg-lnw.9/base-private_process_info_is_shell.log",
+    "evidence/hg-lnw.9/late-rebind-pinned-order.log",
+    "evidence/hg-lnw.9/tier3-final-rebased.log",
+    "evidence/hg-lnw.9/tier3-run2-summary.log"
+   ],
+   "slices": [
+    "slices/000132.diff",
+    "slices/000133.diff",
+    "slices/000134.diff",
+    "slices/000135.diff",
+    "slices/000136.diff"
+   ]
+  },
+  {
+   "name": "src-daemon",
+   "files": [
+    "src/daemon/clone_status.rs",
+    "src/daemon/compose.rs",
+    "src/daemon/doctor.rs"
+   ],
+   "slices": [
+    "slices/000137.diff",
+    "slices/000138.diff",
+    "slices/000139.diff"
+   ]
+  },
+  {
+   "name": "src-herdr",
+   "files": [
+    "src/herdr/client.rs",
+    "src/herdr/fake.rs",
+    "src/herdr/tests.rs"
+   ],
+   "slices": [
+    "slices/000140.diff",
+    "slices/000141.diff",
+    "slices/000142.diff"
+   ]
+  },
+  {
+   "name": "src-model",
+   "files": [
+    "src/model/clone.rs",
+    "src/model/tests.rs"
+   ],
+   "slices": [
+    "slices/000143.diff",
+    "slices/000144.diff"
+   ]
+  },
+  {
+   "name": "src-observe",
+   "files": [
+    "src/observe/seat_observation.rs",
+    "src/observe/tests.rs"
+   ],
+   "slices": [
+    "slices/000145.diff",
+    "slices/000146.diff"
+   ]
+  },
+  {
+   "name": "src-plan",
+   "files": [
+    "src/plan/seat_adopt.rs",
+    "src/plan/tests.rs"
+   ],
+   "slices": [
+    "slices/000147.diff",
+    "slices/000148.diff"
+   ]
+  },
+  {
+   "name": "src-ports",
+   "files": [
+    "src/ports/threads.rs"
+   ],
+   "slices": [
+    "slices/000149.diff"
+   ]
+  },
+  {
+   "name": "src-reconcile",
+   "files": [
+    "src/reconcile/herdr_exec.rs",
+    "src/reconcile/planner.rs",
+    "src/reconcile/tests.rs"
+   ],
+   "slices": [
+    "slices/000150.diff",
+    "slices/000151.diff",
+    "slices/000152.diff"
+   ]
+  },
+  {
+   "name": "src-threads",
+   "files": [
+    "src/threads/adapter.rs",
+    "src/threads/assignment.rs",
+    "src/threads/effects.rs",
+    "src/threads/fake.rs",
+    "src/threads/mapping.rs",
+    "src/threads/service_tests.rs",
+    "src/threads/tests.rs"
+   ],
+   "slices": [
+    "slices/000153.diff",
+    "slices/000154.diff",
+    "slices/000155.diff",
+    "slices/000156.diff",
+    "slices/000157.diff",
+    "slices/000158.diff",
+    "slices/000159.diff"
+   ]
+  },
+  {
+   "name": "src-undo",
+   "files": [
+    "src/undo/preview.rs",
+    "src/undo/tests.rs"
+   ],
+   "slices": [
+    "slices/000160.diff",
+    "slices/000161.diff"
+   ]
+  },
+  {
+   "name": "tests",
+   "files": [
+    "tests/adopt_private_herdr.rs",
+    "tests/e2e_private_herdr.rs",
+    "tests/integration_sweep.rs",
+    "tests/support/agent_stub.rs",
+    "tests/support/mod.rs",
+    "tests/support/private_herdr.rs",
+    "tests/support/threads_bin.rs",
+    "tests/test_isolation.rs",
+    "tests/threads_real.rs"
+   ],
+   "slices": [
+    "slices/000162.diff",
+    "slices/000163.diff",
+    "slices/000164.diff",
+    "slices/000165.diff",
+    "slices/000166.diff",
+    "slices/000167.diff",
+    "slices/000168.diff",
+    "slices/000169.diff",
+    "slices/000170.diff"
+   ]
+  },
+  {
+   "name": "third-party",
+   "files": [
+    "third_party/herdr-threads"
+   ],
+   "slices": [
+    "slices/000171.diff"
+   ]
+  }
+ ]
+}

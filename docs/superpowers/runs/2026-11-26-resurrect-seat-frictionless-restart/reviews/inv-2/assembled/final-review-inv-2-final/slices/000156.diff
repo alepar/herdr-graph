@@ -1,0 +1,378 @@
+diff --git a/src/threads/fake.rs b/src/threads/fake.rs
+index f3739bf..813b1b4 100644
+--- a/src/threads/fake.rs
++++ b/src/threads/fake.rs
+@@ -2,9 +2,21 @@
+ //! operation keys are idempotent, a Required invitation stays `pending` until `accept` simulates the native
+ //! agent, and nothing ever fabricates acceptance.
+ use crate::model::clone::{InvitationState, InviteConstraint};
++use crate::model::{HerdrPaneId, Timestamp};
++use crate::ports::clock::Clock;
+ use crate::ports::threads::*;
+ use std::collections::{BTreeMap, BTreeSet};
+-use std::sync::Mutex;
++use std::sync::{Arc, Mutex};
++
++/// One retirement the seat-lifecycle model tracks (threads 3.5.0 reversible close).
++#[derive(Debug, Clone, PartialEq, Eq)]
++struct FakeRetirement {
++    keyed: bool,
++    retired_at: Timestamp,
++    /// The 24 h obligation settlement already ran.
++    settled: bool,
++    final_: bool,
++}
+ 
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct FakeThread {
+@@ -63,6 +75,54 @@ struct State {
+     /// Pending or Accepted membership of a retired seat (reversible or final) as Retired, while the stored
+     /// episode stays as it was (store/service_substrate.rs `current_requirement`, queries.rs participants).
+     retired_seats: BTreeSet<String>,
++    /// The opt-in 3.5.0/3.6.0 seat-lifecycle model (`enable_resurrect`): the seat view and the injectable clock.
++    model: Option<(Arc<FakeThreadsSeatView>, Arc<dyn Clock>)>,
++    retirements: BTreeMap<String, FakeRetirement>,
++    /// Restart-held seats and the pane each is saved on.
++    held: BTreeMap<String, HerdrPaneId>,
++    /// Seats threads minted bare for a pane (the `replace` of a ResurrectSeat).
++    bare: BTreeSet<String>,
++    /// Seats keyed by another service.
++    foreign_keyed: BTreeSet<String>,
++    reconcile_pending: bool,
++    /// Invitations `invite` minted, per (thread, seat); a reused pending invitation mints none.
++    minted: BTreeMap<(String, String), usize>,
++}
++
++/// Apply the 24 h and 7 d windows of every reversible keyless retirement at the model clock's now.
++fn settle(st: &mut State) {
++    let Some((view, clock)) = st.model.clone() else {
++        return;
++    };
++    let now = clock.now();
++    let seats: Vec<String> = st.retirements.keys().cloned().collect();
++    for seat in seats {
++        let r = st.retirements[&seat].clone();
++        if r.keyed || r.final_ {
++            continue;
++        }
++        if !r.settled && now >= r.retired_at + KEYLESS_OBLIGATIONS_SETTLE_AFTER {
++            // Threads settled the ordinary pending invitations as recipient_retired; accepted memberships and
++            // required episodes stay.
++            st.members.retain(|(_, s), m| {
++                !(s == &seat
++                    && m.constraint == InviteConstraint::Ordinary
++                    && m.state == InvitationState::Pending)
++            });
++            st.retirements.get_mut(&seat).unwrap().settled = true;
++        }
++        if now >= r.retired_at + KEYLESS_REVERSIBLE_FOR {
++            st.retirements.get_mut(&seat).unwrap().final_ = true;
++            view.set(
++                &ThreadsSeatRef(seat),
++                SeatStatus::Retired {
++                    kind: RetirementKind::Final,
++                    keyed: false,
++                    retired_at: Some(r.retired_at),
++                },
++            );
++        }
++    }
+ }
+ 
+ #[derive(Clone)]
+@@ -111,7 +171,7 @@ impl FakeThreads {
+             Some(root) => crate::threads::namespace::guard(&root)
+                 .await
+                 .map(Some)
+-                .map_err(|e| ThreadsError::Rejected(e.to_string())),
++                .map_err(|e| ThreadsError::Disconnected(format!("graph-local: {e}"))),
+             None => Ok(None),
+         }
+     }
+@@ -217,19 +277,41 @@ impl FakeThreads {
+ 
+     /// Model closing `seat`'s pane (spec §14.12): the retirement is reversible only while a continuity key is
+     /// bound to the seat, final otherwise. Returns the kind `view` now reports for the seat.
++    /// With `enable_resurrect` every close is reversible (threads 3.5.0), keyed or not, and records the retirement
++    /// time.
+     pub fn close_pane(&self, view: &FakeThreadsSeatView, seat: &ThreadsSeatRef) -> RetirementKind {
+-        let keyed = self
+-            .lock()
++        let mut st = self.lock();
++        let keyed = st
+             .keys
+             .values()
+             .any(|bound| bound.as_ref() == Some(&seat.0));
+-        let kind = if keyed {
++        let model_now = st.model.as_ref().map(|(_, c)| c.now());
++        let kind = if keyed || model_now.is_some() {
+             RetirementKind::Reversible
+         } else {
+             RetirementKind::Final
+         };
+-        view.set(seat, SeatStatus::Retired { kind });
+-        self.lock().retired_seats.insert(seat.0.clone());
++        if let Some(now) = model_now {
++            st.retirements.insert(
++                seat.0.clone(),
++                FakeRetirement {
++                    keyed,
++                    retired_at: now,
++                    settled: false,
++                    final_: false,
++                },
++            );
++        }
++        st.retired_seats.insert(seat.0.clone());
++        drop(st);
++        view.set(
++            seat,
++            SeatStatus::Retired {
++                kind,
++                keyed,
++                retired_at: model_now,
++            },
++        );
+         kind
+     }
+ 
+@@ -239,15 +321,155 @@ impl FakeThreads {
+         let mut st = self.lock();
+         st.keys.retain(|_, bound| bound.as_ref() != Some(&seat.0));
+         st.retired_seats.insert(seat.0.clone());
++        let now = st.model.as_ref().map(|(_, c)| c.now());
++        if let Some(r) = st.retirements.get_mut(&seat.0) {
++            r.final_ = true;
++        }
+         drop(st);
+         view.set(
+             seat,
+             SeatStatus::Retired {
+                 kind: RetirementKind::Final,
++                keyed: false,
++                retired_at: now,
+             },
+         );
+     }
+ 
++    /// Turn on the threads 3.5.0/3.6.0 seat-lifecycle model: `view` is the seat view the fake keeps current and
++    /// `clock` times the 24 h and 7 d windows. Without it `resurrect_seat` and `rebind_held_seat` answer
++    /// `Unsupported`.
++    pub fn enable_resurrect(&self, view: Arc<FakeThreadsSeatView>, clock: Arc<dyn Clock>) {
++        self.lock().model = Some((view, clock));
++    }
++
++    /// Apply the 24 h and 7 d windows at the model clock's now (`resurrect_seat` runs this first).
++    pub fn settle_windows(&self) {
++        settle(&mut self.lock());
++    }
++
++    /// Hold `seat` for a Herdr restart: it reads `Unresolved` and `pane` is its saved pane.
++    pub fn hold_for_restart(&self, seat: &ThreadsSeatRef, pane: &HerdrPaneId) {
++        let mut st = self.lock();
++        if let Some((view, _)) = &st.model {
++            view.set(seat, SeatStatus::Unresolved);
++        }
++        st.held.insert(seat.0.clone(), pane.clone());
++    }
++
++    /// `seat` is a bare seat threads minted for `pane`: it reads `Resolved` there.
++    pub fn set_bare_seat(&self, seat: &ThreadsSeatRef, pane: &HerdrPaneId) {
++        let mut st = self.lock();
++        if let Some((view, _)) = &st.model {
++            view.set(seat, SeatStatus::Resolved { pane: pane.clone() });
++        }
++        st.bare.insert(seat.0.clone());
++    }
++
++    /// `seat` is keyed by another service: ResurrectSeat on it answers `Unauthorized`.
++    pub fn set_foreign_key(&self, seat: &ThreadsSeatRef) {
++        self.lock().foreign_keyed.insert(seat.0.clone());
++    }
++
++    /// While set, restoring a held seat answers `ServiceBusy` (reconciliation pending).
++    pub fn set_reconcile_pending(&self, pending: bool) {
++        self.lock().reconcile_pending = pending;
++    }
++
++    /// Shared core of `resurrect_seat` and `rebind_held_seat`; `name` is the call recorded.
++    async fn restore(
++        &self,
++        name: &str,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        replace: Option<&ThreadsSeatRef>,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        use SeatRestoreRefusal as R;
++        let _guard = match self.namespace_guard().await {
++            Ok(g) => g,
++            Err(e) => return SeatRestoreOutcome::from_error(&e),
++        };
++        let mut st = self.lock();
++        if let Err(e) = Self::gate(&st) {
++            return SeatRestoreOutcome::from_error(&e);
++        }
++        st.calls.push(name.into());
++        st.lifecycle.push((name.into(), seat.0.clone(), op.clone()));
++        let Some((view, clock)) = st.model.clone() else {
++            return SeatRestoreOutcome::refused(R::Unsupported);
++        };
++        let payload = format!(
++            "resurrect|{}|{}|{}",
++            seat.0,
++            pane.0,
++            replace.map_or("-", |r| r.0.as_str())
++        );
++        if let Some(r) = replay(&st, op, &payload) {
++            return match r {
++                Ok(_) => SeatRestoreOutcome::Done,
++                Err(e) => SeatRestoreOutcome::from_error(&e),
++            };
++        }
++        settle(&mut st);
++        if st.foreign_keyed.contains(&seat.0) {
++            return SeatRestoreOutcome::refused(R::Unauthorized);
++        }
++        if replace.is_none()
++            && view.status(seat) == Some(SeatStatus::Resolved { pane: pane.clone() })
++        {
++            return SeatRestoreOutcome::AlreadyResolved;
++        }
++        let done = |st: &mut State| {
++            st.stored
++                .insert(op.0.clone(), (payload.clone(), StoredAnswer::Done));
++            SeatRestoreOutcome::Done
++        };
++        if let Some(saved) = st.held.get(&seat.0).cloned() {
++            if replace.is_some() {
++                return SeatRestoreOutcome::refused(R::InvalidRequest);
++            }
++            if &saved != pane {
++                return SeatRestoreOutcome::refused(R::NotFound);
++            }
++            if st.reconcile_pending {
++                return SeatRestoreOutcome::refused(R::ServiceBusy);
++            }
++            view.set(seat, SeatStatus::Resolved { pane: pane.clone() });
++            st.held.remove(&seat.0);
++            return done(&mut st);
++        }
++        if st.retirements.get(&seat.0).is_some_and(|r| !r.final_) {
++            let owners: Vec<ThreadsSeatRef> = view.resolved_on(pane);
++            if let Some(r) = replace
++                && !(st.bare.contains(&r.0) && owners.contains(r))
++            {
++                return SeatRestoreOutcome::refused(R::InvalidRequest);
++            }
++            if owners.iter().any(|o| Some(o) != replace) {
++                return SeatRestoreOutcome::refused(R::TargetAlreadyOwned);
++            }
++            st.retirements.remove(&seat.0);
++            st.retired_seats.remove(&seat.0);
++            view.set(seat, SeatStatus::Resolved { pane: pane.clone() });
++            if let Some(r) = replace {
++                let now = clock.now();
++                view.set(
++                    r,
++                    SeatStatus::Retired {
++                        kind: RetirementKind::Final,
++                        keyed: false,
++                        retired_at: Some(now),
++                    },
++                );
++                st.bare.remove(&r.0);
++                st.retired_seats.insert(r.0.clone());
++            }
++            return done(&mut st);
++        }
++        SeatRestoreOutcome::refused(R::NotFound)
++    }
++
+     /// Reserving `key` answers `Conflict` while set.
+     pub fn set_reserve_conflict(&self, key: &str) {
+         self.lock().reserve_conflicts.insert(key.to_owned());
+@@ -303,6 +525,15 @@ impl FakeThreads {
+             .collect()
+     }
+ 
++    /// How many invitations `invite` minted for `seat` on `thread` (an invite onto a pending one mints none).
++    pub fn minted_invitations(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) -> usize {
++        self.lock()
++            .minted
++            .get(&(thread.0.clone(), seat.0.clone()))
++            .copied()
++            .unwrap_or(0)
++    }
++
+     pub fn call_count(&self, name: &str) -> usize {
+         self.lock()
+             .calls
+@@ -395,6 +626,7 @@ impl ThreadsPort for FakeThreads {
+             }
+             return Ok(());
+         }
++        *st.minted.entry(key.clone()).or_default() += 1;
+         st.members.insert(
+             key,
+             FakeMember {
+@@ -590,6 +822,12 @@ impl ThreadsPort for FakeThreads {
+                 st.stored
+                     .insert(op.0.clone(), (payload, StoredAnswer::Done));
+                 st.retired_seats.remove(&seat.0);
++                // With the seat-lifecycle model on, threads no longer reads the seat retired: it is unbound
++                // until its key checks in again.
++                st.retirements.remove(&seat.0);
++                if let Some((view, _)) = &st.model {
++                    view.set(seat, SeatStatus::Unresolved);
++                }
+                 Ok(())
+             }
+         }
+@@ -620,6 +858,26 @@ impl ThreadsPort for FakeThreads {
+         Ok(())
+     }
+ 
++    async fn resurrect_seat(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        replace: Option<&ThreadsSeatRef>,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        self.restore("resurrect_seat", seat, pane, replace, op)
++            .await
++    }
++
++    async fn rebind_held_seat(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        self.restore("rebind_held_seat", seat, pane, None, op).await
++    }
++
+     async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
+         let _guard = self.namespace_guard().await?;
+         let mut st = self.lock();
+@@ -704,6 +962,19 @@ impl FakeThreadsSeatView {
+     pub fn set_error(&self, error: Option<FakeSeatViewError>) {
+         self.lock().error = error;
+     }
++    /// The status last `set` for `seat` (`None`: never set).
++    pub fn status(&self, seat: &ThreadsSeatRef) -> Option<SeatStatus> {
++        self.lock().seats.get(seat).cloned()
++    }
++    /// Every seat currently set `Resolved` on `pane`.
++    pub fn resolved_on(&self, pane: &HerdrPaneId) -> Vec<ThreadsSeatRef> {
++        self.lock()
++            .seats
++            .iter()
++            .filter(|(_, s)| matches!(s, SeatStatus::Resolved { pane: p } if p == pane))
++            .map(|(k, _)| k.clone())
++            .collect()
++    }
+     /// `inspect` omits `seat` from its map, as the real view does for a per-seat refusal.
+     pub fn refuse(&self, seat: &ThreadsSeatRef, message: &str) {
+         self.lock().refused.insert(seat.clone(), message.to_owned());

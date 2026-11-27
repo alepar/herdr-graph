@@ -1,0 +1,12 @@
+diff --git a/evidence/hg-lnw.3/red.log b/evidence/hg-lnw.3/red.log
+new file mode 100644
+index 0000000..8892af1
+--- /dev/null
++++ b/evidence/hg-lnw.3/red.log
+@@ -0,0 +1,6 @@
++test reconcile::tests::undo_restored_agent_that_exits_is_relaunched ... FAILED
++thread 'reconcile::tests::undo_restored_agent_that_exits_is_relaunched' (1630050) panicked at src/reconcile/tests.rs:5245:5:
++assertion `left == right` failed: []
++  left: 0
++ right: 1
++test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1449 filtered out; finished in 0.04s

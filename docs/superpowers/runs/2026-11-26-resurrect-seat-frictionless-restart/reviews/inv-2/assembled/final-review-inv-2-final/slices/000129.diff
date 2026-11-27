@@ -1,0 +1,30 @@
+diff --git a/evidence/hg-lnw.8/callers.log b/evidence/hg-lnw.8/callers.log
+new file mode 100644
+index 0000000..643eae0
+--- /dev/null
++++ b/evidence/hg-lnw.8/callers.log
+@@ -0,0 +1,24 @@
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.8)
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.08s
++     Running tests/test_isolation.rs (target/debug/deps/test_isolation-2ace6a44c5b75759)
++
++running 1 test
++test threads_binary_with_a_different_version_is_rejected ... ok
++
++test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
++
++exit=0
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.8)
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.20s
++     Running tests/adopt_private_herdr.rs (target/debug/deps/adopt_private_herdr-2c9d9eafef9a3069)
++
++running 4 tests
++test adopted_seat_keeps_its_threads_seat_and_memberships_across_a_daemon_restart ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
++ok
++test adopted_workspace_leaves_unmanaged_tabs_alone ... ok
++test release_leaves_the_tab_and_agent_running ... ok
++test support::isolated::root_watchdog ... ok
++
++test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.66s
++
++exit=0

@@ -1,0 +1,36 @@
+# Final review inv-2, cluster 31 (src-threads)
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad (both verified with `git rev-parse --verify <sha>^{commit}`; the caller checkout was at the head and clean when read). Inputs: slices 000153-000159 (src/threads/adapter.rs, assignment.rs, effects.rs, fake.rs, mapping.rs, service_tests.rs, tests.rs), digest.md, and the root spec `docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md` with its post-implementation notes. No tests were run by this review; test status comes from the committed evidence logs.
+
+## Requirement baseline trace
+
+- B1 (re-adopt the closed tab's seat): `resurrectable` in effects.rs emits `threads.resurrect_seat` for a pending Restore whose fact reads `Retired{reversible: true, keyed: false}` on a verified reopened pane; `unretirable` now requires `keyed: true`; `Retired{Final}` keeps the succession. `ThreadsExecutor::resurrect_seat` calls `ThreadsPort::resurrect_seat`, and the real `ServiceThreads` sends `ServiceOperation::ResurrectSeat` with graph's host and the reopened pane. Success and `AlreadyResolved` write `SeatTransition::AcknowledgeResurrected`, which sets `threads_done` and resets graph's ordinary pending invitations on that seat in the same write. Production path: the Restore intent written by the undo, then the threads source want, then the executor, then the adapter. Tier 3 evidence (`evidence/hg-lnw.9/tier3-final-rebased.log`: `undo_of_closed_adopted_tab_keeps_seat_and_external_membership`, `undo_of_closed_adopted_pane_keeps_seat`, `close_restart_then_undo_resurrects_the_seat` ok) shows the real path working. Delivered within this cluster.
+- B2 (frictionless restart): this cluster supplies the rebind half. `rebind_wants` and `rebindable` emit `threads.rebind_held_seat` on every pass while the seated, active clone's fact reads `Unresolved` at or after `incarnation:changed_at` and its recorded pane is in the live snapshot, unless `rebind_refused:<clone>` names that incarnation. The executor treats done and `SeatAlreadyResolved` as done, retries transient refusals and records a definitive one once. The keyless start gate, `restart_covered` and the `clones.restart_held` row live in src/reconcile and src/daemon, which belong to the seam reviewer. Delivered for the part this cluster owns.
+- B3 (upstream level choice): `PersistentServiceClient::new(..).with_level(GRAPH_SERVICE_LEVEL)` with `ServiceSessionLevel::V4`; registration `Unsupported` maps to the named `level_refused` error with no v3 fallback; `daemon_floor` refuses a published `software_version` below 3.6.0 at `discover`. Delivered.
+- B4 (upstream rebind of a restart-held seat): `rebind_held_seat` is `ResurrectSeat` with `replace: None` on the seat's saved pane, matching the U2 contract. Delivered.
+
+## Code analysis
+
+- Adapter outcome mapping (`restore_outcome`): an intent left pending maps to `ServiceBusy` or `OutcomeUnknown` (both transient). `NotFound`, `Unauthorized`, `TargetAlreadyOwned`, `InstanceMismatch`, `Unsupported` and `InvalidRequest` are definitive. Transport, generation and boot-change codes map to `Unreachable`. `restore` forgets a non-pending refusal in the client intent journal, so a retry under the same key is a fresh decision. This matches threads storing only successes. `service_tests.rs` covers it (`restore_retry_under_the_same_key_is_a_fresh_decision`, `restore_outcome_maps_every_variant`).
+- Resurrect op key `resurrect:<clone>:<epoch>:<replace>:<count>`. When the input matches the last refusal, the want is deferred without a call. When `replace` or the pane changes, it calls again under the next count. This matches the post-implementation note, and the refusal meta is cleared on acknowledgement and on succession.
+- `ack_restore` uses `AcknowledgeResurrected` for every keyless clone with a recorded seat, so a lost response, or an operator's manual rebind read as `Resolved` on the reopened pane, also carries the invitation reset (spec section 3; test `operator_resurrect_ack_carries_the_reset`).
+- `seat_status` in mapping.rs reads `keyed` from `continuity_key` and `retired_at` from the summary. Legacy facts take `keyed` from the clone's `keyless` flag (hg-lnw.26, test `legacy_reversible_fact_on_a_keyless_clone_resurrects`).
+- The fake models the 24 h and 7 d windows, bare `replace`, held seats, the other-pane `NotFound`, the reconcile-pending `ServiceBusy` and `Unauthorized` from a foreign key, and it stores only successes under the op key. That matches the threads semantics the adapter relies on.
+- `replace` is read with `PaneSeatMap::seat_for`. On the real map that is a fresh `ResolveSeat`, which mints a bare seat for the reopened pane when the pane has none. In production graph therefore always passes a graph-minted bare seat as `replace`, and the `None` branch is reached only on a `Rejected` resolution. Threads retires that bare seat in the same decision, and tier 3 shows the result is correct. The spec reads as if `None` were the usual case, so this is a small undocumented divergence that spends one bare seat on each resurrect attempt.
+- `daemon_floor` compares only `major.minor.patch` after stripping a `-pre` or `+build` suffix, so a `3.6.0-rc.N` daemon passes the floor although semver orders it before 3.6.0.
+- Test evidence: full `--lib` runs are green at hg-lnw.24 rebased (1546 passed) and hg-lnw.25 (1539 passed). The last src/threads change (9e1dd41, hg-lnw.24, fake namespace guard now `Disconnected("graph-local: ...")`) predates both runs.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- No executor-level test in this cluster drives `resurrect_seat` against the real `ThreadsSeatMap`, whose `seat_for` mints a bare seat that then becomes `replace`; only tier 3 (tests/adopt_private_herdr.rs, outside this cluster) exercises that combination end to end.
+- `daemon_floor` has no case for a pre-release `3.6.0-rc.N` version string, which passes the floor.
+- This review ran no tests; it relies on the committed evidence logs (hg-lnw.24 rebased lib, hg-lnw.25 lib, hg-lnw.9 tier 3).
+
+## Deferred OK
+- `resurrect_seat` derives `replace` from `seat_for`, which on the real map calls `ResolveSeat` and mints a bare seat when the pane has none, so production always passes a graph-minted `replace`; it works (threads retires it in the same decision) but the spec's "otherwise None" wording and the post-implementation notes do not say so; record it as a note or read the pane's current owner without allocating.
+- `daemon_floor` accepts `3.6.0-<pre>` builds as meeting the 3.6.0 floor; harmless unless a pre-release lacking ht-lzhi or ht-0f0r is deployed.

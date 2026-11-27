@@ -1,0 +1,31 @@
+# Final review inv-2, cluster 10 (evidence-hg-lnw-15)
+
+Source: base 60e287aa, head 985d1eb6. Cluster files: evidence/hg-lnw.15/lib-all.log, threads-run1.log, threads-run2.log, threads-run3.log (slices 000076 to 000079). All four are new text logs; no production code is in this cluster.
+
+## What the logs show
+
+- lib-all.log: full lib test run, 1526 passed, 0 failed, exit 0. Only warning is the unused `Fx.herdr` field in src/threads/tests.rs.
+- threads-run1.log: threads filter, 207 tests, 1 failed. `threads::tests::operator_resurrect_ack_carries_the_reset` panicked at tests.rs:5452 on `threads_done` after "fake seat view rejected" reconcile noise. Exit 101. This was a fresh build (it compiled herdr-threads).
+- threads-run2.log: same test failed at tests.rs:5456 with "the settled invitation was re-issued" (left 1, right 2). Exit 101. Different assertion and line than run 1, so the test or code changed between runs.
+- threads-run3.log: 207 passed, 0 failed, exit 0.
+- The sequence reads as a RED, RED, GREEN development trail for commit 7356026 (AcknowledgeResurrected resets Ordinary pending invitations). It is consistent with the task's intent, not a flake report.
+- At head the test (tests.rs:5489) asserts resurrect_seat is called once, the intent clears, the invitation row is Pending and two invitations were minted. This matches the evidence for the green run.
+
+## Observations on the evidence
+
+- Two of the four committed logs end in failure with exit 101. They are intermediate evidence; a reader skimming the directory could mistake them for the final state. The passing runs (run3, lib-all) are the final ones.
+- The test settles with a fixed step count (`steps(&fx, 6)`), and the failing runs printed nine "fake seat view rejected" reconcile lines. Whether the final test is order or timing sensitive is not shown by a single green run; the logs hold exactly one green threads-filter run.
+- Logs record build paths under a task worktree that no longer needs to exist; harmless.
+- I did not rerun tests (a rerun needs a fresh target dir and the checkout is read-only for this review).
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- operator_resurrect_ack_carries_the_reset has one green threads-filter run and a fixed `steps(&fx, 6)` settle; repeat-run stability is not demonstrated by this evidence (later head test runs, such as the tier 5 and integration-tip logs, are the seam reviewer's to cite).
+
+## Deferred OK
+- Committed failing logs run1 and run2 could be labelled or dropped as superseded evidence; cosmetic only.

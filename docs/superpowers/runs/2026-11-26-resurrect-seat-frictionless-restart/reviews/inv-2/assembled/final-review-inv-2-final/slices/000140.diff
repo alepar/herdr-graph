@@ -1,0 +1,85 @@
+diff --git a/src/herdr/client.rs b/src/herdr/client.rs
+index 85d7161..3705c68 100644
+--- a/src/herdr/client.rs
++++ b/src/herdr/client.rs
+@@ -47,6 +47,23 @@ fn lines_of(v: &[(String, String)]) -> Value {
+     )
+ }
+ 
++/// The Herdr agent names `agent.start` submits for an agent of `kind` in `pane`, in order. Herdr names match
++/// `[a-z][a-z0-9_-]{0,31}` and are unique among live agents. First the sanitized pane label, else the kind;
++/// then, only after Herdr refuses the first as `agent_name_taken`, that name cut to fit plus `-<pane id>`.
++/// Pane ids are never reused within one server, so two unlabelled panes of one kind both start.
++pub fn agent_names(label: Option<&str>, kind: &str, pane: &HerdrPaneId) -> [String; 2] {
++    use herdr_threads::ports::{HERDR_AGENT_NAME_MAX, sanitize_agent_name};
++    let first = label
++        .and_then(sanitize_agent_name)
++        .or_else(|| sanitize_agent_name(kind))
++        .unwrap_or_else(|| "agent".to_owned());
++    let keep = HERDR_AGENT_NAME_MAX.saturating_sub(1 + pane.0.len());
++    let base = &first[..first.len().min(keep)];
++    let retry =
++        sanitize_agent_name(&format!("{base}-{}", pane.0)).unwrap_or_else(|| first.clone());
++    [first, retry]
++}
++
+ /// The shell line exporting `env`, or why a name or value is not safe to type into a shell unquoted.
+ fn export_line(env: &[(String, String)]) -> Result<String, String> {
+     let mut vars = Vec::with_capacity(env.len());
+@@ -559,9 +576,10 @@ impl HerdrApi for HerdrClient {
+         self.ok(wire::M_WORKSPACE_REPORT_METADATA, p).await
+     }
+ 
+-    /// `agent.start` takes a `name`; the trait carries none, so the pane's label is used (its kind when
+-    /// the pane is unlabelled). Success is `Started`, `agent_not_ready` is `BlockedNeedsHuman`, a missed
+-    /// deadline is `Unknown` (never retried here), any other rejection is `NeedsRevision`.
++    /// `agent.start` takes a `name`; the trait carries none, so the client picks one from the pane label and
++    /// the kind ([`agent_names`]), retrying once under the pane-qualified name on `agent_name_taken`. Success
++    /// is `Started`, `agent_not_ready` is `BlockedNeedsHuman`, a missed deadline is `Unknown` (never retried
++    /// here), any other rejection is `NeedsRevision`.
+     /// Starts the agent on the pane. A non-empty `req.env` is delivered first as a shell export typed into the
+     /// pane (spec §5): the line starts with a space so shells that ignore space-prefixed lines keep it out of
+     /// history. Names and values are validated before anything is sent; a bad one is `NeedsRevision`.
+@@ -576,7 +594,7 @@ impl HerdrApi for HerdrClient {
+             }
+             other => Err(other),
+         };
+-        let name = match self
++        let label = match self
+             .request(wire::M_PANE_GET, json!({ "pane_id": req.pane.0 }))
+             .await
+         {
+@@ -586,8 +604,8 @@ impl HerdrApi for HerdrClient {
+                 .filter(|s| !s.is_empty())
+                 .map(str::to_owned),
+             Err(e) => return reject(e),
+-        }
+-        .unwrap_or_else(|| req.kind.clone());
++        };
++        let names = agent_names(label.as_deref(), &req.kind, &req.pane);
+         if !req.env.is_empty() {
+             let line = match export_line(&req.env) {
+                 Ok(l) => l,
+@@ -598,12 +616,18 @@ impl HerdrApi for HerdrClient {
+                 return reject(e);
+             }
+         }
+-        let p = json!({ "name": name, "kind": req.kind, "pane_id": req.pane.0, "args": req.args });
+         let limit = self.timeout.max(AGENT_START_DEADLINE);
+-        match rpc(&self.socket, self.new_id(), wire::M_AGENT_START, p, limit).await {
+-            Ok(_) => Ok(StartOutcome::Started),
+-            Err(e) => reject(e),
++        let mut last = None;
++        for name in names {
++            let p =
++                json!({ "name": name, "kind": req.kind, "pane_id": req.pane.0, "args": req.args });
++            match rpc(&self.socket, self.new_id(), wire::M_AGENT_START, p, limit).await {
++                Ok(_) => return Ok(StartOutcome::Started),
++                Err(e) if wire::is_code(&e, "agent_name_taken") => last = Some(e),
++                Err(e) => return reject(e),
++            }
+         }
++        reject(last.expect("agent_names yields two names"))
+     }
+ 
+     async fn agent(&self, pane: &HerdrPaneId) -> Result<Option<AgentInfo>, HerdrError> {
