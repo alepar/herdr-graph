@@ -1,0 +1,31 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.40s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 1 test
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+ok
+
+successes:
+
+---- e2e_cold_restart_attended_keeps_clones_on_their_seats stdout ----
+DIAG after restart: client alive=false server pid=2728069
+   5149       1 Tue Nov 10 20:46:33 2026 /var/home/alepar/.local/bin/herdr server
+1497920 1497852 Wed Nov 25 21:51:31 2026 /var/home/alepar/.local/bin/herdr remote-client-bridge --idle-timeout-v1
+2724733 2724731 Fri Nov 27 05:45:48 2026 timeout 300 toolbox run -c hg-build env TMPDIR=/tmp/sp-8aba7101/hg-lnw.39 HG_REAL_THREADS=1 cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1 --show-output e2e_cold_restart_attended
+2724734 2724733 Fri Nov 27 05:45:48 2026 toolbox run -c hg-build env TMPDIR=/tmp/sp-8aba7101/hg-lnw.39 HG_REAL_THREADS=1 cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1 --show-output e2e_cold_restart_attended
+2724863 2724859 Fri Nov 27 05:45:49 2026 /var/home/alepar/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/cargo test --features private-herdr --test e2e_private_herdr -- --test-threads=1 --show-output e2e_cold_restart_attended
+2727052 2725505 Fri Nov 27 05:45:54 2026 [herdr] <defunct>
+2728069 2725505 Fri Nov 27 05:45:57 2026 /var/home/alepar/.local/bin/herdr server
+2728156 2725784 Fri Nov 27 05:45:57 2026 /usr/sbin/lsof -t /tmp/hg-01m8em2nzwtv3bhcm2s3qh7sa1/herdr.sock
+2728158 2728156 Fri Nov 27 05:45:57 2026 /usr/sbin/lsof -t /tmp/hg-01m8em2nzwtv3bhcm2s3qh7sa1/herdr.sock
+DIAG +481.723027ms foreman: generation 1>1 avail=present facts_eq=false runtime={ availability = "present", bound = { incarnation = { generation = 1, server_pid = 2725549, server_started = "Fri Nov 27 05:45:50 2026" }, pane_id = "w1:p4", tab_id = "w1:t2", terminal_id = "term_6614247664e3e4", token = "hg=cl_01M8EM2RCE2ET38V0JCEJ5Y55K", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:54.130538916Z" } facts=None want=CloneFacts { id: "cl_01M8EM2RCE2ET38V0JCEJ5Y55K", threads_seat: "sH951mXApUuZ", pane: "w1:p4", invitations: [("hg-st_01m8em2pz2gkbercd14mtqjm3t", "pending", "iH95UXzsYh4c"), ("hg-ts_01m8em2px0xkkjy7m313gxq9wj", "pending", "iH95kCthiQCn")] } foreman: generation 1>1 avail=present facts_eq=false runtime={ availability = "present", bound = { incarnation = { generation = 1, server_pid = 2725549, server_started = "Fri Nov 27 05:45:50 2026" }, pane_id = "w1:p2", tab_id = "w1:t2", terminal_id = "term_661424753421f2", token = "hg=cl_01M8EM2PZ26768W9RARVEJEJGH", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:52.744175825Z" } facts=None want=CloneFacts { id: "cl_01M8EM2PZ26768W9RARVEJEJGH", threads_seat: "sH95zRgko0iQ", pane: "w1:p2", invitations: [("hg-st_01m8em2pz2gkbercd14mtqjm3t", "pending", "iH95Jljuf23N"), ("hg-ts_01m8em2px0xkkjy7m313gxq9wj", "pending", "iH95iIDAwmJB")] } bar: generation 2>1 avail=present facts_eq=false runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 2728069, server_started = "Fri Nov 27 05:45:57 2026" }, pane_id = "w1:p3", tab_id = "w1:t3", terminal_id = "term_6614247ad2a214", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:58.924334198Z" } facts=None want=CloneFacts { id: "cl_01M8EM2QMPA1HJ61EPE17T6D2M", threads_seat: "sH95dF7G9PL1", pane: "w1:p3", invitations: [("hg-st_01m8em2qmpc7vp0jyx1eepg3j2", "pending", "iH959WEyyPWO"), ("hg-ts_01m8em2px0xkkjy7m313gxq9wj", "pending", "iH95zxp7YOwn")] }
+DIAG +1.095782962s foreman: generation 2>1 avail=present facts_eq=true runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 2728069, server_started = "Fri Nov 27 05:45:57 2026" }, pane_id = "w1:p4", tab_id = "w1:t2", terminal_id = "term_6614247ad270b3", token = "hg=cl_01M8EM2RCE2ET38V0JCEJ5Y55K", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:59.070308104Z" } foreman: generation 2>1 avail=present facts_eq=true runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 2728069, server_started = "Fri Nov 27 05:45:57 2026" }, pane_id = "w1:p2", tab_id = "w1:t2", terminal_id = "term_6614247ad240b2", token = "hg=cl_01M8EM2PZ26768W9RARVEJEJGH", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:59.063348302Z" } bar: generation 2>1 avail=present facts_eq=true runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 2728069, server_started = "Fri Nov 27 05:45:57 2026" }, pane_id = "w1:p3", tab_id = "w1:t3", terminal_id = "term_6614247ad2a214", token = "hg=cl_01M8EM2QMPA1HJ61EPE17T6D2M", workspace_id = "w1" }, observed_at = "2026-11-27T13:45:59.076716763Z" }
+DIAG end: client alive=false
+
+
+successes:
+    e2e_cold_restart_attended_keeps_clones_on_their_seats
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 9.40s
+

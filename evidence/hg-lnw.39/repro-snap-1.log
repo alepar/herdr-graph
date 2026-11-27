@@ -1,0 +1,25 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.95s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 1 test
+test diag_step_while_herdr_is_down ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+ok
+
+successes:
+
+---- diag_step_while_herdr_is_down stdout ----
+DIAG snap +242.906746ms w1:p1:-:true w1:p2:-:true w1:p4:-:true w1:p3:-:true
+DIAG snap +355.338296ms w1:p1:-:true w1:p2:hg=cl_01M8ERXZ1CHZ29FJMC26N64RZP:true w1:p4:hg=cl_01M8ERXZV3RZRV8CRYJ4RY52X6:true w1:p3:hg=cl_01M8ERXZDXY9GGB3B5ZDJHW9V3:true
+DIAG daemon log after restart:
+herdr-graph: observe: snapshot failed: herdr rejected session.snapshot: server_unavailable: server is shutting down
+
+DIAG client alive=false
+DIAG +334.297851ms foreman: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p4", read_at = "2026-11-27T15:10:46.978297507Z", seat = "siKyEND6Pn2P", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 4120099, server_started = "Fri Nov 27 07:10:44 2026" }, pane_id = "w1:p4", tab_id = "w1:t2", terminal_id = "term_6614376e013323", token = "hg=cl_01M8ERXZV3RZRV8CRYJ4RY52X6", workspace_id = "w1" }, observed_at = "2026-11-27T15:10:47.010590974Z" } foreman: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p2", read_at = "2026-11-27T15:10:46.978297507Z", seat = "siKy3Zx8QvmW", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 4120099, server_started = "Fri Nov 27 07:10:44 2026" }, pane_id = "w1:p2", tab_id = "w1:t2", terminal_id = "term_6614376e0105d2", token = "hg=cl_01M8ERXZ1CHZ29FJMC26N64RZP", workspace_id = "w1" }, observed_at = "2026-11-27T15:10:47.002774172Z" } bar: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p3", read_at = "2026-11-27T15:10:46.978297507Z", seat = "siKyYvKcMChS", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 4120099, server_started = "Fri Nov 27 07:10:44 2026" }, pane_id = "w1:p3", tab_id = "w1:t3", terminal_id = "term_6614376e016024", token = "hg=cl_01M8ERXZDXY9GGB3B5ZDJHW9V3", workspace_id = "w1" }, observed_at = "2026-11-27T15:10:47.007254003Z" }
+
+
+successes:
+    diag_step_while_herdr_is_down
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 11.06s
+

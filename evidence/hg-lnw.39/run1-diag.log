@@ -1,0 +1,52 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 42 tests
+test cold_restart_brings_every_seat_kind_back ...    Compiling herdr-threads v3.6.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39/third_party/herdr-threads)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 14s
+ok
+test e2e_application_retire_closes_exclusive_seats ... ok
+test e2e_cancel_and_reassign_rejected_op ... ok
+test e2e_close_pane_retires_clone ... ok
+test e2e_close_tab_retires_seat_and_clones ... ok
+test e2e_close_then_undo_keeps_the_seat_and_memberships ... ok
+test e2e_close_while_daemon_down_unknown_not_recreated ... ok
+test e2e_close_workspace_retires_all_incl_dormant ... ok
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ... ok
+test e2e_cold_restart_fresh_agent_reattaches_by_key ... ok
+test e2e_cold_restart_headless_resumes_via_the_driver ... ok
+test e2e_create_teamspace_seats_tabs_panes_env ... ok
+test e2e_daemon_kill_mid_op_recovers_no_duplicates ... ok
+test e2e_dropped_rename_recovered ... ok
+test e2e_event_loss_reconnect_converges ... ok
+test e2e_herdr_restart_no_mass_retirement_no_duplicates ... ok
+test e2e_live_handoff_keeps_clones_on_their_seats ... ok
+test e2e_move_only_pane_moved_out_no_recreate ... ok
+test e2e_move_pane_into_other_seat_tab_keeps_that_seats_name ... ok
+test e2e_node_manager_failing_agent_does_not_respawn_loop ... ok
+test e2e_pane_closed_during_downtime_retires_undoably ... ok
+test e2e_participation_join_leave_scopes ... ok
+test e2e_plugin_link_status_action_single_daemon ... ok
+test e2e_rename_tab_renames_seat_moves_path_history ... ok
+test e2e_rename_while_daemon_down_recorded ... ok
+test e2e_resurrect_retired_seat ... ok
+test e2e_retire_last_clone_induced_seat_retirement_once ... ok
+test e2e_seat_deactivate_closes_tab_no_retirement ... ok
+test e2e_seat_override_model_change_recorded_shell_not_replaced ... ok
+test e2e_seat_resolution_in_bound_pane ... ok
+test e2e_single_pane_tab_closed_during_downtime_undo_reopens_it ... ok
+test e2e_summary_lands_in_archived_seat_folder ... ok
+test e2e_template_edit_adds_member_new_tab ... ok
+test e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane ... ok
+test e2e_undo_from_pane_leaves_the_callers_pane_alone ... ok
+test e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab ... ok
+test e2e_undo_tab_close_restores_in_new_tab ... ok
+test e2e_unseated_clone_headless_cold_restart_is_launched_and_seated ... ok
+test keyless_cold_restart_without_session_returns_to_its_seat ... ok
+test late_rebind_binds_the_fresh_agent_at_its_next_prompt ... ok
+test support::isolated::root_watchdog ... ok
+test undo_restored_agent_that_exits_is_relaunched_live ... ok
+
+test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1086.58s
+
+exit=0

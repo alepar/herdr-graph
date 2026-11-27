@@ -2494,13 +2494,60 @@ fn assert_clones_kept_their_seats(
     before: &[(Row, CloneFacts)],
     before_generations: &[i64],
 ) {
-    rig.wait_until("every clone to be rebound and present", WAIT, |r| {
-        before.iter().zip(before_generations).all(|((c, f), g)| {
-            bound_generation(r, c) > *g
-                && tstr(&r.show(&c.id), "runtime.availability") == "present"
-                && r.clone_facts(c).as_ref() == Some(f)
-        })
-    });
+    // Which clones still miss, and why: the timeout message names them (with their seat fact and runtime) and
+    // threads' own view of the seats, so a failing run says what was slow or missing.
+    let missing = |r: &E2e| -> Vec<String> {
+        before
+            .iter()
+            .zip(before_generations)
+            .filter_map(|((c, f), g)| {
+                let s = r.show(&c.id);
+                let generation = bound_generation(r, c);
+                let availability = tstr(&s, "runtime.availability");
+                let facts = r.clone_facts(c);
+                (generation <= *g || availability != "present" || facts.as_ref() != Some(f)).then(
+                    || {
+                        format!(
+                            "{} {}: generation {generation} (before {g}), availability {availability:?}, \
+                             seat_fact {}, facts {facts:?} (before {f:?})",
+                            c.name,
+                            c.id,
+                            at(&s, "seat_fact").map_or("none".into(), |v| v.to_string()),
+                        )
+                    },
+                )
+            })
+            .collect()
+    };
+    let deadline = Instant::now() + WAIT;
+    let mut left = missing(rig);
+    while !left.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(150));
+        left = missing(rig);
+    }
+    if !left.is_empty() {
+        let seats = rig
+            .herdr
+            .command(&support::threads_bin::threads_binary())
+            .arg("--state-dir")
+            .arg(rig.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&rig.herdr.socket)
+            .args(["--json", "seat", "list", "--include-retired"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        rig.wait_until(
+            &format!(
+                "every clone to be rebound and present (gave up after {WAIT:?}); still missing:\n{}\nthreads seats: {}{}",
+                left.join("\n"),
+                stdout(&seats),
+                stderr(&seats)
+            ),
+            Duration::ZERO,
+            |_| false,
+        );
+    }
     rig.wait_settled();
     for (c, f) in before {
         assert_eq!(

@@ -1,0 +1,56 @@
+2b5508d6226c4b222b493fb1c4ab9907022feefa
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.67s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.51s
+
+iter 1 rc=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.39s
+
+iter 2 rc=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.51s
+
+iter 3 rc=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.50s
+
+iter 4 rc=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.48s
+
+iter 5 rc=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+
+running 1 test
+test private_process_info_is_shell ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.40s
+
+iter 6 rc=0

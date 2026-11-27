@@ -1,0 +1,70 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.15s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 1 test
+test diag_step_while_herdr_is_down ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+ok
+
+successes:
+
+---- diag_step_while_herdr_is_down stdout ----
+DIAG daemon log after restart:
+herdr-graph: observe: snapshot failed: herdr rejected session.snapshot: server_unavailable: server is shutting down
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+herdr-graph: observe: snapshot failed: herdr socket unavailable: /tmp/hg-01m8ep11gd3dtxfw4hn5cwz9ta/herdr.sock: No such file or directory (os error 2)
+
+DIAG client alive=false
+DIAG +357.820415ms foreman: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p4", read_at = "2026-11-27T14:20:10.653812368Z", seat = "synKF5gzb2xs", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 3698511, server_started = "Fri Nov 27 06:20:09 2026" }, pane_id = "w1:p4", tab_id = "w1:t2", terminal_id = "term_66142c1f7a1853", token = "hg=cl_01M8EP13NN15BNN2HJ3V3CR46H", workspace_id = "w1" }, observed_at = "2026-11-27T14:20:10.551680585Z" } foreman: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p2", read_at = "2026-11-27T14:20:10.653812368Z", seat = "synKYCCjQaLZ", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 3698511, server_started = "Fri Nov 27 06:20:09 2026" }, pane_id = "w1:p2", tab_id = "w1:t2", terminal_id = "term_66142c1f79e9a2", token = "hg=cl_01M8EP12ER35ZDZX7S1AX8HX1D", workspace_id = "w1" }, observed_at = "2026-11-27T14:20:10.545143228Z" } bar: generation 2>1 avail=present facts_eq=true seat_fact={ pane = "w1:p3", read_at = "2026-11-27T14:20:10.653812368Z", seat = "synK26zbu6Qx", state = "resolved" } runtime={ availability = "present", bound = { incarnation = { generation = 2, server_pid = 3698511, server_started = "Fri Nov 27 06:20:09 2026" }, pane_id = "w1:p3", tab_id = "w1:t3", terminal_id = "term_66142c1f7a4514", token = "hg=cl_01M8EP12WGJZJFP5N35SSTEJ3K", workspace_id = "w1" }, observed_at = "2026-11-27T14:20:10.561808889Z" }
+
+
+successes:
+    diag_step_while_herdr_is_down
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 18.77s
+
