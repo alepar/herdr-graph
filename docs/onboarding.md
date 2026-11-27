@@ -1,7 +1,6 @@
 # Onboarding: move an existing Herdr space into herdr-graph
 
-> Status: draft, 2026-11-27.
-> Needs a build from `main` (adoption is not in a tagged release yet; v0.3.0 lacks it) and a herdr-threads daemon of 3.6.0 or later.
+> Needs herdr-graph v0.4.0 or later and a herdr-threads daemon of 3.6.0 or later.
 
 You already run agents in Herdr tabs and they talk over herdr-threads. This guide brings those tabs under herdr-graph one at a time, without restarting anything.
 

@@ -26,6 +26,21 @@ Authority: in 3.6.0 both the resurrect and the restore case run `reversible::req
 
 ResurrectSeat op-key idempotency (hg-lnw.7, same code): the daemon runs the decision in `execute_idempotent_transaction` under the service session's scope (`service:<instance>:<author>`) with a digest of the typed operator command (seat, target, host, replace, key). A success is stored and a replay under the key returns it; the same key with a changed payload (another `replace`, pane or seat) is refused `OperationPayloadMismatch`; a refusal rolls the transaction back and stores nothing, so a retry under the same key is a fresh decision. Graph's client intent journal keeps a definitive refusal as the key's completion, which `mutate` would replay once; the adapter forgets it after every restore refusal, so a `NotFound` or `StaleHostObservation` retried under the same key reaches the daemon again. `ServiceBusy` and a dropped call keep the intent pending and replay its original envelope. A changed payload needs a new key, which the resurrect executor's key (`resurrect:<clone>:<epoch>:<replace or none>:<refusal count>`) provides. The adapter maps the answers per the hg-lnw.14 split: `SeatResurrected` done, `SeatAlreadyResolved` already resolved (done), `ServiceBusy` (and `StoreBusy`), `StaleHostObservation`, transport trouble and an unknown outcome transient; `NotFound`, `Unauthorized`, `TargetAlreadyOwned`, `InvalidRequest` (also `OperationPayloadMismatch`), `Unsupported` (also a refused v4 registration) and `InstanceMismatch` definitive. Graph registers `with_level(ServiceSessionLevel::V4)`; a pre-3.5.0 daemon's `unsupported service capability` refusal is the named error `herdr-threads daemon refused service_session_v4 (...); upgrade the herdr-threads daemon to >= 3.6.0`, shown by the `threads` status component and the doctor's `threads` check with the upgrade step.
 
+## v0.4.0 qualification: threads 3.6.0 (2026-11-27)
+
+Run in the `hg-build` toolbox on Linux x86_64 with Herdr 0.9.5, on the tree merged as `a59a39b` (hg-lnw on top of adoption, hg-ihi). The Herdr release matrix did not run (hg-aka), so Herdr 0.9.1-0.9.4 are unverified for this release.
+
+| Tier | Command | Result |
+|---|---|---|
+| 1 | `cargo test` | 1688 passed, 0 failed, 1 ignored |
+| 2 | `cargo test --no-default-features` | 1685 passed, 0 failed, 1 ignored |
+| test-support | `cargo test --features test-support` | 1714 passed, 0 failed, 1 ignored |
+| 3 | `cargo test --features private-herdr -- --test-threads=1` | 1778 passed, 0 failed, 6 ignored |
+| 5 | `HG_REAL_THREADS=1 cargo test --features private-herdr --test threads_real -- --test-threads=1` | 9 passed, 0 failed |
+| scripts | `python3 -m unittest discover -s scripts/tests` | 35 passed |
+
+No test rig was left running. Known open item: `e2e_cold_restart_attended_keeps_clones_on_their_seats` timed out in two earlier full serial runs on the branch and has no root cause (hg-mn3); it passed in this run.
+
 ## v0.3.0 qualification: threads 3.1.0 (2026-11-07)
 
 Graph pins official threads v3.1.0 `482e0d2f8de761d7d31e562faf38c06bdab5f30e` (annotated tag `4fea9a5eddc0f4b145b388b42abb6fe2e1e1f00b`), superseding v3.0.0. Wire protocol stays 9; the threads node store is schema 17 (one-way). Graph registers `service_session_v3`, so the threads daemon must be 3.1.0 before graph connects. Run at main `f9f5bdd` on Linux x86_64 (Fedora 44) in the `hg-build` toolbox with Herdr 0.9.5.
