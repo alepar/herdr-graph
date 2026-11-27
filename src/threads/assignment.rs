@@ -1,7 +1,9 @@
 //! ThreadsSeatAssignment (spec §2, §8, §13, §14): the write-once `threads_seat` of a clone and every
 //! transition of its `seat_intent`. No other code writes either field; callers use the helpers below or
 //! admit `bookkeeping.threads_seat`. This module makes no threads calls.
-use crate::model::clone::{CloneRecord, KeyReservation, SeatIntent};
+use crate::model::clone::{
+    CloneRecord, InvitationState, InviteConstraint, KeyReservation, SeatIntent,
+};
 use crate::model::common::{CloneLifecycle, Runtime};
 use crate::model::{CloneId, OpId};
 use crate::ports::writer::{Writer, WriterError};
@@ -25,6 +27,12 @@ pub enum SeatTransition {
     },
     /// Threads acknowledged the Restore of `epoch`: `threads_done = true`.
     Acknowledge { epoch: OpId },
+    /// `Acknowledge` for a Restore whose keyless `seat` was brought back unchanged (resurrected, or read resolved
+    /// on the reopened pane): in the same write, every Ordinary invitation recorded Pending on `seat` becomes
+    /// Retired, so the channel want re-plans an Invite. Threads settles those after 24 h of retirement and graph
+    /// reads no clock; a re-invite onto a still-pending invitation reuses it. Required, Accepted, Released
+    /// (declined or left) rows and rows on another seat are untouched.
+    AcknowledgeResurrected { epoch: OpId, seat: String },
     /// Threads refused the Restore's threads step of `epoch`: remember why, for status.
     RecordRefusal { epoch: OpId, reason: String },
     /// The executor is about to dispatch StartAgent for `epoch`; allowed once per epoch.
@@ -234,7 +242,8 @@ impl Mutation for ThreadsSeatMutation {
                     });
                 }
             }
-            SeatTransition::Acknowledge { epoch } => {
+            SeatTransition::Acknowledge { epoch }
+            | SeatTransition::AcknowledgeResurrected { epoch, .. } => {
                 if let Some(SeatIntent::Restore {
                     epoch: e,
                     threads_done,
@@ -245,6 +254,16 @@ impl Mutation for ThreadsSeatMutation {
                 {
                     *threads_done = true;
                     *last_refusal = None;
+                    if let SeatTransition::AcknowledgeResurrected { seat, .. } = &a.transition {
+                        for i in &mut rec.invitations {
+                            if i.constraint == InviteConstraint::Ordinary
+                                && i.state == InvitationState::Pending
+                                && i.link.as_ref().is_some_and(|l| &l.seat == seat)
+                            {
+                                i.state = InvitationState::Retired;
+                            }
+                        }
+                    }
                 }
             }
             SeatTransition::RecordRefusal { epoch, reason } => {

@@ -1668,13 +1668,18 @@ impl ThreadsExecutor {
         {
             return ExecOutcome::Obsolete;
         }
-        match admit_threads_seat(
-            cx.writer,
-            &clone.id,
-            &SeatTransition::Acknowledge {
+        // A keyless Restore is acknowledged with its seat unchanged: the reset of graph's ordinary invitations
+        // rides in the same write (spec §3).
+        let transition = match (&clone.threads_seat, clone.keyless) {
+            (Some(seat), true) => SeatTransition::AcknowledgeResurrected {
+                epoch: epoch.clone(),
+                seat: seat.clone(),
+            },
+            _ => SeatTransition::Acknowledge {
                 epoch: epoch.clone(),
             },
-        ) {
+        };
+        match admit_threads_seat(cx.writer, &clone.id, &transition) {
             Ok(()) => {
                 let _ = self.journal.meta_delete(&resurrect_refused_key(&clone.id));
                 ExecOutcome::Done
@@ -1820,8 +1825,9 @@ impl ThreadsExecutor {
                 match admit_threads_seat(
                     cx.writer,
                     &clone.id,
-                    &SeatTransition::Acknowledge {
+                    &SeatTransition::AcknowledgeResurrected {
                         epoch: epoch.clone(),
+                        seat: seat.to_owned(),
                     },
                 ) {
                     Ok(()) => {

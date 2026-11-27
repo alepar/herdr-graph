@@ -85,6 +85,8 @@ struct State {
     /// Seats keyed by another service.
     foreign_keyed: BTreeSet<String>,
     reconcile_pending: bool,
+    /// Invitations `invite` minted, per (thread, seat); a reused pending invitation mints none.
+    minted: BTreeMap<(String, String), usize>,
 }
 
 /// Apply the 24 h and 7 d windows of every reversible keyless retirement at the model clock's now.
@@ -523,6 +525,15 @@ impl FakeThreads {
             .collect()
     }
 
+    /// How many invitations `invite` minted for `seat` on `thread` (an invite onto a pending one mints none).
+    pub fn minted_invitations(&self, thread: &ThreadRef, seat: &ThreadsSeatRef) -> usize {
+        self.lock()
+            .minted
+            .get(&(thread.0.clone(), seat.0.clone()))
+            .copied()
+            .unwrap_or(0)
+    }
+
     pub fn call_count(&self, name: &str) -> usize {
         self.lock()
             .calls
@@ -615,6 +626,7 @@ impl ThreadsPort for FakeThreads {
             }
             return Ok(());
         }
+        *st.minted.entry(key.clone()).or_default() += 1;
         st.members.insert(
             key,
             FakeMember {
