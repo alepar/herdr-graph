@@ -47,11 +47,8 @@ struct ThreadsDaemon {
 impl ThreadsDaemon {
     /// A command with the private Herdr's env and nothing else (`PrivateHerdr::command`).
     fn command(&self) -> std::process::Command {
-        let mut c = std::process::Command::new(&self.bin);
-        c.env_clear()
-            .envs(self.env.iter().cloned())
-            .envs(self.extra.iter().cloned())
-            .current_dir(&self.root);
+        let mut c = support::private_herdr::private_command(&self.root, &self.env, &self.bin);
+        c.envs(self.extra.iter().cloned());
         c
     }
 
