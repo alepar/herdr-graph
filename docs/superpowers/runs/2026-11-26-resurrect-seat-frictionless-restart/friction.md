@@ -4,3 +4,8 @@
 - [design-roast] report format repair: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md → docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1-format-repair.md — repair-check failed: (iv) line count differs; original stands (original fails --complete: none marker has finding text in Escalations)
 - [design-roast r2] triage reused from round 1 (same artifact, domains unchanged) so domain scouts dispatch with the core scouts
 - [design] parallelism pass: graph-pass judge not dispatched; 11 candidates, only one (hg-lnw.4 <- hg-lnw.2) shortens depth and it carries a genuine artifact; recorded kept
+- [code] mergeCheck covers default and --all-features cargo check (all targets); no CI workflow in repo to compare against
+- [code] default test pathspecs miss Rust inline test modules (src/**/tests.rs); reviewer diffed manually. config.testPaths should be set for this repo
+- [code] stop-run-processes/remove-task-worktree exit 4 'git worktree inventory failed' because a foreign /tmp/.git exists; temp root /tmp/sp-<hash> sits under /tmp. Cleanup of task worktrees done by hand after a cwd scan showed no processes
+- [code] git worktree remove refuses task worktrees that contain the third_party/herdr-threads submodule even after deinit; coordinator used --force after a clean status and merged-branch check
+- [code] flaky: daemon::lock::tests::is_held_reports_holder failed once in hg-lnw.4's --lib run (untouched file), passed on 3 reruns; cli::adopt::tests::memberships_failures_are_errors_not_empty flaked once in hg-lnw.2
