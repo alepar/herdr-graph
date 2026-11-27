@@ -879,6 +879,109 @@ fn restore_preview_names_the_keyless_seat_window() {
 }
 
 #[test]
+fn seat_window_note_names_the_window_over_a_pre_close_fact() {
+    use super::preview::seat_window_note;
+    use crate::model::clone::SeatFactState as F;
+    let hours = |h: i64| t0() + chrono::Duration::hours(h);
+    for state in [
+        F::Resolved {
+            pane: crate::model::HerdrPaneId("p-old".into()),
+        },
+        F::Unresolved,
+        F::KeyConflict { pane: None },
+    ] {
+        let mut c = note_clone(true, Some(state.clone()));
+        // The fact is a read from well before the close; the window counts from the close.
+        c.seat_fact.as_mut().unwrap().read_at = t0() - chrono::Duration::days(10);
+        let within = seat_window_note(&c, hours(2)).unwrap_or_else(|| panic!("{state:?}"));
+        assert!(
+            within.contains("comes back with everything")
+                && within.ends_with("if threads reports the close reversible"),
+            "{state:?}: {within}"
+        );
+        let middle = seat_window_note(&c, hours(30)).unwrap();
+        assert!(
+            middle.contains("settled at 24 h")
+                && middle.ends_with("if threads reports the close reversible"),
+            "{state:?}: {middle}"
+        );
+        let late = seat_window_note(&c, hours(24 * 7 + 1)).unwrap();
+        assert!(late.contains("is final"), "{state:?}: {late}");
+        let keyed = note_clone(false, Some(state.clone()));
+        assert_eq!(seat_window_note(&keyed, hours(2)), None, "{state:?}");
+    }
+}
+
+/// Undo preview notes for `seat-A` after a keyless tab close, `fact` committed before the cascade
+/// (the threads read graph held when it observed the close, 3 h before it), previewed `age_h` hours after the
+/// close. A `retired` fact's `retired_at` is set to the read time.
+fn preview_after_close(mut fact: serde_json::Value, age_h: i64) -> Vec<String> {
+    let fx = fx();
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let f_clone = clones_of(&fx, &foreman.id).remove(0);
+    assign_threads_seat(&fx, &f_clone.id, "seat-A");
+    patch(&fx, json!({ "clone": f_clone.id, "keyless": true }));
+    if fact["state"] == "retired" {
+        fact["retired_at"] = json!(fx.clock.now());
+    }
+    patch(&fx, json!({ "clone": f_clone.id, "fact": fact }));
+    fx.clock.advance(chrono::Duration::hours(3));
+    let act = cascade(
+        &fx,
+        CascadeRule::Tab,
+        &[foreman.id.to_any(), f_clone.id.to_any()],
+    );
+    fx.clock.advance(chrono::Duration::hours(age_h));
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    sp.plan
+        .warnings
+        .iter()
+        .filter(|w| w.contains("threads seat seat-A"))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn restore_preview_names_the_window_when_graph_saw_the_close_first() {
+    let resolved = json!({ "state": "resolved", "pane": "p-old" });
+    let within = preview_after_close(resolved.clone(), 2);
+    assert_eq!(within.len(), 1, "{within:?}");
+    assert!(
+        within[0].contains("comes back with everything")
+            && within[0].ends_with("if threads reports the close reversible"),
+        "{}",
+        within[0]
+    );
+    let middle = preview_after_close(resolved.clone(), 30);
+    assert_eq!(middle.len(), 1, "{middle:?}");
+    assert!(middle[0].contains("settled at 24 h"), "{}", middle[0]);
+    let late = preview_after_close(resolved, 24 * 7 + 1);
+    assert_eq!(late.len(), 1, "{late:?}");
+    assert!(late[0].contains("is final"), "{}", late[0]);
+}
+
+#[test]
+fn restore_preview_names_the_window_when_threads_reported_first() {
+    // Threads retired the seat 3 h before graph's cascade.
+    let retired = json!({ "state": "retired", "reversible": true, "keyed": false });
+    let within = preview_after_close(retired.clone(), 2);
+    assert_eq!(within.len(), 1, "{within:?}");
+    assert!(
+        within[0].contains("comes back with everything") && !within[0].contains("if threads"),
+        "{}",
+        within[0]
+    );
+    // 22 h after the close is 25 h after threads' retirement: the 24 h window has passed.
+    let middle = preview_after_close(retired.clone(), 22);
+    assert_eq!(middle.len(), 1, "{middle:?}");
+    assert!(middle[0].contains("settled at 24 h"), "{}", middle[0]);
+    let late = preview_after_close(retired, 24 * 7);
+    assert_eq!(late.len(), 1, "{late:?}");
+    assert!(late[0].contains("is final"), "{}", late[0]);
+}
+
+#[test]
 fn undo_of_a_seatless_clone_writes_no_restore_intent() {
     let fx = fx();
     alpha(&fx);
