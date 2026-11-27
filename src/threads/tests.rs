@@ -5281,6 +5281,197 @@ async fn keyless_resurrect_between_24h_and_7d_keeps_memberships() {
     );
 }
 
+// --- invitation reset on resurrect success (hg-lnw.15) ---
+
+/// A keyless clone on `seat-A` with its channels accepted and an ordinary seat-wide participation thread `th_a`
+/// pending on the seat.
+async fn participating_clone(fx: &Fx) -> (CloneRecord, ThreadRef) {
+    let (clone, ..) = member_clone(fx, false).await;
+    fx.threads.add_thread("th_a", "shared");
+    plan_and_apply(fx, "participation join th_a --scope seat --seat foreman");
+    steps(fx, 3).await;
+    let th = ThreadRef("th_a".into());
+    assert_eq!(
+        inv(&clone_rec(fx, &clone.id), &th).state,
+        InvitationState::Pending
+    );
+    assert_eq!(fx.threads.minted_invitations(&th, &seat_ref("seat-A")), 1);
+    (clone, th)
+}
+
+/// Close the seat, let `hours` pass, then undo (a Restore intent and the committed fact of the closed seat).
+async fn close_wait_undo(fx: &Fx, clone: &CloneId, hours: i64) -> OpId {
+    fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    fx.clock.advance(chrono::Duration::hours(hours));
+    fx.threads.settle_windows();
+    let epoch = OpId::new();
+    write_restore(fx, clone, &epoch);
+    commit_seat_read(fx, clone, "seat-A").await;
+    epoch
+}
+
+/// Between 24 h and 7 d threads settled the pending ordinary invitation; the resurrect resets graph's row and the
+/// channel want mints a new one.
+#[tokio::test]
+async fn resurrect_between_24h_and_7d_reissues_the_ordinary_invitation() {
+    let fx = model_fx();
+    let (clone, th) = participating_clone(&fx).await;
+    close_wait_undo(&fx, &clone.id, 25).await;
+    assert!(
+        fx.threads.member(&th, &seat_ref("seat-A")).is_none(),
+        "threads settled it at 24 h"
+    );
+    steps(&fx, 6).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    let row = clone_rec(&fx, &clone.id);
+    let row = inv(&row, &th);
+    assert_eq!(row.state, InvitationState::Pending);
+    assert_eq!(row.link.as_ref().unwrap().seat, "seat-A");
+    assert_eq!(
+        fx.threads.minted_invitations(&th, &seat_ref("seat-A")),
+        2,
+        "a new invitation was minted"
+    );
+    assert_eq!(
+        fx.threads.member(&th, &seat_ref("seat-A")).unwrap().state,
+        InvitationState::Pending
+    );
+}
+
+/// Inside 24 h the invitation is still pending on threads: the re-issue lands on it and mints nothing.
+#[tokio::test]
+async fn resurrect_before_24h_reuses_the_pending_invitation() {
+    let fx = model_fx();
+    let (clone, th) = participating_clone(&fx).await;
+    close_wait_undo(&fx, &clone.id, 1).await;
+    let invites = fx.threads.call_count("invite");
+    steps(&fx, 6).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(
+        fx.threads.call_count("invite"),
+        invites + 1,
+        "the reset row was re-planned as one Invite"
+    );
+    assert_eq!(
+        fx.threads.minted_invitations(&th, &seat_ref("seat-A")),
+        1,
+        "no duplicate invitation"
+    );
+    let row = clone_rec(&fx, &clone.id);
+    assert_eq!(inv(&row, &th).state, InvitationState::Pending);
+}
+
+/// Only Ordinary rows Pending on the resurrected seat reset; Required, Accepted, declined (Released) rows and rows
+/// on another seat stay, and the reset is in the acknowledgement's own commit.
+#[tokio::test]
+async fn resurrect_reset_leaves_other_rows_and_is_in_the_acknowledgement_write() {
+    let fx = model_fx();
+    let clone = base(&fx).await;
+    seat_the_clone(&fx, &clone, "seat-A");
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    let row = |thread: &str, constraint: &str, state: &str, seat: &str| {
+        bookkeeping(
+            &fx,
+            "invitation",
+            json!({
+                "clone": clone.id, "thread": thread, "constraint": constraint, "state": state,
+                "link": { "seat": seat }, "expect_seat": null,
+            }),
+        );
+    };
+    row("ord-pending", "ordinary", "pending", "seat-A");
+    row("ord-accepted", "ordinary", "accepted", "seat-A");
+    row("ord-declined", "ordinary", "released", "seat-A");
+    row("ord-other-seat", "ordinary", "pending", "seat-old");
+    row("req-pending", "required", "pending", "seat-A");
+    row("req-accepted", "required", "accepted", "seat-A");
+    let head = fx.store.head().unwrap();
+    assert_eq!(
+        transition(
+            &fx,
+            &clone.id,
+            SeatTransition::AcknowledgeResurrected {
+                epoch: epoch.clone(),
+                seat: "seat-A".into(),
+            }
+        ),
+        None
+    );
+    let after = fx.store.head().unwrap();
+    let parent = fx
+        .store
+        .with_repo(|r| {
+            Ok(r.find_commit(git2::Oid::from_str(&after.0)?)?
+                .parent_id(0)?
+                .to_string())
+        })
+        .unwrap();
+    assert_eq!(parent, head.0, "one commit carries the acknowledgement");
+    let c = clone_rec(&fx, &clone.id);
+    assert!(
+        matches!(
+            &c.seat_intent,
+            Some(SeatIntent::Restore {
+                threads_done: true,
+                ..
+            })
+        ),
+        "{:?}",
+        c.seat_intent
+    );
+    let state = |t: &str| c.invitations.iter().find(|i| i.thread == t).unwrap().state;
+    assert_eq!(state("ord-pending"), InvitationState::Retired);
+    assert_eq!(state("ord-accepted"), InvitationState::Accepted);
+    assert_eq!(state("ord-declined"), InvitationState::Released);
+    assert_eq!(state("ord-other-seat"), InvitationState::Pending);
+    assert_eq!(state("req-pending"), InvitationState::Pending);
+    assert_eq!(state("req-accepted"), InvitationState::Accepted);
+}
+
+/// An operator resurrected the seat before graph asked: the fact reads Resolved on the reopened pane and the
+/// ack_restore path acknowledges with the same reset.
+#[tokio::test]
+async fn operator_resurrect_ack_carries_the_reset() {
+    let fx = model_fx();
+    let (clone, th) = participating_clone(&fx).await;
+    // An adopted clone: the ack_restore path resets only for those.
+    bookkeeping(
+        &fx,
+        "test_seat_fixture",
+        json!({ "clone": clone.id, "op": "keyless" }),
+    );
+    close_wait_undo(&fx, &clone.id, 25).await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    assert_eq!(
+        fx.threads
+            .resurrect_seat(&seat_ref("seat-A"), &pane, None, &OpKey("operator".into()))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": pane }),
+    );
+    steps(&fx, 6).await;
+    assert_eq!(
+        fx.threads.call_count("resurrect_seat"),
+        1,
+        "graph never asked: the ack_restore path ran"
+    );
+    // Acknowledged, then cleared on reattach.
+    assert_eq!(intent(&fx, &clone.id), None);
+    let row = clone_rec(&fx, &clone.id);
+    assert_eq!(inv(&row, &th).state, InvitationState::Pending);
+    assert_eq!(
+        fx.threads.minted_invitations(&th, &seat_ref("seat-A")),
+        2,
+        "the settled invitation was re-issued"
+    );
+}
+
 /// The reopened pane already holds a bare seat threads minted: it is passed as `replace`.
 #[tokio::test]
 async fn resurrect_passes_the_bare_seat_of_the_reopened_pane_as_replace() {
