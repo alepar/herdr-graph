@@ -60,6 +60,9 @@ pub const RESERVE_KEY_KIND: &str = "threads.reserve_key";
 /// `EffectKind::Custom` name of the key-link want: binds a recorded reservation to the clone's target seat
 /// (spec §14.12). It is the only want that issues a seat-bearing `ReserveContinuityKey`.
 pub const KEY_LINK_KIND: &str = "threads.key_link";
+/// `EffectKind::Custom` name of the resurrection of a Restore intent's reversibly retired keyless seat onto the
+/// reopened pane (spec §3).
+pub const RESURRECT_KIND: &str = "threads.resurrect_seat";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -291,6 +294,14 @@ pub(crate) enum Payload {
     /// Un-retire `seat`, the reversibly retired seat of the Restore intent of `epoch`.
     UnretireSeat {
         seat: String,
+        epoch: OpId,
+    },
+    /// Resurrect `seat`, the reversibly retired keyless seat of the Restore of `epoch`, onto the reopened `pane`.
+    /// `replace` is not in the payload: it is read at execution time, because only threads knows which seat the
+    /// reopened pane holds now.
+    ResurrectSeat {
+        seat: String,
+        pane: HerdrPaneId,
         epoch: OpId,
     },
     /// Finalize the retirement of `seat` for its `Finalize` purge tombstone.
@@ -563,9 +574,11 @@ fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
     }
 }
 
-/// The seat and epoch of a pending Restore whose seat the committed `seat_fact` reads reversibly retired: the
-/// unretire want asks threads to bring it back. Only a Restore intent asks (an ordinary pane close is never
-/// reversed), and only against a reversible read; a final one is the succession's.
+/// The seat and epoch of a pending Restore whose seat the committed `seat_fact` reads reversibly retired as a
+/// keyed seat: the unretire want asks threads to bring it back. Only a Restore intent asks (an ordinary pane
+/// close is never reversed), and only against a reversible read; a final one is the succession's, and a
+/// keyless one is the resurrect want's (a legacy fact reads `keyed: true`, so pre-upgrade keyed facts keep
+/// this path).
 fn unretirable(g: &Graph, c: &CloneRecord) -> Option<(String, OpId)> {
     use crate::model::clone::SeatFactState as F;
     let Some(SeatIntent::Restore {
@@ -585,10 +598,42 @@ fn unretirable(g: &Graph, c: &CloneRecord) -> Option<(String, OpId)> {
         fact.state,
         F::Retired {
             reversible: true,
+            keyed: true,
             ..
         }
     )
     .then(|| (seat.clone(), epoch.clone()))
+}
+
+/// The seat, reopened pane and epoch of a pending Restore whose seat the committed `seat_fact` reads reversibly
+/// retired as a keyless seat (spec §3): the resurrect want brings the same seat back onto the pane. The action
+/// follows the fact, not the journal entry's age. Without a verified pane there is no target and no want; the
+/// next pass picks it up.
+fn resurrectable(g: &Graph, c: &CloneRecord) -> Option<(String, HerdrPaneId, OpId)> {
+    use crate::model::clone::SeatFactState as F;
+    let Some(SeatIntent::Restore {
+        seat,
+        epoch,
+        threads_done: false,
+        ..
+    }) = &c.seat_intent
+    else {
+        return None;
+    };
+    if !g.clone_active(c) || c.threads_seat.as_ref() != Some(seat) {
+        return None;
+    }
+    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
+    matches!(
+        fact.state,
+        F::Retired {
+            reversible: true,
+            keyed: false,
+            ..
+        }
+    )
+    .then_some(())?;
+    Some((seat.clone(), verified_pane(g, c)?, epoch.clone()))
 }
 
 /// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
@@ -657,6 +702,15 @@ fn clone_wants(g: &Graph, journal: &Journal, out: &mut Vec<Want>) {
                 object.clone(),
                 c.rev,
                 Payload::UnretireSeat { seat, epoch },
+            ));
+        }
+        if let Some((seat, pane, epoch)) = resurrectable(g, c) {
+            out.push(want(
+                g,
+                EffectKind::Custom(RESURRECT_KIND.into()),
+                object.clone(),
+                c.rev,
+                Payload::ResurrectSeat { seat, pane, epoch },
             ));
         }
         match &c.seat_intent {
@@ -1603,6 +1657,83 @@ impl ThreadsExecutor {
         }
     }
 
+    /// Bring the reversibly retired keyless seat of a pending Restore back onto the reopened pane (spec §3), then
+    /// acknowledge the Restore with the seat unchanged. `replace` is the bare seat threads minted for the pane,
+    /// read now (threads retires it in the same decision). Minimal refusal path: a retryable refusal backs off, a
+    /// definitive one is recorded on the intent and deferred; the full mapping is the refusal bead's.
+    async fn resurrect_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        seat: &str,
+        pane: &HerdrPaneId,
+        epoch: &OpId,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        if resurrectable(&g, clone).as_ref()
+            != Some(&(seat.to_owned(), pane.clone(), epoch.clone()))
+        {
+            return ExecOutcome::Obsolete;
+        }
+        let replace = match self.mapping.seat_for(pane).await {
+            Ok(Some(s)) if s.0 != seat => Some(s),
+            Ok(_) | Err(ThreadsError::Rejected(_)) => None,
+            Err(err) => return port_outcome(err),
+        };
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!(
+                "resurrect:{}:{epoch}:{}",
+                clone.id,
+                replace.as_ref().map_or("none", |s| s.0.as_str())
+            ),
+        ));
+        match self
+            .threads
+            .resurrect_seat(
+                &ThreadsSeatRef(seat.to_owned()),
+                pane,
+                replace.as_ref(),
+                &op,
+            )
+            .await
+        {
+            SeatRestoreOutcome::Done | SeatRestoreOutcome::AlreadyResolved => {
+                match admit_threads_seat(
+                    cx.writer,
+                    &clone.id,
+                    &SeatTransition::Acknowledge {
+                        epoch: epoch.clone(),
+                    },
+                ) {
+                    Ok(()) => ExecOutcome::Done,
+                    Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
+                }
+            }
+            SeatRestoreOutcome::Refused {
+                reason,
+                retryable: true,
+            } => ExecOutcome::Transient(format!("{reason:?}")),
+            SeatRestoreOutcome::Refused {
+                reason,
+                retryable: false,
+            } => {
+                let msg = format!("resurrect refused: {reason:?}");
+                record_refusal(cx, clone, epoch, &msg);
+                ExecOutcome::Deferred(msg)
+            }
+        }
+    }
+
     /// Finalize the retirement of the tombstone's seat (threads releases its key with it), then delete the
     /// tombstone. A refusal is an acknowledgement when the seat reads final-retired anyway, or when threads no
     /// longer knows the seat (the read omits it); otherwise the tombstone waits and the want is issued again.
@@ -2332,6 +2463,7 @@ impl EffectExecutor for ThreadsExecutor {
                 SUCCEED_KIND,
                 ACK_RESTORE_KIND,
                 UNRETIRE_KIND,
+                RESURRECT_KIND,
                 FINALIZE_KIND,
                 RELEASE_KEY_KIND,
                 RESERVE_KEY_KIND,
@@ -2437,6 +2569,9 @@ impl ThreadsExecutor {
             }
             (EffectKind::Custom(_), Some(Payload::UnretireSeat { seat, epoch })) => {
                 self.unretire_seat(cx, e, &seat, &epoch).await
+            }
+            (EffectKind::Custom(_), Some(Payload::ResurrectSeat { seat, pane, epoch })) => {
+                self.resurrect_seat(cx, e, &seat, &pane, &epoch).await
             }
             (EffectKind::Custom(_), Some(Payload::FinalizeSeat { seat })) => {
                 self.finalize_seat(cx, e, &seat).await

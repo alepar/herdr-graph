@@ -2931,9 +2931,10 @@ fn retirement_kind_is_mapped_from_seat_inspect() {
     );
 }
 
-/// G5 (herdr-threads v3.1.0): an unresolved seat whose pane never came back is retired by threads after its
-/// window, reversibly when it holds a key (`retirement_state: reversible`), else finally (field absent). Both
-/// read as the existing Retired state, so SeatObservation's Retired arm applies with no new variant.
+/// G5: an unresolved seat whose pane never came back is retired by threads after its window, reversibly
+/// (`retirement_state: reversible`: a keyed seat on 3.1.0, any seat on 3.5.0) or finally (field absent). Both
+/// read as the existing Retired state, so SeatObservation's Retired arm applies with no new variant; a keyless
+/// reversible one reads `keyed: false`, which is what routes its undo to ResurrectSeat rather than UnretireSeat.
 #[test]
 fn g5_disposition_maps_from_seat_inspect() {
     use super::mapping::seat_status;
@@ -4537,9 +4538,16 @@ fn close_seat_in_fake(fx: &Fx, seat: &str) {
 async fn commit_seat_read(fx: &Fx, clone: &CloneId, seat: &str) {
     let read = fx.seats.inspect(&[seat_ref(seat)]).await.unwrap();
     let state = match &read[&seat_ref(seat)] {
-        SeatStatus::Retired { kind, .. } => {
-            json!({ "state": "retired", "reversible": *kind == RetirementKind::Reversible })
-        }
+        SeatStatus::Retired {
+            kind,
+            keyed,
+            retired_at,
+        } => json!({
+            "state": "retired",
+            "reversible": *kind == RetirementKind::Reversible,
+            "keyed": keyed,
+            "retired_at": retired_at,
+        }),
         SeatStatus::KeyConflict { pane } => json!({ "state": "key_conflict", "pane": pane }),
         other => panic!("unexpected read {other:?}"),
     };
@@ -5115,14 +5123,32 @@ async fn operator_final_seat_is_succeeded_with_one_reacceptance_and_key_relink()
     assert_eq!(succeed_rows(&fx).len(), 1);
 }
 
+/// The threads 3.5.0 model on: a keyless close is reversible for 7 d (obligations settle at 24 h), on the
+/// fixture's clock.
+fn model_fx() -> Fx {
+    let fx = fx();
+    fx.threads
+        .enable_resurrect(fx.seats.clone(), fx.clock.clone());
+    fx
+}
+
+fn resurrect_rows(fx: &Fx) -> Vec<EffectRecord> {
+    rows(
+        fx,
+        EffectKind::Custom(super::effects::RESURRECT_KIND.into()),
+    )
+}
+
+/// Spec §3 row 3, operator-final variant: a keyless close that threads reads final (3.1.0 semantics, model off)
+/// takes the fresh-seat succession and never asks to resurrect.
 #[tokio::test]
-async fn keyless_pane_close_is_final_and_undo_succeeds() {
+async fn keyless_final_close_takes_fresh_seat_succession_without_the_model() {
     let fx = fx();
     let (clone, epoch, st, ts, kind) = closed_and_undone(&fx, false).await;
     assert_eq!(
         kind,
         RetirementKind::Final,
-        "no bound key: the close is final"
+        "model off: a keyless close is final"
     );
     fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
     steps(&fx, 6).await;
@@ -5133,6 +5159,7 @@ async fn keyless_pane_close_is_final_and_undo_succeeds() {
         restore("seat-B", &epoch, true, false)
     );
     assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 0);
     for t in [&st, &ts] {
         assert_eq!(
             fx.threads.member(t, &seat_ref("seat-B")).unwrap().state,
@@ -5141,6 +5168,235 @@ async fn keyless_pane_close_is_final_and_undo_succeeds() {
             t.0
         );
     }
+}
+
+/// Spec §3 row 2: a keyless close is reversible, and an undo inside 24 h brings the same seat back onto the
+/// reopened pane, memberships intact, with no succession and no unretire.
+#[tokio::test]
+async fn keyless_reversible_close_then_undo_resurrects_the_same_seat() {
+    let fx = model_fx();
+    let (clone, epoch, st, ts, kind) = closed_and_undone(&fx, false).await;
+    assert_eq!(kind, RetirementKind::Reversible);
+    let invites = fx.threads.call_count("invite");
+    steps(&fx, 5).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert!(c.threads_seat_history.is_empty(), "no succession");
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+    assert!(succeed_rows(&fx).is_empty());
+    for t in [&st, &ts] {
+        assert!(accepted(&fx, t, "seat-A"), "membership kept: {}", t.0);
+    }
+    assert_eq!(fx.threads.call_count("invite"), invites, "no re-invitation");
+}
+
+/// Spec §3 row 1: a keyed seat's close then undo unretires it and never resurrects, with the model on.
+#[tokio::test]
+async fn keyed_reversible_close_then_undo_unretires_and_never_resurrects() {
+    let fx = model_fx();
+    let (clone, epoch, _st, _ts, kind) = closed_and_undone(&fx, true).await;
+    assert_eq!(kind, RetirementKind::Reversible);
+    steps(&fx, 5).await;
+    assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 0);
+    assert!(resurrect_rows(&fx).is_empty());
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+}
+
+/// Spec §3 row 3: past 7 d the close is final; the undo takes the fresh-seat succession and the seat is not
+/// resurrected.
+#[tokio::test]
+async fn keyless_final_close_takes_fresh_seat_succession() {
+    let fx = model_fx();
+    let (clone, _st, _ts) = member_clone(&fx, false).await;
+    fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    fx.clock
+        .advance(chrono::Duration::days(7) + chrono::Duration::seconds(1));
+    fx.threads.settle_windows();
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-B", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 0);
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
+}
+
+/// Window 2 (24 h to 7 d): memberships come back; the ordinary pending invitation owed to the seat was settled
+/// by threads at 24 h.
+#[tokio::test]
+async fn keyless_resurrect_between_24h_and_7d_keeps_memberships() {
+    let fx = model_fx();
+    let (clone, st, ts) = member_clone(&fx, false).await;
+    let extra = fx
+        .threads
+        .ensure_thread(
+            ChannelScope::Teamspace,
+            "extra",
+            &OpKey("ensure:extra".into()),
+        )
+        .await
+        .unwrap();
+    fx.threads
+        .invite(
+            &extra,
+            &seat_ref("seat-A"),
+            InviteConstraint::Ordinary,
+            &OpKey("inv:extra".into()),
+        )
+        .await
+        .unwrap();
+    fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    fx.clock.advance(chrono::Duration::hours(25));
+    fx.threads.settle_windows();
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    steps(&fx, 5).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    for t in [&st, &ts] {
+        assert!(accepted(&fx, t, "seat-A"), "membership kept: {}", t.0);
+    }
+    assert!(
+        fx.threads.member(&extra, &seat_ref("seat-A")).is_none(),
+        "the ordinary pending invitation was settled at 24 h"
+    );
+}
+
+/// The reopened pane already holds a bare seat threads minted: it is passed as `replace`.
+#[tokio::test]
+async fn resurrect_passes_the_bare_seat_of_the_reopened_pane_as_replace() {
+    let fx = model_fx();
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(&fx, false).await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set(&pane, "seat-bare");
+    fx.threads.set_bare_seat(&seat_ref("seat-bare"), &pane);
+    steps(&fx, 5).await;
+    let ops = fx.threads.lifecycle_ops("resurrect_seat");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert!(
+        ops[0]
+            .0
+            .ends_with(&format!("resurrect:{}:{epoch}:seat-bare", clone.id)),
+        "{ops:?}"
+    );
+    assert_eq!(
+        fx.seats.status(&seat_ref("seat-bare")),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(crate::ports::clock::Clock::now(&*fx.clock)),
+        }),
+        "threads retired the bare seat in the same decision"
+    );
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+}
+
+/// The pane holds no seat but the retired one (or none): `replace` is None.
+#[tokio::test]
+async fn resurrect_passes_no_replace_without_a_seat_on_the_pane() {
+    let fx = model_fx();
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(&fx, false).await;
+    steps(&fx, 5).await;
+    let ops = fx.threads.lifecycle_ops("resurrect_seat");
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert!(
+        ops[0]
+            .0
+            .ends_with(&format!("resurrect:{}:{epoch}:none", clone.id)),
+        "{ops:?}"
+    );
+}
+
+/// The action follows the seat fact, not the journal entry's age. A fact read as final (3.1.0 semantics) takes
+/// the succession; the same close read as reversible resurrects.
+#[tokio::test]
+async fn pre_upgrade_keyless_close_follows_the_fact() {
+    // Read final: succession.
+    let fx = model_fx();
+    let (clone, _st, _ts) = member_clone(&fx, false).await;
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "retired", "reversible": false, "keyed": false }),
+    );
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    assert_eq!(
+        clone_rec(&fx, &clone.id).threads_seat.as_deref(),
+        Some("seat-B")
+    );
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 0);
+
+    // Read reversible: resurrect.
+    let fx = model_fx();
+    let (clone, _st, _ts) = member_clone(&fx, false).await;
+    fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    steps(&fx, 5).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+}
+
+/// Close a keyless seat, a Herdr restart, then undo inside the window: the original seat is resurrected onto the
+/// reopened pane.
+#[tokio::test]
+async fn keyless_close_restart_then_undo_resurrects_onto_the_reopened_pane() {
+    let fx = model_fx();
+    let (clone, _st, _ts) = member_clone(&fx, false).await;
+    fx.threads.close_pane(&fx.seats, &seat_ref("seat-A"));
+    // Herdr restarts: the journal records the incarnation change; threads' read of the closed seat is unchanged.
+    fx.clock.advance(chrono::Duration::hours(1));
+    fx.journal
+        .meta_set(
+            "incarnation:changed_at",
+            &crate::ports::clock::Clock::now(&*fx.clock).to_rfc3339(),
+        )
+        .unwrap();
+    let epoch = OpId::new();
+    write_restore(&fx, &clone.id, &epoch);
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    steps(&fx, 5).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(
+        fx.seats.status(&seat_ref("seat-A")),
+        Some(SeatStatus::Resolved {
+            pane: pane_of(&clone_rec(&fx, &clone.id))
+        })
+    );
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
 }
 
 #[tokio::test]

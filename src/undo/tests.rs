@@ -90,6 +90,16 @@ impl Mutation for Patch {
                 since: cx.now,
             });
         }
+        if a.get("keyless").is_some() {
+            rec.keyless = true;
+        }
+        if let Some(state) = a.get("fact") {
+            rec.seat_fact = Some(crate::model::clone::SeatFact {
+                seat: rec.threads_seat.clone().unwrap(),
+                state: serde_json::from_value(state.clone()).unwrap(),
+                read_at: cx.now,
+            });
+        }
         cx.tree.put_record(loc.record_path, &mut rec)?;
         Ok(Applied {
             summary: "patch".into(),
@@ -750,6 +760,122 @@ fn undo_writes_a_restore_intent_for_a_seated_clone_only() {
         "the epoch is the undo commit's operation"
     );
     assert_eq!(back.threads_seat.as_deref(), Some("seat-A"));
+}
+
+/// A retired clone holding `seat-A`, closed at `t0()`, with `fact` as its committed seat read.
+fn note_clone(keyless: bool, fact: Option<crate::model::clone::SeatFactState>) -> CloneRecord {
+    let fx = fx();
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let mut c = clones_of(&fx, &foreman.id).remove(0);
+    c.keyless = keyless;
+    c.threads_seat = Some("seat-A".into());
+    c.seat_fact = fact.map(|state| crate::model::clone::SeatFact {
+        seat: "seat-A".into(),
+        state,
+        read_at: t0(),
+    });
+    c.retired = Some(crate::model::common::Retirement {
+        op: crate::model::OpId::new(),
+        action: None,
+        at: t0(),
+        mechanism: RetireMechanism::ObservedTabClose,
+    });
+    c
+}
+
+fn reversible(keyed: bool) -> Option<crate::model::clone::SeatFactState> {
+    Some(crate::model::clone::SeatFactState::Retired {
+        reversible: true,
+        keyed,
+        retired_at: Some(t0()),
+    })
+}
+
+#[test]
+fn seat_window_note_names_each_window() {
+    use super::preview::seat_window_note;
+    let hours = |h: i64| t0() + chrono::Duration::hours(h);
+    let c = note_clone(true, reversible(false));
+    let within = seat_window_note(&c, hours(2)).unwrap();
+    assert!(
+        within.contains("comes back with everything") && within.contains("less than 24 h"),
+        "{within}"
+    );
+    let middle = seat_window_note(&c, hours(30)).unwrap();
+    assert!(
+        middle.contains("memberships and history")
+            && middle.contains("settled at 24 h")
+            && !middle.contains("everything"),
+        "{middle}"
+    );
+    let late = seat_window_note(&c, hours(24 * 7 + 1)).unwrap();
+    assert!(
+        late.contains("is final") && late.contains("fresh threads seat"),
+        "{late}"
+    );
+    let final_fact = note_clone(
+        true,
+        Some(crate::model::clone::SeatFactState::Retired {
+            reversible: false,
+            keyed: false,
+            retired_at: Some(t0()),
+        }),
+    );
+    let note = seat_window_note(&final_fact, hours(1)).unwrap();
+    assert!(
+        note.contains("is final"),
+        "a final fact is final whatever the age: {note}"
+    );
+    let unread = note_clone(true, None);
+    let note = seat_window_note(&unread, hours(30)).unwrap();
+    assert!(
+        note.contains("settled at 24 h")
+            && note.ends_with("if threads reports the close reversible"),
+        "{note}"
+    );
+}
+
+#[test]
+fn seat_window_note_is_silent_for_a_keyed_seat() {
+    use super::preview::seat_window_note;
+    let keyed_fact = note_clone(false, reversible(true));
+    assert_eq!(seat_window_note(&keyed_fact, t0()), None);
+    let keyed_unread = note_clone(false, None);
+    assert_eq!(seat_window_note(&keyed_unread, t0()), None);
+    let mut seatless = note_clone(true, reversible(false));
+    seatless.threads_seat = None;
+    assert_eq!(seat_window_note(&seatless, t0()), None);
+}
+
+#[test]
+fn restore_preview_names_the_keyless_seat_window() {
+    let fx = fx();
+    alpha(&fx);
+    let foreman = active_seat(&fx, "foreman");
+    let f_clone = clones_of(&fx, &foreman.id).remove(0);
+    assign_threads_seat(&fx, &f_clone.id, "seat-A");
+    patch(&fx, json!({ "clone": f_clone.id, "keyless": true }));
+    let act = cascade(
+        &fx,
+        CascadeRule::Tab,
+        &[foreman.id.to_any(), f_clone.id.to_any()],
+    );
+    patch(
+        &fx,
+        json!({ "clone": f_clone.id, "fact": { "state": "retired", "reversible": true, "keyed": false,
+                 "retired_at": fx.clock.now() } }),
+    );
+    fx.clock.advance(chrono::Duration::hours(30));
+    let sp = plan(&fx, &format!("undo {}", act.id));
+    let notes: Vec<_> = sp
+        .plan
+        .warnings
+        .iter()
+        .filter(|w| w.contains("threads seat seat-A"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{:?}", sp.plan.warnings);
+    assert!(notes[0].contains("settled at 24 h"), "{}", notes[0]);
 }
 
 #[test]

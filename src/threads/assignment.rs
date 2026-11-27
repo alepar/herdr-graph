@@ -85,7 +85,9 @@ pub fn clear_restore_on_retire(rec: &mut CloneRecord) {
 
 /// Called by the purge commit: the inert tombstone to keep in place of `rec`, or None to delete the record.
 /// A seated clone always keeps `Finalize{seat}`, whatever its retirement kind, and the write needs no threads
-/// read (§14.2). A seatless one keeps a ReleaseKey only when it has a key reservation (§14.3).
+/// read (§14.2). A seatless one keeps a ReleaseKey only when it has a key reservation (§14.3). For a keyless
+/// closed seat still inside threads' 7 d reversible window this finalizes it at once: purging the clone gives up
+/// the undo (spec §3).
 pub fn purge_tombstone(rec: &CloneRecord, reservation: Option<&str>) -> Option<CloneRecord> {
     let seat_intent = match (&rec.threads_seat, reservation) {
         (Some(seat), _) => SeatIntent::Finalize { seat: seat.clone() },
