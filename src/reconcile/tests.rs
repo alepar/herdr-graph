@@ -1375,6 +1375,43 @@ async fn start_agent_needs_shell_foreground() {
     assert!(msgs[0].contains("not the shell"), "{msgs:?}");
 }
 
+/// Graph-created panes are unlabelled, so both claude agents would be named `claude` and Herdr refuses the
+/// second as `agent_name_taken` (the fake enforces Herdr's live-name uniqueness). Both must still start.
+#[tokio::test]
+async fn two_unlabelled_claude_panes_both_start() {
+    let fx = fx();
+    activate(&fx, "claude");
+    commit(
+        &fx,
+        "seat create helper --teamspace alpha --active --harness claude",
+    );
+    step(&fx).await;
+    step(&fx).await;
+    let starts = rows(&fx, EffectKind::StartAgent);
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    for ef in &starts {
+        assert_eq!(ef.status, EffectStatus::Done, "{ef:?}");
+    }
+    let a = pane_of(&fx, &only_clone(&fx, "foreman"));
+    let b = pane_of(&fx, &only_clone(&fx, "helper"));
+    let snap = fx.herdr.snapshot().await.unwrap();
+    let panes: Vec<_> = snap
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.tabs)
+        .flat_map(|t| &t.panes)
+        .filter(|p| p.id == a || p.id == b)
+        .collect();
+    assert_eq!(panes.len(), 2);
+    for p in panes {
+        assert_eq!(p.label, None, "graph-created panes are unlabelled");
+        assert_eq!(p.agent.as_ref().map(|g| g.kind.as_str()), Some("claude"));
+    }
+    let names = fx.herdr.agent_names();
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert_ne!(names[&a], names[&b], "{names:?}");
+}
+
 #[tokio::test]
 async fn blocked_needs_human_outcome() {
     let fx = fx();

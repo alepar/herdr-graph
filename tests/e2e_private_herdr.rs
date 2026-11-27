@@ -3448,15 +3448,9 @@ impl E2e {
                 env: vec![],
             }))
             .expect("create tab");
+        // The pane stays unlabelled: its agent and a graph-created claude seat's would both be named `claude`,
+        // and the client retries a taken name under a pane-qualified one.
         let pane = tab.pane.unwrap().0;
-        // `agent.start` names the agent after the pane label, else its kind, and Herdr refuses a second live
-        // agent of the same name (`agent_name_taken`): a labelled pane keeps this agent clear of a graph seat's.
-        self.rt
-            .block_on(client.rename_pane(
-                &herdr_graph::model::HerdrPaneId(pane.clone()),
-                "legacy-agent",
-            ))
-            .expect("label pane");
         self.plan_apply(&["teamspace", "adopt", "legacy"]);
         self.plan_apply(&["seat", "adopt", "worker", "--harness", "claude"]);
         let mut clone = String::new();
