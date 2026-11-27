@@ -20,3 +20,13 @@ L19 · r2 · GAP · R8 Cargo.lock · applied — hg-lnw.6 acceptance
 L20 · r2 · GAP · B1 ht-eu3v in 3.6.0 · applied — hg-lnw.6 audit acceptance
 L21 · r2 · GAP · B2 refusal on ordinary restart · applied — hg-lnw.5 expected refusals listed, ordinary restart refuses none; hg-lnw.9 scenario 6
 L22 · r2 · GAP · R12 docs · applied — hg-lnw.10 documents the pre-3.6.0 error, edge hg-lnw.10 -> hg-lnw.7
+L23 · amend-design-1 · GAP · B2 rebind retry after grace · applied — spec §4 emission and §4.2 retry while Unresolved past the grace; hg-lnw.13 acceptance
+L24 · amend-design-1 · GAP · B2 gate when never Unresolved · applied — spec §4 states the bounded 90 s wait as accepted; hg-lnw.13 acceptance documents it
+L25 · amend-design-1 · UNOWNED-SEAM · rebind_refused/seat_unresolved meta · applied — owns line and acceptance on hg-lnw.13
+L26 · amend-design-1 · UNOWNED-SEAM · resurrect success journal write · applied — hg-lnw.14 owns it; edge hg-lnw.15 -> hg-lnw.14; same-write acceptance
+L27 · amend-design-1 · GAP · R2 stale hg-lnw.4 acceptance · applied — line removed (covered by hg-lnw.15)
+L28 · amend-design-1 · GAP · R1 recovery after definitive resurrect refusal / replace re-plan · applied — spec §3 re-plan on input change with distinct op key; hg-lnw.14 acceptance
+L29 · amend-design-1 · GAP · R5 operator remedy verified · applied — hg-lnw.8 tier-5 acceptance; hg-lnw.14 operator-path test
+L30 · amend-design-1 · ORPHAN · hg-lnw.5 · rejected — already closed, superseded by hg-lnw.13
+L31 · amend-design-1 · UNOWNED-SEAM · hg-lnw.7 caller list · applied — names hg-lnw.4, hg-lnw.13, hg-lnw.14; outcome split acceptance
+L32 · amend-design-1 · GAP · R2 docs invitation reset · applied — edge hg-lnw.10 -> hg-lnw.15 and acceptance

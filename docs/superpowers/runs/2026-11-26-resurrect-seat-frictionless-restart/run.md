@@ -15,7 +15,7 @@ roastDesignRound: 1
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
-redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast - · state beads-filed
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast - · state applied
 stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
 approvals:
@@ -26,3 +26,4 @@ approvals:
 parked:
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · beyond-cap · "30 severe candidates beyond config.panelCap=10 left unjudged (Not verified (beyond panel cap)); unattended answer: no re-roast with a raised cap"
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · degraded-verdict · "verdict qualifier [panel-capped: 30 unverified]"
+- coverage-amend-design-1 · L23-L29, L31, L32 applied auto; L30 rejected auto · R1..R12 (coverage-round-1-requirements.md)
