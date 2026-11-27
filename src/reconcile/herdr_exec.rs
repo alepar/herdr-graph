@@ -604,11 +604,23 @@ impl HerdrExecutor {
                 "keyless start waits for its seat to be placed or the grace to end".into(),
             );
         }
+        // A restart relaunch of a Restore launched before the incarnation change is an ordinary restart relaunch.
+        let restart_owned = relaunch
+            && incarnation_changed_at(&self.journal)
+                .is_some_and(|at| launched_before(&p.seat_intent, at));
         // §4.1 readiness: no agent on the pane and the foreground is the shell.
         if lp.pane.agent.is_some() {
             if e.status == EffectStatus::Unknown {
-                // The earlier start went through; only its response was lost.
-                self.record_launch(p);
+                // The earlier start went through; only its response was lost. A keyless clone's restore launch
+                // (this effect's epoch, marked before the dispatch) records no launch, as below (hg-lnw.3).
+                let restore_launch = !restart_owned
+                    && matches!(
+                        &p.seat_intent,
+                        Some(SeatIntent::Restore { epoch, launched: Some(_), .. }) if *epoch == e.op
+                    );
+                if !(restore_launch && p.keyless) {
+                    self.record_launch(p);
+                }
                 self.record_launch_env(
                     &clone,
                     &lp.pane.id,
@@ -625,10 +637,6 @@ impl HerdrExecutor {
         }
         // A pending Restore launches once per epoch: the mark is admitted before the dispatch, and a clone whose
         // epoch is already marked (or acknowledged by no one) is never started here.
-        // A restart relaunch of a Restore launched before the incarnation change is an ordinary restart relaunch.
-        let restart_owned = relaunch
-            && incarnation_changed_at(&self.journal)
-                .is_some_and(|at| launched_before(&p.seat_intent, at));
         let mut restore_launch = false;
         if !restart_owned
             && let Some(SeatIntent::Restore {
