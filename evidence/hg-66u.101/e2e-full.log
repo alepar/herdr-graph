@@ -1,0 +1,218 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-18f0440c20943ddf)
+
+running 38 tests
+test e2e_application_retire_closes_exclusive_seats ... ok
+test e2e_cancel_and_reassign_rejected_op ... ok
+test e2e_close_pane_retires_clone ... ok
+test e2e_close_tab_retires_seat_and_clones ... ok
+test e2e_close_then_undo_keeps_the_seat_and_memberships ... ok
+test e2e_close_while_daemon_down_unknown_not_recreated ... ok
+test e2e_close_workspace_retires_all_incl_dormant ... ok
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ... ok
+test e2e_cold_restart_fresh_agent_reattaches_by_key ... ok
+test e2e_cold_restart_headless_resumes_via_the_driver ... ok
+test e2e_create_teamspace_seats_tabs_panes_env ... ok
+test e2e_daemon_kill_mid_op_recovers_no_duplicates ... FAILED
+test e2e_dropped_rename_recovered ... ok
+test e2e_event_loss_reconnect_converges ... ok
+test e2e_herdr_restart_no_mass_retirement_no_duplicates ... ok
+test e2e_live_handoff_keeps_clones_on_their_seats ... ok
+test e2e_move_only_pane_moved_out_no_recreate ... ok
+test e2e_move_pane_into_other_seat_tab_keeps_that_seats_name ... ok
+test e2e_node_manager_failing_agent_does_not_respawn_loop ... ok
+test e2e_pane_closed_during_downtime_retires_undoably ... ok
+test e2e_participation_join_leave_scopes ... ok
+test e2e_plugin_link_status_action_single_daemon ... ok
+test e2e_rename_tab_renames_seat_moves_path_history ... ok
+test e2e_rename_while_daemon_down_recorded ... ok
+test e2e_resurrect_retired_seat ... ok
+test e2e_retire_last_clone_induced_seat_retirement_once ... ok
+test e2e_seat_deactivate_closes_tab_no_retirement ... ok
+test e2e_seat_override_model_change_recorded_shell_not_replaced ... ok
+test e2e_seat_resolution_in_bound_pane ... ok
+test e2e_single_pane_tab_closed_during_downtime_undo_reopens_it ... ok
+test e2e_summary_lands_in_archived_seat_folder ... ok
+test e2e_template_edit_adds_member_new_tab ... ok
+test e2e_undo_from_bound_pane_leaves_it_alone_and_reopens_the_clones_own_pane ... ok
+test e2e_undo_from_pane_leaves_the_callers_pane_alone ... ok
+test e2e_undo_tab_close_from_pane_reopens_the_seats_own_tab ... ok
+test e2e_undo_tab_close_restores_in_new_tab ... ok
+test e2e_unseated_clone_headless_cold_restart_is_launched_and_seated ... ok
+test support::isolated::root_watchdog ... ok
+
+failures:
+
+---- e2e_daemon_kill_mid_op_recovers_no_duplicates stdout ----
+
+thread 'e2e_daemon_kill_mid_op_recovers_no_duplicates' (3988205) panicked at tests/e2e_private_herdr.rs:326:9:
+timed out (40s) waiting for s2's tab
+daemon log:
+
+status:
+instance: /tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/graph
+daemon: running (pid 3988596, up 40s)
+herdr socket: /tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/herdr.sock
+clones: {"key_conflicts":[],"resume_blocked":[],"retired_unpurged":[],"stuck_restores":[]}
+reconciler: {"attention":[],"blocked_effects":0,"failed_effects":0,"needs_revision_effects":0,"pending_effects":12,"pending_notices":0,"unknown_effects":0}
+threads: {"connected":false,"error":"threads service disconnected: herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir in config.toml, the herdr-threads sibling of the plugin state dir, $XDG_STATE_HOME/herdr/plugins/herdr-threads and ~/.local/state/her
+transcripts: {"completed":0,"delivery":"fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)","dispatched":0,"export_rejected":[],"pending":0,"undeliverable":[],"unresolved":0}
+writer: {"ops":{"committed":22},"writer_halted":null}
+herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+
+snapshot:
+Ok(
+    HerdrSnapshot {
+        incarnation: Incarnation {
+            generation: 0,
+            server_pid: Some(
+                3988208,
+            ),
+            server_started: Some(
+                "Sat Nov  7 16:38:03 2026",
+            ),
+        },
+        workspaces: [
+            WorkspaceInfo {
+                id: HerdrWorkspaceId(
+                    "w1",
+                ),
+                label: "t",
+                metadata: {
+                    "hg": "hg=ts_01M6W9EHV7Y0XNHHDC5SMAZ1VJ",
+                },
+                tabs: [
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t1",
+                        ),
+                        label: "1",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p1",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65fb90ef08cf81",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/graph",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t2",
+                        ),
+                        label: "s1",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p2",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65fb90ef0a9482",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M6W9EHX5VSYWTKP2S7BV7XHA",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t3",
+                        ),
+                        label: "s3",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p3",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65fb90ef27b9d3",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M6W9EJ14GED1TBJQZKCQDBQG",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t4",
+                        ),
+                        label: "s2 ·KNP3RT",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p4",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65fb90ef2ac7e4",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/home",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p5",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_65fb90ef6bb865",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m6w9ehmkwzm02zbvm5nhnyta/home",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    },
+)
+open effects:
+[("rename_tab", "st_01M6W9EHZ42F2QMHF24MFMVRXJ", "Pending", ""), ("rename_pane", "cl_01M6W9EHZ4H368P53YQW40155Y", "Pending", ""), ("threads.resolve_seat", "cl_01M6W9EJ14GED1TBJQZKCQDBQG", "Pending", "herdr-threads state directory not found (looked at HERDR_GRAPH_THREADS_STATE_DIR, threads_state_dir 
+stack backtrace:
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+
+
+failures:
+    e2e_daemon_kill_mid_op_recovers_no_duplicates
+
+test result: FAILED. 37 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 325.47s
+
+error: test failed, to rerun pass `--test e2e_private_herdr`
+exit 101

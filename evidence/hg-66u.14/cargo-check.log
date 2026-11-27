@@ -1,0 +1,15 @@
+    Checking herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.14)
+warning: field `herdr` is never read
+   --> src/threads/tests.rs:206:5
+    |
+198 | struct Fx {
+    |        -- field in this struct
+...
+206 |     herdr: Arc<FakeHerdr>,
+    |     ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `herdr-graph` (lib test) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.63s
+exit=0

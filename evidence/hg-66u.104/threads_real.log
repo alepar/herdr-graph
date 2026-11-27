@@ -1,0 +1,13 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.104)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.20s
+     Running tests/threads_real.rs (target/debug/deps/threads_real-60ab10a666a82eb1)
+
+running 3 tests
+test production_discovery_reaches_real_threads_daemon ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+ok
+test real_threads_channel_invite_membership_notify_release ... ok
+test support::isolated::root_watchdog ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.76s
+
+exit=0

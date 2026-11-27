@@ -1,0 +1,29 @@
+   Compiling herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.18)
+warning: associated function `start_with_threads` is never used
+    --> tests/e2e_private_herdr.rs:2324:8
+     |
+2321 | impl E2e {
+     | -------- associated function in this implementation
+...
+2324 |     fn start_with_threads() -> Option<Self> {
+     |        ^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `herdr-graph` (test "e2e_private_herdr") generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.38s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-18f0440c20943ddf)
+
+running 7 tests
+test e2e_close_then_undo_keeps_the_seat_and_memberships ... ok
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ... ok
+test e2e_cold_restart_fresh_agent_reattaches_by_key ... ok
+test e2e_cold_restart_headless_resumes_via_the_driver ... ok
+test e2e_live_handoff_keeps_clones_on_their_seats ... SKIPPED: no private-rig-safe live handoff: `herdr update --handoff` downloads and installs a release over the herdr binary
+ok
+test e2e_pane_closed_during_downtime_retires_undoably ... SKIPPED: G5 needs a threads build with the test-support grace override (HG_THREADS_TEST_SUPPORT=1 with HG_TEST_THREADS_BINARY) or HG_G5_FULL_WINDOW=1 for the real 10 minute window
+ok
+test e2e_unseated_clone_headless_cold_restart_is_launched_and_seated ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 34.36s
+

@@ -1,0 +1,19 @@
+test observe::tests::threads_unreachable_changes_no_binding ... ok
+test observe::tests::parity_pane_renumbering_after_cold_restart ... ok
+test observe::tests::restart_without_tokens_matches_terminal_id_with_cwd ... ok
+test observe::tests::parity_partial_restore_binds_only_what_threads_resolved ... ok
+test observe::tests::run_loop_reacts_to_events_and_ticks ... ok
+test observe::tests::parity_token_pass_clone_found_by_seat_when_the_token_is_gone ... ok
+test observe::tests::seat_unresolved_keeps_the_matcher_result ... ok
+test observe::tests::seat_resolved_binds_and_marks_present ... ok
+test observe::tests::threads_resolved_pane_is_withheld_from_a_matcher_bound_clone ... ok
+test observe::tests::run_loop_wakes_for_deferred_effect ... ok
+test observe::tests::workspace_close_retires_dormant_seats_too ... ok
+test observe::tests::seat_retired_retires_the_clone_undoably ... ok
+
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 792 filtered out; finished in 0.34s
+
+    Checking herdr-threads v3.0.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.23/third_party/herdr-threads)
+    Checking herdr-graph v0.2.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/threads-seat-identity/.worktrees/super-auto-threads-seat-identity--task-hg-66u.23)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.83s
+done
