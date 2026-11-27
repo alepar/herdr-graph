@@ -108,6 +108,13 @@ fn threads_check(
             .or(c["note"].as_str())
             .unwrap_or("no reason reported");
         detail.push_str(&format!("; daemon not connected: {why}"));
+        // An older daemon refused graph's v4 service session (adapter `level_refused`).
+        if why.contains("service_session_v4") {
+            detail.push_str(
+                "; upgrade step: install herdr-threads >= 3.6.0 and restart the herdr-threads daemon \
+                 (graph registers service_session_v4 and has no fallback to v3)",
+            );
+        }
     }
     if !connected && not_found {
         warn_check("threads", detail)
@@ -1110,6 +1117,35 @@ mod tests {
             "{}",
             c.detail
         );
+    }
+
+    #[test]
+    fn threads_check_names_the_upgrade_step_for_v4_refusal() {
+        let found = || {
+            Ok(Some((
+                PathBuf::from("/s/herdr-threads"),
+                Source::XdgDefault,
+            )))
+        };
+        let refused = crate::threads::adapter::level_refused("unsupported service capability");
+        let c = threads_check(
+            found(),
+            Some(&serde_json::json!({"connected": false, "error": refused.to_string()})),
+        );
+        assert!(!c.ok, "{c:?}");
+        assert!(
+            c.detail
+                .contains("upgrade step: install herdr-threads >= 3.6.0")
+                && c.detail.contains("refused service_session_v4"),
+            "{}",
+            c.detail
+        );
+        // Any other disconnect names no upgrade step.
+        let c = threads_check(
+            found(),
+            Some(&serde_json::json!({"connected": false, "error": "refused"})),
+        );
+        assert!(!c.detail.contains("upgrade step"), "{}", c.detail);
     }
 
     #[test]

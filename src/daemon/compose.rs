@@ -780,6 +780,18 @@ mod lazy {
             Ok(discovered)
         }
 
+        /// The Herdr host locator of graph's panes. RuntimeContext canonicalizes the selected host parent
+        /// consistently with threads.
+        fn host(&self) -> Result<herdr_threads::protocol::ids::HostLocator, ThreadsError> {
+            herdr_threads::daemon::paths::RuntimeContext::explicit(
+                self.graph_root.clone(),
+                self.herdr_socket.clone(),
+                None,
+            )
+            .and_then(|context| context.claim_host())
+            .map_err(|e| ThreadsError::Rejected(e.to_string()))
+        }
+
         async fn guard(&self) -> Result<std::fs::File, ThreadsError> {
             crate::threads::namespace::guard(&self.graph_root)
                 .await
@@ -855,11 +867,14 @@ mod lazy {
                 }
             }
             *slot = None;
-            let t =
-                ServiceThreads::with_system_clock(d.socket.clone(), intents.clone(), d.instance)
-                    .map_err(|e| {
-                        ThreadsError::Disconnected(format!("threads intent journal: {e}"))
-                    })?;
+            let host = self.endpoint.host()?;
+            let t = ServiceThreads::with_system_clock(
+                d.socket.clone(),
+                intents.clone(),
+                d.instance,
+                host,
+            )
+            .map_err(|e| ThreadsError::Disconnected(format!("threads intent journal: {e}")))?;
             let t = Arc::new(t);
             *slot = Some((d, intents, t.clone()));
             Ok(t)
@@ -1091,16 +1106,7 @@ mod lazy {
                     *slot = None;
                     let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
                         Arc::new(herdr_threads::app::SystemClock::new());
-                    // RuntimeContext canonicalizes the selected host parent consistently with threads.
-                    let context = herdr_threads::daemon::paths::RuntimeContext::explicit(
-                        me.endpoint.graph_root.clone(),
-                        me.endpoint.herdr_socket.clone(),
-                        None,
-                    )
-                    .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
-                    let host = context
-                        .claim_host()
-                        .map_err(|e| ThreadsError::Rejected(e.to_string()))?;
+                    let host = me.endpoint.host()?;
                     let m = Arc::new(ThreadsSeatMap::new(
                         d.socket.clone(),
                         d.instance,
