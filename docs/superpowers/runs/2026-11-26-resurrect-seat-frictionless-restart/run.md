@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-26-resurrect-seat-frictionless-restart
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: design
+phase: roast-design
 codeMechanism: Workflow
 runTag: resurrect-seat-frictionless-restart-20261126T231316
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -11,6 +11,7 @@ branch: super-auto/resurrect-seat-frictionless-restart
 base: main
 spec: 2026-11-26-resurrect-seat-frictionless-restart-design.md
 epic: hg-lnw
+roastDesignRound: 1
 
 approvals:
 - top-split · auto · hg-lnw.1 LEAF, hg-lnw.2 LEAF, hg-lnw.3 LEAF, hg-lnw.4 LEAF, hg-lnw.5 LEAF (PROMOTE overruled, sp:demoted-by-session), hg-lnw.6 LEAF, hg-lnw.7 LEAF, hg-lnw.8 LEAF, hg-lnw.9 LEAF, hg-lnw.10 LEAF, hg-lnw.11 LEAF
