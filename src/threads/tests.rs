@@ -5295,7 +5295,7 @@ async fn resurrect_passes_the_bare_seat_of_the_reopened_pane_as_replace() {
     assert!(
         ops[0]
             .0
-            .ends_with(&format!("resurrect:{}:{epoch}:seat-bare", clone.id)),
+            .ends_with(&format!("resurrect:{}:{epoch}:seat-bare:0", clone.id)),
         "{ops:?}"
     );
     assert_eq!(
@@ -5324,7 +5324,7 @@ async fn resurrect_passes_no_replace_without_a_seat_on_the_pane() {
     assert!(
         ops[0]
             .0
-            .ends_with(&format!("resurrect:{}:{epoch}:none", clone.id)),
+            .ends_with(&format!("resurrect:{}:{epoch}:none:0", clone.id)),
         "{ops:?}"
     );
 }
@@ -6012,4 +6012,412 @@ async fn fake_restore_without_model_is_unsupported() {
         t.rebind_held_seat(&seat, &pane, &rop("b")).await,
         refused(SeatRestoreRefusal::Unsupported)
     );
+}
+
+// --- resurrect outcome mapping and the resurrect_held row (hg-lnw.14) ---
+
+fn refused_meta_of(fx: &Fx, clone: &CloneId) -> Option<serde_json::Value> {
+    serde_json::from_str(
+        &fx.journal
+            .meta_get(&super::effects::resurrect_refused_key(clone))
+            .unwrap()?,
+    )
+    .ok()
+}
+
+fn threads_done(fx: &Fx, clone: &CloneId) -> bool {
+    matches!(
+        intent(fx, clone),
+        Some(SeatIntent::Restore {
+            threads_done: true,
+            ..
+        })
+    )
+}
+
+/// A keyless undo whose pane already holds a bare seat threads minted, which graph's map does not report: threads
+/// refuses the resurrect with `TargetAlreadyOwned`. Returns the pane and the first refusal's meta.
+async fn refused_resurrect(fx: &Fx) -> (CloneRecord, OpId, HerdrPaneId) {
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(fx, false).await;
+    let pane = pane_of(&clone_rec(fx, &clone.id));
+    fx.threads.set_bare_seat(&seat_ref("seat-bare"), &pane);
+    steps(fx, 4).await;
+    (clone, epoch, pane)
+}
+
+#[tokio::test]
+async fn resurrect_success_acknowledges() {
+    let fx = model_fx();
+    let (clone, epoch, ..) = closed_and_undone(&fx, false).await;
+    steps(&fx, 5).await;
+    assert!(threads_done(&fx, &clone.id));
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 1);
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+}
+
+/// Threads answers SeatAlreadyResolved (an operator got there first): the success bucket.
+#[tokio::test]
+async fn resurrect_already_resolved_acknowledges() {
+    let fx = model_fx();
+    let (clone, epoch, ..) = closed_and_undone(&fx, false).await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    assert_eq!(
+        fx.threads
+            .resurrect_seat(&seat_ref("seat-A"), &pane, None, &OpKey("operator".into()))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    steps(&fx, 5).await;
+    assert_eq!(
+        fx.threads.call_count("resurrect_seat"),
+        2,
+        "graph asked too"
+    );
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+}
+
+/// NotFound defers with no refusal meta; the next seat read says final, so the succession takes over.
+#[tokio::test]
+async fn resurrect_not_found_then_final_takes_succession() {
+    let fx = model_fx();
+    let (clone, epoch, ..) = closed_and_undone(&fx, false).await;
+    fx.threads
+        .operator_final_retire(&fx.seats, &seat_ref("seat-A"));
+    steps(&fx, 3).await;
+    later(&fx).await;
+    assert!(
+        fx.threads.call_count("resurrect_seat") >= 1,
+        "NotFound is deferred and asked again"
+    );
+    assert!(!threads_done(&fx, &clone.id));
+    assert_eq!(
+        refused_meta_of(&fx, &clone.id),
+        None,
+        "NotFound is no refusal"
+    );
+    let asked = fx.threads.call_count("resurrect_seat");
+    // The re-read fact: final. The reopened pane maps to a fresh seat.
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-B"));
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-B", &epoch, true, false)
+    );
+    assert_eq!(
+        fx.threads.call_count("resurrect_seat"),
+        asked,
+        "the succession ends the resurrect want"
+    );
+}
+
+/// NotFound, then the re-read fact shows the seat resolved on the reopened pane: acknowledged, not succeeded.
+#[tokio::test]
+async fn resurrect_not_found_then_resolved_acknowledges() {
+    let fx = model_fx();
+    let (clone, ..) = closed_and_undone(&fx, false).await;
+    fx.threads
+        .operator_final_retire(&fx.seats, &seat_ref("seat-A"));
+    steps(&fx, 3).await;
+    assert!(!threads_done(&fx, &clone.id));
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": pane }),
+    );
+    steps(&fx, 4).await;
+    let c = clone_rec(&fx, &clone.id);
+    assert_eq!(c.threads_seat.as_deref(), Some("seat-A"));
+    assert!(c.threads_seat_history.is_empty(), "no succession");
+    // Acknowledged (threads_done) and then cleared on reattach: the clone has an occupant on the resolved seat.
+    assert_eq!(intent(&fx, &clone.id), None);
+}
+
+#[tokio::test]
+async fn resurrect_transient_is_retried() {
+    let fx = model_fx();
+    let (clone, epoch, ..) = closed_and_undone(&fx, false).await;
+    fx.threads.set_busy(true);
+    steps(&fx, 3).await;
+    assert!(!threads_done(&fx, &clone.id));
+    assert_eq!(
+        refused_meta_of(&fx, &clone.id),
+        None,
+        "transient is not recorded"
+    );
+    assert!(matches!(
+        intent(&fx, &clone.id),
+        Some(SeatIntent::Restore {
+            last_refusal: None,
+            ..
+        })
+    ));
+    fx.threads.set_busy(false);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+}
+
+#[tokio::test]
+async fn resurrect_target_already_owned_is_recorded_once_and_gates_the_launch() {
+    let fx = model_fx();
+    let (clone, epoch, pane) = refused_resurrect(&fx).await;
+    for _ in 0..3 {
+        later(&fx).await;
+    }
+    assert_eq!(
+        fx.threads.call_count("resurrect_seat"),
+        1,
+        "no repeat call on unchanged inputs"
+    );
+    assert_eq!(fx.threads.call_count("start_agent"), 0);
+    assert!(
+        !threads_done(&fx, &clone.id),
+        "the restore launch stays gated"
+    );
+    let m = refused_meta_of(&fx, &clone.id).expect("refusal recorded");
+    assert_eq!(m["epoch"], epoch.to_string());
+    assert_eq!(m["reason"], "target_already_owned");
+    assert_eq!(m["count"], 1);
+    assert_eq!(m["replace"], "none");
+    assert_eq!(m["pane"], pane.0.as_str());
+    assert!(m["first_at"].as_str().is_some());
+    assert!(matches!(
+        intent(&fx, &clone.id),
+        Some(SeatIntent::Restore {
+            threads_done: false,
+            last_refusal: Some(_),
+            ..
+        })
+    ));
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 1);
+}
+
+/// A bare seat appears on the reopened pane (the map now reports it): replace, under a distinct op key.
+#[tokio::test]
+async fn resurrect_refusal_replans_when_a_bare_seat_appears() {
+    let fx = model_fx();
+    let (clone, epoch, pane) = refused_resurrect(&fx).await;
+    assert_eq!(refused_meta_of(&fx, &clone.id).unwrap()["count"], 1);
+    fx.map.set(&pane, "seat-bare");
+    later(&fx).await;
+    later(&fx).await;
+    let ops = fx.threads.lifecycle_ops("resurrect_seat");
+    assert_eq!(ops.len(), 2, "{ops:?}");
+    assert!(
+        ops[0]
+            .0
+            .ends_with(&format!("resurrect:{}:{epoch}:none:0", clone.id)),
+        "{ops:?}"
+    );
+    assert!(
+        ops[1]
+            .0
+            .ends_with(&format!("resurrect:{}:{epoch}:seat-bare:1", clone.id)),
+        "{ops:?}"
+    );
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(
+        refused_meta_of(&fx, &clone.id),
+        None,
+        "cleared on acknowledge"
+    );
+}
+
+/// The map names a seat that threads does not hold as bare (InvalidRequest); the target then frees and the map
+/// reports none: re-planned and resurrected.
+#[tokio::test]
+async fn resurrect_refusal_replans_when_the_target_frees() {
+    let fx = model_fx();
+    let (clone, epoch, _st, _ts, _) = closed_and_undone(&fx, false).await;
+    let pane = pane_of(&clone_rec(&fx, &clone.id));
+    fx.map.set(&pane, "seat-named");
+    fx.seats.set(
+        &seat_ref("seat-named"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    steps(&fx, 4).await;
+    let m = refused_meta_of(&fx, &clone.id).expect("refused");
+    assert_eq!(m["reason"], "invalid_request");
+    assert_eq!(m["replace"], "seat-named");
+    assert!(!threads_done(&fx, &clone.id));
+    fx.seats.set(
+        &seat_ref("seat-named"),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: None,
+        },
+    );
+    fx.map.clear(&pane);
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 2);
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+}
+
+/// After a definitive refusal an operator resurrect (done in the fake) makes the fact read Resolved on the
+/// reopened pane: graph acknowledges it without another resurrect call, and the row clears.
+#[tokio::test]
+async fn operator_resurrect_after_refusal_is_acknowledged_and_launches_once() {
+    let fx = model_fx();
+    let (clone, _epoch, pane) = refused_resurrect(&fx).await;
+    fx.clock.advance(chrono::Duration::seconds(100));
+    let held = |fx: &Fx| {
+        crate::daemon::clone_status::clone_status_at(&view(fx), &fx.journal, fx.clock.now())
+            ["resurrect_held"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(held(&fx), 1, "row present while refused and reversible");
+    assert_eq!(
+        fx.threads
+            .resurrect_seat(
+                &seat_ref("seat-A"),
+                &pane,
+                Some(&seat_ref("seat-bare")),
+                &OpKey("operator".into())
+            )
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": pane }),
+    );
+    assert_eq!(
+        held(&fx),
+        0,
+        "the row clears when the fact leaves reversible"
+    );
+    steps(&fx, 4).await;
+    // Acknowledged (threads_done) and then cleared on reattach: the clone has an occupant on the resolved seat.
+    assert_eq!(intent(&fx, &clone.id), None);
+    assert_eq!(
+        fx.threads.call_count("resurrect_seat"),
+        2,
+        "graph made only its first call; the second is the operator's"
+    );
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+    assert_eq!(held(&fx), 0);
+}
+
+#[tokio::test]
+async fn resurrect_refused_meta_clears_on_succession() {
+    let fx = model_fx();
+    let (clone, epoch, _pane) = refused_resurrect(&fx).await;
+    assert!(refused_meta_of(&fx, &clone.id).is_some());
+    fx.threads
+        .operator_final_retire(&fx.seats, &seat_ref("seat-A"));
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    fx.map.set(&pane_of(&clone_rec(&fx, &clone.id)), "seat-B");
+    steps(&fx, 6).await;
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-B", &epoch, true, false)
+    );
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+}
+
+#[tokio::test]
+async fn resurrect_refused_meta_clears_on_ack_restore() {
+    let fx = model_fx();
+    let (clone, _epoch, pane) = refused_resurrect(&fx).await;
+    seat_fact(
+        &fx,
+        &clone.id,
+        "seat-A",
+        json!({ "state": "resolved", "pane": pane }),
+    );
+    steps(&fx, 4).await;
+    // Acknowledged (threads_done) and then cleared on reattach: the clone has an occupant on the resolved seat.
+    assert_eq!(intent(&fx, &clone.id), None);
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+}
+
+fn held_rows(fx: &Fx, now: Timestamp) -> Vec<serde_json::Value> {
+    crate::daemon::clone_status::clone_status_at(&view(fx), &fx.journal, now)["resurrect_held"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+fn first_refusal_at(fx: &Fx, clone: &CloneId) -> Timestamp {
+    chrono::DateTime::parse_from_rfc3339(
+        refused_meta_of(fx, clone).unwrap()["first_at"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap()
+    .with_timezone(&chrono::Utc)
+}
+
+#[tokio::test]
+async fn resurrect_held_row_after_90s_while_reversible() {
+    let fx = model_fx();
+    let (clone, _epoch, pane) = refused_resurrect(&fx).await;
+    let t0 = first_refusal_at(&fx, &clone.id);
+    assert!(held_rows(&fx, t0 + chrono::Duration::seconds(89)).is_empty());
+    let rows = held_rows(&fx, t0 + chrono::Duration::seconds(91));
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["clone"], clone.id.to_string());
+    assert_eq!(rows[0]["seat"], "seat-A");
+    assert_eq!(rows[0]["pane"], pane.0.as_str());
+    assert_eq!(rows[0]["reason"], "target_already_owned");
+    assert_eq!(
+        rows[0]["remedy"],
+        format!(
+            "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: herdr-threads seat rebind seat-A --pane {} --operator",
+            pane.0
+        )
+    );
+}
+
+#[tokio::test]
+async fn resurrect_held_row_requires_the_current_epoch() {
+    let fx = model_fx();
+    let (clone, _epoch, pane) = refused_resurrect(&fx).await;
+    let t0 = first_refusal_at(&fx, &clone.id);
+    let later_t = t0 + chrono::Duration::seconds(200);
+    assert_eq!(held_rows(&fx, later_t).len(), 1);
+    // A newer Restore (another epoch) never shows the old refusal.
+    write_restore(&fx, &clone.id, &OpId::new());
+    assert!(held_rows(&fx, later_t).is_empty(), "{pane:?}");
+}
+
+#[tokio::test]
+async fn resurrect_held_row_clears_when_the_fact_leaves_reversible() {
+    let fx = model_fx();
+    let (clone, _epoch, _pane) = refused_resurrect(&fx).await;
+    let t = first_refusal_at(&fx, &clone.id) + chrono::Duration::seconds(200);
+    assert_eq!(held_rows(&fx, t).len(), 1);
+    fx.threads
+        .operator_final_retire(&fx.seats, &seat_ref("seat-A"));
+    commit_seat_read(&fx, &clone.id, "seat-A").await;
+    assert!(held_rows(&fx, t).is_empty());
 }
