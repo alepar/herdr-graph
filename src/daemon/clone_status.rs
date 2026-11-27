@@ -1,8 +1,12 @@
 //! The `clones` status component: clone facts an operator may need to act on.
 use crate::journal::Journal;
 use crate::model::clone::{CloneRecord, LEGACY_LAUNCHED_AT, SeatFactState, SeatIntent};
-use crate::model::common::CloneLifecycle;
-use crate::reconcile::planner::{restore_mark_failed_key, restore_stuck_key, resume_blocked_key};
+use crate::model::common::{CloneLifecycle, Timestamp};
+use crate::observe::seat_observation::SEAT_LOST_AFTER;
+use crate::reconcile::planner::{
+    incarnation_changed_at, rebind_refused_in, restore_mark_failed_key, restore_stuck_key,
+    resume_blocked_key,
+};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
 use serde_json::json;
@@ -56,11 +60,71 @@ fn key_conflicts(clones: &[CloneRecord]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// One row per active seated clone whose seat is still held after a Herdr restart: the fact graph holds for the
+/// seat is a fresh `Unresolved` read (read in the current incarnation) and one grace period has passed since the
+/// incarnation began. `SEAT_LOST_AFTER` is that grace (documented as equal to the 90 s relaunch grace). It does
+/// not depend on what the rebind did: refused (reason recorded), errored or never attempted. The row clears when
+/// the fact reads anything else.
+fn restart_held(
+    clones: &[CloneRecord],
+    journal: &Journal,
+    now: Timestamp,
+) -> Vec<serde_json::Value> {
+    let Some(changed_at) = incarnation_changed_at(journal) else {
+        return Vec::new();
+    };
+    if now < changed_at + SEAT_LOST_AFTER {
+        return Vec::new();
+    }
+    clones
+        .iter()
+        .filter_map(|c| {
+            let seat = c.threads_seat.as_ref()?;
+            let fact = c.seat_fact.as_ref()?;
+            if fact.seat != *seat
+                || fact.state != SeatFactState::Unresolved
+                || fact.read_at < changed_at
+            {
+                return None;
+            }
+            let pane = c
+                .runtime
+                .bound
+                .as_ref()
+                .and_then(|b| b.pane_id.as_ref())
+                .map_or("unknown", |p| p.0.as_str());
+            let reason = match rebind_refused_in(journal, &c.id, changed_at) {
+                Some(r) => format!("rebind refused: {r}"),
+                None => "rebind did not complete".to_owned(),
+            };
+            Some(json!({
+                "clone": c.id.to_string(),
+                "name": c.name,
+                "seat": seat,
+                "pane": pane,
+                "reason": reason,
+                "since": changed_at.to_rfc3339(),
+                "remedy": format!("herdr-threads seat rebind {seat} --pane {pane} --operator"),
+            }))
+        })
+        .collect()
+}
+
 /// `clone_status` plus the resume driver's two stuck lists (spec §9, §14.4, §14.7):
 /// `"stuck_restores": [{clone, epoch, reason, remedy, last_refusal?}]` for every pending Restore that cannot
 /// make progress (`launched_no_reattach`, `mark_failed`, `not_launchable`, `threads_pending`), and
 /// `"resume_blocked": [{clone, pane, remedy}]` for a clone whose last pane no longer exists after a restart.
 pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serde_json::Value {
+    clone_status_at(tree, journal, chrono::Utc::now())
+}
+
+/// `clone_status_with_journal` at an explicit `now` (the restart-held rows are time-dependent).
+/// Adds `"restart_held": [{clone, name, seat, pane, reason, since, remedy}]` (see `restart_held`).
+pub fn clone_status_at(
+    tree: &dyn TreeRead,
+    journal: &Journal,
+    now: Timestamp,
+) -> serde_json::Value {
     let mut v = clone_status(tree);
     let clones: Vec<_> = layout::all_clones(tree)
         .unwrap_or_default()
@@ -147,6 +211,7 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
             }))
         })
         .collect();
+    v["restart_held"] = json!(restart_held(&clones, journal, now));
     v["stuck_restores"] = json!(stuck_restores);
     v["resume_blocked"] = json!(resume_blocked);
     v
