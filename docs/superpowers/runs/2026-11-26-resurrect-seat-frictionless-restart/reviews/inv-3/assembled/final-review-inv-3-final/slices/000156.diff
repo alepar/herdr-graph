@@ -1,0 +1,10 @@
+diff --git a/evidence/hg-lnw.6/build.log b/evidence/hg-lnw.6/build.log
+new file mode 100644
+index 0000000..d9f8c57
+--- /dev/null
++++ b/evidence/hg-lnw.6/build.log
+@@ -0,0 +1,4 @@
++   Compiling herdr-threads v3.6.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.6/third_party/herdr-threads)
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.6)
++    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 13s
++exit 0

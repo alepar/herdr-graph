@@ -1,0 +1,15 @@
+diff --git a/src/threads/mapping.rs b/src/threads/mapping.rs
+index a720838..1f4ada1 100644
+--- a/src/threads/mapping.rs
++++ b/src/threads/mapping.rs
+@@ -169,6 +169,10 @@ pub(crate) fn seat_status(i: &SeatInspection) -> SeatStatus {
+                 Some(SeatRetirementState::Reversible) => RetirementKind::Reversible,
+                 None => RetirementKind::Final,
+             },
++            keyed: i.continuity_key.is_some(),
++            retired_at: summary
++                .retired_at
++                .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms.0)),
+         },
+     }
+ }

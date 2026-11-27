@@ -1,0 +1,12 @@
+diff --git a/evidence/hg-lnw.13/red-mutation-gate-only.log b/evidence/hg-lnw.13/red-mutation-gate-only.log
+new file mode 100644
+index 0000000..ed799f0
+--- /dev/null
++++ b/evidence/hg-lnw.13/red-mutation-gate-only.log
+@@ -0,0 +1,6 @@
++test reconcile::tests::never_emitted_rebind_keyless_start_proceeds_at_grace ... FAILED
++test reconcile::tests::never_unresolved_seat_fresh_keyless_start_waits_full_grace ... FAILED
++test reconcile::tests::always_erroring_rebind_keyless_relaunch_proceeds_at_grace ... FAILED
++test reconcile::tests::restart_never_observed_keyless_clone_starts_after_placement ... FAILED
++test reconcile::tests::threads_lag_stale_resolved_then_unresolved_emits_on_unresolved ... FAILED
++test result: FAILED. 129 passed; 5 failed; 0 ignored; 0 measured; 1356 filtered out; finished in 0.62s

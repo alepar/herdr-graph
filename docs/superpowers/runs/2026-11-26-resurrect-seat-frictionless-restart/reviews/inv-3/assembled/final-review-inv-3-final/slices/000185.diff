@@ -1,0 +1,22 @@
+diff --git a/src/plan/seat_adopt.rs b/src/plan/seat_adopt.rs
+index 3be2a22..45cd10a 100644
+--- a/src/plan/seat_adopt.rs
++++ b/src/plan/seat_adopt.rs
+@@ -513,7 +513,7 @@ impl OrgKind for SeatAdopt {
+         if a.harness != Harness::Shell {
+             warnings.push("if the agent exits with the pane kept, graph starts one in it, resuming its last captured session".to_owned());
+         }
+-        warnings.push("the seat is keyless: closing its tab and undoing that gives the pane a fresh threads seat; memberships graph does not own are not restored".to_owned());
++        warnings.push("the seat is keyless: undoing a close of its tab within 7 days brings back its threads seat (within 24 h with everything; after that, receipts and ordinary invitations owed to it are settled); after 7 days the pane gets a fresh threads seat and memberships graph does not own are lost".to_owned());
+         if node_manager {
+             warnings.push(
+                 format!(
+@@ -1111,7 +1111,7 @@ mod tests {
+                 "closing the tab or one of its panes in Herdr retires the seat or clone (undoable)",
+                 "renaming the tab in Herdr renames the seat; renaming the seat relabels the tab",
+                 "if the agent exits with the pane kept, graph starts one in it, resuming its last captured session",
+-                "the seat is keyless: closing its tab and undoing that gives the pane a fresh threads seat; memberships graph does not own are not restored",
++                "the seat is keyless: undoing a close of its tab within 7 days brings back its threads seat (within 24 h with everything; after that, receipts and ordinary invitations owed to it are settled); after 7 days the pane gets a fresh threads seat and memberships graph does not own are lost",
+                 "pane p2 has no agent and stays unmanaged inside the seat's tab; closing the seat's tab closes it",
+             ]
+         );

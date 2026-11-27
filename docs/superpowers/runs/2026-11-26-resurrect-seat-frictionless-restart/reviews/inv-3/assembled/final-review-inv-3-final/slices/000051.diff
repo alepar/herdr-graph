@@ -1,0 +1,42 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-20.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-20.md
+new file mode 100644
+index 0000000..b860260
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-20.md
+@@ -0,0 +1,36 @@
++# Final review, cluster 20 (third-party)
++
++Source: base 60e287a, head 8f8ec53. The cluster is one gitlink bump, third_party/herdr-threads 482e0d2 to 7c3c090.
++
++## Pin provenance
++
++- 7c3c090 is "Freeze the v3.6.0 peer wire", tagged v3.6.0, contained in origin/main of the submodule, and its Cargo.toml version is 3.6.0.
++- Cargo.lock moves herdr-threads from 3.1.0 to 3.6.0 with no dependency-list change, matching the submodule manifest (it only adds a test target).
++- The range 482e0d2..7c3c090 contains the commits the baseline names: ht-eu3v seat resurrect (v3.5.0), ht-lzhi PersistentServiceClient level choice (ee50a8e, d5c9007), ht-0f0r service rebind of a restart-held seat (483a1f8, 4455c34).
++- The .gitmodules URL is unchanged and the submodule worktree is clean.
++
++## Requirement baseline trace
++
++- B1 and B3 need a graph-selectable v4 service level and ResurrectSeat: both are present in the pinned range. The graph-side use is outside this cluster and belongs to the seam reviewer.
++- B2 and B4 need the service rebind of a restart-held keyless seat: present at the pin (ht-0f0r). The graph call site is outside this cluster.
++- The Cargo.toml comment states the daemon must be 3.6.0 or newer and that an older daemon refuses v4 with a named error. That is consistent with the pin; runtime enforcement is not in this cluster.
++
++## Assessment
++
++- The bump is minimal, reproducible and tagged. Nothing here fails the spec on its own terms.
++
++## Verdict
++
++ready
++
++## Must fix before landing
++
++- none
++
++## Untested scope
++
++- none
++
++## Deferred OK
++
++- Graph-side consumption of ht-lzhi and ht-0f0r (call sites for B1 to B4) is in other clusters and is for the seam reviewer.

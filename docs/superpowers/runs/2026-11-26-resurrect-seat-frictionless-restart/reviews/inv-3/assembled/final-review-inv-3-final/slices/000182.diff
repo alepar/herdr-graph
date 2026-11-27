@@ -1,0 +1,68 @@
+diff --git a/src/model/tests.rs b/src/model/tests.rs
+index 30cd913..fb28c2d 100644
+--- a/src/model/tests.rs
++++ b/src/model/tests.rs
+@@ -473,8 +473,16 @@ fn clone_record_seat_fact_roundtrip() {
+         SeatFactState::KeyConflict {
+             pane: Some(HerdrPaneId("p_2".into())),
+         },
+-        SeatFactState::Retired { reversible: true },
+-        SeatFactState::Retired { reversible: false },
++        SeatFactState::Retired {
++            reversible: true,
++            keyed: true,
++            retired_at: None,
++        },
++        SeatFactState::Retired {
++            reversible: false,
++            keyed: true,
++            retired_at: None,
++        },
+     ] {
+         toml_rt(&CloneRecord {
+             schema: 1,
+@@ -1388,3 +1396,44 @@ fn keyless_clone_round_trips_and_defaults_to_false() {
+     let back: CloneRecord = toml::from_str(&s).unwrap();
+     assert!(!back.keyless, "an absent key deserializes to false");
+ }
++
++#[test]
++fn retired_fact_reads_legacy_without_keyed() {
++    use crate::model::clone::{SeatFact, SeatFactState};
++    let legacy: SeatFact = serde_json::from_value(serde_json::json!({
++        "seat": "s",
++        "state": "retired",
++        "reversible": true,
++        "read_at": "2026-10-02T12:00:00Z",
++    }))
++    .unwrap();
++    assert_eq!(
++        legacy.state,
++        SeatFactState::Retired {
++            reversible: true,
++            keyed: true,
++            retired_at: None,
++        }
++    );
++    let t = chrono::DateTime::from_timestamp_millis(5_000).unwrap();
++    let fact = SeatFact {
++        seat: "s".into(),
++        state: SeatFactState::Retired {
++            reversible: true,
++            keyed: false,
++            retired_at: Some(t),
++        },
++        read_at: t,
++    };
++    json_rt(&fact);
++    toml_rt(&fact);
++    assert!(
++        !serde_json::to_string(&SeatFactState::Retired {
++            reversible: false,
++            keyed: true,
++            retired_at: None
++        })
++        .unwrap()
++        .contains("retired_at")
++    );
++}

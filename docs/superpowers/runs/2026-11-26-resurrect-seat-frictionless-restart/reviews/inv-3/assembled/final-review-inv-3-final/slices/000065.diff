@@ -1,0 +1,39 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-14.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-14.md
+new file mode 100644
+index 0000000..002c754
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-14.md
+@@ -0,0 +1,33 @@
++# Final review inv-2, cluster 14 (evidence-hg-lnw-24)
++
++Source: base 60e287aa, head 985d1eb6. Cluster holds five evidence files under evidence/hg-lnw.24/ and no source code. The root spec has no "Requirement baseline" section, so the baseline rules do not apply.
++
++## Evidence assessment
++
++- red-namespace_tests.log: 11 tests run, 5 pass and 6 fail. Each failure shows the graph-local error surfacing as `Rejected(...)` where a retryable `Disconnected` was expected, at compose.rs:1668 and :1515. This is the RED the task bead describes: namespace bind mismatch, stale snapshot, explicit config error, host-claim failure, broken intent dir, and cached-client rediscovery. The six names match the fault-injection paths the bead lists.
++- green-lib.log and green-lib.exit: 1543 passed, 0 failed, exit 0. The pass count matches the run's own 1543 "ok" lines.
++- rebased-lib.log: 1546 passed, 0 failed after rebase. The count is three higher than the pre-rebase run, consistent with tests arriving from the rebase; the dead-code warning line numbers shifted accordingly.
++- check.log: cargo check exit 0 with one dead-code warning (`Fx.herdr` never read, src/threads/tests.rs). It also records fmt_exit=1, meaning rustfmt reported differences at the time. That is a source-formatting matter for the code cluster, not for this evidence.
++- The logs embed absolute worktree paths; this is cosmetic.
++- The only tier-5 consequence of hg-lnw.24 (production_discovery still asserting Rejected) was a seam break, fixed by hg-lnw.29 in the same branch. That belongs to the seam reviewer.
++
++## Spec coverage
++
++The evidence supports the bead's acceptance criterion that a fault-injection test exists per graph-local path and that the suite passes. It does not by itself prove the retry happens in the same incarnation; that is a source and test question for the code clusters.
++
++## Verdict
++
++ready
++
++## Must fix before landing
++
++- none
++
++## Untested scope
++
++- Evidence covers only the lib test tier. Tier 5 (HG_REAL_THREADS=1) is not in this cluster; the stale tier-5 assertion was addressed by hg-lnw.29.
++- check.log records fmt_exit=1 and no later evidence shows the formatting restored; the code clusters should confirm.
++
++## Deferred OK
++
++- The unused `Fx.herdr` field warning in src/threads/tests.rs.

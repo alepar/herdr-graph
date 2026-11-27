@@ -1,0 +1,12 @@
+diff --git a/tests/support/mod.rs b/tests/support/mod.rs
+index 73067dc..a2edc46 100644
+--- a/tests/support/mod.rs
++++ b/tests/support/mod.rs
+@@ -2,6 +2,7 @@
+ //! Include with `mod support;` from an integration test.
+ #![allow(dead_code)]
+ 
++pub mod agent_stub;
+ pub mod isolated;
+ pub mod private_herdr;
+ pub mod threads_bin;

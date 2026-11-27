@@ -1,0 +1,65 @@
+diff --git a/tests/support/threads_bin.rs b/tests/support/threads_bin.rs
+index ed04ef2..c3d65ed 100644
+--- a/tests/support/threads_bin.rs
++++ b/tests/support/threads_bin.rs
+@@ -46,22 +46,27 @@ pub fn check_version(bin: &Path, expected: &str) -> Result<(), String> {
+     }
+ }
+ 
+-fn resolve() -> Result<PathBuf, String> {
+-    let bin = if let Some(path) = std::env::var_os("HG_TEST_THREADS_BINARY") {
++/// Build (or take from `override_env`) the pinned threads binary into `target/<target_dir>` with `features`.
++fn resolve(override_env: &str, target_dir: &str, features: &[&str]) -> Result<PathBuf, String> {
++    let bin = if let Some(path) = std::env::var_os(override_env) {
+         super::validated_binary(PathBuf::from(path))
+     } else {
+         if std::env::var("HG_HERDR_MATRIX").as_deref() == Ok("1") {
+-            return Err(
+-                "matrix requires a prebuilt HG_TEST_THREADS_BINARY; nested Cargo is forbidden"
+-                    .into(),
+-            );
++            return Err(format!(
++                "matrix requires a prebuilt {override_env}; nested Cargo is forbidden"
++            ));
+         }
+-        let target = crate_root().join("target/threads-bin");
+-        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())) // isolation-ok: cargo build of the pinned threads checkout
++        let target = crate_root().join("target").join(target_dir);
++        let mut build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())); // isolation-ok: cargo build of the pinned threads checkout
++        build
+             .args(["build", "--locked", "--offline", "--manifest-path"])
+             .arg(crate_root().join("third_party/herdr-threads/Cargo.toml"))
+             .arg("--target-dir")
+-            .arg(&target)
++            .arg(&target);
++        if !features.is_empty() {
++            build.arg("--features").arg(features.join(","));
++        }
++        let status = build
+             .stdin(Stdio::null())
+             .status()
+             .map_err(|e| format!("cargo runs: {e}"))?;
+@@ -82,7 +87,22 @@ fn resolve() -> Result<PathBuf, String> {
+ /// the reason on any failure: a test that needs threads must never run against the wrong daemon or skip.
+ pub fn threads_binary() -> PathBuf {
+     static BIN: OnceLock<Result<PathBuf, String>> = OnceLock::new();
+-    BIN.get_or_init(resolve)
++    BIN.get_or_init(|| resolve("HG_TEST_THREADS_BINARY", "threads-bin", &[]))
+         .clone()
+         .unwrap_or_else(|e| panic!("{e}"))
+ }
++
++/// The pinned herdr-threads binary built with its `test-support` feature into `target/threads-bin-test-support`
++/// (or `HG_TEST_THREADS_SUPPORT_BINARY`), version-checked like [`threads_binary`]. Only such a build honours the
++/// `HT_TEST_*` clock overrides (`HT_TEST_OBLIGATION_EXPIRY_MS`, `HT_TEST_KEYLESS_FINALIZE_MS`).
++pub fn test_support_binary() -> Result<PathBuf, String> {
++    static BIN: OnceLock<Result<PathBuf, String>> = OnceLock::new();
++    BIN.get_or_init(|| {
++        resolve(
++            "HG_TEST_THREADS_SUPPORT_BINARY",
++            "threads-bin-test-support",
++            &["test-support"],
++        )
++    })
++    .clone()
++}

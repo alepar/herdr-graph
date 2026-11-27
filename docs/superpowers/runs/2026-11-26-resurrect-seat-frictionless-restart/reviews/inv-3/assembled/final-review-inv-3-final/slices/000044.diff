@@ -1,0 +1,44 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-14.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-14.md
+new file mode 100644
+index 0000000..b98b790
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-14.md
+@@ -0,0 +1,38 @@
++# Final review, cluster 14 (evidence-hg-lnw-6)
++
++Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 8f8ec538ca1f1e4d8d897804aae726472f753ef9. Both resolve with `git rev-parse --verify`. The review-source binding was recorded in the ledger without error.
++
++## Scope read
++
++The cluster is six new log files under evidence/hg-lnw.6/ (slices 000066 to 000071), the captured evidence for task hg-lnw.6, the herdr-threads 3.1.0 to 3.6.0 pin. It carries no production code. The epic spec has no `## Requirement baseline` section, so no baseline rows apply to this cluster.
++
++## What the logs show
++
++- build.log and build-all-features.log: dev build of herdr-threads v3.6.0 and herdr-graph succeeds, exit 0.
++- check-all-targets-all-features.log: exit 0 with one warning, `field herdr is never read` at src/threads/tests.rs:245 (struct Fx). The field is still present at the reviewed head (line 245), so the warning is live.
++- test-run1-compile-break.log: an honest record of the first run failing with E0004, `ServiceOperation::ResurrectSeat` not covered in src/threads/service_tests.rs:91. This is the expected break from the new 3.6.0 enum variant, and it is kept as red evidence for the fix.
++- test.log: 30 "test result" lines, none with failures. The lib suite reports 1526 passed, 0 failed, and every integration binary listed is green, exit 0.
++- test-isolation.log: 17 passed, 0 failed, exit 0, covering reaping of leaked rigs, which matches the AGENTS.md leak rules.
++
++## Consistency notes
++
++- The logs embed absolute task-worktree paths (task-hg-lnw.6). That is expected for captured output and does not affect correctness.
++- The ledger already records the minor items for hg-lnw.6 (evidence-tree-mismatch, compiler-warning, doc drift). Nothing in the cluster contradicts them.
++- The evidence supports the pin task's claim: the contract break is visible and fixed, and the final run is green. The cluster has no spec requirement of its own beyond that.
++- Whether later tasks kept the suite green after composition is the seam reviewer's concern. These logs predate the later tasks.
++
++## Verdict
++
++ready
++
++## Must fix before landing
++
++- none
++
++## Untested scope
++
++- The test.log run predates hg-lnw.7 onward. It does not show the post-merge suite, which the later per-task evidence logs and the seam reviewer cover.
++
++## Deferred OK
++
++- The dead-code warning on `Fx.herdr` at src/threads/tests.rs:245 is already in the ledger as a minor item. It is a one-line cleanup for a later pass.

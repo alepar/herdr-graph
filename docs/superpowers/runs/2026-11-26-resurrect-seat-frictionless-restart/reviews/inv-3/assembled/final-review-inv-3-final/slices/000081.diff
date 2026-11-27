@@ -1,0 +1,51 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-29.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-29.md
+new file mode 100644
+index 0000000..e66a5ee
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-29.md
+@@ -0,0 +1,45 @@
++# Final review inv-2, cluster 29 (src-ports)
++
++Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad (both verified with `git rev-parse --verify`). Caller checkout observed at HEAD 985d1eb, clean, before and during the review. Review source bound with `dispatch-text.mjs bind-review-source` (exit 0).
++
++Scope: `src/ports/threads.rs` (slice 000149.diff). Spec: hg-lnw design `docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md`, including its Requirement baseline (B1-B4, no human scope changes).
++
++## What the cluster changes
++
++- `SeatStatus::Retired` gains `keyed: bool` and `retired_at: Option<Timestamp>`. The spec's section 3 needs the keyed/keyless split and the `retired_at` windows. The production producer is `src/threads/mapping.rs:167-175` (`keyed: continuity_key.is_some()`, `retired_at` from the inspection summary). The only consumer converts it to `SeatFactState` (`src/observe/seat_observation.rs:91-105`). `SeatStatus` is not persisted itself, so the new fields without `#[serde(default)]` cause no compatibility problem in this cluster. How `SeatFactState` is persisted belongs to the observe cluster.
++- `SeatRestoreRefusal` with `retryable()`. The transient set (ServiceBusy, StaleHostObservation, Unreachable, OutcomeUnknown) matches spec section 3's list: ServiceBusy, StaleHostObservation, timeout, unreachable, outcome unknown. The definitive set (TargetAlreadyOwned, Unauthorized, InvalidRequest, Unsupported, InstanceMismatch) matches the spec's "any other definitive refusal" list. NotFound is definitive at the port, and the executor gives it its own deferred handling, as section 3 requires.
++- `SeatRestoreOutcome` {Done, AlreadyResolved, Refused}, with the `refused` constructor and `from_error`. `AlreadyResolved` models U2's `SeatAlreadyResolved` (spec section 1). The post-implementation note for hg-lnw.27 records it as done for both resurrect and rebind. `from_error` maps `Disconnected` to the retryable `Unreachable` and `Rejected` to the definitive `InvalidRequest`. This matches hg-lnw.24/.29: graph-local failures are `Disconnected("graph-local: ...")` (`src/daemon/compose.rs:537,764,801,807,812,872`) and are retried.
++- `KEYLESS_OBLIGATIONS_SETTLE_AFTER` (24 h) and `KEYLESS_REVERSIBLE_FOR` (7 d). They match the threads 3.5.0 windows in spec section 2. They are used by the fake (`src/threads/fake.rs:104,114`) and by the undo preview wording (`src/undo/preview.rs:505-508`).
++- `ThreadsPort::resurrect_seat` and `rebind_held_seat`, whose additive defaults return `Unsupported`.
++
++## Production trace through the port (B1, B2, B3, B4)
++
++- Production port implementations: `LazyThreads` (`src/daemon/compose.rs:1024-1053`) overrides both new methods. It takes the endpoint guard and delegates to `ServiceThreads` (`src/threads/adapter.rs:772-790`, which calls `restore` with `replace: None` for the rebind). Errors from the guard and from lazy construction go through `SeatRestoreOutcome::from_error`. So the `Unsupported` default is never what production gets. Only the test doubles (`RecordingThreads`, `AckThreads`) inherit it.
++- `restore_outcome` (`src/threads/adapter.rs:107-147`) builds every refusal through `SeatRestoreOutcome::refused`. No production code builds `Refused { .. }` directly (grep: the only struct-literal constructions are in `src/ports/threads.rs` and in tests). The `retryable == reason.retryable()` invariant therefore holds on every production path.
++- The executors (`src/threads/effects.rs:1767-1925`) route on the `retryable` flag and on NotFound as the spec describes. Tracing from the planner/executor to these port methods, and from those methods into the reconciler, crosses out of this cluster and is the seam reviewer's to trace.
++- On the port side, within this cluster: B1 (resurrect) and B4 (held-seat rebind) have a typed operation reachable from the production composition. B3 (v4 session) is exercised through the adapter's `GRAPH_SERVICE_LEVEL = V4`, and its registration refusal maps to `Unsupported`. B2 relies on the rebind surface above. The cluster has no baseline gap.
++
++## Evidence consulted
++
++- `restore_outcome_maps_every_variant` (`src/threads/service_tests.rs`) covers the mapping table, the graph-local `Disconnected` messages, `Rejected` as definitive, and both `from_error` cases. It passes in the hg-lnw.24 lib runs (`evidence/hg-lnw.24/green-lib.log`, `rebased-lib.log`). `src/ports/threads.rs` last changed in hg-lnw.24 (9e1dd41).
++- Tier 5 real threads at hg-lnw.29: `evidence/hg-lnw.29/tier5-threads-real.log`, 9 passed.
++
++## Concerns
++
++- `ThreadsError::Rejected`'s doc comment says graph-local failures are never `Rejected` and name "intent journal" among the `graph-local: `-prefixed `Disconnected` errors. The adapter's intent-journal and completion-repair errors are `Disconnected("intent journal: ...")` and `Disconnected("completion record needs repair")`, with no prefix (`src/threads/adapter.rs:397-402`). `mutate_raw` also returns a graph-local `Rejected("mutate: operation has no key")` (`src/threads/adapter.rs:422`). The behaviour is correct: the first two are retryable. The third cannot happen for `ResurrectSeat`, which always carries a key. Only the comment overstates.
++- `SeatRestoreOutcome::Refused { retryable }` is a public, serialized field. Its agreement with `reason` is held only by convention plus the `refused` constructor. The executors route on the flag, not on `reason.retryable()`, so a hand-built or deserialized inconsistent value would misroute. No production path does either today.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- No unit test asserts `SeatRestoreRefusal::retryable()` for every variant directly. It is covered indirectly through `restore_outcome_maps_every_variant`, which never checks the flag for TargetAlreadyOwned or InstanceMismatch on their own.
++- The `Unsupported` defaults of `resurrect_seat` and `rebind_held_seat` are exercised only through test doubles. No test asserts that the production `LazyThreads` overrides both. Grep confirms it does.
++
++## Deferred OK
++- Tighten the `ThreadsError::Rejected` doc comment: the adapter's intent-journal errors are unprefixed `Disconnected`, and `mutate: operation has no key` is a graph-local `Rejected`. Alternatively, prefix those errors to match the comment.
++- Consider making `SeatRestoreOutcome::Refused.retryable` derived (drop the field, or a private field with an accessor) so the invariant cannot be broken by construction or deserialization.
++- `KEYLESS_OBLIGATIONS_SETTLE_AFTER` and `KEYLESS_REVERSIBLE_FOR` copy threads 3.5.0 defaults. Threads exposes no clock fields, so a change upstream (or the shortened `HT_TEST_*` windows in tier 5) would make only the undo preview wording drift. Behaviour does not depend on them.

@@ -1,0 +1,52 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-33.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-33.md
+new file mode 100644
+index 0000000..b730d03
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-2/final-review-inv-2.cluster-33.md
+@@ -0,0 +1,46 @@
++# Final review inv-2, cluster 33 (tests)
++
++## Scope and source
++
++- Source bound with `bind-review-source` (inv-2, base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad); both verified with `git rev-parse --verify <sha>^{commit}`. Caller checkout HEAD was 985d1eb6 with a clean status when read; nothing was switched or edited.
++- Files: tests/adopt_private_herdr.rs, tests/e2e_private_herdr.rs, tests/integration_sweep.rs, tests/support/agent_stub.rs (new), tests/support/mod.rs, tests/support/private_herdr.rs, tests/support/threads_bin.rs, tests/test_isolation.rs, tests/threads_real.rs (slices 000162 to 000170).
++- Standard: spec docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md, including its Requirement baseline (B1 to B4, no human scope changes) and the dated post-implementation notes (hg-lnw.25, hg-lnw.27).
++- No tests were run by this review; the evidence below is the committed evidence/ logs.
++
++## Requirement baseline trace
++
++- B1 (undo of a closed adopted tab brings back the original threads seat). Tier 3 drives the real graph daemon binary and real herdr-threads 3.6.0 through the production CLI (`herdr-graph undo --json`, plan apply): `undo_of_closed_adopted_tab_keeps_seat_and_external_membership`, `undo_of_closed_adopted_pane_keeps_seat`, `close_restart_then_undo_resurrects_the_seat`. Each asserts the same seat id on the reopened pane, no `threads_seat_history`, any bare seat minted during the undo retired, and the thread created outside graph still lists the seat. Composed-daemon sweep (`keyless_close_then_undo` x3) covers the three windows and the preview wording; tier 5 covers ResurrectSeat through `production_ports` in each window. Delivered at the test tier; the production code path itself is the src cluster's and seam reviewer's to trace.
++- B2 (frictionless Herdr restart). Tier 3: `keyless_cold_restart_without_session_returns_to_its_seat` asserts a `threads.rebind_held_seat` effect reaches Done and the seat is placed before any relaunched agent checks in, then a fresh start checks in onto the original seat; `cold_restart_brings_every_seat_kind_back` covers keyed, keyless-with-session and shell seats with both agents resumed by session, no `restart_held` row, no `rebind_refused` meta, nothing retired; `never_observed_keyless_clone_starts_after_restart` covers the hg-c9e never-observed keyless row; `late_rebind_binds_the_fresh_agent_at_its_next_prompt` covers threads down past the grace. None take an operator step.
++- B3 (v4 service session via upstream U1). Tier 5 builds graph's ports with `daemon::compose::production_ports` and calls `resurrect_seat` / `rebind_held_seat`, which only a v4 session can serve; pin fixture moves to 3.6.0 (`tests/test_isolation.rs`).
++- B4 (upstream U2 rebind of a restart-held seat). Tier 5 `rebind_places_a_restart_held_seat_on_its_pane` (Done, then `AlreadyResolved` on a second key) and tier 3 rebind-Done assertion above.
++- Trial finding 3 regression (spec 4.4): `undo_restored_agent_that_exits_is_relaunched_live` asserts the restore launch resumes `stub-1`, the exited restored agent is relaunched in the same pane exactly once over 10 s, and the seat stays put.
++
++## Review of the test changes
++
++- `support::agent_stub`: a shell `claude` that Herdr detects, runs the real threads Claude hook (SessionStart, and UserPromptSubmit on demand) against the rig's own state dir and socket, and optionally reports sessions to the rig's graph instance. It stays foreground until released; its processes carry the rig env and are reaped by `reap_root`. `freeze_at` SIGSTOPs the graph daemon; `E2e::drop` sends SIGCONT before SIGKILL, so a panic while frozen does not leak a stopped daemon.
++- `ThreadsDaemon` now owns copies of root, socket and env instead of borrowing `PrivateHerdr`, so tier 5 can restart Herdr under it; declaration order in every new test drops the daemon before the Herdr. `private_command` keeps `env_clear()` semantics.
++- `threads_bin::test_support_binary` builds the pinned threads with `--features test-support` into its own persistent `target/threads-bin-test-support` (one reused build dir, not per run), version-checked like the default binary.
++- `production_discovery_reaches_real_threads_daemon` now expects `Disconnected("graph-local: ...")` (hg-lnw.29) instead of `Rejected`; it still asserts a specific variant rather than any error, which matches the hg-lnw.24 namespace guard's intent (no register/dispatch against a fresh node).
++- Sweep `Window::Settled` asserts only that the externally sent pending invitation does not return; graph's own ordinary-invitation reset is covered at the unit tier (`src/threads/tests.rs` `resurrect_between_24h_and_7d_reissues_the_ordinary_invitation`, `resurrect_reset_leaves_other_rows_and_is_in_the_acknowledgement_write`, `operator_resurrect_ack_carries_the_reset`) and tier 5 shows threads mints episode 2 after 24 h.
++- `scripts/herdr-release-smoke` (not in this cluster, opened only to check the test-binary override): matrix mode filters `HG_*` except `HG_TEST_HERDR_BINARY` and `HG_TEST_THREADS_BINARY` and forbids nested Cargo, and its `threads_real` expected-test inventory is exact. At base the inventory already omitted `adopt_resolves_the_checked_in_seat`, so the matrix was already out of step; this branch adds five tier-5 tests whose `test_support_binary` returns the "matrix requires a prebuilt HG_TEST_THREADS_SUPPORT_BINARY" error in matrix mode, and four e2e tests not in its e2e list.
++
++## Evidence
++
++- Tier 5 at hg-lnw.29 (evidence/hg-lnw.29/tier5-threads-real.log): all eight threads_real tests ok, including the five new ones and the updated production_discovery test.
++- Tier 3 at hg-lnw.9 (evidence/hg-lnw.9/tier3-final-rebased.log) and hg-lnw.23 (evidence/hg-lnw.23/tier3-adopted-unlabelled-rebased.log): all seven new tier-3 tests ok; evidence/hg-lnw.9/late-rebind-pinned-order.log shows the late order actually exercised (SessionStart check-in refused `TargetUnresolved`, rebind Done after, one prompt binds `stub-2`).
++- No tier-3 run is recorded at the reviewed head; later merges (hg-lnw.24 namespace guard, hg-lnw.25 daemon floor, hg-lnw.27 to .29) postdate the tier-3 evidence.
++
++## Verdict
++ready
++
++## Must fix before landing
++- none
++
++## Untested scope
++- Tier 3 (tests/adopt_private_herdr.rs and the new tests/e2e_private_herdr.rs tests) has no run recorded at head 985d1eb6; the latest evidence predates the hg-lnw.24 namespace guard and hg-lnw.25 daemon-floor merges that sit on the production discovery path those rigs use.
++- `late_rebind_binds_the_fresh_agent_at_its_next_prompt` asserts the "late rebind opens no binding" property only when the race lands in the late order (`if late`); the other order passes without exercising it. The committed log shows the late order observed once.
++- Rebind refusals other than retryable and `AlreadyResolved` (`NotFound` on another pane, `InvalidRequest`) are not exercised against real threads 3.6.0; they are covered only through the fake.
++- The spec 4 table row "adopted (keyless), resume fails" has no tier-3 test; the keyless no-session row is covered instead.
++
++## Deferred OK
++- scripts/herdr-release-smoke matrix mode cannot run the new tier-5 window tests (no pass-through or prebuild for HG_TEST_THREADS_SUPPORT_BINARY) and its threads_real and e2e expected-test inventories do not list the new tests; the inventory was already stale at base (missing adopt_resolves_the_checked_in_seat), so this is a follow-up for the release-matrix tooling rather than a defect of this epic's tests.

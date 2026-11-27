@@ -1,0 +1,128 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
+new file mode 100644
+index 0000000..30e7224
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
+@@ -0,0 +1,121 @@
++---
++super-roast verdict: Should-fix (7 confirmed) [converged]
++mode: design        iteration: 2 of 4
++profile (assumed): Not supplied by the caller; inferred from the repository. herdr-graph is a local Rust tool that one operator runs on their own machine to manage coding-agent panes in the Herdr terminal multiplexer through the herdr-threads daemon. It has no network-exposed surface, no external users and no money at stake; the state at risk is agent seats, channel memberships and invitations, and a change is rolled back with git plus a pinned daemon version. Blast radius is low, so resilience and observability gaps weigh less, while gaps on the two stated goals (undo restores the seat, Herdr restarts are frictionless) keep their seat severity.
++inputs: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md + bead tree hg-lnw @3c7a4b9
++delta vs prior: 5 new confirmed (0 Blocking) · 0 carried (0 Blocking) · 3 resolved · 1 regressed (0 Blocking) · 0 punch-listed (open)
++coverage: scouts 9/9 (premortem, completeness, yagni, failure-mode, feasibility, regression, domain:distributed-systems, domain:process-lifecycle-state-reconciliation, domain:terminal-multiplexer-integration) · raw 25 → deduped 12 → panel 9 · spot 3 · promoted 0 · judge completion 100% · remainder-capped: 0 · review readiness: coverage complete, provenance available — basis: "settled tree @3c7a4b916ea0b9dec21ffbbdbe61be09ae27f923: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md"
++independence: same-family (Claude) — seat-differentiated panel · rung: manual fan-out
++seat-agreement: panels 9 · rr 0.44 · rg 0.56 · fg 0.44 · unanimous 0.22 · ground-loo 0.50 (n=4) · reproduce 6/3/0 · refute 5/4/0 · ground 8/0/1
++lane-yield (found/confirmed/unique/refuted): premortem 3/3/1/0 · completeness 3/3/0/0 · yagni 3/2/1/1 · failure-mode 2/1/0/0 · feasibility 2/1/0/0 · regression 5/3/2/1 · domain:distributed-systems 3/2/0/0 · domain:process-lifecycle-state-reconciliation 2/2/0/0 · domain:terminal-multiplexer-integration 2/1/0/1
++
++## Confirmed findings            ← consumed by super-design, one task per finding
++- [Should-fix] §4.2 "Success and an already-placed answer (`NotFound` or the U2 equivalent, because the seat is already resolved on that pane) are done"; versus §1 U2 contract — §4.2 still counts a rebind `NotFound` as an already-placed done answer. §1 now says `SeatAlreadyResolved` is the already-placed answer and `NotFound` means other pane or not held. A real refusal is recorded as success with no `rebind_refused:<clone>`, and beads hg-lnw.7 and hg-lnw.13 map the same code in opposite ways.
++  verdict: confirmed (reproduce ✓ / refute ✗-survived (refute voted REJECT, outvoted 2 to 1) / ground ✓)
++  prior: rejected 2 to 1 in iteration 1; reopened under the narrow exception, and not counted in the delta line because the prior report lists it.
++  new evidence: the rejection rested on "U2 is unreleased and its error shape is a stated open point". Commit 67b2ade added the §1 U2 contract paragraph (spec line 47, message mnSGlBAZYHNZ), which fixes the error shape: "already resolved on that pane → new `SeatAlreadyResolved` (a no-op, graph counts it as done); other pane or not held → `NotFound`".
++  evidence: spec line 122 (§4.2) was not updated and names `NotFound` as done; `SeatAlreadyResolved` appears nowhere in §4.2.
++  §4.2 records only "any other definitive refusal" as `rebind_refused:<clone>`, so a `NotFound` never records a refusal and the §4.5 reason falls back to "rebind did not complete".
++  The restart path passes `replace: None` and emits only while the fact reads `Unresolved`, so a `NotFound` there is a refusal (not held, or held on another pane).
++  Scout evidence, not checked by the seats: bead hg-lnw.7 lists `NotFound` among the definitive refusals while hg-lnw.13 follows §4.2.
++  Refute seat dissent: the outcomes only record and none opens or closes the gate, and §4.5 still raises `clones.restart_held` with the operator remedy at grace. Both confirming seats state the same limit and still confirm: the loss is the refusal reason plus two sections giving one error code opposite meanings.
++  severity: both confirming seats voted Should-fix; kept, because the defect is a contradictory error-code mapping that two beads implement, not only a missing diagnostic.
++  fix-shape hint: in §4.2 name `SeatAlreadyResolved` as the done answer and list `NotFound` among the definitive refusals; align hg-lnw.7 and hg-lnw.13.
++- [Should-fix] §3 "Invitation reset after a resurrect … the resurrect success transition, in the same journal write as the acknowledgement"; §3 NotFound bullet; §3 definitive-refusal bullet ("graph acknowledges it as done") — The invitation reset is attached only to the resurrect success transition. An acknowledgement reached through the fact reading `Resolved` on the reopened pane (operator resurrect, crash before the journal write, possibly a lost response) runs no reset. Between 24 h and 7 d graph's settled ordinary invitations then stay recorded Pending and are never re-issued.
++  verdict: confirmed (reproduce ✓ / refute ✗-survived / ground ✓)
++  prior: regressed. This is the iteration-1 confirmed finding on the 24 h to 7 d re-issue (§3 window), fixed incompletely: the reset mechanism now exists but does not cover every acknowledgement path.
++  evidence: spec line 79: "success: `SeatTransition::Acknowledge` (seat unchanged), then the invitation reset below"; line 93 defines the reset on "the resurrect success transition".
++  Line 82 (operator resurrect): "the fact reads `Resolved` on the reopened pane: graph acknowledges it as done", with no reset stated; graph made no resurrect call there, so there is no success outcome to carry it.
++  Line 80 (NotFound, then `Resolved`) says "is acknowledged as success"; the refute and ground seats read this as ambiguous, so the lost-response path may be covered by wording.
++  The spec says the poll records settled ordinary invitations as Pending, the channel want counts Pending on the recorded seat as satisfied, and the reset "does not read the window or any clock", so nothing triggers it later.
++  The operator path is the remedy §3 itself prescribes (`herdr-threads seat rebind SEAT --pane PANE --operator`). §6 lists no operator-path or lost-response reset test.
++  fix-shape hint: state that every acknowledgement of a keyless `Retired{Reversible}` Restore seat (own success, NotFound-then-Resolved, operator resurrect, crash recovery) carries the reset in the same journal write, and add an operator-path test.
++- [Nit] §3 Invitation reset: "a service invite on a seat that still holds a pending invitation to that thread reuses it … so before 24 h the re-issue is a no-op" — The reset re-invites seats that declined graph's ordinary invitation, in every window, so the no-op claim is false for that case.
++  verdict: confirmed (reproduce ✗ (voted REJECT, outvoted 2 to 1) / refute ✗-survived / ground ✓)
++  evidence: herdr-threads v3.5.0 src/store/service_controls.rs L435 reuses a pending invitation only with "AND NOT EXISTS (SELECT 1 FROM invitation_rejections r WHERE r.invitation_id=i.id)" (https://raw.githubusercontent.com/alepar/herdr-threads/v3.5.0/src/store/service_controls.rs).
++  src/store/control/invitation.rs ~L1277 (`AnswerOutcome::Rejected`) inserts the rejection row and resets `voluntary_state` to absent or left.
++  Graph src/threads/adapter.rs L106 maps Absent to None and src/threads/effects.rs ~L2263 maps None to `InvitationState::Pending`, so a declined invitation is recorded Pending, is reset to Retired, and a fresh invitation is minted.
++  `opt_outs` is set only by the operator command `participation leave --scope clone` (src/plan/kinds_extra.rs:783), so "minus opt-outs" does not exclude an agent's decline.
++  Reproduce seat dissent: no stated requirement promises that declined invitations stay declined. The confirming seats agree the impact is small and rate it Nit: one extra invitation per declined thread per keyless undo.
++  fix-shape hint: scope the no-op claim in §3 and either record the re-invite of declined invitations as accepted or have the reset skip rejected rows; add a declined-invitation case to the hg-lnw.15 test.
++- [Nit] §3 "`resurrect_seat` outcomes" bullets; §1 U2 contract — The §3 outcome list has no entry for `SeatAlreadyResolved`, the success-type result §1 adds to `ResurrectSeat` with `replace: None`. The case §3 routes through `NotFound` (seat already `Resolved` on the reopened pane) answers `SeatAlreadyResolved` on 3.6.0.
++  verdict: confirmed (reproduce ✓ / refute ✗-survived (refute voted REJECT, outvoted 2 to 1) / ground ✓)
++  evidence: §3 names only success, `NotFound`, transient, and a closed definitive list (`TargetAlreadyOwned`, `Unauthorized`, `InvalidRequest`, `Unsupported`, `InstanceMismatch`).
++  herdr-threads design f738bcb2f, docs/superpowers/specs/2026-11-26-service-restore-held-seat-design.md D5: "if OLD is already resolved on exactly the requested host and target, the call succeeds as a no-op with the new result SeatAlreadyResolved(seat)"; resolved elsewhere is `NotFound`.
++  The §3 undo call also uses `replace: None` when the pane holds no bare seat, so the operator-resurrect and lost-response cases return the new variant.
++  Refute seat dissent: §1 already says graph counts it as done and §3 plans from the re-read fact. The ground seat accepts this: an unmapped result self-heals on the next pass.
++  severity: seats split Should-fix (reproduce) and Nit (ground). demoted: profile is a single-operator local tool and the next fact read acknowledges the seat, so a missing enumerated outcome is a Nit here.
++  fix-shape hint: add `SeatAlreadyResolved` to the §3 success bucket (Acknowledge) and to the port outcome type and mapping (hg-lnw.2, hg-lnw.7, hg-lnw.14).
++- [Nit] §3 definitive-refusal bullet: "recorded once as journal meta `resurrect_refused:<clone>` with the epoch and reason … one grace period (90 s) after the first refusal gets a `clones.resurrect_held` status row" — The meta holds only the epoch and reason, so the 90 s grace has no stored start time. The row condition does not match the meta's epoch to the current Restore epoch and nothing clears the meta, so a stale meta from an earlier undo epoch fires the row on a later one.
++  verdict: confirmed (reproduce ✗ (voted REJECT, outvoted 2 to 1) / refute ✗-survived / ground ✓)
++  prior: the iteration-1 Nit (no outcome mapping for a refused `resurrect_seat`) is resolved by the new §3 outcome bullets; this is a defect in that new text.
++  evidence: spec line 82 stores the meta as "the epoch and reason"; the row condition is "meta is set" plus the fact reading `Retired{Reversible}`; only the status row is said to clear.
++  src/journal/mod.rs:32: `meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`, so there is no timestamp outside the value.
++  The §4 counterpart anchors its grace on `incarnation:changed_at` (spec lines 100-102) and scopes `rebind_refused` to "this incarnation".
++  Reproduce seat dissent: the worst outcome is a spurious or mistimed advisory row, and the launch gate is unaffected. The confirming seats agree on that limit.
++  severity: seats split Should-fix (ground) and Nit (refute). demoted: profile is a single-operator local tool with low blast radius, and the harm is a false status row and doctor finding (observability) with no effect on the restore launch, so it is a Nit here.
++  fix-shape hint: store the first-refusal time in the meta value, require the meta's epoch to equal the current Restore epoch, and clear the meta on acknowledge and succession.
++- [Nit] §3 keyless Reversible row op key; §3 definitive-refusal bullet ("Each re-plan with a changed `replace` (or target) uses a distinct op key") — §3 promises a distinct op key when "a target that freed" changes the want's inputs, but the key `resurrect:<clone>:<epoch>:<replace seat id or none>` has no target component, so that re-plan reuses the same key.
++  verdict: confirmed (reproduce ✓ / refute ✗-survived / ground ✓)
++  evidence: spec line 72 gives the key; line 82 gives the promise and the reason ("so threads' idempotency does not replay the cached refusal").
++  Walk-through: the pane is owned by a non-bare seat, graph calls with `replace: None` and gets `TargetAlreadyOwned`; the owner leaves; clone, epoch and `replace` are unchanged, so the key is identical.
++  By the spec's own premise the cached refusal replays, and the clone leaves that state only through `clones.resurrect_held` and the operator remedy.
++  severity: seats split Should-fix (refute, ground) and Nit (reproduce). demoted: the consequence rests on the spec's premise that threads replays a cached refusal, and the spot-check seat on the related op-key-rationale nit read herdr-threads v3.5.0 src/store/service_controls.rs and found the operations row is inserted only after success, so a refusal is not stored and a same-key retry re-decides. On that evidence the remaining defect is a self-contradiction in §3 text. Profile is a single-operator local tool, the case is narrow and an operator fallback is specified, so it is a Nit here.
++  fix-shape hint: drop the "or target" claim and correct the idempotency rationale, or add a key component (refusal counter or observed owner seat) if a cached refusal can replay on 3.6.0.
++- [Nit] §4 table rows "adopted (keyless), session captured" and "adopted (keyless), no session, or resume fails"; §4 Gate bullet — The table rows say the relaunch "waits until the seat is placed or the grace expires". The Gate bullet says that for `RelaunchOccupant` the gate "adds nothing", so these relaunches always wait the full 90 s and placement never releases them early.
++  verdict: confirmed (reproduce ✓ / refute ✗-survived (refute voted REJECT, outvoted 2 to 1) / ground ✓)
++  prior: the two iteration-1 §4 findings (keyless relaunch never released when the rebind errors; no rebind emitted when the post-restart read lags) are resolved by the amended Gate ("or the grace since `changed_at` has passed. It then proceeds whatever the rebind did") and the level-triggered Emission rule; this is a wording defect in that amended text.
++  evidence: spec lines 113-114 (table rows) versus line 103 ("`RelaunchOccupant` keeps its existing grace deferral unchanged, so for it the gate adds nothing"), line 104 and line 151 (fixed 90 s grace unchanged).
++  src/reconcile/planner.rs ~1106 plans `RelaunchOccupant` for restart relaunches; src/reconcile/herdr_exec.rs 559-567 defers any relaunch until `incarnation:changed_at` + grace with no placement check.
++  Refute seat dissent: the Gate text is normative and stated three times, so the table is a loose summary. The confirming seats agree the impact is low and rate it Nit.
++  fix-shape hint: reword the two rows to "relaunch waits out the 90 s grace, then resumes / starts fresh" and keep "placed or grace" for a fresh `StartAgent` only.
++
++## Not verified (beyond panel cap)   ← severe candidates the panel cap left unverified — listed, never dropped
++- none
++
++## Not verified (dedupe failed or judge lost)   ← findings a pipeline failure left unjudged — listed, never dropped
++- none
++
++## Beyond remainder cap (count only)   ← low-severity candidates the dedupe remainder cap dropped; the count survives, the claims do not
++- none
++
++## Rejected (with reason)        ← so re-roasts don't re-litigate
++- §4 table row "adopted (keyless), session captured"; Key decisions ("cooperative continuity is no longer load-bearing for keyless seats"); §6 tier 3 — §4 assumes graph's own relaunch brings a keyless agent back after a cold restart, while Herdr resumes official agents in restored panes by default (`[session] resume_agents_on_restore`), so cooperative continuity usually still places the seat; the spec never mentions Herdr's own resume.
++  reason: rejected 2 to 1. The external premise holds (https://herdr.dev/docs/session-state/: "Native agent session restore is enabled by default"), and all three seats verified it.
++  The §4 Gate already proceeds when the seat is placed "by graph's rebind or anyone else", and the "Accepted behaviour" paragraph covers cooperative continuity placing the seat first.
++  The row text is conditional ("when the rebind succeeds"). A Herdr-resumed agent is present, so graph does not relaunch and continuity places the seat as today.
++  The failure path (a pending continuity claim keeps the rebind at `ServiceBusy`) is the finding's own stated inference; §4.2 retries it and §4.5 surfaces `clones.restart_held` after the grace.
++  Ground seat dissent (CONFIRM, Should-fix): the spec never names Herdr's resume and §6 tier 3 does not test the captured-session path. The majority answers this as a wording and test-coverage suggestion; the ground seat itself calls it "not a design break".
++  Optional follow-up: mention Herdr's own resume in the row and add a tier-3 scenario with default `resume_agents_on_restore`.
++- Key decisions (U2 open points); §4 table; §4.2 — The §4 table, refusal mapping, fake and tests assume particular answers to U2's open semantics.
++  reason: carried from iteration 1 (rejected 3 to 0); not re-surfaced this round.
++- §4 "whose bound pane exists"; §4 table row "pane missing after restart" — The restart design assumes a pane keeps its id across a Herdr server restart.
++  reason: carried from iteration 1 (rejected 3 to 0; CURRENT-DESIGN.md line 132 and docs/verification-matrix.md record it as verified); not re-surfaced this round.
++- Key decisions "what happens to a binding that reconnects later"; §4 table — An old binding or cooperative reattach can contest the rebound seat after graph has launched a fresh agent on it.
++  reason: carried from iteration 1 (rejected 3 to 0); not re-surfaced this round.
++- §3 `replace` paragraph — §3 does not say how graph learns the bare seat to pass as `replace`.
++  reason: carried from iteration 1 (rejected 3 to 0); not re-surfaced this round.
++- §2 "An older daemon refuses the v4 registration … (no silent fallback to v3)" — A daemon older than 3.6.0 takes down all of graph's threads integration.
++  reason: carried from iteration 1 (rejected 3 to 0); not re-surfaced this round.
++
++## Unverified nits (spot-checked)
++- [Nit] §3 table row "keyless, `Retired{Reversible}`" (op key `resurrect:<clone>:<epoch>:<replace seat id or none>`); beads hg-lnw.4 and hg-lnw.14 — Bead hg-lnw.4 still specifies the superseded op key `resurrect:<clone>:<epoch>` and its own "then SeatTransition::Acknowledge", while hg-lnw.14 now owns the outcome mapping and success journal write in the same executor.
++  spot check: refute seat voted CONFIRM (Nit) — `bd show hg-lnw.4` still carries the old key and Acknowledge text; hg-lnw.14 is blocked by hg-lnw.4, so the cost is rework, not a parallel conflict.
++- [FYI] §3 "any other definitive refusal … `clones.resurrect_held` status row and a doctor finding" — The round-1 fix for a Nit grew into new machinery (meta, status row, doctor finding, replace-suffixed op keys, README work), and its stated rationale that threads' idempotency would "replay the cached refusal" does not match threads' op-key store.
++  spot check: refute seat voted REJECT (FYI) — the factual half holds (herdr-threads v3.5.0 src/store/service_controls.rs inserts the operations row only after success, so a refusal is not cached), but the distinct key is harmless and the new machinery mirrors the §4.2/§4.5 pattern; at most a one-clause wording fix in §3.
++- [FYI] §4 Gate bullet and "Accepted behaviour" paragraph; §4 Emission bullet (`seat_unresolved:<clone>`) — The early-open half of the keyless gate benefits only a fresh keyless `StartAgent`; a plain grace wait would give the same bounded behaviour without new journal state.
++  spot check: refute seat voted REJECT (FYI) — the early release is a stated design choice in service of B2 and names no wrong outcome; the table-versus-Gate wording point is the confirmed Nit above.
++
++## Escalations (need human)      ← UNVERIFIED externals, incomplete panels, unsettled panels, material dissent
++- [Should-fix] §4.2 "A late rebind that lands after the agent was already started fresh places the seat on the pane, and the agent enrolls onto it at its next lifecycle check-in"; §4 Gate; §4.5 — UNVERIFIED external: reproduce and refute seats confirmed from herdr-threads source that only SessionStart (startup, clear, resume) enrolls, while the ground seat found contrary source text (bindings.rs resolve_claim, hook.rs `existing` arm, U2 design D6) and could not settle it; needs the tier-3 test on a 3.6.0 build: start a fresh keyless agent on the held pane, rebind after 90 s, submit one prompt, check `seat inspect` for an open binding.
++  reason: UNVERIFIED external. Votes: reproduce CONFIRM (Should-fix), refute CONFIRM (Should-fix), ground UNVERIFIED.
++  for: herdr-threads docs/operations.md:224 ("No binding opens: the next agent session started (or /clear ed) in PANE enrolls onto OLD"); src/cli/hook.rs (lifecycle hooks enroll, tool-boundary hooks make a non-durable Current CheckIn and write nothing); src/harness/bridge.rs ~1393 ("only a lifecycle event may register again"); U2 design D6 ("a turn event keeps its refusal").
++  against (ground seat): src/store/bindings.rs `resolve_claim` doc ("any agent claim (enroll, reconnect, reopen or plain touch)"); TRUST-POLICY A4; hook.rs `check_in()` takes the `existing` arm on a Resolved pane; U2 design D6 ("the next lifecycle or turn event takes the Resolved arm").
++  All seats read a local herdr-threads checkout (private repository); none ran a live rig.
++  if the test shows no binding without `/clear`: §4.2 needs graph to relaunch or nudge a fresh-started keyless agent after a late rebind, and §4.5 must not clear `clones.restart_held` until the agent is bound.
++  context: this path exists because the amended Gate now opens at the 90 s grace whatever the rebind did (the fix for the iteration-1 keyless-relaunch finding).
++---
++
++
++## Escalations the reporter omitted (engine-added — escalate routes are final)
++- §4.2 'A late rebind that lands after the agent was already started fresh places the seat on the pane, and the agent enrolls onto it at its next lifecycle check-in … `clones.restart_held` (4.5) clears when the fact reads `Resolved`'; §4 Gate 'or the grace since `changed_at` has passed. It then proceeds whatever the rebind did'; §4.2 "A late rebind that lands after the agent was already started fresh places the seat on the pane, and the agent enrolls onto it at its next lifecycle check-in ... `clones.restart_held` (4.5) clears when the fact reads `Resolved`"; §4 Gate (keyless relaunch proceeds once "the grace since `changed_at` has passed ... whatever the rebind did"); §4.2 ("A late rebind that lands after the agent was already started fresh places the seat on the pane, and the agent enrolls onto it at its next lifecycle check-in (threads ResurrectSeat semantics: no binding opens, the next check-in enrolls)"); §4 table row "adopted (keyless), no session … then starts fresh" — §4.2 assumes an agent started fresh at the grace on a still-held pane enrolls at its next lifecycle check-in once a late rebind places the seat, but lifecycle enrollment happens only at SessionStart (startup, clear, resume), so the running or idle agent may stay unenrolled for its whole session while §4.5 clears `clones.restart_held` as soon as the fact reads `Resolved`. (external-unverified)
+\ No newline at end of file

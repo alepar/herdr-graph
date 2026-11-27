@@ -1,0 +1,1091 @@
+diff --git a/src/reconcile/tests.rs b/src/reconcile/tests.rs
+index 343bf67..2e9b7c5 100644
+--- a/src/reconcile/tests.rs
++++ b/src/reconcile/tests.rs
+@@ -1375,6 +1375,43 @@ async fn start_agent_needs_shell_foreground() {
+     assert!(msgs[0].contains("not the shell"), "{msgs:?}");
+ }
+ 
++/// Graph-created panes are unlabelled, so both claude agents would be named `claude` and Herdr refuses the
++/// second as `agent_name_taken` (the fake enforces Herdr's live-name uniqueness). Both must still start.
++#[tokio::test]
++async fn two_unlabelled_claude_panes_both_start() {
++    let fx = fx();
++    activate(&fx, "claude");
++    commit(
++        &fx,
++        "seat create helper --teamspace alpha --active --harness claude",
++    );
++    step(&fx).await;
++    step(&fx).await;
++    let starts = rows(&fx, EffectKind::StartAgent);
++    assert_eq!(starts.len(), 2, "{starts:?}");
++    for ef in &starts {
++        assert_eq!(ef.status, EffectStatus::Done, "{ef:?}");
++    }
++    let a = pane_of(&fx, &only_clone(&fx, "foreman"));
++    let b = pane_of(&fx, &only_clone(&fx, "helper"));
++    let snap = fx.herdr.snapshot().await.unwrap();
++    let panes: Vec<_> = snap
++        .workspaces
++        .iter()
++        .flat_map(|w| &w.tabs)
++        .flat_map(|t| &t.panes)
++        .filter(|p| p.id == a || p.id == b)
++        .collect();
++    assert_eq!(panes.len(), 2);
++    for p in panes {
++        assert_eq!(p.label, None, "graph-created panes are unlabelled");
++        assert_eq!(p.agent.as_ref().map(|g| g.kind.as_str()), Some("claude"));
++    }
++    let names = fx.herdr.agent_names();
++    assert_eq!(names.len(), 2, "{names:?}");
++    assert_ne!(names[&a], names[&b], "{names:?}");
++}
++
+ #[tokio::test]
+ async fn blocked_needs_human_outcome() {
+     let fx = fx();
+@@ -3884,7 +3921,8 @@ async fn restart_arm_needs_an_earlier_agent() {
+     activate(&fx, "claude");
+     step(&fx).await;
+     let c = only_clone(&fx, "foreman");
+-    // Never had an agent session: the resume rule is not its launcher.
++    // Never had an agent session, but graph launched an agent (`launched:` meta): treated as had-agent (spec
++    // §4.3), so the resume rule relaunches it, fresh since there is no session to resume.
+     let pane = cold_restart(&fx, &c.id).await;
+     keep_pane_id(&fx, &c.id, &pane);
+     seat_state(
+@@ -3894,7 +3932,11 @@ async fn restart_arm_needs_an_earlier_agent() {
+     );
+     fx.clock.advance(chrono::Duration::seconds(91));
+     step(&fx).await;
+-    assert_eq!(relaunch_rows(&fx), 0);
++    assert_eq!(relaunch_rows(&fx), 1);
++    let starts = start_calls(&fx);
++    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
++    assert!(starts[0].args.is_empty(), "fresh: {:?}", starts[0].args);
++    fx.herdr.clear_calls();
+     // Seatless clone with an earlier agent but no key reservation: the unseated arm needs the key (with one it
+     // is covered by `clone_unseated_at_cold_restart_is_launched_then_seated`).
+     end_session(&fx, &c, "abc", "claude");
+@@ -3904,7 +3946,7 @@ async fn restart_arm_needs_an_earlier_agent() {
+         json!({"sub": "test_seat_state", "clone": c.id, "drop_reservation": true}),
+     );
+     step_unreserved(&fx).await;
+-    assert_eq!(relaunch_rows(&fx), 0);
++    assert_eq!(relaunch_rows(&fx), 1, "no new relaunch row");
+     assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+ }
+ 
+@@ -4244,7 +4286,7 @@ async fn reactivate_seated(harness: &str, resumes: bool) {
+     seat_state(
+         &fx,
+         &c.id,
+-        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false }, fx.clock.now()) }),
++        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false, keyed: true, retired_at: None }, fx.clock.now()) }),
+     );
+     map.set(&pane_of(&fx, &c), "seat-B");
+     for _ in 0..5 {
+@@ -4781,7 +4823,7 @@ fn observe_reversible(w: &D2World) {
+     seat_state(
+         &w.fx,
+         &w.clone.id,
+-        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true }, w.fx.clock.now()) }),
++        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true, keyed: true, retired_at: None }, w.fx.clock.now()) }),
+     );
+ }
+ 
+@@ -5185,6 +5227,201 @@ async fn keyless_restore_launches_without_a_key() {
+     }
+ }
+ 
++/// An undo-restored keyless clone (acknowledged Restore, bare pane, no launch on record) after its restore launch:
++/// the agent checked in and exited with the pane open. Returns the clone, its pane and the epoch.
++async fn undo_restored_exited(fx: &Fx, clear_intent: bool) -> (CloneRecord, HerdrPaneId, OpId) {
++    let c = keyless_claude(fx, true).await;
++    let pane = pane_of(fx, &c);
++    // The pane is as undo leaves it: bare shell, no launch record of graph's.
++    fx.journal
++        .meta_delete(&planner::launched_key(&c.id))
++        .unwrap();
++    let epoch = OpId::new();
++    seat_state(
++        fx,
++        &c.id,
++        json!({
++            "threads_seat": "seat-1",
++            "intent": restore_intent("seat-1", &epoch, true, false),
++            "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()),
++        }),
++    );
++    fx.herdr.clear_calls();
++    step_unreserved(fx).await;
++    assert_eq!(
++        start_calls(fx).len(),
++        1,
++        "the restore launch: {:?}",
++        calls(fx)
++    );
++    assert!(matches!(
++        the_clone(fx, &c.id).seat_intent,
++        Some(SeatIntent::Restore {
++            launched: Some(_),
++            ..
++        })
++    ));
++    // The agent checked in, then exited; the pane stays open.
++    let c = the_clone(fx, &c.id);
++    end_session(fx, &c, "abc", "claude");
++    fx.herdr.set_agent(&pane, None);
++    if clear_intent {
++        admit_threads_seat(
++            &*fx.w,
++            &c.id,
++            &SeatTransition::ClearOnReattach {
++                epoch: epoch.clone(),
++            },
++        )
++        .unwrap();
++        fx.w.drain().unwrap();
++        assert_eq!(the_clone(fx, &c.id).seat_intent, None);
++    }
++    fx.herdr.clear_calls();
++    (c, pane, epoch)
++}
++
++#[tokio::test]
++async fn undo_restored_agent_that_exits_is_relaunched() {
++    // The agent reattached, so the Restore intent was cleared (ClearOnReattach) before it exited.
++    let fx = fx();
++    undo_restored_exited(&fx, true).await;
++    for _ in 0..3 {
++        step_unreserved(&fx).await;
++    }
++    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
++    assert!(!has_key(&start_calls(&fx)[0].env));
++    // Like the adopted seat it was before the close: relaunched once, then left alone.
++    fx.herdr.clear_calls();
++    step_unreserved(&fx).await;
++    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
++}
++
++#[tokio::test]
++async fn undo_restored_agent_whose_start_response_was_lost_is_relaunched_after_exit() {
++    // The restore StartAgent goes through but its response is lost (Unknown); the re-run finds the agent on
++    // the pane. It must not record `launched:` for the keyless clone, or the agent is never relaunched.
++    for clear_intent in [true, false] {
++        let fx = fx();
++        let c = keyless_claude(&fx, true).await;
++        let pane = pane_of(&fx, &c);
++        fx.journal
++            .meta_delete(&planner::launched_key(&c.id))
++            .unwrap();
++        let epoch = OpId::new();
++        seat_state(
++            &fx,
++            &c.id,
++            json!({
++                "threads_seat": "seat-1",
++                "intent": restore_intent("seat-1", &epoch, true, false),
++                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()),
++            }),
++        );
++        fx.herdr.clear_calls();
++        fx.herdr.fail_next("agent.start", Fault::LostResponse);
++        step_unreserved(&fx).await;
++        let ef = rows(&fx, EffectKind::StartAgent)
++            .into_iter()
++            .find(|r| r.status == EffectStatus::Unknown)
++            .expect("the restore start is Unknown");
++        // The re-run inspects the pane instead of launching again.
++        step_unreserved(&fx).await;
++        assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
++        assert_eq!(
++            fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
++            EffectStatus::Done
++        );
++        assert!(
++            fx.journal
++                .meta_get(&planner::launched_key(&c.id))
++                .unwrap()
++                .is_none(),
++            "clear_intent={clear_intent}: a keyless restore launch records no launched:"
++        );
++        let marked = the_clone(&fx, &c.id).seat_intent;
++        assert!(matches!(
++            marked,
++            Some(SeatIntent::Restore {
++                launched: Some(_),
++                ..
++            })
++        ));
++        // The agent checked in, then exited; the pane stays open.
++        let c = the_clone(&fx, &c.id);
++        end_session(&fx, &c, "abc", "claude");
++        fx.herdr.set_agent(&pane, None);
++        if clear_intent {
++            admit_threads_seat(
++                &*fx.w,
++                &c.id,
++                &SeatTransition::ClearOnReattach {
++                    epoch: epoch.clone(),
++                },
++            )
++            .unwrap();
++            fx.w.drain().unwrap();
++        }
++        fx.herdr.clear_calls();
++        for _ in 0..3 {
++            step_unreserved(&fx).await;
++        }
++        if clear_intent {
++            // Relaunched once by the ordinary rule, like the adopted seat it was.
++            assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
++            assert!(!has_key(&start_calls(&fx)[0].env));
++        } else {
++            // The marked Restore still pending: the restore path never launches the epoch again.
++            assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
++            assert_eq!(the_clone(&fx, &c.id).seat_intent, marked);
++        }
++    }
++}
++
++#[tokio::test]
++async fn adopted_keyless_clone_whose_agent_exits_is_relaunched() {
++    // The control the undo-restored clone must match: no restore history, no launch on record.
++    let fx = fx();
++    let c = keyless_claude(&fx, true).await;
++    let pane = pane_of(&fx, &c);
++    fx.journal
++        .meta_delete(&planner::launched_key(&c.id))
++        .unwrap();
++    fx.herdr.set_agent(&pane, None);
++    fx.herdr.clear_calls();
++    step_unreserved(&fx).await;
++    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
++}
++
++#[tokio::test]
++async fn restore_epoch_launches_at_most_once_via_restore_path() {
++    let fx = fx();
++    let (c, _, epoch) = undo_restored_exited(&fx, false).await;
++    let marked = the_clone(&fx, &c.id).seat_intent;
++    for _ in 0..3 {
++        step_unreserved(&fx).await;
++    }
++    // The intent is still the marked Restore (the clear has not landed): the restore path never launches it
++    // again, and the ordinary rule leaves a pending Restore to it.
++    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
++    assert_eq!(
++        the_clone(&fx, &c.id).seat_intent,
++        marked,
++        "the epoch's launch mark is untouched: marked once, not re-marked"
++    );
++    // Marking again is refused: one restore launch per epoch (a re-mark would move the timestamp).
++    fx.clock.advance(chrono::Duration::seconds(5));
++    let _ = admit_threads_seat(
++        &*fx.w,
++        &c.id,
++        &SeatTransition::MarkLaunched {
++            epoch: epoch.clone(),
++        },
++    );
++    let _ = fx.w.drain();
++    assert_eq!(the_clone(&fx, &c.id).seat_intent, marked);
++}
++
+ #[tokio::test]
+ async fn keyless_restart_resumes_after_grace() {
+     let fx = fx();
+@@ -5284,3 +5521,790 @@ async fn released_clone_pane_and_teamspace_workspace_are_never_closed() {
+     assert_eq!(closes_after_retiring(M::Released, false).await, vec![]);
+     assert_eq!(closes_after_retiring(M::Released, true).await, vec![]);
+ }
++
++// -------------------------------------------------------------------------------------------------
++// restart rebind and the keyless start gate (hg-lnw.13, spec §4)
++// -------------------------------------------------------------------------------------------------
++
++use crate::ports::threads::{SeatStatus, ThreadsSeatRef};
++use crate::reconcile::planner::{
++    rebind_refused_in, rebind_refused_key, seat_unresolved_in, seat_unresolved_key,
++};
++use crate::threads::fake::{FakeThreads, FakeThreadsSeatView};
++
++const HELD_SEAT: &str = "seat-1";
++
++/// A foreman clone after a cold Herdr restart with threads on the fakes (the resurrect model on): its seat is
++/// held for the restart (reads `Unresolved`, saved pane = the clone's pane), graph's fact for it is a fresh
++/// `Unresolved` read, and no step has run since.
++struct Restarted {
++    fx: Fx,
++    keyless: bool,
++    threads: Arc<FakeThreads>,
++    view: Arc<FakeThreadsSeatView>,
++    clone: CloneRecord,
++    pane: HerdrPaneId,
++}
++
++/// What the clone had before the restart.
++#[derive(Clone, Copy, PartialEq)]
++enum Had {
++    /// An agent whose session `abc` ended.
++    Session,
++    /// An agent graph launched whose session was never captured (`launched:` meta only).
++    LaunchedOnly,
++    /// No agent was ever started: no session and no `launched:` meta.
++    Nothing,
++}
++
++async fn restarted(keyless: bool, had: Had, harness: &str) -> Restarted {
++    let fx = fx();
++    let threads = Arc::new(FakeThreads::new());
++    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
++    let view = Arc::new(FakeThreadsSeatView::new());
++    activate(&fx, harness);
++    if keyless {
++        // As `keyless_claude`: the clone is adopted before any key is reserved, so threads reserves none.
++        step_unreserved(&fx).await;
++        seat_state(
++            &fx,
++            &only_clone(&fx, "foreman").id,
++            json!({ "keyless": true }),
++        );
++        crate::threads::register_with(&fx.rec, threads.clone(), map, view.clone());
++        step_unreserved(&fx).await;
++    } else {
++        crate::threads::register_with(&fx.rec, threads.clone(), map, view.clone());
++        steps(&fx, 3).await;
++    }
++    threads.enable_resurrect(view.clone(), fx.clock.clone());
++    let c = only_clone(&fx, "foreman");
++    if had == Had::Session {
++        end_session(&fx, &c, "abc", harness);
++    }
++    if had == Had::Nothing {
++        let _ = fx
++            .journal
++            .meta_delete(&crate::reconcile::planner::launched_key(&c.id));
++    }
++    if had == Had::Nothing {
++        // Seated before the restart, never launched: the pre-restart fact (Resolved, stale) is in hand when
++        // the restart is first seen, so the ordinary start rule meets the keyless gate in that very step.
++        seat_state(
++            &fx,
++            &c.id,
++            json!({ "threads_seat": HELD_SEAT,
++                    "fact": fact(HELD_SEAT, SeatFactState::Resolved { pane: pane_of(&fx, &c) }, fx.clock.now()) }),
++        );
++    }
++    let pane = if keyless {
++        // `cold_restart` records key reservations; an adopted clone has none.
++        fx.herdr.restart(true, true);
++        step_unreserved(&fx).await;
++        let pane = token_pane(&fx, &c.id).await;
++        fx.herdr.set_agent(&pane, None);
++        fx.herdr.clear_calls();
++        pane
++    } else {
++        cold_restart(&fx, &c.id).await
++    };
++    keep_pane_id(&fx, &c.id, &pane);
++    if had == Had::Nothing {
++        let _ = fx
++            .journal
++            .meta_delete(&crate::reconcile::planner::launched_key(&c.id));
++    }
++    threads.hold_for_restart(&ThreadsSeatRef(HELD_SEAT.into()), &pane);
++    seat_state(
++        &fx,
++        &c.id,
++        json!({ "threads_seat": HELD_SEAT, "fact": unresolved(HELD_SEAT, fx.clock.now()) }),
++    );
++    fx.herdr.clear_calls();
++    Restarted {
++        keyless,
++        clone: the_clone(&fx, &c.id),
++        fx,
++        threads,
++        view,
++        pane,
++    }
++}
++
++impl Restarted {
++    /// One reconcile step; keyless clones record no key reservation (as `keyless_claude`'s tests).
++    async fn step(&self) -> StepReport {
++        if self.keyless {
++            step_unreserved(&self.fx).await
++        } else {
++            step(&self.fx).await
++        }
++    }
++
++    /// Observer stand-in: the fact graph holds now mirrors what the seat view reads.
++    fn observe(&self) {
++        let state = match self.view.status(&ThreadsSeatRef(HELD_SEAT.into())) {
++            Some(SeatStatus::Resolved { pane }) => SeatFactState::Resolved { pane },
++            _ => SeatFactState::Unresolved,
++        };
++        seat_state(
++            &self.fx,
++            &self.clone.id,
++            json!({ "fact": fact(HELD_SEAT, state, self.fx.clock.now()) }),
++        );
++    }
++
++    fn rebinds(&self) -> usize {
++        self.threads.call_count("rebind_held_seat")
++    }
++
++    fn advance(&self, secs: i64) {
++        self.fx.clock.advance(chrono::Duration::seconds(secs));
++    }
++
++    fn seat_is_placed(&self) -> bool {
++        self.view.status(&ThreadsSeatRef(HELD_SEAT.into()))
++            == Some(SeatStatus::Resolved {
++                pane: self.pane.clone(),
++            })
++    }
++
++    fn refused(&self) -> Option<String> {
++        let changed = crate::reconcile::planner::incarnation_changed_at(&self.fx.journal).unwrap();
++        rebind_refused_in(&self.fx.journal, &self.clone.id, changed)
++    }
++}
++
++#[tokio::test]
++async fn restart_keyed_session_seat_rebinds_and_resumes_without_waiting() {
++    // Rows 1-2: the rebind runs; the keyed relaunch is the ordinary one (waits the grace, not the rebind).
++    for had in [Had::Session, Had::LaunchedOnly] {
++        let r = restarted(false, had, "claude").await;
++        r.step().await;
++        assert_eq!(r.rebinds(), 1);
++        assert!(r.seat_is_placed());
++        assert_eq!(relaunch_rows(&r.fx), 1);
++        assert!(start_calls(&r.fx).is_empty(), "inside the 90 s grace");
++        r.advance(91);
++        r.step().await;
++        let starts = start_calls(&r.fx);
++        assert_eq!(starts.len(), 1, "{:?}", calls(&r.fx));
++        assert_eq!(
++            starts[0].args,
++            if had == Had::Session {
++                vec!["--resume", "abc"]
++            } else {
++                Vec::<&str>::new()
++            }
++        );
++        assert_eq!(starts[0].env, agent_env(&r.clone.id, true));
++    }
++}
++
++#[tokio::test]
++async fn restart_keyless_session_seat_waits_for_placement_then_resumes() {
++    // Row 3: the rebind places the seat at once, yet the occupant relaunch keeps its whole 90 s grace.
++    let r = restarted(true, Had::Session, "claude").await;
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    assert!(r.seat_is_placed());
++    r.observe();
++    r.advance(60);
++    r.observe();
++    r.step().await;
++    assert!(
++        start_calls(&r.fx).is_empty(),
++        "placement does not release a relaunch"
++    );
++    r.advance(31);
++    r.step().await;
++    let starts = start_calls(&r.fx);
++    assert_eq!(starts.len(), 1, "{:?}", calls(&r.fx));
++    assert_eq!(starts[0].args, ["--resume", "abc"]);
++    assert_eq!(starts[0].pane, r.pane);
++    assert!(!has_key(&starts[0].env));
++}
++
++#[tokio::test]
++async fn restart_keyless_no_session_starts_fresh_on_the_original_seat() {
++    // Row 4: an adopted agent with no captured session: rebind, then a fresh start on the original seat.
++    let r = restarted(true, Had::LaunchedOnly, "claude").await;
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    r.observe();
++    assert_eq!(
++        relaunch_rows(&r.fx),
++        1,
++        "covered by the restart rule (§4.3)"
++    );
++    r.advance(91);
++    r.step().await;
++    let starts = start_calls(&r.fx);
++    assert_eq!(starts.len(), 1, "{:?}", calls(&r.fx));
++    assert!(starts[0].args.is_empty(), "{:?}", starts[0].args);
++    assert_eq!(starts[0].pane, r.pane);
++    assert!(!has_key(&starts[0].env));
++    assert!(r.seat_is_placed(), "the agent enrolls on the original seat");
++}
++
++#[tokio::test]
++async fn restart_shell_seat_is_rebound_and_nothing_launches() {
++    // Row 5: a graph-created shell seat is placed; no agent is ever started for it.
++    let r = restarted(false, Had::Nothing, "shell").await;
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    assert!(r.seat_is_placed());
++    r.advance(300);
++    r.observe();
++    r.step().await;
++    assert!(start_calls(&r.fx).is_empty(), "{:?}", calls(&r.fx));
++    assert_eq!(relaunch_rows(&r.fx), 0);
++    assert_eq!(r.rebinds(), 1);
++}
++
++#[tokio::test]
++async fn restart_never_observed_keyed_clone_rebinds_then_starts_fresh_keyed() {
++    // Row 7: `launched:` meta, no session: treated as had-agent (§4.3).
++    let r = restarted(false, Had::LaunchedOnly, "claude").await;
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    assert_eq!(relaunch_rows(&r.fx), 1);
++    assert!(start_calls(&r.fx).is_empty());
++    r.advance(91);
++    r.step().await;
++    let starts = start_calls(&r.fx);
++    assert_eq!(starts.len(), 1, "{:?}", calls(&r.fx));
++    assert!(starts[0].args.is_empty());
++    assert_eq!(starts[0].env, agent_env(&r.clone.id, true));
++    r.advance(300);
++    r.step().await;
++    assert_eq!(start_calls(&r.fx).len(), 1, "one start per incarnation");
++}
++
++#[tokio::test]
++async fn restart_never_observed_keyless_clone_starts_after_placement() {
++    // Row 8: no agent ever, no `launched:` meta: the fresh start waits for the seat, and opens on placement.
++    let r = restarted(true, Had::Nothing, "claude").await;
++    r.threads.set_reconcile_pending(true);
++    r.step().await;
++    assert!(
++        start_calls(&r.fx).is_empty(),
++        "seat not placed: {:?}",
++        calls(&r.fx)
++    );
++    assert!(!r.seat_is_placed());
++    r.threads.set_reconcile_pending(false);
++    r.advance(10);
++    r.step().await;
++    assert!(r.seat_is_placed());
++    r.observe();
++    r.advance(10);
++    r.step().await;
++    let starts = start_calls(&r.fx);
++    assert_eq!(
++        starts.len(),
++        1,
++        "opened early, at 20 s of the grace: {:?}",
++        calls(&r.fx)
++    );
++    assert!(!has_key(&starts[0].env));
++}
++
++#[tokio::test]
++async fn restart_missing_pane_keeps_resume_blocked() {
++    // Row 9: the last pane is gone; no rebind is emitted and the resume_blocked row stays.
++    let r = restarted(false, Had::Session, "claude").await;
++    seat_state(&r.fx, &r.clone.id, json!({ "bound_pane": "p-gone" }));
++    r.advance(91);
++    r.step().await;
++    assert_eq!(r.rebinds(), 0);
++    assert!(start_calls(&r.fx).is_empty());
++    assert_eq!(relaunch_rows(&r.fx), 0);
++    assert!(
++        r.fx.journal
++            .meta_get(&crate::reconcile::planner::resume_blocked_key(&r.clone.id))
++            .unwrap()
++            .is_some()
++    );
++}
++
++#[tokio::test]
++async fn threads_lag_stale_resolved_then_unresolved_emits_on_unresolved() {
++    let r = restarted(true, Had::Nothing, "claude").await;
++    let seat = ThreadsSeatRef(HELD_SEAT.into());
++    // Threads has not caught up: the fact still reads Resolved on the pane, read after the restart.
++    seat_state(
++        &r.fx,
++        &r.clone.id,
++        json!({ "fact": fact(HELD_SEAT, SeatFactState::Resolved { pane: r.pane.clone() }, r.fx.clock.now()) }),
++    );
++    r.advance(20);
++    r.step().await;
++    assert_eq!(r.rebinds(), 0, "a stale Resolved read emits nothing");
++    assert!(
++        start_calls(&r.fx).is_empty(),
++        "and the keyless gate stays closed"
++    );
++    let changed = crate::reconcile::planner::incarnation_changed_at(&r.fx.journal).unwrap();
++    assert!(!seat_unresolved_in(&r.fx.journal, &r.clone.id, changed));
++    // The first read after threads notices the restart: Unresolved. The rebind is refused once (busy).
++    r.threads.set_reconcile_pending(true);
++    seat_state(
++        &r.fx,
++        &r.clone.id,
++        json!({ "fact": unresolved(HELD_SEAT, r.fx.clock.now()) }),
++    );
++    r.step().await;
++    assert_eq!(r.rebinds(), 1, "emitted on the Unresolved read");
++    assert!(seat_unresolved_in(&r.fx.journal, &r.clone.id, changed));
++    assert!(
++        start_calls(&r.fx).is_empty(),
++        "the keyless relaunch waits for placement"
++    );
++    // Placed: the Resolved read is now fresh, and the start opens.
++    r.threads.set_reconcile_pending(false);
++    r.advance(10);
++    r.step().await;
++    assert_eq!(
++        r.view.status(&seat),
++        Some(SeatStatus::Resolved {
++            pane: r.pane.clone()
++        })
++    );
++    r.observe();
++    r.advance(10);
++    r.step().await;
++    assert_eq!(start_calls(&r.fx).len(), 1, "{:?}", calls(&r.fx));
++}
++
++#[tokio::test]
++async fn always_erroring_rebind_keyless_relaunch_proceeds_at_grace() {
++    for had in [Had::Session, Had::Nothing] {
++        let r = restarted(true, had, "claude").await;
++        r.threads.set_reconcile_pending(true);
++        r.step().await;
++        r.advance(80);
++        r.step().await;
++        assert!(start_calls(&r.fx).is_empty(), "inside the grace");
++        r.advance(11);
++        r.step().await;
++        let starts = start_calls(&r.fx);
++        assert_eq!(starts.len(), 1, "{:?}", calls(&r.fx));
++        assert!(!r.seat_is_placed());
++        assert!(r.rebinds() >= 1);
++        assert_eq!(r.refused(), None, "a transient error is not a refusal");
++    }
++}
++
++#[tokio::test]
++async fn never_emitted_rebind_keyless_start_proceeds_at_grace() {
++    // The service answers nothing (disconnected): no rebind lands, the start still opens at the grace.
++    let r = restarted(true, Had::Nothing, "claude").await;
++    r.threads.disconnect();
++    r.step().await;
++    r.advance(80);
++    r.step().await;
++    assert!(start_calls(&r.fx).is_empty());
++    r.advance(11);
++    r.step().await;
++    assert_eq!(start_calls(&r.fx).len(), 1, "{:?}", calls(&r.fx));
++    assert_eq!(
++        r.threads.call_count("rebind_held_seat"),
++        0,
++        "no call got through"
++    );
++}
++
++/// A retryable `Unreachable` refusal (what every graph-local failure on the restore path becomes) records no
++/// `rebind_refused` meta; once threads is reachable the next pass in the same incarnation issues the rebind and
++/// places the seat (hg-lnw.24).
++#[tokio::test]
++async fn unreachable_rebind_is_retried_in_the_same_incarnation() {
++    let r = restarted(true, Had::Session, "claude").await;
++    let changed = crate::reconcile::planner::incarnation_changed_at(&r.fx.journal).unwrap();
++    r.threads.disconnect();
++    r.step().await;
++    let row = rows(
++        &r.fx,
++        EffectKind::Custom(crate::threads::effects::REBIND_KIND.into()),
++    );
++    assert_eq!(row.len(), 1, "the rebind was attempted");
++    assert_eq!(
++        row[0].last_error.as_deref(),
++        Some("rebind refused: unreachable")
++    );
++    assert_eq!(r.refused(), None, "a retryable refusal is not recorded");
++    assert!(!r.seat_is_placed());
++    r.threads.reconnect();
++    for _ in 0..4 {
++        r.advance(60);
++        r.step().await;
++        if r.seat_is_placed() {
++            break;
++        }
++    }
++    assert!(r.seat_is_placed());
++    assert_eq!(r.rebinds(), 1, "the retried call got through once");
++    assert_eq!(r.refused(), None);
++    assert_eq!(
++        crate::reconcile::planner::incarnation_changed_at(&r.fx.journal),
++        Some(changed),
++        "same incarnation"
++    );
++}
++
++#[tokio::test]
++async fn never_unresolved_seat_fresh_keyless_start_waits_full_grace() {
++    // Accepted behaviour (spec §4): graph never read Unresolved (threads placed the seat first), so a stale
++    // Resolved read cannot be told from a fresh one and the fresh start waits the full grace.
++    let r = restarted(true, Had::Nothing, "claude").await;
++    r.view.set(
++        &ThreadsSeatRef(HELD_SEAT.into()),
++        SeatStatus::Resolved {
++            pane: r.pane.clone(),
++        },
++    );
++    r.observe();
++    r.step().await;
++    assert_eq!(r.rebinds(), 0);
++    r.advance(60);
++    r.observe();
++    r.step().await;
++    assert!(start_calls(&r.fx).is_empty(), "{:?}", calls(&r.fx));
++    r.advance(31);
++    r.observe();
++    r.step().await;
++    assert_eq!(start_calls(&r.fx).len(), 1, "{:?}", calls(&r.fx));
++}
++
++#[tokio::test]
++async fn late_rebind_after_grace_places_the_seat() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.set_reconcile_pending(true);
++    r.step().await;
++    r.advance(91);
++    r.step().await;
++    assert_eq!(
++        start_calls(&r.fx).len(),
++        1,
++        "the relaunch went ahead at the grace"
++    );
++    assert!(!r.seat_is_placed());
++    r.observe();
++    assert_eq!(r.held_rows().len(), 1, "held past the grace");
++    let before = r.rebinds();
++    // Threads recovers; the rebind kept retrying past the grace while the fact reads Unresolved.
++    r.threads.set_reconcile_pending(false);
++    for _ in 0..4 {
++        r.advance(60);
++        r.step().await;
++        if r.seat_is_placed() {
++            break;
++        }
++    }
++    assert!(r.seat_is_placed(), "calls: {} -> {}", before, r.rebinds());
++    r.observe();
++    assert_eq!(
++        the_clone(&r.fx, &r.clone.id).seat_fact.map(|f| f.state),
++        Some(SeatFactState::Resolved {
++            pane: r.pane.clone()
++        })
++    );
++    assert_eq!(r.refused(), None);
++    assert!(r.held_rows().is_empty(), "restart_held clears once placed");
++    assert_eq!(
++        start_calls(&r.fx).len(),
++        1,
++        "the agent was not started again"
++    );
++}
++
++#[tokio::test]
++async fn definitive_rebind_refusal_records_once_and_is_not_retried() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.set_foreign_key(&ThreadsSeatRef(HELD_SEAT.into()));
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    let changed = crate::reconcile::planner::incarnation_changed_at(&r.fx.journal).unwrap();
++    assert_eq!(r.refused().as_deref(), Some("unauthorized"));
++    let raw =
++        r.fx.journal
++            .meta_get(&rebind_refused_key(&r.clone.id))
++            .unwrap()
++            .unwrap();
++    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
++    assert_eq!(v["incarnation"], changed.to_rfc3339());
++    assert_eq!(v["reason"], "unauthorized");
++    for _ in 0..4 {
++        r.advance(30);
++        r.observe();
++        r.step().await;
++    }
++    assert_eq!(r.rebinds(), 1, "not retried in this incarnation");
++    assert_eq!(
++        r.fx.journal
++            .meta_get(&rebind_refused_key(&r.clone.id))
++            .unwrap()
++            .as_deref(),
++        Some(raw.as_str()),
++        "recorded once"
++    );
++    // A refused rebind does not block the relaunch.
++    assert_eq!(start_calls(&r.fx).len(), 1, "{:?}", calls(&r.fx));
++}
++
++#[tokio::test]
++async fn rebind_not_found_is_recorded_as_refused() {
++    // The held seat's saved pane is another pane: NotFound is a definitive refusal (spec §1 wins over §4.2).
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.hold_for_restart(
++        &ThreadsSeatRef(HELD_SEAT.into()),
++        &HerdrPaneId("p-elsewhere".into()),
++    );
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    assert_eq!(r.refused().as_deref(), Some("not_found"));
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++}
++
++#[tokio::test]
++async fn rebind_already_resolved_is_done() {
++    let r = restarted(true, Had::Session, "claude").await;
++    // Threads placed the seat on the pane between graph's read and the call.
++    r.view.set(
++        &ThreadsSeatRef(HELD_SEAT.into()),
++        SeatStatus::Resolved {
++            pane: r.pane.clone(),
++        },
++    );
++    r.step().await;
++    assert_eq!(r.rebinds(), 1);
++    assert_eq!(r.refused(), None, "already placed is not a refusal");
++    let done = rows(
++        &r.fx,
++        EffectKind::Custom(crate::threads::effects::REBIND_KIND.into()),
++    );
++    assert_eq!(done.len(), 1);
++    assert_eq!(done[0].status, EffectStatus::Done);
++}
++
++#[tokio::test]
++async fn ordinary_restart_refuses_no_rebind() {
++    for keyless in [false, true] {
++        let r = restarted(keyless, Had::Session, "claude").await;
++        r.step().await;
++        r.observe();
++        r.advance(91);
++        r.step().await;
++        assert_eq!(r.rebinds(), 1);
++        assert_eq!(r.refused(), None);
++        assert!(
++            r.fx.journal
++                .meta_get(&rebind_refused_key(&r.clone.id))
++                .unwrap()
++                .is_none(),
++            "no rebind_refused meta"
++        );
++    }
++}
++
++#[tokio::test]
++async fn first_unresolved_read_records_seat_unresolved() {
++    let r = restarted(false, Had::Session, "claude").await;
++    assert_eq!(
++        r.fx.journal
++            .meta_get(&seat_unresolved_key(&r.clone.id))
++            .unwrap(),
++        None
++    );
++    r.step().await;
++    let changed = crate::reconcile::planner::incarnation_changed_at(&r.fx.journal).unwrap();
++    assert_eq!(
++        r.fx.journal
++            .meta_get(&seat_unresolved_key(&r.clone.id))
++            .unwrap(),
++        Some(changed.to_rfc3339())
++    );
++    // A later Resolved read never clears it.
++    r.observe();
++    r.step().await;
++    assert!(seat_unresolved_in(&r.fx.journal, &r.clone.id, changed));
++}
++
++#[tokio::test]
++async fn keyless_relaunch_occupant_is_not_released_by_placement() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.step().await;
++    assert!(r.seat_is_placed());
++    r.observe();
++    r.advance(5);
++    r.step().await;
++    assert_eq!(relaunch_rows(&r.fx), 1);
++    assert!(
++        start_calls(&r.fx).is_empty(),
++        "placed, still inside the grace"
++    );
++    r.advance(90);
++    r.step().await;
++    assert_eq!(start_calls(&r.fx).len(), 1);
++}
++
++#[tokio::test]
++async fn undo_then_restart_rebinds_and_relaunches_once() {
++    // Undo: the Restore launch ran and its mark is on record; then Herdr restarts before the agent reattaches.
++    let fx = fx();
++    let threads = Arc::new(FakeThreads::new());
++    let map = Arc::new(crate::threads::mapping::FakePaneSeatMap::new());
++    let view = Arc::new(FakeThreadsSeatView::new());
++    crate::threads::register_with(&fx.rec, threads.clone(), map, view.clone());
++    threads.enable_resurrect(view.clone(), fx.clock.clone());
++    let epoch = OpId::new();
++    let (c, _) = restored_clone(&fx, &epoch).await;
++    step(&fx).await;
++    assert_eq!(start_calls(&fx).len(), 1, "the restore launch");
++    fx.clock.advance(chrono::Duration::seconds(30));
++    let pane = cold_restart(&fx, &c.id).await;
++    keep_pane_id(&fx, &c.id, &pane);
++    threads.hold_for_restart(&ThreadsSeatRef("seat-1".into()), &pane);
++    seat_state(
++        &fx,
++        &c.id,
++        json!({ "fact": unresolved("seat-1", fx.clock.now()) }),
++    );
++    step(&fx).await;
++    assert_eq!(threads.call_count("rebind_held_seat"), 1);
++    assert!(start_calls(&fx).is_empty(), "inside the grace");
++    fx.clock.advance(chrono::Duration::seconds(91));
++    step(&fx).await;
++    let starts = start_calls(&fx);
++    assert_eq!(starts.len(), 1, "{:?}", calls(&fx));
++    assert_eq!(starts[0].args, ["--resume", "abc"]);
++    fx.herdr.clear_calls();
++    for _ in 0..3 {
++        fx.clock.advance(chrono::Duration::seconds(120));
++        step(&fx).await;
++    }
++    assert!(start_calls(&fx).is_empty(), "relaunched exactly once");
++    assert_eq!(
++        threads.call_count("rebind_held_seat"),
++        1,
++        "rebound exactly once"
++    );
++}
++
++// -------------------------------------------------------------------------------------------------
++// clones.restart_held (hg-lnw.11, spec §4.5)
++// -------------------------------------------------------------------------------------------------
++
++impl Restarted {
++    /// The `restart_held` rows of the clones status at the fake clock's now.
++    fn held_rows(&self) -> Vec<serde_json::Value> {
++        let st = crate::daemon::clone_status::clone_status_at(
++            &view(&self.fx),
++            &self.fx.journal,
++            self.fx.clock.now(),
++        );
++        st["restart_held"].as_array().unwrap().clone()
++    }
++
++    fn remedy(&self) -> String {
++        format!(
++            "herdr-threads human seat rebind {HELD_SEAT} --pane {} --operator",
++            self.pane.0
++        )
++    }
++}
++
++#[tokio::test]
++async fn restart_held_row_after_grace_when_rebind_refused() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.set_foreign_key(&ThreadsSeatRef(HELD_SEAT.into()));
++    r.step().await;
++    assert_eq!(r.refused().as_deref(), Some("unauthorized"));
++    assert!(r.held_rows().is_empty(), "inside the grace");
++    r.advance(89);
++    r.observe();
++    r.step().await;
++    assert!(r.held_rows().is_empty(), "89 s");
++    r.advance(2);
++    r.observe();
++    r.step().await;
++    let rows = r.held_rows();
++    assert_eq!(rows.len(), 1, "{rows:?}");
++    assert_eq!(rows[0]["clone"], r.clone.id.to_string());
++    assert_eq!(rows[0]["seat"], HELD_SEAT);
++    assert_eq!(rows[0]["pane"], r.pane.0);
++    assert_eq!(rows[0]["reason"], "rebind refused: unauthorized");
++    assert_eq!(rows[0]["remedy"], r.remedy());
++    // The operator resolves the seat: the row clears.
++    r.view.set(
++        &ThreadsSeatRef(HELD_SEAT.into()),
++        SeatStatus::Resolved {
++            pane: r.pane.clone(),
++        },
++    );
++    r.observe();
++    r.step().await;
++    assert!(r.held_rows().is_empty(), "cleared once the seat resolves");
++}
++
++#[tokio::test]
++async fn restart_held_row_after_grace_when_rebind_errors() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.set_reconcile_pending(true);
++    r.step().await;
++    r.advance(91);
++    r.observe();
++    r.step().await;
++    assert!(r.rebinds() >= 1);
++    assert_eq!(r.refused(), None);
++    let rows = r.held_rows();
++    assert_eq!(rows.len(), 1, "{rows:?}");
++    assert_eq!(rows[0]["reason"], "rebind did not complete");
++    assert_eq!(rows[0]["remedy"], r.remedy());
++}
++
++#[tokio::test]
++async fn restart_held_row_after_grace_when_rebind_never_attempted() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.disconnect();
++    r.step().await;
++    r.advance(91);
++    r.observe();
++    r.step().await;
++    assert_eq!(r.rebinds(), 0, "no call got through");
++    let rows = r.held_rows();
++    assert_eq!(rows.len(), 1, "{rows:?}");
++    assert_eq!(rows[0]["reason"], "rebind did not complete");
++}
++
++#[tokio::test]
++async fn no_restart_held_row_when_rebind_succeeds() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.step().await;
++    assert!(r.seat_is_placed());
++    r.observe();
++    r.advance(120);
++    r.observe();
++    r.step().await;
++    assert!(r.held_rows().is_empty());
++}
++
++#[tokio::test]
++async fn no_restart_held_row_when_seat_resolves_by_itself() {
++    let r = restarted(true, Had::Session, "claude").await;
++    r.threads.set_busy(true);
++    r.step().await;
++    // Threads places the seat without graph's help (the agent checked in).
++    r.view.set(
++        &ThreadsSeatRef(HELD_SEAT.into()),
++        SeatStatus::Resolved {
++            pane: r.pane.clone(),
++        },
++    );
++    r.advance(120);
++    r.observe();
++    r.step().await;
++    assert!(r.held_rows().is_empty());
++}

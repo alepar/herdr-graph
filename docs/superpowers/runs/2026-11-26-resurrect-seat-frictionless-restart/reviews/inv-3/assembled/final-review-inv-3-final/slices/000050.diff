@@ -1,0 +1,44 @@
+diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-2.md b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-2.md
+new file mode 100644
+index 0000000..2abe097
+--- /dev/null
++++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/reviews/inv-1/final-review-inv-1.cluster-2.md
+@@ -0,0 +1,38 @@
++# Final review, inv-1, cluster 2 (docs)
++
++Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 8f8ec538ca1f1e4d8d897804aae726472f753ef9 (both verified with `git rev-parse --verify <sha>^{commit}`). Caller checkout observed at HEAD 8f8ec538, clean status, before and during the review; no worktree was created and no caller file was edited. Review source binding (`bind-review-source`, inv-1) succeeded.
++
++Scope: the 23 files of the `docs` cluster in clusters.json (slices 000006-000028): the hg-lnw run records under docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/, the onboarding spec, specs/INDEX.md and docs/verification-matrix.md. Spec: bead hg-lnw and its design doc (itself in this cluster), which has a `## Requirement baseline` (B1-B4, no human scope change rows).
++
++## What was checked
++
++- docs/verification-matrix.md pin section against head: the gitlink `third_party/herdr-threads` is 7c3c09082e8894ebceec9c060b769b07e359a2ad, the submodule's `v3.6.0` tag object is 5bcb8a7b5f2ef0c1d0fd88b3b21870256e389852, and Cargo.lock resolves herdr-threads 3.6.0, all as stated. The stated resurrect op key `resurrect:<clone>:<epoch>:<replace or none>:<refusal count>` matches src/threads/effects.rs:1812; the rebind key `rebind:<clone>:<changed_at>` matches effects.rs:1907; `with_level(GRAPH_SERVICE_LEVEL)` (V4) is at src/threads/adapter.rs:281; the named upgrade error text matches adapter.rs:68; `SeatAlreadyResolved` is mapped explicitly at adapter.rs:111; the refusal forgetting (`forget_completed`) the matrix describes is present (adapter.rs:350, 414, 481).
++- Onboarding spec G4 rows and its new Post-Implementation note against CURRENT-DESIGN.md and README at head: consistent (7 d reversible window, 24 h settle, invitation re-issue, fresh keyless start waits for placement or grace, keyed fresh start never waits, resumed relaunch waits the full grace, the two status rows). The printed remedy `herdr-threads human seat rebind SEAT --pane PANE --operator` matches `operator_rebind_remedy` (src/daemon/clone_status.rs:66-67) and the form threads 3.6.0 itself prints (evidence/hg-lnw.9/late-rebind-pinned-order.log).
++- The design-roast r2 escalation (does a fresh agent started before a late rebind enroll later) is settled by evidence: evidence/hg-lnw.9/late-rebind-pinned-order.log shows the seat unbound after the rebind and bound with an open claude binding after one prompt, which is what README:94 now says ("enrolls on the original seat at its next check-in").
++- Requirement baseline B1-B4: the docs in this cluster describe the delivered behaviour consistently with the code reached above (resurrect on undo, U2 rebind on restart, v4 registration via U1, rebind before keyless relaunch with resume whenever a session exists). Tracing each row from production entry points through the planner and executors lies in the src/tests clusters and is the seam reviewer's; nothing in this cluster contradicts delivery.
++- INDEX.md row, amend-design-1.md, coverage ledger and round files, design roast ledger and overrides, friction.md, run.md: well-formed run records; no claims about current behaviour beyond what is checked above.
++
++## Spec of record left stale
++
++The design doc (linked from INDEX.md and named as "Design:" in the onboarding spec's new Post-Implementation note) asks in its own `## Post-Implementation Notes` section for a dated note on anything that diverged; that section is empty at head. The bead hg-lnw.21 exempts historical records from its remedy-string sweep, so the stale remedy alone is acceptable, but the design text now contradicts the shipped behaviour on several normative points, most of them the design-roast r2 confirmed items that run.md records as "designRoast r2 fixed" while the fixes landed only in beads and code:
++
++- §4.2 says a rebind `NotFound` is an "already-placed" done answer; the code records `NotFound` as a definitive refusal under `rebind_refused:<clone>` (effects.rs rebind executor; verification-matrix lists `NotFound` as definitive), and `SeatAlreadyResolved` is the done answer.
++- §3 gives the resurrect op key as `resurrect:<clone>:<epoch>:<replace seat id or none>`; the code adds `:<refusal count>`.
++- §3 lists no `SeatAlreadyResolved` outcome; the adapter maps it to done.
++- §3 ties the invitation reset to the resurrect success transition only; hg-lnw.15 applies it on every keyless resurrect acknowledgement, and CURRENT-DESIGN says rejected rows are not re-issued, which §3's no-op claim does not cover.
++- §4 table rows for adopted keyless seats say the relaunch "waits until the seat is placed or the grace expires" for the session-captured (resume) case; the shipped rule, documented in README and CURRENT-DESIGN, is that a resumed relaunch waits the full 90 s grace.
++- §3 and §4.5 print the remedy without the `human` namespace, which threads 3.6.0 refuses (hg-lnw.21).
++- The hg-lnw.23 change (retry `agent.start` under a pane-qualified name on `agent_name_taken`) is not recorded.
++
++## Verdict
++not ready (design doc of record contradicts shipped behaviour in six places and its Post-Implementation Notes section is empty)
++
++## Must fix before landing
++- Append a dated Post-Implementation note to docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md recording the divergences: rebind NotFound is a definitive refusal (SeatAlreadyResolved is done), resurrect op key carries a refusal count, SeatAlreadyResolved is a resurrect done outcome, the invitation reset runs on every keyless resurrect acknowledgement and skips rejected rows, resumed relaunches wait the full 90 s grace, the remedy is `herdr-threads human seat rebind SEAT --pane PANE --operator`, and the hg-lnw.23 pane-qualified agent-name retry.
++
++## Untested scope
++- The remedy string graph prints (`operator_rebind_remedy`) is not exercised end to end against real threads; the tier-5 `operator_rebind_resurrects_and_places` test builds its own argv (hg-lnw.21 report), so the docs' remedy claim rests on a string match plus the threads hook text in evidence/hg-lnw.9.
++
++## Deferred OK
++- docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/interim-status.md describes tip 985239e ("tier 5 not run", "not safe to merge alone"); it is a dated interim record, superseded by later evidence, and could carry a one-line superseded pointer.
++- docs/superpowers/specs/INDEX.md lists the hg-lnw spec as `draft` although it is implemented; matches how sibling rows are kept.

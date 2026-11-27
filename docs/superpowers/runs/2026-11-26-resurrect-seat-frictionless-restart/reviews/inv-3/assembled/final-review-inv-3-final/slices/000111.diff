@@ -1,0 +1,145 @@
+diff --git a/evidence/hg-lnw.14/focused-1.log b/evidence/hg-lnw.14/focused-1.log
+new file mode 100644
+index 0000000..3b59d35
+--- /dev/null
++++ b/evidence/hg-lnw.14/focused-1.log
+@@ -0,0 +1,139 @@
++   Compiling herdr-threads v3.1.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.14/third_party/herdr-threads)
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.14)
++warning: field `herdr` is never read
++   --> src/threads/tests.rs:245:5
++    |
++237 | struct Fx {
++    |        -- field in this struct
++...
++245 |     herdr: Arc<FakeHerdr>,
++    |     ^^^^^
++    |
++    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
++
++warning: `herdr-graph` (lib test) generated 1 warning
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 41s
++     Running unittests src/lib.rs (target/debug/deps/herdr_graph-af06ac88911be9ca)
++
++running 48 tests
++test daemon::doctor::tests::resurrect_held_check_names_the_remedy ... ok
++test threads::tests::fake_resurrect_held_seat_with_replace_invalid ... ok
++test threads::tests::fake_resurrect_already_resolved_on_target ... ok
++test threads::tests::fake_resurrect_between_24h_and_7d_settles_ordinary_pending_invitations ... ok
++test threads::tests::fake_resurrect_inside_24h_keeps_memberships_and_invitations ... ok
++test threads::tests::fake_resurrect_target_already_owned ... ok
++test threads::tests::fake_resurrect_replace_must_be_bare ... ok
++test threads::tests::fake_resurrect_is_idempotent_under_op ... ok
++test plan::tests::cycle_guard_resurrection_closes_loop ... ok
++test bootstrap::tests::resolve_retired_seat_proposes_resurrect ... ok
++test plan::release::tests::released_seat_cannot_be_resurrected ... ok
++test plan::tests::seat_and_teamspace_resurrect_skip_a_purge_tombstone ... ok
++test plan::tests::teamspace_resurrect_first_seat_assigns ... ok
++test plan::tests::purged_seated_clone_is_not_revived_by_seat_resurrect ... ok
++test plan::tests::seat_resurrect_first_seat_assigns ... ok
++test plan::tests::teamspace_resurrect_leaves_earlier_retired_seats_retired ... ok
++test plan::tests::resurrect_active_opens_runtime ... ok
++test bootstrap::tests::proposal_resurrect_and_clone_add_rules_still_win ... ok
++test plan::tests::resurrect_restores_ids ... ok
++test plan::tests::seat_resurrect_no_auto_assign_when_live_seats_exist ... ok
++test undo::tests::seat_resurrection_writes_a_restore_intent_for_a_seated_clone ... ok
++test undo::tests::undo_plan_applied_seat_retirement_previews_and_applies_resurrection ... ok
++test undo::tests::seat_resurrect_removes_its_retirements_exclusion ... ok
++test reconcile::tests::seatless_resurrection_launches_once_through_the_ordinary_start_rule ... ok
++test undo::tests::seat_resurrection_of_a_seatless_clone_writes_no_restore_intent ... ok
++test threads::tests::resurrect_passes_the_bare_seat_of_the_reopened_pane_as_replace ... ok
++test threads::tests::resurrect_held_row_requires_the_current_epoch ... ok
++test threads::tests::resurrect_passes_no_replace_without_a_seat_on_the_pane ... ok
++test threads::tests::keyless_resurrect_between_24h_and_7d_keeps_memberships ... ok
++test threads::tests::resurrect_refusal_replans_when_the_target_frees ... ok
++test threads::tests::resurrect_held_row_clears_when_the_fact_leaves_reversible ... ok
++test threads::tests::resurrect_refusal_replans_when_a_bare_seat_appears ... ok
++test threads::tests::resurrect_held_row_after_90s_while_reversible ... ok
++test threads::tests::operator_resurrect_after_refusal_is_acknowledged_and_launches_once ... FAILED
++test threads::tests::resurrect_already_resolved_acknowledges ... ok
++test threads::tests::resurrect_success_acknowledges ... ok
++test threads::tests::resurrect_not_found_then_final_takes_succession ... FAILED
++test threads::tests::keyless_reversible_close_then_undo_resurrects_the_same_seat ... ok
++test reconcile::tests::resurrection_unretires_the_same_seat ... ok
++test threads::tests::keyless_close_restart_then_undo_resurrects_onto_the_reopened_pane ... ok
++test threads::tests::resurrect_not_found_then_resolved_acknowledges ... FAILED
++test threads::tests::keyed_reversible_close_then_undo_unretires_and_never_resurrects ... ok
++test threads::tests::resurrect_refused_meta_clears_on_ack_restore ... FAILED
++test threads::tests::resurrect_transient_is_retried ... ok
++test threads::tests::resurrection_succeeds_the_seat ... ok
++test threads::tests::resurrect_refused_meta_clears_on_succession ... ok
++test threads::tests::tombstones_are_not_planned_listed_undone_resurrected_or_invited ... ok
++test threads::tests::resurrect_target_already_owned_is_recorded_once_and_gates_the_launch ... ok
++
++failures:
++
++---- threads::tests::operator_resurrect_after_refusal_is_acknowledged_and_launches_once stdout ----
++herdr-graph: reconcile: effect ef_04X6CQV1X2AAD01PTWW23B16AM failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_2G01EDYP13GPYX2NJXFJ3RKT30 failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_61FDCJM71SHEXEXYN2JEDWMAZF failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_585QHMZ233PX24Q98XB0QJNFW5 failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_2RC4GBES5XGGZWY0GVZGXPJSGB failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_1NRADGF0QR6RZSEKG53BJ7AJRY failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_4D4HGYN6AX8N1CDPJPYCRTK9AH failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_05TZFQYG4FBTG4NF503RA4K1DV failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_0QN4EXYKS1NJE482FZ54GRZKF6 failed: fake seat view rejected
++
++thread 'threads::tests::operator_resurrect_after_refusal_is_acknowledged_and_launches_once' (1930065) panicked at src/threads/tests.rs:6317:5:
++assertion `left == right` failed: acknowledged: threads_done opens the restore launch gate
++  left: None
++ right: Some(Restore { seat: "seat-A", epoch: op_01M8D9MYM8ED99KWHKJH86ZQJ0, threads_done: true, launched: None, last_refusal: None })
++note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
++
++---- threads::tests::resurrect_not_found_then_final_takes_succession stdout ----
++herdr-graph: reconcile: effect ef_4HFCGR044WP2EAKZ6NPSV54NAV failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_0RJD791ZDCARAQAH608NZEXGYH failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_254YBQZ5Q9B2X0G73TPD8T8SHR failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_4JPT208W82ZN5KJV7BY9QTQ6HB failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_45C3WDXFPW7RGT78D2V381K73R failed: fake seat view rejected
++
++thread 'threads::tests::resurrect_not_found_then_final_takes_succession' (1930070) panicked at src/threads/tests.rs:6096:5:
++assertion `left == right` failed: NotFound, then deferred on the stale fact
++  left: 4
++ right: 1
++
++---- threads::tests::resurrect_not_found_then_resolved_acknowledges stdout ----
++herdr-graph: reconcile: effect ef_2F2NPG1KFNG1GDZNZ3VESEBXZ3 failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_12BGRDH6CNVAG96M00FCY5BVSD failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_1CTA7E5BCT047B9TAR86DHYP4Z failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_50XXNTAV7E5QNH45PXZXNF6P1S failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_1B3B0BDH184AFYRP880FPC04DN failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_4YEVWEG3VQEJAF94DBBXDF5BRN failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_52492QREXYGMSYJ8SDPK9T06A3 failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_0EX3000YMY4DTRPC0CYT9NCJHJ failed: fake seat view rejected
++
++thread 'threads::tests::resurrect_not_found_then_resolved_acknowledges' (1930071) panicked at src/threads/tests.rs:6140:5:
++assertion `left == right` failed
++  left: None
++ right: Some(Restore { seat: "seat-A", epoch: op_01M8D9MYMW7NZD85HEBBAMZ1Y6, threads_done: true, launched: None, last_refusal: None })
++
++---- threads::tests::resurrect_refused_meta_clears_on_ack_restore stdout ----
++herdr-graph: reconcile: effect ef_0XGT1A1CM18G8F8AMBEH5C2YSH failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_3BENZPT038DPED9MFG6RHZ3WHF failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_52B5EMK9PC2RCW6WCC459FJX9N failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_7ZB19BAXZDZ2JDE103EQ7MBMAX failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_20G0DKK803AY315AABNTMFECEW failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_2WPF63M2R4C1XRDYR398HWTCQJ failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_52N7R5FSBSPR3YTRR5SSZ21SYP failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_3ASB4DBPHE0NFD991VDZX8YK6H failed: fake seat view rejected
++herdr-graph: reconcile: effect ef_4JPYK2D73FMYD82Q0STEJZK8Z0 failed: fake seat view rejected
++
++thread 'threads::tests::resurrect_refused_meta_clears_on_ack_restore' (1930076) panicked at src/threads/tests.rs:6359:5:
++assertion `left == right` failed
++  left: None
++ right: Some(Restore { seat: "seat-A", epoch: op_01M8D9MYNB7FJYGF121E8W25PR, threads_done: true, launched: None, last_refusal: None })
++
++
++failures:
++    threads::tests::operator_resurrect_after_refusal_is_acknowledged_and_launches_once
++    threads::tests::resurrect_not_found_then_final_takes_succession
++    threads::tests::resurrect_not_found_then_resolved_acknowledges
++    threads::tests::resurrect_refused_meta_clears_on_ack_restore
++
++test result: FAILED. 44 passed; 4 failed; 0 ignored; 0 measured; 1449 filtered out; finished in 0.38s
++
++error: test failed, to rerun pass `--lib`
