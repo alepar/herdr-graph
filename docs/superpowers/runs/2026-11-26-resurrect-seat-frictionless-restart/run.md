@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-26-resurrect-seat-frictionless-restart
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: fix-loop
+phase: report
 codeMechanism: ordinary-subagents
 runTag: resurrect-seat-frictionless-restart-20261126T231316
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -14,8 +14,9 @@ epic: hg-lnw
 roastDesignRound: 2
 roastCodeRound: 2
 roastCodeExit: converged
+friction: 14 events
 findingsLedger: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger.md
-roast-code: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md, docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-2.md
+roast-code: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md, docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-2.md, docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-audit.md
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
@@ -157,4 +158,4 @@ parked:
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · degraded-verdict · "verdict qualifier [panel-capped: 30 unverified]"
 - coverage-amend-design-1 · L23-L29, L31, L32 applied auto; L30 rejected auto · R1..R12 (coverage-round-1-requirements.md)
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md · escalation · "§4.2 late rebind: does an already-running fresh keyless agent enroll at its next turn or only at a lifecycle event (UNVERIFIED external; asked herdr-threads graph-asks; tier-3 check added to hg-lnw.9)"
-codeBuckets: {"stopReason":"ready-drained","completed":["hg-lnw.2","hg-lnw.3","hg-lnw.4","hg-lnw.6","hg-lnw.7","hg-lnw.8","hg-lnw.9","hg-lnw.10","hg-lnw.11","hg-lnw.12","hg-lnw.13","hg-lnw.14","hg-lnw.15","hg-lnw.21","hg-lnw.22","hg-lnw.23"],"escalated":[],"pendingRetry":[],"parked":[],"stalled":[],"review":"not ready (keyless restore launch with a lost response still records launched: (cluster 30), and cluster 2 is unreviewed)","reviewPath":".superpowers/sdd/hg-lnw-plan/final-review-inv-2.md","sweep":"SWEEP DEFERRED (caller-owned)","ledger":".superpowers/sdd/hg-lnw-plan/progress.md","worktreesKept":[],"processSweep":{"stopped":[],"survived":[],"unknown":["stop-run-processes unverifiable: foreign empty /tmp/.git and unreadable system pids; AGENTS.md /tmp/hg-* count 0 after every merge"],"kept":[]}}
+codeBuckets: {"stopReason":"ready-drained","completed":["hg-lnw.2","hg-lnw.3","hg-lnw.4","hg-lnw.6","hg-lnw.7","hg-lnw.8","hg-lnw.9","hg-lnw.10","hg-lnw.11","hg-lnw.12","hg-lnw.13","hg-lnw.14","hg-lnw.15","hg-lnw.21","hg-lnw.22","hg-lnw.23"],"escalated":[],"pendingRetry":[],"parked":[],"stalled":[],"review":"not ready (keyless restore launch with a lost response still records launched: (cluster 30), and cluster 2 is unreviewed)","reviewPath":".superpowers/sdd/hg-lnw-plan/final-review-inv-2.md","sweep":"d1bd89e: tiers 1-2 PASS (cargo test exit 0); tiers 3+5 (HG_REAL_THREADS=1, --features private-herdr, --test-threads=1) FAIL 2 of ~1700: e2e_private_herdr e2e_cold_restart_attended_keeps_clones_on_their_seats (40 s rebind wait in the full serial run; 3/3 pass alone; also timed out in the 985239e interim run) and herdr_client private_process_info_is_shell (1/3 fail alone; flaky at c1c1943 too, main unmeasured); 0 rig leaks @ d1bd89e","ledger":".superpowers/sdd/hg-lnw-plan/progress.md","worktreesKept":[],"processSweep":{"stopped":[],"survived":[],"unknown":["stop-run-processes unverifiable: foreign empty /tmp/.git and unreadable system pids; AGENTS.md /tmp/hg-* count 0 after every merge"],"kept":[]}}
