@@ -15,8 +15,8 @@ roastDesignRound: 2
 roastCodeRound: 2
 roastCodeExit: converged
 friction: 14 events
-findingsLedger: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/findings-ledger.md
-roast-code: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md, docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-2.md, docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-audit.md
+findingsLedger: findings-ledger.md
+roast-code: 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-2.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-audit.md
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
@@ -158,4 +158,15 @@ parked:
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · degraded-verdict · "verdict qualifier [panel-capped: 30 unverified]"
 - coverage-amend-design-1 · L23-L29, L31, L32 applied auto; L30 rejected auto · R1..R12 (coverage-round-1-requirements.md)
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md · escalation · "§4.2 late rebind: does an already-running fresh keyless agent enroll at its next turn or only at a lifecycle event (UNVERIFIED external; asked herdr-threads graph-asks; tier-3 check added to hg-lnw.9)"
-codeBuckets: {"stopReason":"ready-drained","completed":["hg-lnw.2","hg-lnw.3","hg-lnw.4","hg-lnw.6","hg-lnw.7","hg-lnw.8","hg-lnw.9","hg-lnw.10","hg-lnw.11","hg-lnw.12","hg-lnw.13","hg-lnw.14","hg-lnw.15","hg-lnw.21","hg-lnw.22","hg-lnw.23"],"escalated":[],"pendingRetry":[],"parked":[],"stalled":[],"review":"not ready (keyless restore launch with a lost response still records launched: (cluster 30), and cluster 2 is unreviewed)","reviewPath":".superpowers/sdd/hg-lnw-plan/final-review-inv-2.md","sweep":"d1bd89e: tiers 1-2 PASS (cargo test exit 0); tiers 3+5 (HG_REAL_THREADS=1, --features private-herdr, --test-threads=1) FAIL 2 of ~1700: e2e_private_herdr e2e_cold_restart_attended_keeps_clones_on_their_seats (40 s rebind wait in the full serial run; 3/3 pass alone; also timed out in the 985239e interim run) and herdr_client private_process_info_is_shell (1/3 fail alone; flaky at c1c1943 too, main unmeasured); 0 rig leaks @ d1bd89e","ledger":".superpowers/sdd/hg-lnw-plan/progress.md","worktreesKept":[],"processSweep":{"stopped":[],"survived":[],"unknown":["stop-run-processes unverifiable: foreign empty /tmp/.git and unreadable system pids; AGENTS.md /tmp/hg-* count 0 after every merge"],"kept":[]}}
+codeBuckets:
+  completed: hg-lnw.2, hg-lnw.3, hg-lnw.4, hg-lnw.6, hg-lnw.7, hg-lnw.8, hg-lnw.9, hg-lnw.10, hg-lnw.11, hg-lnw.12, hg-lnw.13, hg-lnw.14, hg-lnw.15, hg-lnw.21, hg-lnw.22, hg-lnw.23, hg-lnw.24, hg-lnw.25, hg-lnw.26, hg-lnw.27, hg-lnw.28, hg-lnw.29, hg-lnw.30, hg-lnw.31, hg-lnw.32
+  escalated: none
+  pendingRetry: none
+  parked: none
+  stalled: false
+  review: not ready (default cargo test failed on the instruction_writers inventory, fixed after by hg-lnw.31; undo preview omits the keyless window note on the ordinary tab-close ordering)
+  sweep: d1bd89e — 3458 passed, 2 failed, 0 errors, 7 skipped; failing: e2e_private_herdr::e2e_cold_restart_attended_keeps_clones_on_their_seats (passes 3/3 alone), herdr_client::private_process_info_is_shell (1/3 alone, flaky on this branch before); command: toolbox run -c hg-build env TMPDIR=/tmp/sp-8aba7101/sweep cargo test && toolbox run -c hg-build env TMPDIR=/tmp/sp-8aba7101/sweep HG_REAL_THREADS=1 cargo test --features private-herdr --no-fail-fast -- --test-threads=1 @ d1bd89e85715dae6e780d90af0419212df593780
+  slowness: mergeCheck lacked submodule sync (fixed); final-review clusters split per evidence dir (34 clusters each invocation)
+  worktreesKept: 
+  processSweep: stopped 0 · survived 0 · unknown 1 · kept 0 — unknown: stop-run-processes unverifiable (foreign empty /tmp/.git; unreadable system pids); AGENTS.md /tmp/hg-* cwd count 0 after every run
+sweepFix: 2 failing → hg-lnw.31, hg-lnw.32 · re-run d1bd89e — 3458 passed, 2 failed, 0 errors, 7 skipped; failing: e2e_cold_restart_attended_keeps_clones_on_their_seats, private_process_info_is_shell @ d1bd89e85715dae6e780d90af0419212df593780
