@@ -157,3 +157,5 @@ Herdr-native "undo close" (graph has none; graph undo is the only undo). Automat
 ## Post-Implementation Notes
 
 > *As this design is implemented and iterated on — bug fixes, adjustments, anything that diverged from the assumptions above — append a dated note here, whether or not a formal debugging skill was used.*
+
+- **2026-11-27 (hg-lnw.25): the 3.6.0 floor is checked, not inferred from v4.** Section 2 says an older daemon refuses the v4 registration. That holds only below 3.5.0: 3.5.0 already serves `service_session_v4`, so a 3.5.x daemon registers. Graph now reads the `software_version` in the daemon's published endpoint descriptor at discovery (`threads::discover`, `daemon_floor`) and refuses a daemon below 3.6.0 with `herdr-threads daemon must be at least 3.6.0 (found <version>); upgrade the herdr-threads daemon and restart it`, a retryable disconnect; doctor's `threads` line gives the upgrade step. The explicit-endpoint override (`HERDR_GRAPH_THREADS_SOCKET` + `HERDR_GRAPH_THREADS_INSTANCE`) reads no descriptor and skips the check.

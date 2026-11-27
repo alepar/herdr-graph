@@ -61,7 +61,8 @@ pub(crate) fn api_error(e: ApiError) -> ThreadsError {
 /// rebind). A daemon that does not serve it refuses the registration; there is no fallback to v3.
 pub(crate) const GRAPH_SERVICE_LEVEL: ServiceSessionLevel = ServiceSessionLevel::V4;
 
-/// The named registration error for a daemon that does not serve `GRAPH_SERVICE_LEVEL` (older than 3.6.0).
+/// The named registration error for a daemon that does not serve `GRAPH_SERVICE_LEVEL` (older than 3.5.0).
+/// A 3.5.x daemon serves v4 and registers, so it never reaches this; [`daemon_floor`] refuses it at discovery.
 /// The doctor's `threads` check keys its upgrade step on the capability name in it.
 pub(crate) fn level_refused(detail: &str) -> ThreadsError {
     ThreadsError::Rejected(format!(
@@ -216,8 +217,34 @@ pub struct Discovered {
     pub instance: herdr_threads::node::NodeUuid,
 }
 
+/// The lowest herdr-threads daemon release graph runs against. 3.5.0 already serves `service_session_v4`, so
+/// the v4 registration alone does not prove it; [`discover`] checks the descriptor's `software_version`.
+const DAEMON_FLOOR: (u64, u64, u64) = (3, 6, 0);
+
+/// Refuse a daemon whose published `software_version` is below [`DAEMON_FLOOR`], with the named upgrade error.
+/// A version graph cannot parse as `major.minor.patch` (with an optional `-pre`/`+build` suffix) passes: graph
+/// does not refuse a daemon on a version format it does not understand.
+pub(crate) fn daemon_floor(software_version: &str) -> Result<(), String> {
+    let core = software_version
+        .split(['-', '+'])
+        .next()
+        .unwrap_or(software_version);
+    let parts: Vec<Option<u64>> = core.split('.').map(|p| p.parse().ok()).collect();
+    let [Some(major), Some(minor), Some(patch)] = parts[..] else {
+        return Ok(());
+    };
+    if (major, minor, patch) >= DAEMON_FLOOR {
+        return Ok(());
+    }
+    Err(format!(
+        "herdr-threads daemon must be at least 3.6.0 (found {software_version}); \
+         upgrade the herdr-threads daemon and restart it"
+    ))
+}
+
 /// Read the published endpoint of the daemon that serves `state_dir` for the Herdr at `host_endpoint`.
-/// `NotFound` when no daemon has published one (never started, or stopped).
+/// `NotFound` when no daemon has published one (never started, or stopped); `Unsupported` with the
+/// [`daemon_floor`] error when the daemon is older than 3.6.0.
 pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Discovered> {
     use herdr_threads::daemon::{ownership, paths};
     let ctx = paths::RuntimeContext::explicit(
@@ -233,6 +260,8 @@ pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Disco
         )
     })?;
     let d = ownership::read_descriptor(&paths, instance)?;
+    daemon_floor(&d.software_version)
+        .map_err(|msg| std::io::Error::new(std::io::ErrorKind::Unsupported, msg))?;
     Ok(Discovered {
         socket: d.endpoint,
         instance: d.node_uuid,
