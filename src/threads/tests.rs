@@ -166,10 +166,24 @@ impl Mutation for SeatFixture {
                     read_at: cx.now,
                 });
             }
+            "legacy_fact" => {}
             other => panic!("unknown fixture op {other}"),
         }
         if !deleted {
-            cx.tree.put_record(loc.record_path, &mut rec)?;
+            cx.tree.put_record(loc.record_path.clone(), &mut rec)?;
+        }
+        if cx.request.args["op"] == "legacy_fact" {
+            // The fact as a build before `keyed` existed wrote it: drop the line from the stored TOML.
+            let bytes =
+                crate::store::tree::TreeRead::read_file(&cx.tree, &loc.record_path)?.unwrap();
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(text.contains("\nkeyed = "), "{text}");
+            let legacy: String = text
+                .lines()
+                .filter(|l| !l.starts_with("keyed = "))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            cx.tree.put_file(loc.record_path, legacy.into_bytes());
         }
         Ok(Applied {
             summary: "seat fixture".into(),
@@ -5194,6 +5208,45 @@ async fn keyless_reversible_close_then_undo_resurrects_the_same_seat() {
         assert!(accepted(&fx, t, "seat-A"), "membership kept: {}", t.0);
     }
     assert_eq!(fx.threads.call_count("invite"), invites, "no re-invitation");
+}
+
+/// A reversible fact the old graph wrote without `keyed` (against an upgraded threads daemon) on a keyless
+/// clone reads keyless: the undo resurrects rather than unretires, and the preview names the window.
+#[tokio::test]
+async fn legacy_reversible_fact_on_a_keyless_clone_resurrects() {
+    let fx = model_fx();
+    let (clone, _epoch, _st, _ts, kind) = closed_and_undone(&fx, false).await;
+    assert_eq!(kind, RetirementKind::Reversible);
+    for op in ["keyless", "legacy_fact"] {
+        bookkeeping(
+            &fx,
+            "test_seat_fixture",
+            json!({ "clone": clone.id, "op": op }),
+        );
+    }
+    let c = clone_rec(&fx, &clone.id);
+    assert!(c.keyless);
+    assert!(
+        matches!(
+            c.seat_fact.as_ref().map(|f| &f.state),
+            Some(crate::model::clone::SeatFactState::Retired {
+                reversible: true,
+                keyed: false,
+                ..
+            })
+        ),
+        "{:?}",
+        c.seat_fact
+    );
+    let note = crate::undo::preview::seat_window_note(&c, fx.clock.now());
+    assert!(
+        note.as_deref()
+            .is_some_and(|n| n.contains("comes back with everything")),
+        "{note:?}"
+    );
+    steps(&fx, 5).await;
+    assert_eq!(fx.threads.lifecycle_calls("resurrect_seat"), vec!["seat-A"]);
+    assert_eq!(fx.threads.call_count("unretire_seat"), 0);
 }
 
 /// Spec §3 row 1: a keyed seat's close then undo unretires it and never resurrects, with the model on.
