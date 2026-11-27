@@ -116,6 +116,29 @@ fn threads_check(
     }
 }
 
+/// The `restart held` check: seats still held by threads after a Herdr restart (the `clones.restart_held` rows).
+/// A `[WARN]` per spec §4.5 naming each seat, its pane, why, and the operator remedy; `None` when no seat is held.
+fn restart_held_check(clones: Option<&Value>) -> Option<Check> {
+    let rows = clones?["restart_held"].as_array()?;
+    if rows.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{} seat {} on pane {}: {}; {}",
+                r["name"].as_str().unwrap_or("?"),
+                r["seat"].as_str().unwrap_or("?"),
+                r["pane"].as_str().unwrap_or("unknown"),
+                r["reason"].as_str().unwrap_or("?"),
+                r["remedy"].as_str().unwrap_or("?"),
+            )
+        })
+        .collect();
+    Some(warn_check("restart held", capped(&items)))
+}
+
 const LIST_CAP: usize = 10;
 
 /// `a; b; c; +N more` for lists longer than [`LIST_CAP`].
@@ -608,6 +631,7 @@ pub fn doctor(env: &Env) -> DoctorReport {
         resolve_state_dir(&inputs),
         comp("threads").as_ref(),
     ));
+    checks.extend(restart_held_check(comp("clones").as_ref()));
     match comp("journal") {
         Some(j) => checks.push(check("journal", true, j.to_string())),
         None => checks.push(check("journal", true, "no counts reported")),
@@ -953,6 +977,26 @@ mod tests {
             .expect("attention check");
         assert!(c.warn && c.detail.contains("occupant busy"), "{c:?}");
         assert!(checks.iter().all(|c| c.ok), "{checks:?}");
+    }
+
+    #[test]
+    fn restart_held_check_names_the_operator_remedy() {
+        let clones = serde_json::json!({ "restart_held": [{
+            "clone": "c1", "name": "foreman", "seat": "seat-1", "pane": "w1:p1",
+            "reason": "rebind refused: unauthorized", "since": "2026-01-01T00:00:00+00:00",
+            "remedy": "herdr-threads seat rebind seat-1 --pane w1:p1 --operator",
+        }]});
+        let c = restart_held_check(Some(&clones)).expect("a finding");
+        assert!(c.ok && c.warn, "{c:?}");
+        assert!(
+            c.detail
+                .contains("herdr-threads seat rebind seat-1 --pane w1:p1 --operator"),
+            "{}",
+            c.detail
+        );
+        assert!(c.detail.contains("foreman") && c.detail.contains("unauthorized"));
+        assert!(restart_held_check(Some(&serde_json::json!({ "restart_held": [] }))).is_none());
+        assert!(restart_held_check(None).is_none());
     }
 
     #[test]

@@ -5834,6 +5834,8 @@ async fn late_rebind_after_grace_places_the_seat() {
         "the relaunch went ahead at the grace"
     );
     assert!(!r.seat_is_placed());
+    r.observe();
+    assert_eq!(r.held_rows().len(), 1, "held past the grace");
     let before = r.rebinds();
     // Threads recovers; the rebind kept retrying past the grace while the fact reads Unresolved.
     r.threads.set_reconcile_pending(false);
@@ -5853,6 +5855,7 @@ async fn late_rebind_after_grace_places_the_seat() {
         })
     );
     assert_eq!(r.refused(), None);
+    assert!(r.held_rows().is_empty(), "restart_held clears once placed");
     assert_eq!(
         start_calls(&r.fx).len(),
         1,
@@ -6032,4 +6035,120 @@ async fn undo_then_restart_rebinds_and_relaunches_once() {
         1,
         "rebound exactly once"
     );
+}
+
+// -------------------------------------------------------------------------------------------------
+// clones.restart_held (hg-lnw.11, spec §4.5)
+// -------------------------------------------------------------------------------------------------
+
+impl Restarted {
+    /// The `restart_held` rows of the clones status at the fake clock's now.
+    fn held_rows(&self) -> Vec<serde_json::Value> {
+        let st = crate::daemon::clone_status::clone_status_at(
+            &view(&self.fx),
+            &self.fx.journal,
+            self.fx.clock.now(),
+        );
+        st["restart_held"].as_array().unwrap().clone()
+    }
+
+    fn remedy(&self) -> String {
+        format!(
+            "herdr-threads seat rebind {HELD_SEAT} --pane {} --operator",
+            self.pane.0
+        )
+    }
+}
+
+#[tokio::test]
+async fn restart_held_row_after_grace_when_rebind_refused() {
+    let r = restarted(true, Had::Session, "claude").await;
+    r.threads.set_foreign_key(&ThreadsSeatRef(HELD_SEAT.into()));
+    r.step().await;
+    assert_eq!(r.refused().as_deref(), Some("unauthorized"));
+    assert!(r.held_rows().is_empty(), "inside the grace");
+    r.advance(89);
+    r.observe();
+    r.step().await;
+    assert!(r.held_rows().is_empty(), "89 s");
+    r.advance(2);
+    r.observe();
+    r.step().await;
+    let rows = r.held_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["clone"], r.clone.id.to_string());
+    assert_eq!(rows[0]["seat"], HELD_SEAT);
+    assert_eq!(rows[0]["pane"], r.pane.0);
+    assert_eq!(rows[0]["reason"], "rebind refused: unauthorized");
+    assert_eq!(rows[0]["remedy"], r.remedy());
+    // The operator resolves the seat: the row clears.
+    r.view.set(
+        &ThreadsSeatRef(HELD_SEAT.into()),
+        SeatStatus::Resolved {
+            pane: r.pane.clone(),
+        },
+    );
+    r.observe();
+    r.step().await;
+    assert!(r.held_rows().is_empty(), "cleared once the seat resolves");
+}
+
+#[tokio::test]
+async fn restart_held_row_after_grace_when_rebind_errors() {
+    let r = restarted(true, Had::Session, "claude").await;
+    r.threads.set_reconcile_pending(true);
+    r.step().await;
+    r.advance(91);
+    r.observe();
+    r.step().await;
+    assert!(r.rebinds() >= 1);
+    assert_eq!(r.refused(), None);
+    let rows = r.held_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["reason"], "rebind did not complete");
+    assert_eq!(rows[0]["remedy"], r.remedy());
+}
+
+#[tokio::test]
+async fn restart_held_row_after_grace_when_rebind_never_attempted() {
+    let r = restarted(true, Had::Session, "claude").await;
+    r.threads.disconnect();
+    r.step().await;
+    r.advance(91);
+    r.observe();
+    r.step().await;
+    assert_eq!(r.rebinds(), 0, "no call got through");
+    let rows = r.held_rows();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["reason"], "rebind did not complete");
+}
+
+#[tokio::test]
+async fn no_restart_held_row_when_rebind_succeeds() {
+    let r = restarted(true, Had::Session, "claude").await;
+    r.step().await;
+    assert!(r.seat_is_placed());
+    r.observe();
+    r.advance(120);
+    r.observe();
+    r.step().await;
+    assert!(r.held_rows().is_empty());
+}
+
+#[tokio::test]
+async fn no_restart_held_row_when_seat_resolves_by_itself() {
+    let r = restarted(true, Had::Session, "claude").await;
+    r.threads.set_busy(true);
+    r.step().await;
+    // Threads places the seat without graph's help (the agent checked in).
+    r.view.set(
+        &ThreadsSeatRef(HELD_SEAT.into()),
+        SeatStatus::Resolved {
+            pane: r.pane.clone(),
+        },
+    );
+    r.advance(120);
+    r.observe();
+    r.step().await;
+    assert!(r.held_rows().is_empty());
 }
