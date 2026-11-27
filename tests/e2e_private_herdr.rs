@@ -2640,7 +2640,7 @@ fn e2e_live_handoff_keeps_clones_on_their_seats() {
 
 // ---- hg-66u.18: configuration smokes after the gates (spec §11, herdr-threads v3.1.0: D1, D2, G5) ---------------
 //
-// Same rig as the pre-D1 smokes above (shell clones, a real 3.1.0 herdr-threads daemon in the private root).
+// Same rig as the pre-D1 smokes above (shell clones, a real herdr-threads daemon at the pinned release in the private root).
 // Herdr's agent detection needs real agent binaries and credentials, which a private rig does not have, so the
 // graph's own agent launches (fresh keyed agent, resumed session) are not exercised here; each test names what it
 // measures and the unmet remainder is recorded in the task report.

@@ -169,7 +169,8 @@ impl Service {
                     ServiceOperation::ReleaseContinuityKey(_)
                     | ServiceOperation::UnretireSeat(_)
                     | ServiceOperation::FinalizeRetirement(_)
-                    | ServiceOperation::ContinuityAlerts(_) => {
+                    | ServiceOperation::ContinuityAlerts(_)
+                    | ServiceOperation::ResurrectSeat(_) => {
                         return Some(Err(api_error(ErrorCode::Unsupported)));
                     }
                     ServiceOperation::Receipts(q) => {

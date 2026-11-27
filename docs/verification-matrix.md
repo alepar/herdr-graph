@@ -3,6 +3,27 @@
 Which contract behaviours of herdr-graph are checked against what. Written by hg-zmi.19; the README's
 "Verification matrix" section summarises this file.
 
+## Threads pin: v3.6.0 and the 3.1.0 to 3.6.0 contract audit (2026-11-26, hg-lnw.6)
+
+Graph pins official threads v3.6.0 `7c3c09082e8894ebceec9c060b769b07e359a2ad` (annotated tag `5bcb8a7b5f2ef0c1d0fd88b3b21870256e389852`), superseding v3.1.0. Wire `PROTOCOL_VERSION` stays 9 and `service_session_v1`..`v3` stay accepted. The node store is schema 19 (one-way: 3.3.0 moved it to 18, 3.5.0 to 19; 3.6.0 has no schema change). `Cargo.lock` resolves `herdr-threads` to 3.6.0 with no other dependency change. Graph builds against 3.6.0 with no source change (`cargo build`, `cargo build --all-features`). The graph client still registers `service_session_v3` at this pin; registering v4 and calling `ResurrectSeat` is the real adapter's work (hg-lnw.7). Daemon requirement once that lands: herdr-threads daemon ≥ 3.6.0. An older daemon refuses the v4 registration, and graph's registration-failure path reports it (no fallback to v3).
+
+Audit, from the herdr-threads CHANGELOG and source at each tag (3.1.0 to 3.5.0 from spec §2 of the hg-lnw design, at v3.5.0 `6aa914a`; 3.6.0 from `git log v3.5.0..v3.6.0` and the source at `7c3c090`). Graph's only threads CLI call is `thread list --seat` (`src/cli/adopt.rs`); every other call goes through the public service client.
+
+| Release | Change graph depends on | Graph action |
+|---|---|---|
+| 3.1.1 | binding cursor starts at the seat's furthest-offered notice; renumbered-socket reads as daemon-not-running (exit 3) | none |
+| 3.1.2, 3.2.0, 3.2.1, 3.4.0, 3.4.1 | harness and text changes; `thread list --seat` unchanged | none |
+| 3.2.2 | person commands refused in an agent environment; operator repairs unaffected | none (graph runs no `human` command) |
+| 3.3.0 | node schema 18, one-way | daemon migration note |
+| 3.5.0 | node schema 19, one-way; every `Closed` retirement reversible, keyless included (7 d, obligations settle at 24 h); `service_session_v4` with `ResurrectSeat`; keyless `FinalizeRetirement` allowed (store-level, v3 too); new `RepairHistory.decision_kind` strings; test env `HT_TEST_OBLIGATION_EXPIRY_MS`, `HT_TEST_KEYLESS_FINALIZE_MS` (test-support builds) | keyless undo resurrects (spec §3, hg-lnw.4); daemon migration note; purge path keeps working |
+| 3.6.0, U1 (ht-lzhi) | `PersistentServiceClient::with_level(ServiceSessionLevel::V4)` registers `service_session_v4`; default stays V3; a daemon that does not serve the level refuses at register, no fallback. `submit` and replay refuse an operation above the client's level locally (`ServiceSessionLevel::required_by`: `ResurrectSeat` needs V4), before journaling, so the operation key is not consumed | the real adapter builds its client with `with_level(V4)` (hg-lnw.7) |
+| 3.6.0, U2 (ht-0f0r) | `ResurrectSeat { seat, target, host, replace, operation }` (v4, no new field) also restores a seat left unresolved and held by a Herdr restart, onto its own saved pane. New `ServiceResult::SeatAlreadyResolved(SeatId)` (wire `seat_already_resolved`) when a resumed session reattached first: nothing changed. Refusals: seat not reversible and not held on that pane, other pane, or a host kind that does not restore saved targets → `NotFound`; recovery reconciliation of the current host epoch not finished, or a kept continuity claim on the target → `ServiceBusy` (retry); `replace` set on a held seat → `InvalidRequest`. A hook whose continuity claim loses the race checks in onto the pane's owner | `rebind_held_seat` = `ResurrectSeat` with `replace: None` (spec §4); the adapter maps `SeatAlreadyResolved` to done and `ServiceBusy` to transient (hg-lnw.7). Today graph's `ServiceResult` matches would read `SeatAlreadyResolved` as an unexpected answer, but graph sends no `ResurrectSeat` at this pin |
+| 3.6.0, other | macOS Codex queue wake (ht-8t52), herdr-core 0.1.22 added to tested releases, macOS symlinked-path canonicalization; no store schema change; peer wire frozen | none |
+
+ResurrectSeat at 3.6.0 still carries ht-eu3v's semantics with the windows hg-lnw.2's fake models: `src/store/seats/reversible.rs` is unchanged since v3.5.0, with `OBLIGATION_EXPIRY_MS` = 24 h (pending ACK requests and ordinary invitations settle as recipient-retired) and `KEYLESS_FINALIZE_MS` = 7 d (the retirement becomes final), overridable in test-support builds through `TEST_OBLIGATION_EXPIRY_ENV` (`HT_TEST_OBLIGATION_EXPIRY_MS`) and `TEST_KEYLESS_FINALIZE_ENV` (`HT_TEST_KEYLESS_FINALIZE_MS`).
+
+Authority: in 3.6.0 both the resurrect and the restore case run `reversible::require_v4_authority`, which accepts a keyless seat (no continuity key) from any v4 service session and requires the key owner for a keyed seat (`src/store/seats/operator.rs` `service_case_of`, `src/store/seats/reversible.rs`). hg-lnw.7 verifies this again against a real daemon.
+
 ## v0.3.0 qualification: threads 3.1.0 (2026-11-07)
 
 Graph pins official threads v3.1.0 `482e0d2f8de761d7d31e562faf38c06bdab5f30e` (annotated tag `4fea9a5eddc0f4b145b388b42abb6fe2e1e1f00b`), superseding v3.0.0. Wire protocol stays 9; the threads node store is schema 17 (one-way). Graph registers `service_session_v3`, so the threads daemon must be 3.1.0 before graph connects. Run at main `f9f5bdd` on Linux x86_64 (Fedora 44) in the `hg-build` toolbox with Herdr 0.9.5.

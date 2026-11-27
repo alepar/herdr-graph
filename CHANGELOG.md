@@ -16,10 +16,12 @@
 
 ### Changed
 
+- **herdr-threads 3.6.0.** `third_party/herdr-threads` is pinned at v3.6.0 (protocol 9), superseding v3.1.0. The 3.1.0 to 3.6.0 contract audit is in docs/verification-matrix.md.
 - **`/seat` in an unmanaged pane.** The proposal is now `seat adopt <tab>` for the caller's own tab (`teamspace adopt <workspace>` first when its workspace is not a teamspace) instead of `seat create`, which opened a second tab with a new agent.
 
 ### Migration
 
+- **Upgrade herdr-threads first.** The herdr-threads daemon must run 3.6.0 before graph is upgraded: graph needs its `service_session_v4` (`ResurrectSeat`), which an older daemon refuses at registration. Node schema 19 is one-way (3.3.0 moved the store to 18, 3.5.0 to 19); back up the threads state directory if you might downgrade.
 - Rerun `herdr-graph setup claude` and `setup codex` to install the `adopt` and `template-capture` skills and the updated `seat` and `graph` skills.
 - Clone records written by this version may carry `keyless`, and retirements may carry the mechanism `released`; older binaries do not know either.
 
