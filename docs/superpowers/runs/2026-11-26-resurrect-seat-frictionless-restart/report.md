@@ -172,3 +172,16 @@ Read in this order, which follows the task-tree dependency order and the diff ag
   - hg-lnw.9: the late-rebind test path is nondeterministic.
 - The branch diff is 776 files and about 248K lines. About 208K of those lines are docs/superpowers/runs and 33K are evidence/; only about 5.4K are src and 2.5K are tests. The smell: committed evidence logs and run records dominate the merge (`git diff --numstat main...HEAD`; inv-3 Deferred OK on the evidence dirs).
 - `e2e_cold_restart_attended_keeps_clones_on_their_seats` timed out in both full serial runs (985239e and d1bd89e) and passed every time alone. The smell: it is filed as a load flake, but it is the attended B2 restart path, and its result on main was not measured (progress.md).
+
+## Round 2 (coordinator request mnSGo60OVJTF, 2026-11-27)
+
+- Merged main@92deeeb. Stripped bulky run records: the runs folder is about 5.7K lines; evidence/ matches main plus a small hg-lnw.39 set.
+- hg-lnw.38 (landed, review clean): the undo preview now shows the keyless window note when graph sees the tab close before threads reports the retirement (the ordinary ordering), counted from graph's close time. Tests cover both orderings and all three windows.
+- hg-lnw.39 (diagnostics landed, root cause NOT established): the attended cold-restart timeout did not reproduce in about 60 runs, including full serial runs, load and forced shutdown-window steps. No product change was made on a guess. On timeout, the test now names each non-converging clone (generation, availability, seat fact, facts, threads' seat list). Blocker bead hg-mn3 stays open until a failing run with these diagnostics exists. Untested candidates: pid pressure in hg-build, concurrent rebuilds of the shared target, and threads' 30 s capture backoff combined with graph's per-read recheck backoff.
+- private_process_info_is_shell: passes on main@92deeeb (0/14), so it is not a main defect. It is a test race (the test samples the foreground process before the child execs), and the same test code exists on main. Filed as hg-lnw.40.
+- Follow-ups filed, not fixed: hg-lnw.33 (ServiceBusy head-of-line), .34 (silent retry on graph-local errors), .35 (failed --resume after restart not started fresh), .36 (pane id renumbering question), .37 (Unresolved-before-Retired question).
+- Sweep at 2c90ebe:
+  - tiers 1-2 pass.
+  - tier 3+5: e2e_private_herdr 42/42 (including the attended test), adopt_private_herdr 8/8, threads_real 9/9, every other binary passes.
+  - herdr_client failed 6/7 on the first pass (private_process_info_is_shell) and passed 7/7 on the rerun.
+  - 0 rig leaks.

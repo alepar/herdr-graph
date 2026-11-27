@@ -238,3 +238,16 @@ Merge: hg-lnw.32 — merged by the coordinator · check pass
 Human action: none — task worktree for hg-lnw.32 removed by the coordinator
 Sweep: re-run started at d1bd89e85715dae6e780d90af0419212df593780 (after sweep fixes hg-lnw.31, hg-lnw.32) → evidence/sweep/sweep-d1bd89e85715dae6e780d90af0419212df593780.log
 Sweep: d1bd89e: tiers 1-2 PASS (cargo test exit 0); tiers 3+5 (HG_REAL_THREADS=1, --features private-herdr, --test-threads=1) FAIL 2 of ~1700: e2e_private_herdr e2e_cold_restart_attended_keeps_clones_on_their_seats (40 s rebind wait in the full serial run; 3/3 pass alone; also timed out in the 985239e interim run) and herdr_client private_process_info_is_shell (1/3 fail alone; flaky at c1c1943 too, main unmeasured); 0 rig leaks @ d1bd89e
+Launch: mechanism ordinary-subagents · epic hg-lnw · runTag resurrect-seat-frictionless-restart-20261126T231316 · invocationId inv-4 · reviewRunFile docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/run.md · branch super-auto/resurrect-seat-frictionless-restart · integrationWorktree /var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart · concurrency 4 · sweep deferred · mergeCheck git submodule update third_party/herdr-threads && toolbox run -c hg-build cargo check --all-targets && toolbox run -c hg-build cargo check --all-targets --all-features · args rootAcceptance caller, deferSweep true · coordinator round (mnSGo60OVJTF): hg-lnw.38, hg-lnw.39
+Task 26 (hg-lnw.38): dispatched (impl, coordinator round)
+Task 27 (hg-lnw.39): dispatched (impl, coordinator round)
+Task 26 (hg-lnw.38): implemented (commits 2b5508d..83725b4); review dispatched
+Minor: hg-lnw.38 — missing-edge-case-test (standalone restored clone site preview.rs:433) (task-26-review.md)
+Task 26 (hg-lnw.38): complete (commits 2b5508d..83725b4, review clean)
+Merge: hg-lnw.38 — merged by the coordinator · check pass
+Human action: none — task worktree for hg-lnw.38 removed by the coordinator
+Task 27 (hg-lnw.39): BLOCKED (no reproduction in ~60 runs; diagnostics committed 31a45a2; blocker hg-mn3); private_process_info_is_shell passes on main@92deeeb, test race → follow-up hg-lnw.40; review of diagnostic commit dispatched
+Minor: hg-lnw.39 — redundant-evaluation; cosmetic-message; unbounded-subprocess (failure path only); bulky-evidence (trimmed by coordinator) (task-27-review.md)
+Task 27 (hg-lnw.39): diagnostics landed (commits 386ddedd..31a45a2, review clean); acceptance not met (no reproduction); blocker hg-mn3 open; next tier-3 sweep doubles as the reproduction attempt
+Merge: hg-lnw.39 — merged by the coordinator · check pass
+Human action: none — task worktree for hg-lnw.39 removed by the coordinator
