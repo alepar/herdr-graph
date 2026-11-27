@@ -1,0 +1,84 @@
+{
+ "triageDead": false,
+ "scoutsDispatched": 9,
+ "scoutsDead": 0,
+ "unknownLanes": [],
+ "domainsDropped": [],
+ "rawFindings": 25,
+ "dedupedFindings": 12,
+ "dedupeOrphans": 0,
+ "beyondCap": 0,
+ "beyondPanelCap": 0,
+ "dedupeDead": false,
+ "panelCount": 9,
+ "spotCount": 3,
+ "promotedCount": 0,
+ "judgeLost": 0,
+ "spotLost": 0,
+ "laneYield": {
+  "premortem": {
+   "found": 3,
+   "confirmed": 3,
+   "unique": 1,
+   "refuted": 0
+  },
+  "completeness": {
+   "found": 3,
+   "confirmed": 3,
+   "unique": 0,
+   "refuted": 0
+  },
+  "yagni": {
+   "found": 3,
+   "confirmed": 2,
+   "unique": 1,
+   "refuted": 1
+  },
+  "failure-mode": {
+   "found": 2,
+   "confirmed": 1,
+   "unique": 0,
+   "refuted": 0
+  },
+  "feasibility": {
+   "found": 2,
+   "confirmed": 1,
+   "unique": 0,
+   "refuted": 0
+  },
+  "regression": {
+   "found": 5,
+   "confirmed": 3,
+   "unique": 2,
+   "refuted": 1
+  },
+  "domain:distributed-systems": {
+   "found": 3,
+   "confirmed": 2,
+   "unique": 0,
+   "refuted": 0
+  },
+  "domain:process-lifecycle-state-reconciliation": {
+   "found": 2,
+   "confirmed": 2,
+   "unique": 0,
+   "refuted": 0
+  },
+  "domain:terminal-multiplexer-integration": {
+   "found": 2,
+   "confirmed": 1,
+   "unique": 0,
+   "refuted": 1
+  }
+ },
+ "judgeCompletionPct": 100,
+ "lowCoverage": false,
+ "panelCappedTag": "",
+ "emptyLateRound": false,
+ "reviewReadiness": {
+  "coverage": "complete",
+  "provenance": "available",
+  "basis": "settled tree @3c7a4b916ea0b9dec21ffbbdbe61be09ae27f923: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md"
+ },
+ "convergenceEligible": true
+}

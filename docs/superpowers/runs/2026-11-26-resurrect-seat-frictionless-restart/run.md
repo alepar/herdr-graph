@@ -12,10 +12,10 @@ base: main
 spec: 2026-11-26-resurrect-seat-frictionless-restart-design.md
 epic: hg-lnw
 roastDesignRound: 2
-roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
+roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
-redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast r2 · state applied
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast r2 fixed · state applied
 stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
 approvals:
@@ -27,3 +27,4 @@ parked:
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · beyond-cap · "30 severe candidates beyond config.panelCap=10 left unjudged (Not verified (beyond panel cap)); unattended answer: no re-roast with a raised cap"
 - 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md · degraded-verdict · "verdict qualifier [panel-capped: 30 unverified]"
 - coverage-amend-design-1 · L23-L29, L31, L32 applied auto; L30 rejected auto · R1..R12 (coverage-round-1-requirements.md)
+- 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md · escalation · "§4.2 late rebind: does an already-running fresh keyless agent enroll at its next turn or only at a lifecycle event (UNVERIFIED external; asked herdr-threads graph-asks; tier-3 check added to hg-lnw.9)"
