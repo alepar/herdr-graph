@@ -1,6 +1,6 @@
 # Onboarding existing Herdr and herdr-threads spaces into herdr-graph
 
-Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement"). Written 2026-11-07. Applies to herdr-graph v0.3.0 (threads 3.1.0, Herdr 0.9.5).
+Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement"). Written 2026-11-07. Applies to herdr-graph v0.3.0 and later (threads pinned at 3.6.0 since hg-lnw; v0.3.0 shipped with 3.1.0; Herdr 0.9.5).
 
 ## Question
 
@@ -16,7 +16,7 @@ Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement")
 
 Every step below is checked against the code or the CLI help. File references are the source of truth.
 
-1. **Prerequisites.** herdr-threads daemon 3.1.0 or later (graph registers `service_session_v3`, no fallback: CHANGELOG Migration). Build, `herdr plugin link`, `herdr-graph init <path>`.
+1. **Prerequisites.** herdr-threads daemon 3.6.0 or later (graph pins 3.6.0 and registers its service session with no fallback: CHANGELOG Migration). Build, `herdr plugin link`, `herdr-graph init <path>`.
 2. **Harness setup.** `herdr-graph setup claude` / `setup codex` installs a user-level SessionStart hook, the `seat` and `graph` skills and the apply ask rule. Safe for unmanaged panes: the hook prompts for `/seat` only when `HERDR_GRAPH=1` or the pane id resolves to a bound live clone (`src/bootstrap/mod.rs` `wants_seat_prompt`). Unmanaged agents see nothing new.
 3. **Create a teamspace.** `plan teamspace create <name> --project-repo <repo> --active`. This always opens a **new** Herdr workspace (`runtime.open_workspace`, `src/plan/core_kinds.rs` TeamspaceCreate). There is no flag to bind an existing workspace.
 4. **Create seats.** `plan seat create <name> --teamspace <ts> --active` always opens a **new** tab and launches a **new** agent (`runtime.open_tab` plus `open_clone_effects`, SeatCreate). The agent starts with a continuity key and gets a fresh threads seat. Or `application apply <template> --teamspace <ts> --name <app>` to hydrate a team template.
@@ -79,14 +79,14 @@ What threads gives a keyless seat on its own (threads `docs/operations.md`, `doc
 | Agent exits and a new one starts in the same pane, or `/clear` | Same seat: a pane has one seat, and a new session adds a binding to it. |
 | `herdr update --handoff` / live handoff | Same seat: process continuity reattaches it. |
 | Herdr restart, agent resumed (`claude --resume`, by hand `codex resume`) | Same seat: a resumed session whose native id matches the seat's last binding reattaches by itself. |
-| Herdr restart, agent started fresh (not a resume) | The pane is held; an operator rebinds or takes a fresh seat. Graph's resume driver launches with the captured native session where the harness supports it, which is the resume case above. |
-| Tab or pane closed | The seat is retired for good, as for any unmanaged tab today. Undo of the closure reopens the tab with a fresh seat (graph's existing keyless succession path); graph re-invites its own channels, and memberships graph does not own are not restored. |
+| Herdr restart, agent started fresh (not a resume) | Same seat, no operator action (since hg-lnw, threads 3.6.0): graph rebinds the held seat onto its own pane (`ResurrectSeat`), and a fresh keyless start waits until the seat is placed or the 90 s grace ends, then starts (a fresh keyed start never waits); the agent enrolls on the original seat. A seat still held after the grace is reported as `clones.restart_held` with the operator remedy. Graph's resume driver still launches with the captured native session where the harness supports it; that resumed relaunch, keyed or keyless, waits out the full 90 s grace. |
+| Tab or pane closed | The seat is retired reversibly for 7 d (threads 3.5.0 and later). Undo of the closure resurrects the original seat onto the reopened pane (since hg-lnw): within 24 h with everything; from 24 h to 7 d with memberships and history, graph re-issuing its own seat-wide invitations while invitations and receipts from other parties are not restored. After 7 d the close is final and undo takes graph's fresh-seat succession: graph re-invites its own channels, and memberships graph does not own are lost. |
 
-So the key buys one thing a keyless seat lacks: closing a tab and undoing it with the same threads seat. An adopted seat gives that up, which is no regression from the unmanaged tab it was.
+So the key bought one thing a keyless seat lacked: closing a tab and undoing it with the same threads seat. An adopted seat gave that up, which was no regression from the unmanaged tab it was; since hg-lnw it has it back for 7 d (Post-Implementation Notes).
 
 What it costs to build: graph's ordinary start waits for a key reservation and launches with the key (`start_needed`, `src/reconcile/planner.rs`), and a key presented at check-in binds to the pane's seat. Adopted clones therefore need a recorded keyless mode: no `threads.reserve_key` want, no key-link want and no key in the launch environment. Graph already carries keyless clones (shell panes, the export-rejected case), so the paths exist; the mode makes it a recorded choice.
 
-**Resurrecting a closed tab's seat.** The user asked (2026-11-25) for this capability in herdr-threads itself, which would close the last row of the table without a key. The request is with the herdr-threads main tab (thread dkTNBwdptgT, message mnSG2uhCyCFJ). When it ships, graph's keyless succession path can un-retire the original seat instead of taking a fresh one; that is a follow-up, not part of these phases.
+**Resurrecting a closed tab's seat.** The user asked (2026-11-25) for this capability in herdr-threads itself, which would close the last row of the table without a key. The request went to the herdr-threads main tab (thread dkTNBwdptgT, message mnSG2uhCyCFJ) and shipped as `ResurrectSeat` (ht-eu3v, threads 3.5.0). It was a follow-up to these phases; epic hg-lnw implemented it (Post-Implementation Notes).
 
 A later, explicit `plan clone key <clone>` could upgrade an adopted seat to a keyed one for reversible retirement. A keyed seat cannot be released (threads refuses `ReleaseContinuityKey` while a seat holds the key, and a closed keyed seat stays frozen until finalized), only retired. Not in the first phases.
 
@@ -210,3 +210,7 @@ Phase 1 (adoption and release), phase 2 (the `adopt` skill), phase 3 (the `templ
 3. Hierarchy (user, 2026-11-25): inferred from transcripts during adoption. The first adopted seat is the top; each later adoption may propose changes to the existing hierarchy.
 4. Template extraction (user, 2026-11-25): build now, as a skill that reviews one or two existing spaces.
 5. Unmanaged listing (user, relayed 2026-11-07): `roster --live --unmanaged` only enumerates ids and labels.
+
+## Post-Implementation Notes
+
+**2026-11-26, hg-lnw: resurrect on undo and frictionless Herdr restart.** Graph pins herdr-threads 3.6.0 and registers `service_session_v4` (no fallback; an older daemon's refusal is a named error and a doctor `threads` finding with the upgrade step). G4's last two rows changed. A closed keyless seat is reversibly retired for 7 d, and undo resurrects it onto the reopened pane with `ResurrectSeat`: within 24 h everything returns; from 24 h to 7 d memberships and history return, graph re-issues its own seat-wide invitations, and invitations or receipts from other parties are not restored; after 7 d undo takes the fresh-seat succession as before. The undo preview and the adoption plan warning name these windows. After a Herdr restart graph rebinds every held seat of a managed pane on its own pane (`ResurrectSeat` with no `replace`), a fresh keyless start waits until the seat is placed or the 90 s grace ends (a fresh keyed start never waits), and a resumed relaunch, keyed or keyless, waits out the full grace, so no seat needs an operator. A seat graph cannot bring back is reported as `clones.restart_held` (after a restart) or `clones.resurrect_held` (after an undo), each with the remedy `herdr-threads human seat rebind SEAT --pane PANE --operator`. Adopted seats stay keyless; release is unchanged. Design: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md.

@@ -2434,6 +2434,26 @@ fn seated_rig() -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
 
 fn seated_rig_env(daemon_env: &[(&str, &str)]) -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
     let rig = E2e::start_with_threads_env(daemon_env)?;
+    Some(seat_foreman_and_bar(rig))
+}
+
+/// `seated_rig` whose panes find `support::agent_stub`'s `claude` first on `PATH`, configured to check in with
+/// the rig's threads daemon and report sessions to its graph instance.
+fn seated_stub_rig() -> Option<(E2e, Vec<(Row, CloneFacts)>)> {
+    let rig =
+        E2e::start_threads_unstarted_custom(true, &[("claude", support::agent_stub::CLAUDE)])?;
+    support::agent_stub::configure(
+        &rig.herdr.root,
+        &support::threads_bin::threads_binary(),
+        Path::new(BIN),
+        &rig.instance,
+    );
+    rig.ensure_threads_daemon(&[]);
+    rig.start_daemon();
+    Some(seat_foreman_and_bar(rig))
+}
+
+fn seat_foreman_and_bar(rig: E2e) -> (E2e, Vec<(Row, CloneFacts)>) {
     let (foreman, bar) = two_seats(&rig);
     rig.plan_apply(&["clone", "add", "foreman"]);
     rig.wait_until("foreman's second pane", WAIT, |r| {
@@ -2456,7 +2476,7 @@ fn seated_rig_env(daemon_env: &[(&str, &str)]) -> Option<(E2e, Vec<(Row, CloneFa
             (c, f)
         })
         .collect();
-    Some((rig, facts))
+    (rig, facts)
 }
 
 /// The incarnation generation a clone is bound under (0 when unbound).
@@ -2474,13 +2494,60 @@ fn assert_clones_kept_their_seats(
     before: &[(Row, CloneFacts)],
     before_generations: &[i64],
 ) {
-    rig.wait_until("every clone to be rebound and present", WAIT, |r| {
-        before.iter().zip(before_generations).all(|((c, f), g)| {
-            bound_generation(r, c) > *g
-                && tstr(&r.show(&c.id), "runtime.availability") == "present"
-                && r.clone_facts(c).as_ref() == Some(f)
-        })
-    });
+    // Which clones still miss, and why: the timeout message names them (with their seat fact and runtime) and
+    // threads' own view of the seats, so a failing run says what was slow or missing.
+    let missing = |r: &E2e| -> Vec<String> {
+        before
+            .iter()
+            .zip(before_generations)
+            .filter_map(|((c, f), g)| {
+                let s = r.show(&c.id);
+                let generation = bound_generation(r, c);
+                let availability = tstr(&s, "runtime.availability");
+                let facts = r.clone_facts(c);
+                (generation <= *g || availability != "present" || facts.as_ref() != Some(f)).then(
+                    || {
+                        format!(
+                            "{} {}: generation {generation} (before {g}), availability {availability:?}, \
+                             seat_fact {}, facts {facts:?} (before {f:?})",
+                            c.name,
+                            c.id,
+                            at(&s, "seat_fact").map_or("none".into(), |v| v.to_string()),
+                        )
+                    },
+                )
+            })
+            .collect()
+    };
+    let deadline = Instant::now() + WAIT;
+    let mut left = missing(rig);
+    while !left.is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(150));
+        left = missing(rig);
+    }
+    if !left.is_empty() {
+        let seats = rig
+            .herdr
+            .command(&support::threads_bin::threads_binary())
+            .arg("--state-dir")
+            .arg(rig.herdr.root.join("threads-state"))
+            .arg("--host-endpoint")
+            .arg(&rig.herdr.socket)
+            .args(["--json", "seat", "list", "--include-retired"])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        rig.wait_until(
+            &format!(
+                "every clone to be rebound and present (gave up after {WAIT:?}); still missing:\n{}\nthreads seats: {}{}",
+                left.join("\n"),
+                stdout(&seats),
+                stderr(&seats)
+            ),
+            Duration::ZERO,
+            |_| false,
+        );
+    }
     rig.wait_settled();
     for (c, f) in before {
         assert_eq!(
@@ -2640,7 +2707,7 @@ fn e2e_live_handoff_keeps_clones_on_their_seats() {
 
 // ---- hg-66u.18: configuration smokes after the gates (spec §11, herdr-threads v3.1.0: D1, D2, G5) ---------------
 //
-// Same rig as the pre-D1 smokes above (shell clones, a real 3.1.0 herdr-threads daemon in the private root).
+// Same rig as the pre-D1 smokes above (shell clones, a real herdr-threads daemon at the pinned release in the private root).
 // Herdr's agent detection needs real agent binaries and credentials, which a private rig does not have, so the
 // graph's own agent launches (fresh keyed agent, resumed session) are not exercised here; each test names what it
 // measures and the unmet remainder is recorded in the task report.
@@ -3186,6 +3253,11 @@ fn e2e_cold_restart_fresh_agent_reattaches_by_key() {
         seats_before,
         "the keyed check-in reattached an existing seat and minted none"
     );
+    // Threads tells the graph nothing: the graph sees the reattach at its next seat read, which it makes by
+    // itself while the seat it last read is Unresolved (`LoopTuning::seat_recheck`).
+    rig.wait_until("the graph to read the reattached seat", WAIT, |r| {
+        tstr(&r.show(&clone.id), "seat_fact.state") == "resolved"
+    });
     rig.wait_settled();
     assert_eq!(
         rig.clone_facts(clone).as_ref(),
@@ -3354,5 +3426,496 @@ fn e2e_node_manager_failing_agent_does_not_respawn_loop() {
     assert!(
         rig.pane_of(&clone.id).is_some(),
         "the pane outlives its agent"
+    );
+}
+
+// ---- hg-lnw.9: frictionless cold restart for every seat kind, and the exited undo-restored agent ------------
+//
+// `seated_stub_rig`: the seated rig (graph-created shell seats foreman x2 and bar) with `support::agent_stub` as
+// `claude`, so graph's agent launches run something Herdr detects as a claude agent, which checks in with the
+// real threads 3.6.0 daemon as Claude's threads hook does and (when asked) reports its session to graph.
+
+/// Longer than the 90 s relaunch grace after an incarnation change, with room for the relaunch itself.
+const PAST_GRACE: Duration = Duration::from_secs(200);
+
+impl E2e {
+    /// threads places `seat` on `pane` and does not hold it retired.
+    fn seat_on(&self, seat: &str, pane: &str) -> bool {
+        let d = &self.seat_inspection(seat)["result"]["data"];
+        d["retirement_state"].is_null()
+            && d["mapping"]["state"] == "resolved"
+            && d["mapping"]["target"] == pane
+    }
+
+    /// The `clones` component of `herdr-graph status`.
+    fn status_clones(&self) -> Value {
+        let text = self.cli_ok(&["status"]);
+        let line = text
+            .lines()
+            .find_map(|l| l.strip_prefix("clones: "))
+            .unwrap_or_else(|| panic!("no clones component in status:\n{text}"));
+        json_of(line)
+    }
+
+    /// The `rebind_refused:<clone>` journal meta, if any.
+    fn rebind_refused(&self, clone: &str) -> Option<String> {
+        let j = herdr_graph::journal::Journal::open(&InstancePaths::new(&self.instance).journal)
+            .expect("journal");
+        let id = herdr_graph::model::CloneId::parse(clone).expect("clone id");
+        j.meta_get(&herdr_graph::reconcile::planner::rebind_refused_key(&id))
+            .expect("meta")
+    }
+
+    fn bound_pane_id(&self, clone: &str) -> Option<String> {
+        at(&self.show(clone), "runtime.bound.pane_id")
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    fn threads_seat_of(&self, clone: &str) -> Option<String> {
+        at(&self.show(clone), "threads_seat")
+            .and_then(toml::Value::as_str)
+            .map(str::to_owned)
+    }
+
+    /// A workspace `legacy` with a tab `worker` the graph did not create and no agent in it, adopted as a
+    /// keyless claude seat. Returns `(clone, pane, tab)`.
+    fn adopt_worker_tab(&self) -> (String, String, String) {
+        let client = self.herdr.client();
+        let cwd = self.herdr.root.join("home");
+        let ws = self
+            .rt
+            .block_on(client.create_workspace(CreateWorkspace {
+                label: "legacy".into(),
+                cwd: cwd.clone(),
+                env: vec![],
+            }))
+            .expect("create workspace");
+        let tab = self
+            .rt
+            .block_on(client.create_tab(CreateTab {
+                workspace: ws.workspace.unwrap(),
+                label: "worker".into(),
+                cwd,
+                env: vec![],
+            }))
+            .expect("create tab");
+        // The pane stays unlabelled: its agent and a graph-created claude seat's would both be named `claude`,
+        // and the client retries a taken name under a pane-qualified one.
+        let pane = tab.pane.unwrap().0;
+        self.plan_apply(&["teamspace", "adopt", "legacy"]);
+        self.plan_apply(&["seat", "adopt", "worker", "--harness", "claude"]);
+        let mut clone = String::new();
+        self.wait_until("the adopted clone bound to its pane", WAIT, |r| {
+            match r
+                .rows("clones")
+                .into_iter()
+                .find(|c| r.bound_pane_id(&c.id).as_deref() == Some(pane.as_str()))
+            {
+                Some(c) => {
+                    clone = c.id;
+                    true
+                }
+                None => false,
+            }
+        });
+        assert!(
+            tbool(&self.show(&clone), "keyless"),
+            "an adopted clone is keyless: {}",
+            self.show(&clone)
+        );
+        (clone, pane, tab.tab.unwrap().0)
+    }
+
+    /// Wait until the clone records a threads seat that threads places on `pane`; returns it.
+    fn wait_seated(&self, clone: &str, pane: &str) -> String {
+        let mut seat = String::new();
+        self.wait_until("the clone seated on its pane", WAIT, |r| {
+            match r.threads_seat_of(clone) {
+                Some(s) if r.seat_on(&s, pane) => {
+                    seat = s;
+                    true
+                }
+                _ => false,
+            }
+        });
+        seat
+    }
+
+    fn sessions_of(&self, clone: &str) -> usize {
+        at(&self.show(clone), "sessions")
+            .and_then(toml::Value::as_array)
+            .map_or(0, Vec::len)
+    }
+}
+
+/// After the restart: the seat is placed back on the pane, no seat is held, and no rebind was refused.
+fn assert_no_restart_friction(rig: &E2e, clones: &[&str]) {
+    assert_eq!(
+        rig.status_clones()["restart_held"],
+        json!([]),
+        "no seat is held after the restart"
+    );
+    for c in clones {
+        assert_eq!(rig.rebind_refused(c), None, "no rebind refused for {c}");
+    }
+}
+
+/// Scenario 2: a cold restart with an adopted (keyless) clone whose agent graph started but whose session it
+/// never captured. Graph's rebind puts the seat back on its pane before any agent checks in, then the keyless
+/// relaunch (after the grace) starts the agent fresh and it checks in onto the same seat; no operator action.
+#[test]
+fn keyless_cold_restart_without_session_returns_to_its_seat() {
+    let Some((mut rig, before)) = seated_stub_rig() else {
+        return;
+    };
+    let root = rig.herdr.root.clone();
+    let (clone, pane, _) = rig.adopt_worker_tab();
+    // A fresh keyless start of a seat graph never read unresolved waits out the 90 s grace (spec §4).
+    rig.wait_until(
+        "graph to start the adopted clone's agent",
+        PAST_GRACE,
+        |_| support::agent_stub::starts(&root).len() == 1,
+    );
+    let seat = rig.wait_seated(&clone, &pane);
+    assert_eq!(rig.sessions_of(&clone), 0, "no session captured");
+    let shell_generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+    let row = Row {
+        id: clone.clone(),
+        name: String::new(),
+        state: String::new(),
+        path: PathBuf::new(),
+    };
+    let generation = bound_generation(&rig, &row);
+
+    rig.herdr_restart();
+    rig.wait_until("graph's rebind to place the seat on its pane", WAIT, |r| {
+        bound_generation(r, &row) > generation
+            && r.effects_of(&clone)
+                .iter()
+                .any(|(k, s)| k == "threads.rebind_held_seat" && s == "Done")
+            && r.seat_on(&seat, &pane)
+    });
+    assert_eq!(
+        support::agent_stub::starts(&root).len(),
+        1,
+        "the seat was placed by graph's rebind, before any relaunched agent checked in"
+    );
+    rig.wait_until("the keyless relaunch after the grace", PAST_GRACE, |_| {
+        support::agent_stub::starts(&root).len() == 2
+    });
+    let starts = support::agent_stub::starts(&root);
+    assert_eq!(starts[1].0, pane, "relaunched in its own pane: {starts:?}");
+    assert!(
+        !starts[1].1.contains("--resume"),
+        "a fresh start: {starts:?}"
+    );
+    rig.wait_until("the relaunched agent's check-in", WAIT, |_| {
+        support::agent_stub::hook_log(&root, 2).contains("rc=")
+    });
+    assert!(
+        support::agent_stub::hook_log(&root, 2)
+            .contains(&format!("Your seat in this pane: {seat}")),
+        "the relaunched agent checked in onto its original seat: {}",
+        support::agent_stub::hook_log(&root, 2)
+    );
+    rig.wait_settled();
+    assert!(rig.seat_on(&seat, &pane), "still on its own seat");
+    assert_eq!(rig.threads_seat_of(&clone).as_deref(), Some(seat.as_str()));
+    assert_no_restart_friction(&rig, &[clone.as_str()]);
+    for ((c, f), g) in before.iter().zip(&shell_generations) {
+        assert!(bound_generation(&rig, c) > *g, "{} was rebound", c.name);
+        assert_eq!(rig.clone_facts(c).as_ref(), Some(f), "{} unchanged", c.name);
+    }
+}
+
+/// Scenario 6: one cold restart with a keyed graph-created claude seat, a keyless adopted claude seat whose
+/// session graph captured, and the graph-created shell seats. Each comes back on its own threads seat with no
+/// operator action; both agent seats are resumed with their sessions; nothing is held and no rebind refused.
+#[test]
+fn cold_restart_brings_every_seat_kind_back() {
+    let Some((mut rig, before)) = seated_stub_rig() else {
+        return;
+    };
+    let root = rig.herdr.root.clone();
+    support::agent_stub::report_sessions(&root);
+    rig.plan_apply(&[
+        "seat",
+        "create",
+        "kc",
+        "--teamspace",
+        "t",
+        "--active",
+        "--harness",
+        "claude",
+    ]);
+    rig.wait_until("kc's tab", WAIT, |r| r.tab_labelled("kc").is_some());
+    let kc = rig.live_clone(&rig.seat("kc").id).id;
+    let kc_pane = rig.pane_of(&kc).expect("kc pane").id.0;
+    let (adopted, adopted_pane, _) = rig.adopt_worker_tab();
+    // The keyed start does not wait; the keyless one waits out the 90 s grace (spec §4).
+    rig.wait_until("graph to start both agents", PAST_GRACE, |_| {
+        support::agent_stub::starts(&root).len() == 2
+    });
+    let kc_seat = rig.wait_seated(&kc, &kc_pane);
+    let adopted_seat = rig.wait_seated(&adopted, &adopted_pane);
+    rig.wait_until("both sessions captured", WAIT, |r| {
+        r.sessions_of(&kc) == 1 && r.sessions_of(&adopted) == 1
+    });
+    let session_of = |pane: &str| {
+        let n = support::agent_stub::starts(&root)
+            .iter()
+            .position(|(p, _)| p == pane)
+            .expect("a start in the pane")
+            + 1;
+        format!("stub-{n}")
+    };
+    let (kc_session, adopted_session) = (session_of(&kc_pane), session_of(&adopted_pane));
+    rig.wait_settled();
+    let shell_generations: Vec<i64> = before
+        .iter()
+        .map(|(c, _)| bound_generation(&rig, c))
+        .collect();
+
+    rig.herdr_restart();
+    rig.wait_until(
+        "both agent seats resumed after the restart",
+        PAST_GRACE,
+        |_| support::agent_stub::starts(&root).len() == 4,
+    );
+    let starts = support::agent_stub::starts(&root);
+    let resumed = |pane: &str, session: &str| {
+        starts[2..]
+            .iter()
+            .any(|(p, a)| p == pane && a.contains(&format!("--resume {session}")))
+    };
+    assert!(
+        resumed(&kc_pane, &kc_session),
+        "kc resumed its session: {starts:?}"
+    );
+    assert!(
+        resumed(&adopted_pane, &adopted_session),
+        "the adopted seat resumed its session: {starts:?}"
+    );
+    rig.wait_until("every seat on its own pane in threads", WAIT, |r| {
+        r.seat_on(&kc_seat, &kc_pane)
+            && r.seat_on(&adopted_seat, &adopted_pane)
+            && before
+                .iter()
+                .all(|(_, f)| r.seat_on(&f.threads_seat, &f.pane))
+    });
+    rig.wait_settled();
+    assert_eq!(rig.threads_seat_of(&kc).as_deref(), Some(kc_seat.as_str()));
+    assert_eq!(
+        rig.threads_seat_of(&adopted).as_deref(),
+        Some(adopted_seat.as_str())
+    );
+    for ((c, f), g) in before.iter().zip(&shell_generations) {
+        assert!(bound_generation(&rig, c) > *g, "{} was rebound", c.name);
+        assert_eq!(rig.clone_facts(c).as_ref(), Some(f), "{} unchanged", c.name);
+    }
+    let mut all: Vec<&str> = before.iter().map(|(c, _)| c.id.as_str()).collect();
+    all.extend([kc.as_str(), adopted.as_str()]);
+    assert_no_restart_friction(&rig, &all);
+    assert_eq!(retired_seat_count(&rig), 0, "nothing was retired");
+}
+
+/// Scenario 4 (trial finding 3, hg-lnw.3): an adopted tab is closed and undone; the restore launch resumes the
+/// agent on the resurrected seat, the agent reattaches, then exits with the pane open. Graph relaunches it
+/// in that pane, once.
+#[test]
+fn undo_restored_agent_that_exits_is_relaunched_live() {
+    let Some((rig, _)) = seated_stub_rig() else {
+        return;
+    };
+    let root = rig.herdr.root.clone();
+    support::agent_stub::report_sessions(&root);
+    let (clone, pane, tab) = rig.adopt_worker_tab();
+    // A fresh keyless start of a seat graph never read unresolved waits out the 90 s grace (spec §4).
+    rig.wait_until(
+        "graph to start the adopted clone's agent",
+        PAST_GRACE,
+        |_| support::agent_stub::starts(&root).len() == 1,
+    );
+    let seat = rig.wait_seated(&clone, &pane);
+    rig.wait_until("the session captured", WAIT, |r| r.sessions_of(&clone) == 1);
+
+    rig.raw_ok("tab.close", json!({ "tab_id": tab }));
+    rig.wait_until("the clone to retire", WAIT, |r| {
+        r.show(&clone)["lifecycle"].as_str() == Some("retired")
+    });
+    rig.wait_until("threads to retire the seat reversibly", WAIT, |r| {
+        r.seat_inspection(&seat)["result"]["data"]["retirement_state"] == "reversible"
+    });
+    let act = rig
+        .undo_candidates()
+        .into_iter()
+        .find(|(_, c)| c.contains(&clone))
+        .expect("the closure is undoable")
+        .0;
+    let (ok, out) = rig.apply_plan(&rig.plan_json(&["undo", &act]));
+    assert!(ok, "undo apply: {out}");
+
+    let mut new_pane = String::new();
+    rig.wait_until("the restore launch in the reopened pane", WAIT, |r| {
+        let starts = support::agent_stub::starts(&root);
+        match (starts.get(1), r.bound_pane_id(&clone)) {
+            (Some((p, _)), Some(b)) if *p == b && b != pane => {
+                new_pane = b;
+                true
+            }
+            _ => false,
+        }
+    });
+    let starts = support::agent_stub::starts(&root);
+    assert!(
+        starts[1].1.contains("--resume stub-1"),
+        "the restore launch resumes the last session: {starts:?}"
+    );
+    rig.wait_until("the original seat placed on the reopened pane", WAIT, |r| {
+        r.seat_on(&seat, &new_pane)
+    });
+    rig.wait_until(
+        "the restored agent to reattach (Restore intent cleared)",
+        WAIT,
+        |r| at(&r.show(&clone), "seat_intent").is_none(),
+    );
+
+    // The restored agent exits; its pane stays open.
+    support::agent_stub::release(&root, 2);
+    rig.wait_until("graph to relaunch the exited agent", WAIT, |_| {
+        support::agent_stub::starts(&root).len() == 3
+    });
+    let starts = support::agent_stub::starts(&root);
+    assert_eq!(
+        starts[2].0, new_pane,
+        "relaunched in the same pane: {starts:?}"
+    );
+    std::thread::sleep(Duration::from_secs(10));
+    assert_eq!(
+        support::agent_stub::starts(&root).len(),
+        3,
+        "relaunched once, not in a loop"
+    );
+    assert_eq!(
+        rig.threads_seat_of(&clone).as_deref(),
+        Some(seat.as_str()),
+        "same seat"
+    );
+    assert!(
+        rig.seat_on(&seat, &new_pane),
+        "the seat stays on the reopened pane"
+    );
+}
+
+/// Late-rebind escalation (design roast r2, threads answer mnSGGl0TGwIX): threads is down across a cold
+/// restart and past the 90 s grace, so when it comes back the keyless gate is already open and the adopted
+/// agent starts fresh in the same pass as graph's late rebind. When the agent's SessionStart check-in meets
+/// the still-held seat, the rebind lands after the agent is running and opens no binding; one prompt (the
+/// agent's UserPromptSubmit hook) must then bind the running agent to its original seat, with no /clear.
+#[test]
+fn late_rebind_binds_the_fresh_agent_at_its_next_prompt() {
+    let Some((mut rig, _)) = seated_stub_rig() else {
+        return;
+    };
+    let root = rig.herdr.root.clone();
+    let (clone, pane, _) = rig.adopt_worker_tab();
+    rig.wait_until(
+        "graph to start the adopted clone's agent",
+        PAST_GRACE,
+        |_| support::agent_stub::starts(&root).len() == 1,
+    );
+    let seat = rig.wait_seated(&clone, &pane);
+
+    rig.stop_threads_daemon();
+    rig.herdr_restart();
+    // Threads stays down past the 90 s grace: graph reads no fresh fact, so nothing is rebound or relaunched.
+    std::thread::sleep(Duration::from_secs(95));
+    assert_eq!(
+        support::agent_stub::starts(&root).len(),
+        1,
+        "nothing relaunched while threads was down"
+    );
+    // Threads comes back after the grace: graph's first fresh read is Unresolved, and with the keyless gate
+    // already open graph plans the late rebind and the fresh relaunch in the same pass. The relaunched agent
+    // stops graph's daemon before its SessionStart check-in, so that check-in meets the held seat and the
+    // rebind lands only after the agent is running: the escalation's order, pinned.
+    let daemon = rig.daemon_pid().expect("graph daemon pid");
+    support::agent_stub::freeze_at(&root, 2, daemon);
+    rig.ensure_threads_daemon(&[]);
+    rig.wait_until("the fresh relaunch and its check-in", PAST_GRACE, |_| {
+        support::agent_stub::hook_log(&root, 2).contains("rc=")
+    });
+    let starts = support::agent_stub::starts(&root);
+    assert_eq!(starts[1].0, pane, "relaunched in its own pane: {starts:?}");
+    assert!(
+        !starts[1].1.contains("--resume"),
+        "a fresh start: {starts:?}"
+    );
+    let check_in = support::agent_stub::hook_log(&root, 2);
+    eprintln!("LATE-REBIND fresh agent's SessionStart check-in:\n{check_in}");
+    let before_rebind = rig.seat_inspection(&seat)["result"]["data"].clone();
+    eprintln!(
+        "LATE-REBIND seat before the rebind: {}",
+        before_rebind["summary"]
+    );
+    rig.signal_daemon(libc::SIGCONT);
+    rig.wait_until("graph's late rebind to place the seat", WAIT, |r| {
+        r.seat_on(&seat, &pane)
+    });
+    eprintln!(
+        "LATE-REBIND graph effects of the clone: {:?}",
+        rig.effects_of(&clone)
+    );
+    let after_rebind = rig.seat_inspection(&seat)["result"]["data"].clone();
+    eprintln!(
+        "LATE-REBIND after the rebind, before any prompt: {}",
+        after_rebind["summary"]
+    );
+    // The order is pinned only when graph had not yet run the rebind when the agent froze it: otherwise the
+    // rebind landed first and the SessionStart check-in itself bound the seat. Both orders must end bound.
+    let late = check_in.contains("check-in unavailable")
+        && before_rebind["mapping"]["state"] != "resolved";
+    eprintln!(
+        "LATE-REBIND order: {}",
+        if late {
+            "fresh check-in refused on the held seat, rebind landed after it"
+        } else {
+            "rebind landed before the fresh check-in"
+        }
+    );
+    if late {
+        assert!(
+            after_rebind["summary"]["active"] == false,
+            "the late rebind alone opens no binding (threads answer mnSGGl0TGwIX): {after_rebind}"
+        );
+    }
+    let prompt = support::agent_stub::prompt(&root, 2);
+    eprintln!("LATE-REBIND one prompt's hook:\n{prompt}");
+    let data = rig.seat_inspection(&seat)["result"]["data"].clone();
+    eprintln!("LATE-REBIND after one prompt: {}", data["summary"]);
+    eprintln!(
+        "LATE-REBIND seat list: {:?}; clone seat {:?}",
+        rig.threads_seat_ids(),
+        rig.threads_seat_of(&clone)
+    );
+    assert!(
+        rig.seat_on(&seat, &pane),
+        "the original seat stays on the pane"
+    );
+    assert_eq!(rig.threads_seat_of(&clone).as_deref(), Some(seat.as_str()));
+    let bound_by_prompt = data["summary"]["active"] == true
+        && !data["open_binding"].is_null()
+        && data["history"]["items"].as_array().is_some_and(|items| {
+            items
+                .iter()
+                .any(|i| i["kind"] == "binding" && i["data"]["native_session"] == "stub-2")
+        });
+    assert!(
+        bound_by_prompt,
+        "after one prompt the running agent (session stub-2) is bound to its original seat: {data}"
     );
 }

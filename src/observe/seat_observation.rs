@@ -92,8 +92,14 @@ fn fact_state(status: &SeatStatus) -> SeatFactState {
     match status {
         SeatStatus::Resolved { pane } => SeatFactState::Resolved { pane: pane.clone() },
         SeatStatus::Unresolved => SeatFactState::Unresolved,
-        SeatStatus::Retired { kind } => SeatFactState::Retired {
+        SeatStatus::Retired {
+            kind,
+            keyed,
+            retired_at,
+        } => SeatFactState::Retired {
             reversible: *kind == RetirementKind::Reversible,
+            keyed: *keyed,
+            retired_at: *retired_at,
         },
         SeatStatus::KeyConflict { pane } => SeatFactState::KeyConflict { pane: pane.clone() },
     }

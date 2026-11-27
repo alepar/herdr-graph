@@ -155,6 +155,7 @@ fn new_loop(
         commit_timeout: Duration::from_secs(5),
         settle_timeout: Duration::from_millis(50),
         debounce: Duration::from_millis(5),
+        seat_recheck: Duration::from_millis(50),
     });
     lp
 }
@@ -1335,6 +1336,8 @@ async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     let reads = fx.seats.reads();
@@ -1376,7 +1379,11 @@ async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
     ));
     assert_eq!(
         fact_state(&fx, &c.id),
-        Some(SeatFactState::Retired { reversible: false }),
+        Some(SeatFactState::Retired {
+            reversible: false,
+            keyed: true,
+            retired_at: None
+        }),
         "the fact still records what threads said"
     );
 }
@@ -1604,8 +1611,7 @@ async fn seated_clone_is_located_only_by_seat_observation() {
     // Threads resolves the seat to a pane that carries no token, while another pane carries the clone's.
     let threads_pane = fx.herdr.add_user_pane(&tab, "resumed");
     assert_ne!(threads_pane, token_pane);
-    fx.seats
-        .set(&seat_ref("seat-1"), resolved(&threads_pane));
+    fx.seats.set(&seat_ref("seat-1"), resolved(&threads_pane));
     step(&fx).await;
     let now = clone_by_id(&fx, &c.id);
     assert_eq!(now.runtime.availability, Availability::Present);
@@ -2154,6 +2160,7 @@ async fn run_loop_reacts_to_events_and_ticks() {
         commit_timeout: Duration::from_secs(5),
         settle_timeout: Duration::from_millis(50),
         debounce: Duration::from_millis(5),
+        seat_recheck: Duration::from_millis(50),
     });
     let (tx, rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(lp.clone().run(rx));
@@ -2954,8 +2961,14 @@ async fn seat_retired_retires_the_clone_undoably() {
     for kind in [RetirementKind::Final, RetirementKind::Reversible] {
         let fx = fx();
         let (c, _) = seated(&fx, "seat-1").await;
-        fx.seats
-            .set(&seat_ref("seat-1"), SeatStatus::Retired { kind });
+        fx.seats.set(
+            &seat_ref("seat-1"),
+            SeatStatus::Retired {
+                kind,
+                keyed: true,
+                retired_at: None,
+            },
+        );
         step(&fx).await;
         let after = clone_by_id(&fx, &c.id);
         assert_eq!(after.lifecycle, CloneLifecycle::Retired, "{kind:?}");
@@ -2987,6 +3000,8 @@ async fn seated_node_manager_retired_seat_is_kept_and_restored() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3194,6 +3209,8 @@ async fn seated_node_manager_herdr_close_before_threads_retired_succeeds_once() 
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     map.set(&new_pane, "seat-2");
@@ -3216,6 +3233,8 @@ async fn seated_node_manager_threads_retired_first_succeeds_once() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     nm_step(&fx).await;
@@ -3277,6 +3296,8 @@ async fn seated_node_manager_stale_unresolved_outlives_the_reopen_then_retired_s
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     map.set(&new_pane, "seat-2");
@@ -3370,6 +3391,8 @@ async fn seatless_clone_keeps_the_matcher_result() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3420,6 +3443,8 @@ async fn retired_seat_with_pending_restore_does_not_retire() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3434,7 +3459,11 @@ async fn retired_seat_with_pending_restore_does_not_retire() {
     ));
     assert_eq!(
         fact_state(&fx, &c.id),
-        Some(SeatFactState::Retired { reversible: false }),
+        Some(SeatFactState::Retired {
+            reversible: false,
+            keyed: true,
+            retired_at: None
+        }),
         "the fact still records what threads said"
     );
 }
@@ -3466,6 +3495,8 @@ async fn retired_seat_after_threads_done_retires_and_clears_the_intent() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3474,6 +3505,58 @@ async fn retired_seat_after_threads_done_retires_and_clears_the_intent() {
     assert_eq!(
         after.seat_intent, None,
         "the retire commit dropped the intent"
+    );
+}
+
+/// Threads pushes nothing to the graph: after a Herdr restart its seat mapping reads Unresolved for a moment
+/// and then Resolved again (or an agent's keyed check-in resolves it) with no Herdr event, op or effect wake to
+/// trigger a step. The running loop re-reads an Unresolved seat by itself, so the committed fact and the
+/// clone's availability catch up long before the tick.
+#[tokio::test]
+async fn run_loop_rereads_an_unresolved_seat_without_another_trigger() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(fx.lp.clone().run(rx));
+    for _ in 0..200 {
+        if fact_state(&fx, &c.id) == Some(SeatFactState::Unresolved) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::Unresolved),
+        "the loop's first step read the seat"
+    );
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown
+    );
+
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    let mut caught_up = false;
+    for _ in 0..200 {
+        if fact_state(&fx, &c.id) == Some(SeatFactState::Resolved { pane: pane.clone() }) {
+            caught_up = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tx.send(true).unwrap();
+    task.await.unwrap();
+    assert!(
+        caught_up,
+        "the loop re-read the Unresolved seat within 2 s, with a 60 s tick: {:?}",
+        fact_state(&fx, &c.id)
+    );
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Present
     );
 }
 
@@ -3908,6 +3991,8 @@ async fn parity_pane_close_retires_the_clone_once() {
         &seat_ref("seat-a"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     fx.herdr.user_close_pane(&pa);
@@ -3941,6 +4026,8 @@ async fn parity_close_while_daemon_down_is_decided_by_threads() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     let lp2 = fx.restarted_loop();
@@ -4313,6 +4400,8 @@ async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_r
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     lp2.step_once().await.unwrap();

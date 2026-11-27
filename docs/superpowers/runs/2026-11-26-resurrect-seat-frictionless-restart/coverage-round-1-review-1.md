@@ -1,0 +1,15 @@
+requirements:
+R1 → hg-lnw.2, hg-lnw.4, hg-lnw.7, hg-lnw.8, hg-lnw.9
+R2 → hg-lnw.4, hg-lnw.10
+R3 → hg-lnw.5, hg-lnw.7, hg-lnw.8, hg-lnw.9
+R4 → hg-lnw.5, hg-lnw.7
+R5 → hg-lnw.11, hg-lnw.10
+R6 → hg-lnw.1, hg-lnw.6, hg-lnw.7
+R7 → hg-lnw.6
+R8 → hg-lnw.6
+R9 → hg-lnw.3, hg-lnw.9
+R10 → hg-lnw.8, hg-lnw.9
+R11 → hg-lnw.4, hg-lnw.5
+R-new: When the running threads daemon is older than 3.6.0, graph's behaviour is defined and surfaced (doctor finding, upgrade path) → hg-lnw.7, hg-lnw.6
+
+findings (summarised verbatim subjects): GAP B3/B4 upstream request owner; GAP R8 pin sites and migration note; GAP R3 shell/keyed/session restart coverage; GAP R5 remedy assertion; GAP R10/R11 keyed tier-3 restart; GAP R11 keyed undo unchanged; GAP R-new older daemon; UNOWNED-SEAM restore epoch .3/.4; UNOWNED-SEAM plan_resume restart branch and grace .3/.5/.11.

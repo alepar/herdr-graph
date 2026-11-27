@@ -1,0 +1,74 @@
+# Final seam review, epic hg-lnw, invocation inv-2
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad, both verified with `git rev-parse --verify <sha>^{commit}`. `bind-review-source` exited 0. Caller checkout observed at HEAD 985d1eb with a clean `git status --short`; this review did not modify it, created no worktree and ran no tests.
+
+Inputs: cluster reviews 1 and 3 to 34 (cluster 2, docs-runs, has no review file), clusters.json, the cross-cluster hunks of src/ports/threads.rs, src/threads/effects.rs, src/threads/mapping.rs, src/observe/seat_observation.rs, src/model/clone.rs, src/reconcile/planner.rs, src/reconcile/herdr_exec.rs, src/daemon/compose.rs and src/daemon/clone_status.rs, the epic (`bd show hg-lnw`) and its design doc (docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md), which carries a `## Requirement baseline` (B1 to B4, no human scope changes). Several cluster reviewers wrote that the epic has no baseline; the bead description has none, but the root design doc does, so this review applies it.
+
+## Cluster verdicts
+
+- 33 of 33 reviewed clusters return ready except cluster 30 (src-reconcile), which returns not ready with one item, carried below.
+- Cluster 2 (docs-runs, 52 files of run records, roast reports and ledgers) was not reviewed: it exceeded the review window after one re-cluster (148778 of 103200). It holds no product code.
+
+## Seams checked
+
+- Port to adapter to compose: `ThreadsPort::resurrect_seat` and `rebind_held_seat` (src/ports/threads.rs) default to `Unsupported`; the production `LazyThreads` in src/daemon/compose.rs overrides both and maps guard or connect errors through `SeatRestoreOutcome::from_error`, so a graph-local failure (now `Disconnected` after hg-lnw.24) becomes the retryable `Unreachable` and a `Rejected` stays definitive. Consistent with the executor's outcome handling in src/threads/effects.rs.
+- Read path to routing: `mapping::seat_status` sets `keyed` from the inspection's continuity key and `retired_at` from the summary; `observe::fact_state` copies both into `SeatFactState::Retired`; the model's legacy deserializer fills a missing `keyed` with `!keyless`. Effects route `keyed: true` reversible reads to `unretirable` and `keyed: false` to `resurrectable`, so the two wants are disjoint and a pre-upgrade keyless fact reaches resurrect. No cluster tests that legacy path end to end (cluster 26 note).
+- Resurrect to restore launch: the executor acknowledges with `AcknowledgeResurrected` (seat unchanged, invitation reset), which sets `threads_done`; the Herdr executor's restore launch requires `threads_done` and bypasses the keyless gate because `seat_intent` is set. The order threads-first, launch-second composes.
+- Restart rebind to keyless gate: the threads source emits `threads.rebind_held_seat` from `rebindable` (fresh `Unresolved` fact, live bound pane, no refusal this incarnation); the Herdr planner's `plan_resume` writes `seat_unresolved:<clone>` on the first fresh `Unresolved` read; `keyless_start_gate` opens on a fresh `Resolved` read on the own pane with that meta, else at the grace. The rule keys agree across clusters (`incarnation:changed_at` RFC 3339 strings in both metas). The meta is written by a different source than the one that changes the fact, so if the Herdr planner never plans a pass between the `Unresolved` commit and the next `Resolved` read, the gate falls back to the full grace: bounded, no operator step, and the spec accepts the same fallback for the never-observed-unresolved case.
+- Status rows: `clones.restart_held` reads `rebind_refused_in` (planner key) and the fact; `clones.resurrect_held` reads `refused_meta` (effects key) and requires a reversible fact; both match what the executors write and clear. `restart_held` uses `SEAT_LOST_AFTER` (90 s constant) while the gate uses the configurable `cfg.relaunch_grace`; they agree at default only.
+- Launch record to restart rule: `restart_covered` now counts a `launched:` meta as had-agent (spec 4.3); `start_needed` still requires no `launched:` meta. The hg-lnw.3 exemption in `HerdrExecutor::start` avoids writing that meta for a keyless restore launch on the normal path, but the Unknown-status branch earlier in the same function writes it unconditionally, which is the cluster 30 item. That branch is reached on a lost-response retry before the Restore checks run, so the defect is real at head.
+- Evidence currency: `git diff 80596ca 985d1eb6` touches only evidence/hg-lnw.29/, so the hg-lnw.29 tier 5 green run (9 of 9) is at the head's source tree. This answers clusters 16 and 22. Tier 3 has no run at head (cluster 33).
+
+## Requirement baseline trace
+
+- B1 (undo of a closed keyless tab re-adopts the original seat): production path is undo admitting a Restore intent, `resurrectable` in the threads source, `ThreadsExecutor::resurrect_seat` with op key `resurrect:<clone>:<epoch>:<replace>:<count>`, `LazyThreads::resurrect_seat`, adapter over `service_session_v4` at threads 3.6.0, then `AcknowledgeResurrected` and the restore launch. Delivered. The follow-on relaunch of an undo-restored agent that exits (spec 4.4) is broken on the lost-response path (cluster 30 item).
+- B2 (frictionless Herdr restart): rebind want every pass while held, keyless start gate bounded by the 90 s grace, keyless `RelaunchOccupant` waits the full grace (documented divergence), status row and doctor only as a degraded fallback. No operator step on the normal path. Delivered, with the gate-timing fallback noted above.
+- B3 (upstream v4 service level): adapter registers `ServiceSessionLevel::V4` through `with_level` from the 3.6.0 pin; discovery refuses a daemon below 3.6.0 by descriptor version. Delivered.
+- B4 (upstream rebind of a restart-held seat): `rebind_held_seat` calls ResurrectSeat with no `replace` (ht-0f0r in 3.6.0), `SeatAlreadyResolved` counted done. Delivered; tier 5 `operator_rebind_resurrects_and_places` and the window tests ran green at the head tree.
+
+## Verdict
+not ready (keyless restore launch with a lost response still records launched: (cluster 30), and cluster 2 is unreviewed)
+
+## Must fix before landing
+- src/reconcile/herdr_exec.rs `HerdrExecutor::start`, Unknown-status branch (agent already on the pane): apply the hg-lnw.3 exemption there too (no `record_launch` for a keyless clone's restore launch), and add a reconcile test with a LostResponse fault on the restore `StartAgent` followed by the agent exiting (carried from cluster 30; breaks spec 4.4 on that path).
+- Cluster 2 (docs-runs-2026-11-26-resurrect-seat-frictionless-restart) is unreviewed: over the review window after one re-cluster (148778 of 103200); run records, roast reports and ledgers, not product code. A human or a split review must accept or review it.
+
+## Untested scope
+- No test drives the gate fallback where the Herdr planner misses the fresh `Unresolved` read before threads reads `Resolved`; the keyless fresh start then waits the full 90 s grace instead of opening early.
+- No test configures `relaunch_grace` away from 90 s; `clones.restart_held` uses the fixed `SEAT_LOST_AFTER` and would then disagree with the gate.
+- No end-to-end test routes a legacy keyless reversible fact (no `keyed` field) through the effects planner to resurrect (cluster 26).
+- Tier 3 (tests/adopt_private_herdr.rs, tests/e2e_private_herdr.rs) has no run at head; the latest runs predate the hg-lnw.24 and hg-lnw.25 merges on the discovery path (cluster 33).
+- No lost-response (Unknown) re-run of a keyless restore StartAgent, and no keyless clone with a non-Restore seat intent across a restart (cluster 30).
+- `restart_held` is not driven with threads unreachable after a restart, where no fresh read lands and the row cannot appear (cluster 24).
+- Doctor's handling of the discovery `Unsupported` floor error is not tested end to end through `Endpoint::locate` (cluster 24).
+- No live 3.5.x daemon test; the floor is covered at unit level and by the tier 5 retryable-refusal check (clusters 1 and 21).
+- The printed remedy is not run from status or doctor output; tier 5 builds it from `operator_rebind_remedy` (cluster 1).
+- Real Herdr name collision with an external agent, the long-pane-id retry, and the self-collision race are covered only by the fake and scripted socket (cluster 25).
+- No observe test copies `keyed: false` or `retired_at: Some` into the committed fact (cluster 27).
+- `SeatRestoreRefusal::retryable()` per variant and the production `LazyThreads` overrides have no direct test (cluster 29).
+- No executor test runs `resurrect_seat` against the real `ThreadsSeatMap`, and `daemon_floor` has no pre-release case (cluster 31).
+- `restore_preview`'s second `clone.resurrect` site, a stale pre-close fact and a mismatched-seat fact have no window-note test (cluster 32).
+- `late_rebind_binds_the_fresh_agent_at_its_next_prompt` checks its property only in the late order; non-retryable rebind refusals run only against the fake; the "adopted keyless, resume fails" row has no tier 3 test (clusters 23 and 33).
+- `operator_resurrect_ack_carries_the_reset` has one green run with a fixed step settle (cluster 10).
+- Rig-leak checks are not recorded in the hg-lnw.3, .7, .8, .11 and .12 evidence (clusters 6, 7, 18, 21, 22).
+- The packaging test checks README headings only, not the hg-lnw.10 doc-content criteria (cluster 5).
+- hg-lnw.24 check.log recorded fmt_exit=1 and no later evidence shows rustfmt clean (cluster 14).
+
+## Deferred OK
+- `daemon_floor` accepts `3.6.0-rc.N` pre-releases (clusters 1 and 31).
+- An empty `/tmp/.git` directory breaks `stop-run-processes` temp-root checks; a human should run `rmdir /tmp/.git` (cluster 1).
+- Daemon-side threads claims in docs/verification-matrix.md rest on cited upstream source (cluster 4).
+- Unused `Fx.herdr` field warning in src/threads/tests.rs (clusters 6, 7, 9, 11, 13, 14, 20).
+- Superseded failing evidence logs (hg-lnw.15 runs 1 and 2, hg-lnw.23 cargo-test.log, hg-lnw.28 rebased and integration-tip) could carry a pointer to the green run (clusters 10, 13, 16).
+- `daemon::lock` tests flake under parallel load, pre-existing at base; track separately (clusters 19, 21, 24).
+- `private_process_info_is_shell` and two timing-sensitive e2e tests are flaky, pre-existing (cluster 23).
+- restart_held could skip clones whose bound pane is gone; persistent graph-local faults now retry indefinitely; doctor upgrade detection uses message substrings (cluster 24).
+- Self-collision retry window in `start_agent`, FakeHerdr duplicating the retry rule, and the degenerate long-id retry (cluster 25).
+- `CloneRecord` TOML type errors lose their span; a queued legacy `bookkeeping.seat_fact` reads `keyed: true` for one pass (cluster 26).
+- Adopt-plan keyless warning wording (cluster 28).
+- `ThreadsError::Rejected` doc comment, deriving `Refused.retryable`, and the copied 3.5.0 window constants (cluster 29).
+- Narrow the gate's `seat_intent.is_some()` bypass or reword its comment; keyless `RelaunchOccupant` waits the full grace by documented design (cluster 30).
+- `resurrect_seat` always passes a graph-minted `replace` via `seat_for`, undocumented in the spec (cluster 31).
+- `seat_window_note` silent for a stale pre-close fact; keyed final retirement gets no membership-loss warning (cluster 32).
+- herdr-release-smoke matrix cannot run the new tier 5 window tests and its inventories are stale (cluster 33).
+- Raw compile noise in hg-lnw.29 logs (cluster 17).

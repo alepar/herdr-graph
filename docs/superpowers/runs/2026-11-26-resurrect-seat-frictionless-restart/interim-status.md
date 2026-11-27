@@ -1,0 +1,36 @@
+# hg-lnw interim status — 2026-11-27
+
+Branch `super-auto/resurrect-seat-frictionless-restart`, code tip `985239e`. Not ready to merge: the threads-facing half waits on herdr-threads 3.6.0.
+
+## Landed (graph side, against the fake)
+
+| Bead | What | Review |
+|---|---|---|
+| hg-lnw.2 | `ThreadsPort::resurrect_seat` / `rebind_held_seat`, typed outcomes incl. already-resolved; keyed/retired_at on retired facts; fake models 3.5/3.6 (24 h / 7 d windows, resurrect, U2 rebind) | clean |
+| hg-lnw.3 | coordinator trial finding 3: an undo-restored keyless seat whose agent exits is relaunched (root cause: restore launch wrote `launched:<clone>`, shutting out the ordinary restart rule) | clean |
+| hg-lnw.4 | undo of a closed keyless seat resurrects the original seat; keyed path unchanged; undo preview names the window; adoption warning reworded | clean |
+| hg-lnw.13 | Herdr restart: level-triggered rebind of every unresolved managed seat; keyless fresh start waits for placement or the 90 s grace; never-observed clones started | clean (seam-reviewed) |
+| hg-lnw.14 | resurrect outcome mapping, re-plan with new replace/op key, `clones.resurrect_held` + doctor finding | clean (seam-reviewed) |
+| hg-lnw.15 | invitation reset on every keyless resurrect acknowledgement | clean |
+| hg-lnw.11 | `clones.restart_held` + doctor finding with operator remedy | clean |
+
+## Tests at 985239e
+
+- Tiers 1-2 (`toolbox run -c hg-build cargo test`): pass (lib 1526, all targets ok), 0 leaked rigs.
+- Tier 3 (`--features private-herdr -- --test-threads=1`): first run had one timeout in `e2e_cold_restart_attended_keeps_clones_on_their_seats` (40 s rebind wait, late in a 7-minute serial run); it passed 2/2 alone, and a full `--no-fail-fast` rerun gave 1732 passed, 0 failed, 0 leaks. Treated as a load flake, not fixed.
+- Tier 5: not run (needs 3.6.0).
+
+## Waiting on herdr-threads 3.6.0 (gate hg-lnw.1)
+
+hg-lnw.6 pin + 3.1→3.6 audit, hg-lnw.7 real adapter (v4 session, ResurrectSeat incl. held seats), hg-lnw.8 tier 5, hg-lnw.9 tier 3 scenarios, hg-lnw.10 docs, hg-lnw.12 integration sweep. Then the code roast, fix loop and the full sweep.
+
+## Not safe to merge alone
+
+With the 3.1.0 pin the real adapter's new methods are stubs answering Unsupported. On a 3.5.0 daemon (this host runs one) a keyless undo then shows `clones.resurrect_held` with the operator remedy instead of stalling silently, but a keyless fresh start after a Herdr restart waits the full 90 s grace and reports `restart_held`. Merge after 3.6.0, not before.
+
+## Findings worth your attention
+
+- Latent on main today: this host runs herdr-threads 3.5.0, graph main pins 3.1.0, so a keyless undo on main stalls up to 7 d (sent earlier, mnSGhWRlc0e5).
+- herdr-threads answered the late-rebind question (mnSGGl0TGwIX): an agent already running unbound binds at its next turn boundary only when attention is pending, or at its first herdr-threads call; until then it reads unavailable. hg-lnw.9 checks it; a nudge after a late rebind is the fix if needed.
+- super-code cleanup helpers exit 4 on this host because of a foreign `/tmp/.git`, and `git worktree remove` refuses worktrees holding the herdr-threads submodule; task worktrees were removed by the coordinator after a cwd scan, clean status and merged-branch check (friction log).
+- Minor follow-ups on the ledger: `restart_held` gives no row when threads is unreachable for a whole incarnation; NotFound resurrect retry reuses its op key; evidence logs are committed under `evidence/hg-lnw.*`.

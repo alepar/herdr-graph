@@ -1,0 +1,36 @@
+# Final review, cluster 1 (root-files), epic hg-lnw, invocation inv-2
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad (both verified with `git rev-parse --verify <sha>^{commit}`). Review source bound with `bind-review-source` (exit 0). Caller checkout observed at HEAD 985d1eb, `git status --short` empty; not modified by this review.
+
+Cluster files: CHANGELOG.md, CURRENT-DESIGN.md, Cargo.lock, Cargo.toml, README.md (slices 000001-000005). Spec: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md (has a Requirement baseline, B1-B4, no human scope changes).
+
+## What was checked
+
+- Pin: the `third_party/herdr-threads` gitlink at head is 7c3c09082e8894ebceec9c060b769b07e359a2ad, tag v3.6.0 in the submodule, whose Cargo.toml reports 3.6.0; the Cargo.lock change is the single matching version line. README's release commit and release URL match.
+- The inv-1 cluster-1 must-fix (docs promised a named refusal for every daemon below 3.6.0, while a 3.5.x daemon registers v4) is closed by hg-lnw.25 in code and by the doc rewrite: `daemon_floor` (src/threads/adapter.rs:227) checks the descriptor's `software_version` in `discover` and returns `Unsupported` with `herdr-threads daemon must be at least 3.6.0 (found <version>); upgrade the herdr-threads daemon and restart it`; `locate` (src/daemon/compose.rs:778-787) maps it to `ThreadsError::Disconnected` (retryable, as CURRENT-DESIGN says); the explicit-endpoint branch (compose.rs:761-768) reads no descriptor, which the README, CHANGELOG and CURRENT-DESIGN all state. The doctor upgrade step fires on both error texts (src/daemon/doctor.rs:111-118), and doctor warns rather than fails when no state dir is found, as the README says.
+- The v4 refusal text `herdr-threads daemon refused service_session_v4 (...); upgrade the herdr-threads daemon to >= 3.6.0` matches `level_refused` (adapter.rs:65-71). The README's no-fallback paragraph and the Cargo.toml feature comment agree with each other: Notify fallback survives only for a daemon lacking send-time receipts, which every accepted daemon advertises, and for `--no-default-features`.
+- Operator remedy `herdr-threads human seat rebind SEAT --pane PANE --operator`, the op keys `resurrect:<clone>:<epoch>:<replace or none>:<refusal count>` and `rebind:<clone>:<incarnation changed_at>`, the meta keys, the status rows `clones.restart_held` and `clones.resurrect_held` and the doctor names are all as shipped, and match the spec's Post-Implementation Notes (hg-lnw.27), which record where they differ from the spec body.
+- Restart wording (a fresh keyless start waits until placed in this incarnation or the 90 s grace ends; a fresh keyed start never waits; `RelaunchOccupant` waits the full grace) matches `keyless_start_gate` (src/reconcile/herdr_exec.rs:38-57: keyed or seat-intent panes return no wait; placement needs `seat_unresolved` for this incarnation plus a fresh `Resolved` read on the pane) and the spec note on resumed relaunches. A `launched:` meta counting as had-agent matches planner.rs:709.
+- The undo window text (24 h / 7 d, reset of `Ordinary` `Pending` rows only, `Required`, accepted and rejected rows untouched, purge finalizes at once) agrees with spec §3 and the hg-lnw.27 notes.
+- The migration note (daemon 3.6.0 first, schema 19 one-way, 3.3.0 to 18 and 3.5.0 to 19) agrees with spec §2.
+
+## Requirement baseline trace
+
+- B1 (resurrect the closed tab's seat): production path `threads.resurrect_seat` want to the compose lazy port (src/daemon/compose.rs:1024-1036) to `ServiceThreads::resurrect_seat` (adapter.rs:772). The root docs describe it accurately. Planner gating is the src cluster's to judge, and composition is the seam reviewer's.
+- B2 (frictionless Herdr restart): `threads.rebind_held_seat` through compose.rs:1040-1051 to the adapter, with the start gate in herdr_exec.rs. With the 3.6.0 floor now enforced at discovery, a 3.5.x daemon can no longer silently degrade the rebind, so the docs' guarantee holds. End-to-end composition belongs to the seam reviewer.
+- B3 (upstream service level): the adapter registers v4 through `with_level` from the pinned 3.6.0 (ht-lzhi). Delivered.
+- B4 (upstream rebind of a restart-held seat): `ResurrectSeat` with no `replace` (ht-0f0r in 3.6.0), with `SeatAlreadyResolved` as done. Delivered at this pin.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- No test runs graph against a real 3.5.x daemon; the floor is covered at unit level (`daemon_floor_refuses_below_3_6_0_by_name` and the published-descriptor test in src/threads/service_tests.rs) and by the tier-5 retryable-refusal check (hg-lnw.29), not by a live 3.5.x process.
+- The remedy string printed by status, doctor and the docs is not parsed and run end to end against real threads; the tier-5 operator rebind test builds its own argv (carried from inv-1).
+
+## Deferred OK
+- `daemon_floor` strips pre-release suffixes, so a `3.6.0-rc.N` daemon passes the floor although semver orders it below 3.6.0; negligible for released daemons.
+- An empty `/tmp/.git` directory, not created by this epic, breaks `stop-run-processes` temp-root checks; a human should remove it (`rmdir /tmp/.git`) (carried from inv-1).

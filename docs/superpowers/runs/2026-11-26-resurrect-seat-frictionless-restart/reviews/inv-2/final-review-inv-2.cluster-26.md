@@ -1,0 +1,41 @@
+# Final review inv-2, cluster 26 (src-model)
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 985d1eb6faaa2e92e4e01f430f0f2c07618bf6ad (both verified with `git rev-parse --verify`). Cluster files: src/model/clone.rs (slice 000143), src/model/tests.rs (slice 000144). Spec: docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-design.md (Requirement baseline B1-B4, no human scope change rows).
+
+## What the cluster changes
+
+- `SeatFactState::Retired` gains `keyed: bool` (serde default `true`) and `retired_at: Option<Timestamp>` (omitted when `None`). This is the model half of spec section 3: "the seat fact gains the keyed/keyless distinction" and the windows "derived from the seat's `retired_at`".
+- `CloneRecord` moves to `#[serde(remote = "Self")]` with a hand-written `Deserialize` that goes through `serde_json::Value`. When `seat_fact.state == "retired"` and `keyed` is missing, it inserts `keyed = !keyless`. Serialization is unchanged (it delegates to the derived impl).
+- Tests: a new `#[cfg(test)]` module in clone.rs (a legacy parse made by stripping the `keyed` line from current TOML, and TOML/JSON round trips over all four keyless/keyed combinations). tests.rs updates the existing seat-fact round trip and adds a standalone legacy `SeatFact` read plus a check that `retired_at: None` is not serialized.
+
+## Requirement baseline trace (cluster scope)
+
+- B1 (keyless undo resurrects the original seat): this cluster supplies only the data the routing needs. The production producer is `src/observe/seat_observation.rs:95-102` (maps `SeatStatus::Retired { keyed, retired_at, .. }` into the fact), persisted through `bookkeeping.seat_fact` (`src/observe/mutations.rs`, `SeatFactMutation`). The consumer is `src/threads/effects.rs:648-701`, which routes `keyed: true` to unretire and `keyed: false` to the resurrect want. The model's legacy rule matters exactly here. Without it, a keyless clone's reversible fact written before the upgrade would read `keyed: true` and be routed to `UnretireSeat`, which threads refuses for keyless seats: the stall the spec's section 2 warns about. With it, that fact reads `keyed: false`. The adapter-to-observation and observation-to-effects paths leave this cluster; they are the seam reviewer's to trace.
+- B2, B3, B4: nothing in this cluster bears on them beyond `retired_at` being carried for the section 3 windows. Their routing is in other clusters.
+
+## Correctness checks done
+
+- Going through `serde_json::Value` is safe for every field type in `CloneRecord`. Ids use `String::deserialize`. Timestamps are chrono strings, because graph writes them with `toml::to_string`, so they are quoted. No TOML datetimes appear in repo fixtures (searched). `launched_compat` is an untagged bool/timestamp that works on a `Value`. `SeatFact` flattens `state`, so inserting `keyed` into the `seat_fact` object is the right place. There are no floats, no `deny_unknown_fields` and no byte fields.
+- The rule fires only for `state == "retired"` with `keyed` absent. An explicit `keyed` is kept (tested). Other states are not touched.
+- `SeatFact` read outside a `CloneRecord` (for example the `fact` in a `bookkeeping.seat_fact` change request) defaults to `keyed: true`, as the field doc states.
+- Ran in a review-owned detached worktree at head, in hg-build: `cargo test --lib -- model::` gave 66 passed, 0 failed. That includes `legacy_retired_fact_takes_keyed_from_the_clone`, `current_clone_record_round_trips`, `retired_fact_reads_legacy_without_keyed`, `clone_record_seat_fact_roundtrip` and `keyless_clone_round_trips_and_defaults_to_false`. Leak check count was 0. The worktree was removed afterwards. No evidence log for hg-lnw.26 is committed under evidence/; this run stands in for it.
+- Caller checkout observed: HEAD still 985d1eb, `git status --short` clean before and after. The only write to caller state was the authorized binding append to progress.md.
+
+## Concerns
+
+- A type error inside a `CloneRecord` (for example a malformed id or timestamp in a clone TOML) now comes back through `D::Error::custom` from the `Value` pass. It loses the TOML line/column span the derived impl reported. Syntax errors still carry spans. This is a diagnostic regression for hand-edited or corrupted records, which the implementer also noted.
+- A `bookkeeping.seat_fact` change request queued by a pre-upgrade build and applied after the upgrade parses its standalone `SeatFact` with the `keyed: true` default, even for a keyless clone. The next SeatObservation pass re-reads the fact from threads and overwrites it, so at most one plan can route a keyless reversible seat to unretire. Threads refuses that and the want is re-planned. The effect is self-healing and narrow.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- No test reads a legacy clone record whose seat fact lacks both `keyed` and `retired_at` through the effects planner end to end, to confirm a pre-upgrade keyless reversible fact is routed to resurrect and not unretire. The model-level parse is tested; the routing is in another cluster.
+- No test asserts how a type error inside a `CloneRecord` is reported (span or message) after the switch to the `Value`-based deserializer.
+
+## Deferred OK
+- TOML type errors inside `CloneRecord` lose their line/column span because they go through `serde_json::Value`. This is a diagnostic-only regression; a follow-up could deserialize through `toml::Value`, or patch the table before the typed pass, to keep spans.
+- A pre-upgrade queued `bookkeeping.seat_fact` request on a keyless clone reads `keyed: true` until the next observation pass overwrites it. This is self-healing within one pass.

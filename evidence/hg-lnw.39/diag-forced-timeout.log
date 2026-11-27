@@ -1,0 +1,166 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.07s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 1 test
+test e2e_cold_restart_headless_resumes_via_the_driver ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+FAILED
+
+failures:
+
+---- e2e_cold_restart_headless_resumes_via_the_driver stdout ----
+
+thread 'e2e_cold_restart_headless_resumes_via_the_driver' (4123674) panicked at tests/e2e_private_herdr.rs:326:9:
+timed out (0s) waiting for every clone to be rebound and present; still missing:
+foreman cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J: generation 2 (before 1), availability "present", seat_fact { pane = "w1:p4", read_at = "2026-11-27T15:12:06.852266758Z", seat = "sarNUlMicj12", state = "resolved" }, facts Some(CloneFacts { id: "cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J", threads_seat: "sarNUlMicj12", pane: "w1:p4", invitations: [("hg-st_01m8es0c73sd4mchza8mvrp4b5", "pending", "iarNXWGj57FP"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNEmvUXwfs")] }) (before CloneFacts { id: "cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J", threads_seat: "sarNUlMicj12", pane: "w1:p4", invitations: [("hg-st_01m8es0c73sd4mchza8mvrp4b5", "pending", "iarNXWGj57FP"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNEmvUXwfs")] })
+foreman cl_01M8ES0C73JBH5PTATNSDN3NP0: generation 2 (before 1), availability "present", seat_fact { pane = "w1:p2", read_at = "2026-11-27T15:12:06.852266758Z", seat = "sarNQ9zQ9NSb", state = "resolved" }, facts Some(CloneFacts { id: "cl_01M8ES0C73JBH5PTATNSDN3NP0", threads_seat: "sarNQ9zQ9NSb", pane: "w1:p2", invitations: [("hg-st_01m8es0c73sd4mchza8mvrp4b5", "pending", "iarNzN22N5wo"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNkA5oUXMO")] }) (before CloneFacts { id: "cl_01M8ES0C73JBH5PTATNSDN3NP0", threads_seat: "sarNQ9zQ9NSb", pane: "w1:p2", invitations: [("hg-st_01m8es0c73sd4mchza8mvrp4b5", "pending", "iarNzN22N5wo"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNkA5oUXMO")] })
+bar cl_01M8ES0CKMVRE48F436PFT5AJS: generation 2 (before 1), availability "present", seat_fact { pane = "w1:p3", read_at = "2026-11-27T15:12:06.852266758Z", seat = "sarN8fLSyCYm", state = "resolved" }, facts Some(CloneFacts { id: "cl_01M8ES0CKMVRE48F436PFT5AJS", threads_seat: "sarN8fLSyCYm", pane: "w1:p3", invitations: [("hg-st_01m8es0ckmskk3mbyjsavp5nm2", "pending", "iarNE8b2B2Mb"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNP2qb6C35")] }) (before CloneFacts { id: "cl_01M8ES0CKMVRE48F436PFT5AJS", threads_seat: "sarN8fLSyCYm", pane: "w1:p3", invitations: [("hg-st_01m8es0ckmskk3mbyjsavp5nm2", "pending", "iarNE8b2B2Mb"), ("hg-ts_01m8es0c5715nk9a0m7adf9vv6", "pending", "iarNP2qb6C35")] })
+threads seats: {"version":9,"result":{"kind":"seats","data":{"items":[{"seat":"sarNUlMicj12","continuity":"resolved","target":"w1:p4","generation":3,"created_at":1795792320319,"retired_at":null,"active":false,"bindings":[],"availability":"unavailable@1795792320319","directory":{"node":"arN","machine":"toolbx","state":"offline","workspace":"t","tab":"foreman","pane":"foreman"}},{"seat":"sarN8fLSyCYm","continuity":"resolved","target":"w1:p3","generation":3,"created_at":1795792319591,"retired_at":null,"active":false,"bindings":[],"availability":"unavailable@1795792319591","directory":{"node":"arN","machine":"toolbx","state":"offline","workspace":"t","tab":"bar","pane":"w1:p3"}},{"seat":"sarNQ9zQ9NSb","continuity":"resolved","target":"w1:p2","generation":3,"created_at":1795792318973,"retired_at":null,"active":false,"bindings":[],"availability":"unavailable@1795792318973","directory":{"node":"arN","machine":"toolbx","state":"offline","workspace":"t","tab":"foreman","pane":"w1:p2"}}],"next_cursor":null,"next_argv":null,"high_water_ordinal":3,"scope_revision":null,"has_more":false,"stop_reason":"complete","consistency":"bounded_live"}}}
+
+daemon log:
+
+status:
+instance: /tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/graph
+daemon: running (pid 4123752, up 43s)
+herdr socket: /tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/herdr.sock
+clones: {"key_conflicts":[],"restart_held":[],"resume_blocked":[],"resurrect_held":[],"retired_unpurged":[],"stuck_restores":[]}
+reconciler: {"attention":[],"blocked_effects":0,"failed_effects":0,"needs_revision_effects":0,"pending_effects":6,"pending_notices":0,"unknown_effects":0}
+threads: {"capability":"service_ack","connected":true}
+transcripts: {"completed":0,"delivery":"fallback: ACK lives in graph, not threads (unless the threads-service-ack path is active)","dispatched":0,"export_rejected":[],"pending":0,"undeliverable":[],"unresolved":0}
+writer: {"ops":{"committed":59},"writer_halted":null}
+herdr-graph: warning: no node manager is assigned; run herdr-graph plan node-manager set <seat>
+
+snapshot:
+Ok(
+    HerdrSnapshot {
+        incarnation: Incarnation {
+            generation: 0,
+            server_pid: Some(
+                4124054,
+            ),
+            server_started: Some(
+                "Fri Nov 27 07:12:00 2026",
+            ),
+        },
+        workspaces: [
+            WorkspaceInfo {
+                id: HerdrWorkspaceId(
+                    "w1",
+                ),
+                label: "t",
+                metadata: {
+                    "hg": "hg=ts_01M8ES0C5715NK9A0M7ADF9VV6",
+                },
+                tabs: [
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t1",
+                        ),
+                        label: "1",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p1",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_661437b6440761",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/graph",
+                                ),
+                                metadata: {},
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t2",
+                        ),
+                        label: "foreman",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p2",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_661437b64433f2",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M8ES0C73JBH5PTATNSDN3NP0",
+                                },
+                                agent: None,
+                            },
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p4",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_661437b64464a3",
+                                    ),
+                                ),
+                                label: Some(
+                                    "foreman",
+                                ),
+                                cwd: Some(
+                                    "/tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                    TabInfo {
+                        id: HerdrTabId(
+                            "w1:t3",
+                        ),
+                        label: "bar",
+                        panes: [
+                            PaneInfo {
+                                id: HerdrPaneId(
+                                    "w1:p3",
+                                ),
+                                terminal_id: Some(
+                                    HerdrTerminalId(
+                                        "term_661437b64491d4",
+                                    ),
+                                ),
+                                label: None,
+                                cwd: Some(
+                                    "/tmp/hg-01m8es0b9t6b2cxnn0zb48hbqz/home",
+                                ),
+                                metadata: {
+                                    "hg": "hg=cl_01M8ES0CKMVRE48F436PFT5AJS",
+                                },
+                                agent: None,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    },
+)
+open effects:
+[("threads.membership", "cl_01M8ES0C73JBH5PTATNSDN3NP0", "Pending", "hg-ts_01m8es0c5715nk9a0m7adf9vv6: still pending"), ("threads.membership", "cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J", "Pending", "hg-st_01m8es0c73sd4mchza8mvrp4b5: still pending"), ("threads.membership", "cl_01M8ES0CKMVRE48F436PFT5AJS", "Pending", "hg-ts_01m8es0c5715nk9a0m7adf9vv6: still pending"), ("threads.membership", "cl_01M8ES0D0CP0Z7SQ5VB1NPTT8J", "Pending", "hg-ts_01m8es0c5715nk9a0m7adf9vv6: still pending"), ("threads.membership", "cl_01M8ES0C73JBH5PTATNSDN3NP0", "Pending", "hg-st_01m8es0c73sd4mchza8mvrp4b5: still pending"), ("threads.membership", "cl_01M8ES0CKMVRE48F436PFT5AJS", "Pending", "hg-st_01m8es0ckmskk3mbyjsavp5nm2: still pending")]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    e2e_cold_restart_headless_resumes_via_the_driver
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out; finished in 44.70s
+
+error: test failed, to rerun pass `--test e2e_private_herdr`
