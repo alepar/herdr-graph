@@ -1,0 +1,20 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.22)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.89s
+     Running tests/threads_real.rs (target/debug/deps/threads_real-079463c64d52bc89)
+
+running 9 tests
+test adopt_resolves_the_checked_in_seat ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+ok
+test operator_rebind_resurrects_and_places ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+ok
+test production_discovery_reaches_real_threads_daemon ... ok
+test real_threads_channel_invite_membership_notify_release ... ok
+test rebind_places_a_restart_held_seat_on_its_pane ... ok
+test resurrect_after_finalization_is_not_found ... ok
+test resurrect_before_24h_keeps_memberships_and_pending_receipt ... ok
+test resurrect_between_24h_and_7d_keeps_memberships_and_settles_receipt ... ok
+test support::isolated::root_watchdog ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.48s
+
+exit=0
