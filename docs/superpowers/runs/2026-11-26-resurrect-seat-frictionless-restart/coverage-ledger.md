@@ -1,0 +1,1 @@
+L1 · r1 · flag-sweep · hg-lnw.5 · kept as leaf — rebind gating and never-observed change the same restart branch of plan_resume; status row split to hg-lnw.11; planner questions answered in the description
