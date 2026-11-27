@@ -1388,9 +1388,9 @@ async fn rebind_places_a_restart_held_seat_on_its_pane() {
     );
 }
 
-/// The operator remedy graph's status rows name (`seat rebind SEAT --pane PANE --operator`) on 3.6.0: it resurrects
-/// a keyless `Retired{Reversible}` seat onto a reopened pane, and places a restart-held seat. Threads 3.6.0 runs it
-/// only in its `human` namespace (`herdr-threads human seat rebind ...`); the bare form graph prints is refused.
+/// The operator remedy graph's status rows name (`herdr-threads human seat rebind SEAT --pane PANE --operator`) on
+/// 3.6.0: it resurrects a keyless `Retired{Reversible}` seat onto a reopened pane, and places a restart-held seat.
+/// Threads 3.6.0 runs it only in its `human` namespace; the bare `seat rebind ...` form is refused.
 #[tokio::test(flavor = "multi_thread")]
 async fn operator_rebind_resurrects_and_places() {
     let Some(mut herdr) = tier5_herdr() else {

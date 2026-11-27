@@ -990,14 +990,14 @@ mod tests {
         let clones = serde_json::json!({ "resurrect_held": [{
             "clone": "c1", "name": "foreman", "seat": "seat-A", "pane": "w1:p9",
             "reason": "target_already_owned", "since": "t",
-            "remedy": "an operator rebind brings the seat back: herdr-threads seat rebind seat-A --pane w1:p9 --operator",
+            "remedy": "an operator rebind brings the seat back: herdr-threads human seat rebind seat-A --pane w1:p9 --operator",
         }]});
         let c = resurrect_held_check(Some(&clones)).expect("finding");
         assert_eq!(c.name, "resurrect held");
         assert!(c.ok && c.warn, "{c:?}");
         assert_eq!(
             c.detail,
-            "foreman seat seat-A on pane w1:p9: target_already_owned; an operator rebind brings the seat back: herdr-threads seat rebind seat-A --pane w1:p9 --operator"
+            "foreman seat seat-A on pane w1:p9: target_already_owned; an operator rebind brings the seat back: herdr-threads human seat rebind seat-A --pane w1:p9 --operator"
         );
     }
 
@@ -1033,13 +1033,13 @@ mod tests {
         let clones = serde_json::json!({ "restart_held": [{
             "clone": "c1", "name": "foreman", "seat": "seat-1", "pane": "w1:p1",
             "reason": "rebind refused: unauthorized", "since": "2026-01-01T00:00:00+00:00",
-            "remedy": "herdr-threads seat rebind seat-1 --pane w1:p1 --operator",
+            "remedy": "herdr-threads human seat rebind seat-1 --pane w1:p1 --operator",
         }]});
         let c = restart_held_check(Some(&clones)).expect("a finding");
         assert!(c.ok && c.warn, "{c:?}");
         assert!(
             c.detail
-                .contains("herdr-threads seat rebind seat-1 --pane w1:p1 --operator"),
+                .contains("herdr-threads human seat rebind seat-1 --pane w1:p1 --operator"),
             "{}",
             c.detail
         );

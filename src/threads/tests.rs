@@ -6585,7 +6585,7 @@ async fn resurrect_held_row_after_90s_while_reversible() {
     assert_eq!(
         rows[0]["remedy"],
         format!(
-            "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: herdr-threads seat rebind seat-A --pane {} --operator",
+            "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: herdr-threads human seat rebind seat-A --pane {} --operator",
             pane.0
         )
     );
