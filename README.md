@@ -91,7 +91,7 @@ Adopted clones are keyless: graph reserves no herdr-threads continuity key for t
 
 `clone purge` of a closed keyless clone finalizes its seat at once, ending the window.
 
-A Herdr restart needs no operator action for any graph-managed seat. Graph rebinds every seat threads holds unresolved on a pane that still exists (`ResurrectSeat` on the seat's own pane), and retries until the seat is placed. A keyless relaunch, fresh or resumed, waits until the seat is placed or the 90 s grace after the restart ends, then starts; an agent started before a late rebind lands enrolls on the original seat at its next check-in. Keyed relaunches never wait. Graph-created shell seats are placed and nothing is launched; an agent graph launched but never saw check in gets a fresh start after the rebind.
+A Herdr restart needs no operator action for any graph-managed seat. Graph rebinds every seat threads holds unresolved on a pane that still exists (`ResurrectSeat` on the seat's own pane), and retries until the seat is placed. A fresh start of a seated keyless clone waits until the seat is placed or the 90 s grace after the restart ends, then starts; a fresh keyed start never waits. A resumed relaunch, keyed or keyless, waits out the full 90 s grace, and placing the seat does not end that wait early. An agent started before a late rebind lands enrolls on the original seat at its next check-in. Graph-created shell seats are placed and nothing is launched; an agent graph launched but never saw check in gets a fresh start after the rebind.
 
 Two status rows (`herdr-graph status`, under `clones`) and their `doctor` findings report a seat graph could not bring back. Both name the seat, pane and reason, and the remedy `herdr-threads seat rebind SEAT --pane PANE --operator`; both clear on their own once the seat is back:
 
@@ -236,7 +236,7 @@ If both 4 and 5 exist and differ, discovery refuses to guess: set `threads_state
 
 `herdr-graph doctor` prints a `threads` line: `state dir <path> (<where it was found>)` or `not found (<reason>)`, followed by whether the running daemon is connected to threads (its capability, or the error). A missing herdr-threads install is reported as `[WARN]` and does not fail doctor: graph works without threads, degraded (no channels, notifications or summarizer delivery). The check fails when the state dir is found but the running daemon reports it is not connected, or when discovery is ambiguous.
 
-A herdr-threads daemon older than 3.6.0 refuses graph's `service_session_v4` registration; graph does not fall back to v3. Graph reports the named error `herdr-threads daemon refused service_session_v4 (<detail>); upgrade the herdr-threads daemon to >= 3.6.0`, threads stays disconnected, and the doctor `threads` line fails with the upgrade step: install herdr-threads 3.6.0 or later and restart the herdr-threads daemon. Graph retries the registration on its next threads call.
+A herdr-threads daemon older than 3.6.0 refuses graph's `service_session_v4` registration; graph does not fall back to v3. Graph reports the named error `herdr-threads daemon refused service_session_v4 (<detail>); upgrade the herdr-threads daemon to >= 3.6.0`, threads stays disconnected, and the doctor `threads` line fails (or warns, when no threads state directory is found) and gives the upgrade step: install herdr-threads 3.6.0 or later and restart the herdr-threads daemon. Graph retries the registration on its next threads call.
 
 ### Threads node identity and recovery
 
