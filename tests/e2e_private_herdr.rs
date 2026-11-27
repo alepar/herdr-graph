@@ -3206,6 +3206,11 @@ fn e2e_cold_restart_fresh_agent_reattaches_by_key() {
         seats_before,
         "the keyed check-in reattached an existing seat and minted none"
     );
+    // Threads tells the graph nothing: the graph sees the reattach at its next seat read, which it makes by
+    // itself while the seat it last read is Unresolved (`LoopTuning::seat_recheck`).
+    rig.wait_until("the graph to read the reattached seat", WAIT, |r| {
+        tstr(&r.show(&clone.id), "seat_fact.state") == "resolved"
+    });
     rig.wait_settled();
     assert_eq!(
         rig.clone_facts(clone).as_ref(),
