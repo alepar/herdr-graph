@@ -171,7 +171,7 @@ impl FakeThreads {
             Some(root) => crate::threads::namespace::guard(&root)
                 .await
                 .map(Some)
-                .map_err(|e| ThreadsError::Rejected(e.to_string())),
+                .map_err(|e| ThreadsError::Disconnected(format!("graph-local: {e}"))),
             None => Ok(None),
         }
     }

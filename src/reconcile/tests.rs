@@ -5834,6 +5834,44 @@ async fn never_emitted_rebind_keyless_start_proceeds_at_grace() {
     );
 }
 
+/// A retryable `Unreachable` refusal (what every graph-local failure on the restore path becomes) records no
+/// `rebind_refused` meta; once threads is reachable the next pass in the same incarnation issues the rebind and
+/// places the seat (hg-lnw.24).
+#[tokio::test]
+async fn unreachable_rebind_is_retried_in_the_same_incarnation() {
+    let r = restarted(true, Had::Session, "claude").await;
+    let changed = crate::reconcile::planner::incarnation_changed_at(&r.fx.journal).unwrap();
+    r.threads.disconnect();
+    r.step().await;
+    let row = rows(
+        &r.fx,
+        EffectKind::Custom(crate::threads::effects::REBIND_KIND.into()),
+    );
+    assert_eq!(row.len(), 1, "the rebind was attempted");
+    assert_eq!(
+        row[0].last_error.as_deref(),
+        Some("rebind refused: unreachable")
+    );
+    assert_eq!(r.refused(), None, "a retryable refusal is not recorded");
+    assert!(!r.seat_is_placed());
+    r.threads.reconnect();
+    for _ in 0..4 {
+        r.advance(60);
+        r.step().await;
+        if r.seat_is_placed() {
+            break;
+        }
+    }
+    assert!(r.seat_is_placed());
+    assert_eq!(r.rebinds(), 1, "the retried call got through once");
+    assert_eq!(r.refused(), None);
+    assert_eq!(
+        crate::reconcile::planner::incarnation_changed_at(&r.fx.journal),
+        Some(changed),
+        "same incarnation"
+    );
+}
+
 #[tokio::test]
 async fn never_unresolved_seat_fresh_keyless_start_waits_full_grace() {
     // Accepted behaviour (spec §4): graph never read Unresolved (threads placed the seat first), so a stale
