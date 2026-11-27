@@ -44,6 +44,8 @@ Graph pins the first herdr-threads release, called T below, that carries two ups
 
 ### 1. Upstream dependency and the gate
 
+U2 contract as agreed by herdr-threads (2026-11-26, message mnSGlBAZYHNZ; design `docs/superpowers/specs/2026-11-26-service-restore-held-seat-design.md` at f738bcb2f in herdr-threads): `ResurrectSeat` (v4, no new field) also accepts a seat that is unresolved under the C2 restore hold, on its own saved pane, with the same authority as for a closed seat. Answers: already resolved on that pane → new `SeatAlreadyResolved` (a no-op, graph counts it as done); other pane or not held → `NotFound`; reconciliation pending or a kept claim in the way → `ServiceBusy` (transient, retry); `replace` set → `InvalidRequest` (graph never passes `replace` on the restart path). `rebind_held_seat` is therefore graph's name for `ResurrectSeat` with `replace: None` on the restart path. ht-lzhi also adds a local level guard in submit and replay.
+
 Recommended: one gate bead, `Gate: herdr-threads 3.6.0 tagged with ht-lzhi and ht-0f0r`, closed by the orchestrator when that tag exists. It blocks the pin bump, the real adapter and the real-threads tests. Every graph-side bead runs against `ThreadsPort` and the fake, ungated. Considered and discarded: waiting with all work until T exists (idle for an unknown time, and the graph logic does not depend on T's exact API); a submodule patch or a graph-owned v4 client (both rejected by the user, B3). If herdr-threads declines U2 or reshapes it, the restart-rebind effect (§4) keeps its port method and gains a different adapter implementation. If no U2 exists at all, the effect's fallback is the `restart_held` status row (§4.5), and the gap is reported as unmet B2.
 
 ### 2. Threads contract audit, 3.1.0 → T
