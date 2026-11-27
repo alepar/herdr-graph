@@ -7,7 +7,9 @@ use crate::model::ids::{CloneId, OpId, SeatId};
 use crate::model::native_session::NativeSession;
 use serde::{Deserialize, Serialize};
 
+/// Deserialized through `impl Deserialize` below, which settles a legacy seat fact's `keyed` from `keyless`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct CloneRecord {
     pub schema: u32,
     pub id: CloneId,
@@ -55,6 +57,29 @@ pub struct CloneRecord {
     pub keyless: bool,
 }
 
+impl Serialize for CloneRecord {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        CloneRecord::serialize(self, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for CloneRecord {
+    /// A retired `seat_fact` written before `keyed` existed takes it from the clone: the old graph against an
+    /// upgraded threads daemon recorded a keyless seat's reversible close too, so `keyed = !keyless`.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let mut v = serde_json::Value::deserialize(d)?;
+        let keyless = v.get("keyless").and_then(|k| k.as_bool()).unwrap_or(false);
+        if let Some(fact) = v.get_mut("seat_fact").and_then(|f| f.as_object_mut())
+            && fact.get("state").and_then(|s| s.as_str()) == Some("retired")
+            && !fact.contains_key("keyed")
+        {
+            fact.insert("keyed".into(), (!keyless).into());
+        }
+        CloneRecord::deserialize(v).map_err(D::Error::custom)
+    }
+}
+
 /// A continuity key reserved for a clone. `seat` is the reservation's recorded binding: the seat threads last
 /// answered the key is bound to (`None`: reserved, unbound). The key-link want (spec §14.12) compares it with
 /// the clone's target seat, and the restore launch is gated on it (spec §14.4).
@@ -94,9 +119,9 @@ pub enum SeatFactState {
     },
     Retired {
         reversible: bool,
-        /// A fact written before this field existed came from threads 3.1.0, where only a keyed seat's close was
-        /// reversible, so `true` is the correct reading of legacy reversible facts (and final ones take
-        /// succession whatever the flag says).
+        /// A fact written before this field existed reads `true` on its own (threads 3.1.0 reversed only a keyed
+        /// seat's close; final facts take succession whatever the flag says). Inside a `CloneRecord` the
+        /// clone's `keyless` decides instead (see its `Deserialize`).
         #[serde(default = "legacy_keyed")]
         keyed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -209,4 +234,84 @@ pub enum InvitationState {
     Accepted,
     Released,
     Retired,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keyless_clone(keyless: bool, keyed: bool) -> CloneRecord {
+        CloneRecord {
+            schema: 1,
+            id: CloneId::new(),
+            rev: 1,
+            seat: SeatId::new(),
+            name: "c".into(),
+            name_history: vec![],
+            lifecycle: CloneLifecycle::Active,
+            retired: None,
+            runtime: Runtime::default(),
+            occupant: None,
+            sessions: vec![],
+            opt_outs: vec![],
+            invitations: vec![],
+            reload_required: false,
+            threads_seat: Some("s1".into()),
+            threads_seat_history: vec![],
+            seat_intent: None,
+            seat_fact: Some(SeatFact {
+                seat: "s1".into(),
+                state: SeatFactState::Retired {
+                    reversible: true,
+                    keyed,
+                    retired_at: Some(chrono::DateTime::from_timestamp_millis(5_000).unwrap()),
+                },
+                read_at: chrono::DateTime::from_timestamp_millis(6_000).unwrap(),
+            }),
+            key_reservation: None,
+            keyless,
+        }
+    }
+
+    /// The record as a build before `keyed` existed wrote it: the same TOML without the `keyed` line.
+    fn legacy_parse(c: &CloneRecord) -> CloneRecord {
+        let text = toml::to_string(c).unwrap();
+        assert!(text.contains("\nkeyed = "), "{text}");
+        let legacy: String = text
+            .lines()
+            .filter(|l| !l.starts_with("keyed = "))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        toml::from_str(&legacy).unwrap_or_else(|e| panic!("{e}\n{legacy}"))
+    }
+
+    fn keyed_of(c: &CloneRecord) -> bool {
+        match c.seat_fact.as_ref().map(|f| &f.state) {
+            Some(SeatFactState::Retired { keyed, .. }) => *keyed,
+            other => panic!("not retired: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_retired_fact_takes_keyed_from_the_clone() {
+        // Keyless clone: a missing `keyed` reads false, whatever the in-memory value was.
+        assert!(!keyed_of(&legacy_parse(&keyless_clone(true, true))));
+        // Keyed (keyless absent): a missing `keyed` reads true.
+        assert!(keyed_of(&legacy_parse(&keyless_clone(false, false))));
+        // An explicit `keyed = true` on a keyless clone is kept: only a missing field is defaulted.
+        let c = keyless_clone(true, true);
+        let back: CloneRecord = toml::from_str(&toml::to_string(&c).unwrap()).unwrap();
+        assert!(keyed_of(&back));
+    }
+
+    #[test]
+    fn current_clone_record_round_trips() {
+        for (keyless, keyed) in [(true, false), (true, true), (false, true), (false, false)] {
+            let c = keyless_clone(keyless, keyed);
+            let text = toml::to_string(&c).unwrap();
+            assert_eq!(toml::from_str::<CloneRecord>(&text).unwrap(), c, "{text}");
+            let json = serde_json::to_string(&c).unwrap();
+            assert_eq!(serde_json::from_str::<CloneRecord>(&json).unwrap(), c);
+        }
+    }
 }
