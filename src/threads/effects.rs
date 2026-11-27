@@ -24,9 +24,12 @@ use crate::model::{
     AnyId, CloneId, EffectId, HerdrPaneId, IdKind, OpId, SeatId, TeamspaceId, Timestamp,
 };
 use crate::plan::store::PlanStore;
+use crate::ports::herdr::HerdrSnapshot;
 use crate::ports::store::StoreError;
 use crate::ports::threads::*;
-use crate::reconcile::planner::threads_answered_key;
+use crate::reconcile::planner::{
+    incarnation_changed_at, rebind_refused_in, rebind_refused_key, threads_answered_key,
+};
 use crate::reconcile::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome, PlannedEffect};
 use crate::store::layout;
 use crate::store::tree::TreeRead;
@@ -63,6 +66,8 @@ pub const KEY_LINK_KIND: &str = "threads.key_link";
 /// `EffectKind::Custom` name of the resurrection of a Restore intent's reversibly retired keyless seat onto the
 /// reopened pane (spec §3).
 pub const RESURRECT_KIND: &str = "threads.resurrect_seat";
+/// `EffectKind::Custom` name of the restart rebind of a held seat onto its own saved pane (spec §4, U2).
+pub const REBIND_KIND: &str = "threads.rebind_held_seat";
 const PAYLOAD_PREFIX: &str = "threads:payload:";
 const TOPIC_PREFIX: &str = "threads:topic:";
 const RELOAD_PREFIX: &str = "threads:reload:";
@@ -319,6 +324,13 @@ pub(crate) enum Payload {
         key: String,
         seat: String,
     },
+    /// Rebind the restart-held `seat` onto its own saved `pane`; one per incarnation (`incarnation` is the
+    /// `incarnation:changed_at` it runs for).
+    RebindHeldSeat {
+        seat: String,
+        pane: HerdrPaneId,
+        incarnation: Timestamp,
+    },
 }
 
 struct Want {
@@ -514,6 +526,64 @@ pub(crate) fn key_link_target(g: &Graph, c: &CloneRecord) -> Option<(String, Str
         _ => c.threads_seat.as_ref()?,
     };
     (!reservation.bound_to(target)).then(|| (reservation.key.clone(), target.clone()))
+}
+
+/// The restart rebind a clone calls for (spec §4): the incarnation changed, the clone is active and seated, its
+/// fact for that seat was read at or after the change and reads `Unresolved`, its last bound pane exists in the
+/// live snapshot (an `Unresolved` read unbinds the clone, so the pane is the recorded one, not the verified
+/// one) and threads has not definitively refused the rebind in this incarnation. A stale `Resolved` read, or one
+/// read before the change, asks for nothing.
+fn rebindable(
+    g: &Graph,
+    journal: &Journal,
+    live: &dyn Fn(&HerdrPaneId) -> bool,
+    c: &CloneRecord,
+) -> Option<(String, HerdrPaneId, Timestamp)> {
+    use crate::model::clone::SeatFactState as F;
+    let changed_at = incarnation_changed_at(journal)?;
+    if !g.clone_active(c) || c.is_tombstone() {
+        return None;
+    }
+    let seat = c.threads_seat.as_ref()?;
+    let fact = c.seat_fact.as_ref()?;
+    if &fact.seat != seat || fact.state != F::Unresolved || fact.read_at < changed_at {
+        return None;
+    }
+    let pane = c.runtime.bound.as_ref()?.pane_id.clone()?;
+    (live(&pane) && rebind_refused_in(journal, &c.id, changed_at).is_none())
+        .then(|| (seat.clone(), pane, changed_at))
+}
+
+fn snapshot_has_pane(snap: &HerdrSnapshot) -> impl Fn(&HerdrPaneId) -> bool + '_ {
+    move |id| {
+        snap.workspaces
+            .iter()
+            .flat_map(|w| &w.tabs)
+            .flat_map(|t| &t.panes)
+            .any(|p| &p.id == id)
+    }
+}
+
+/// One rebind want per clone the restart left held (level-triggered: emitted every pass while `rebindable`).
+fn rebind_wants(g: &Graph, journal: &Journal, snap: &HerdrSnapshot) -> Vec<Want> {
+    let live = snapshot_has_pane(snap);
+    g.clones
+        .values()
+        .filter_map(|c| {
+            let (seat, pane, incarnation) = rebindable(g, journal, &live, c)?;
+            Some(want(
+                g,
+                EffectKind::Custom(REBIND_KIND.into()),
+                c.id.to_any(),
+                c.rev,
+                Payload::RebindHeldSeat {
+                    seat,
+                    pane,
+                    incarnation,
+                },
+            ))
+        })
+        .collect()
 }
 
 /// What an unacknowledged Restore intent asks of threads (spec §2 succession rule, §8 interim).
@@ -1345,6 +1415,7 @@ impl EffectSource for ThreadsSource {
         let mut wants = system_wants(&g, cx.journal);
         wants.extend(reload_wants(&g, cx.journal));
         wants.extend(self.intent_wants(&g, cx.journal, cx.now));
+        wants.extend(rebind_wants(&g, cx.journal, cx.snapshot));
         wants.extend(self.observed_rename_wants(&g, cx.tree, cx.journal, cx.now));
         wants.extend(self.dirty_wants(&g, cx.tree));
 
@@ -1730,6 +1801,66 @@ impl ThreadsExecutor {
                 let msg = format!("resurrect refused: {reason:?}");
                 record_refusal(cx, clone, epoch, &msg);
                 ExecOutcome::Deferred(msg)
+            }
+        }
+    }
+
+    /// The restart rebind (spec §4.2): place the held seat on its own saved pane. Done and already-placed are
+    /// done; a retryable refusal is retried while the fact reads `Unresolved` (after the grace too); a
+    /// definitive one (`NotFound` included) is recorded once in `rebind_refused:<clone>` and not retried in this
+    /// incarnation. None of it opens or closes the keyless relaunch gate.
+    async fn rebind_held_seat(
+        &self,
+        cx: &ExecCx<'_>,
+        e: &EffectRecord,
+        seat: &str,
+        pane: &HerdrPaneId,
+        incarnation: Timestamp,
+    ) -> ExecOutcome {
+        let g = match self.graph(cx) {
+            Ok(g) => g,
+            Err(o) => return o,
+        };
+        let Some(clone) = CloneId::parse(e.object.as_str())
+            .ok()
+            .and_then(|i| g.clones.get(&i))
+        else {
+            return ExecOutcome::Obsolete;
+        };
+        let live = snapshot_has_pane(cx.snapshot);
+        if rebindable(&g, &self.journal, &live, clone)
+            != Some((seat.to_owned(), pane.clone(), incarnation))
+        {
+            return ExecOutcome::Obsolete;
+        }
+        let op = OpKey(super::namespace::salt(
+            &g.epoch,
+            &format!("rebind:{}:{}", clone.id, incarnation.to_rfc3339()),
+        ));
+        match self
+            .threads
+            .rebind_held_seat(&ThreadsSeatRef(seat.to_owned()), pane, &op)
+            .await
+        {
+            SeatRestoreOutcome::Done | SeatRestoreOutcome::AlreadyResolved => ExecOutcome::Done,
+            SeatRestoreOutcome::Refused {
+                reason,
+                retryable: true,
+            } => ExecOutcome::Transient(format!("rebind refused: {reason:?}").to_lowercase()),
+            SeatRestoreOutcome::Refused { reason, .. } => {
+                if rebind_refused_in(&self.journal, &clone.id, incarnation).is_none() {
+                    let value = serde_json::json!({
+                        "incarnation": incarnation.to_rfc3339(),
+                        "reason": reason,
+                    });
+                    if let Err(err) = self
+                        .journal
+                        .meta_set(&rebind_refused_key(&clone.id), &value.to_string())
+                    {
+                        return ExecOutcome::Transient(format!("rebind_refused write: {err}"));
+                    }
+                }
+                ExecOutcome::Done
             }
         }
     }
@@ -2468,6 +2599,7 @@ impl EffectExecutor for ThreadsExecutor {
                 RELEASE_KEY_KIND,
                 RESERVE_KEY_KIND,
                 KEY_LINK_KIND,
+                REBIND_KIND,
             ]
             .contains(&k.as_str()),
             _ => false,
@@ -2499,6 +2631,11 @@ impl EffectExecutor for ThreadsExecutor {
                 } else {
                     alive
                 }
+            }
+            (EffectKind::Custom(k), Payload::RebindHeldSeat { .. }) if k == REBIND_KIND => {
+                rebind_wants(&g, &self.journal, cx.snapshot)
+                    .iter()
+                    .any(|w| w.kind == e.kind && w.object == e.object && w.payload == payload)
             }
             _ => {
                 let wants = system_wants(&g, &self.journal);
@@ -2582,6 +2719,17 @@ impl ThreadsExecutor {
             (EffectKind::Custom(_), Some(Payload::ReserveKey)) => self.reserve_key(cx, e).await,
             (EffectKind::Custom(_), Some(Payload::KeyLink { key, seat })) => {
                 self.key_link(cx, e, &key, &seat).await
+            }
+            (
+                EffectKind::Custom(_),
+                Some(Payload::RebindHeldSeat {
+                    seat,
+                    pane,
+                    incarnation,
+                }),
+            ) => {
+                self.rebind_held_seat(cx, e, &seat, &pane, incarnation)
+                    .await
             }
             (EffectKind::Custom(_), Some(Payload::SucceedSeat { pane, from, epoch })) => {
                 self.succeed_seat(cx, e, &pane, &from, &epoch).await

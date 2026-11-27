@@ -7,7 +7,7 @@ use super::executor::{DiffCx, EffectExecutor, EffectSource, ExecCx, ExecOutcome,
 use super::planner::{
     LiveIndex, LiveRef, Surplus, TOKEN_KEY, delete_live_ref, incarnation_changed_at,
     launch_env_key, launched_before, launched_key, live_ref, plan_effects, restore_mark_failed_key,
-    restore_mark_failures, resumed_key, set_live_ref, token_of,
+    restore_mark_failures, resumed_key, seat_unresolved_in, set_live_ref, token_of,
 };
 use super::session::{self, Relaunch, advance_replacement, start_outcome, transient_or_failed};
 use crate::journal::Journal;
@@ -25,6 +25,36 @@ use crate::store::tree::TreeRead;
 use crate::threads::assignment::{SeatTransition, admit_threads_seat};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
+
+/// How often a gated keyless start re-checks whether its seat has been placed.
+const KEYLESS_GATE_POLL: chrono::Duration = chrono::Duration::seconds(5);
+
+/// The keyless start gate (spec §4): inside the grace after an incarnation change, a fresh start of a seated
+/// keyless clone opens early only once threads reads its seat `Resolved` on the clone's own pane and graph saw
+/// the seat `Unresolved` in this incarnation (so the read cannot be a stale pre-restart one). Returns how long
+/// to wait before looking again, or None when the start may proceed. Keyed clones, unseated clones and a
+/// pending Restore (the restore launch is not an incarnation-change start) never wait here;
+/// `grace_remaining` is the time left of the grace.
+fn keyless_start_gate(
+    journal: &Journal,
+    p: &DesiredPane,
+    pane: &HerdrPaneId,
+    grace_remaining: chrono::Duration,
+) -> Option<chrono::Duration> {
+    if !p.keyless || p.seat_intent.is_some() || p.threads_seat.is_none() {
+        return None;
+    }
+    let placed = incarnation_changed_at(journal).is_some_and(|changed| {
+        seat_unresolved_in(journal, &p.clone, changed)
+            && p.seat_fact.as_ref().is_some_and(|f| {
+                Some(&f.seat) == p.threads_seat.as_ref()
+                    && f.read_at >= changed
+                    && f.state
+                        == (crate::model::clone::SeatFactState::Resolved { pane: pane.clone() })
+            })
+    });
+    (!placed).then(|| grace_remaining.min(KEYLESS_GATE_POLL))
+}
 
 /// Desired runtime of the most recently read revision, shared by the source and the executor.
 #[derive(Default)]
@@ -563,6 +593,15 @@ impl HerdrExecutor {
                     "{}s of relaunch grace left after the incarnation change",
                     wait.num_seconds().max(1)
                 ),
+            );
+        }
+        if !relaunch
+            && let Some(wait) = self.grace_remaining(cx)
+            && let Some(wait) = keyless_start_gate(&self.journal, p, &lp.pane.id, wait)
+        {
+            return ExecOutcome::DeferredUntil(
+                cx.now + wait,
+                "keyless start waits for its seat to be placed or the grace to end".into(),
             );
         }
         // §4.1 readiness: no agent on the pane and the foreground is the shell.
