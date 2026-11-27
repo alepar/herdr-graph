@@ -822,6 +822,12 @@ impl ThreadsPort for FakeThreads {
                 st.stored
                     .insert(op.0.clone(), (payload, StoredAnswer::Done));
                 st.retired_seats.remove(&seat.0);
+                // With the seat-lifecycle model on, threads no longer reads the seat retired: it is unbound
+                // until its key checks in again.
+                st.retirements.remove(&seat.0);
+                if let Some((view, _)) = &st.model {
+                    view.set(seat, SeatStatus::Unresolved);
+                }
                 Ok(())
             }
         }
