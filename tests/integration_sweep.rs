@@ -2972,6 +2972,8 @@ mod wiring {
                 &tseat("th-A"),
                 SeatStatus::Retired {
                     kind: RetirementKind::Final,
+                    keyed: true,
+                    retired_at: None,
                 },
             );
             eventually("the clone retires", || {

@@ -85,10 +85,27 @@ pub struct SeatFact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SeatFactState {
-    Resolved { pane: HerdrPaneId },
+    Resolved {
+        pane: HerdrPaneId,
+    },
     Unresolved,
-    KeyConflict { pane: Option<HerdrPaneId> },
-    Retired { reversible: bool },
+    KeyConflict {
+        pane: Option<HerdrPaneId>,
+    },
+    Retired {
+        reversible: bool,
+        /// A fact written before this field existed came from threads 3.1.0, where only a keyed seat's close was
+        /// reversible, so `true` is the correct reading of legacy reversible facts (and final ones take
+        /// succession whatever the flag says).
+        #[serde(default = "legacy_keyed")]
+        keyed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retired_at: Option<Timestamp>,
+    },
+}
+
+fn legacy_keyed() -> bool {
+    true
 }
 
 /// A `Restore` launch mark written as `launched = true` by older code: launched at an unknown time, earlier

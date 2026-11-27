@@ -997,6 +997,37 @@ mod lazy {
             let _guard = self.endpoint.guard().await?;
             self.get_async().await?.finalize_retirement(seat, op).await
         }
+        async fn resurrect_seat(
+            &self,
+            seat: &ThreadsSeatRef,
+            pane: &HerdrPaneId,
+            replace: Option<&ThreadsSeatRef>,
+            op: &OpKey,
+        ) -> SeatRestoreOutcome {
+            let _guard = match self.endpoint.guard().await {
+                Ok(g) => g,
+                Err(e) => return SeatRestoreOutcome::from_error(&e),
+            };
+            match self.get_async().await {
+                Ok(t) => t.resurrect_seat(seat, pane, replace, op).await,
+                Err(e) => SeatRestoreOutcome::from_error(&e),
+            }
+        }
+        async fn rebind_held_seat(
+            &self,
+            seat: &ThreadsSeatRef,
+            pane: &HerdrPaneId,
+            op: &OpKey,
+        ) -> SeatRestoreOutcome {
+            let _guard = match self.endpoint.guard().await {
+                Ok(g) => g,
+                Err(e) => return SeatRestoreOutcome::from_error(&e),
+            };
+            match self.get_async().await {
+                Ok(t) => t.rebind_held_seat(seat, pane, op).await,
+                Err(e) => SeatRestoreOutcome::from_error(&e),
+            }
+        }
         async fn release_continuity_key(&self, key: &str, op: &OpKey) -> Result<(), ThreadsError> {
             let _guard = self.endpoint.guard().await?;
             self.get_async()

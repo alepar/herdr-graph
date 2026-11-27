@@ -537,7 +537,9 @@ fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
     }
     let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
     match fact.state {
-        F::Retired { reversible: false } => Some(Succession::Succeed {
+        F::Retired {
+            reversible: false, ..
+        } => Some(Succession::Succeed {
             pane: verified_pane(g, c)?,
             from: seat.clone(),
             epoch: epoch.clone(),
@@ -554,7 +556,10 @@ fn succession(g: &Graph, c: &CloneRecord) -> Option<Succession> {
             epoch: epoch.clone(),
         }),
         F::Unresolved | F::Resolved { .. } => None,
-        F::Retired { reversible: true } | F::KeyConflict { .. } => None,
+        F::Retired {
+            reversible: true, ..
+        }
+        | F::KeyConflict { .. } => None,
     }
 }
 
@@ -576,7 +581,14 @@ fn unretirable(g: &Graph, c: &CloneRecord) -> Option<(String, OpId)> {
         return None;
     }
     let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat)?;
-    matches!(fact.state, F::Retired { reversible: true }).then(|| (seat.clone(), epoch.clone()))
+    matches!(
+        fact.state,
+        F::Retired {
+            reversible: true,
+            ..
+        }
+    )
+    .then(|| (seat.clone(), epoch.clone()))
 }
 
 /// The epoch of a Restore intent that is finished: threads acknowledged it, threads reads the clone's seat
@@ -1622,7 +1634,8 @@ impl ThreadsExecutor {
                         if matches!(
                             read.get(&seat_ref),
                             Some(SeatStatus::Retired {
-                                kind: RetirementKind::Final
+                                kind: RetirementKind::Final,
+                                ..
                             })
                         ) =>
                     {

@@ -224,7 +224,14 @@ mod tests {
     #[test]
     fn key_conflicts_is_empty_without_a_conflict() {
         let clones = [
-            clone_with("a", Some(SeatFactState::Retired { reversible: false })),
+            clone_with(
+                "a",
+                Some(SeatFactState::Retired {
+                    reversible: false,
+                    keyed: true,
+                    retired_at: None,
+                }),
+            ),
             clone_with("b", None),
         ];
         assert!(key_conflicts(&clones).is_empty());
