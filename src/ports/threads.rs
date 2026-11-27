@@ -83,6 +83,9 @@ pub enum ThreadsError {
     Disconnected(String),
     #[error("operation unsupported by this threads service")]
     Unsupported,
+    /// A definitive refusal: an answer threads itself returned, or a request it would refuse as malformed (an id
+    /// that does not parse). Never a graph-local failure (namespace guard or bind, host claim, intent journal,
+    /// explicit config): those are `Disconnected` with a `graph-local: ` prefix, so they are retried.
     #[error("threads rejected: {0}")]
     Rejected(String),
 }
@@ -170,7 +173,9 @@ impl SeatRestoreOutcome {
         }
     }
 
-    /// A transport error from a call that never got a typed answer.
+    /// A transport error from a call that never got a typed answer. `Rejected` is definitive (`InvalidRequest`)
+    /// because it only carries threads' own answers; graph-local failures arrive as `Disconnected` and map to the
+    /// retryable `Unreachable`.
     pub fn from_error(e: &ThreadsError) -> Self {
         Self::refused(match e {
             ThreadsError::ServiceBusy => SeatRestoreRefusal::ServiceBusy,

@@ -962,7 +962,8 @@ fn restore_outcome_maps_every_variant() {
             "{code:?}"
         );
     }
-    // Local failures: the v4 registration refusal is Unsupported; the others keep the transport mapping.
+    // Local failures: the v4 registration refusal (threads' answer to the registration) is Unsupported; the
+    // others keep the transport mapping.
     let local = |e| restore_outcome(Err(MutateError::Local(e)));
     assert_eq!(
         local(super::adapter::level_refused(
@@ -970,17 +971,50 @@ fn restore_outcome_maps_every_variant() {
         )),
         SeatRestoreOutcome::refused(R::Unsupported)
     );
+    assert!(!R::Unsupported.retryable());
     assert_eq!(
         local(ThreadsError::Disconnected("gone".into())),
         SeatRestoreOutcome::refused(R::Unreachable)
     );
+    // A graph-local failure (intent journal, namespace guard, host claim) is `Disconnected`: retryable.
+    for m in [
+        "intent journal: permission denied",
+        "graph-local: stale external call snapshot; retry from the current committed namespace",
+        "graph-local: host claim: no such file or directory",
+    ] {
+        assert_eq!(
+            local(ThreadsError::Disconnected(m.into())),
+            SeatRestoreOutcome::Refused {
+                reason: R::Unreachable,
+                retryable: true
+            },
+            "{m}"
+        );
+    }
     assert_eq!(
         local(ThreadsError::ServiceBusy),
         SeatRestoreOutcome::refused(R::ServiceBusy)
     );
+    // `Rejected` carries only threads' own answers: definitive.
     assert_eq!(
         local(ThreadsError::Rejected("other".into())),
         SeatRestoreOutcome::refused(R::InvalidRequest)
+    );
+    assert!(!R::InvalidRequest.retryable());
+    // The transport-error mapping the lazy production port uses before any call reaches threads.
+    assert_eq!(
+        SeatRestoreOutcome::from_error(&ThreadsError::Disconnected("graph-local: x".into())),
+        SeatRestoreOutcome::Refused {
+            reason: R::Unreachable,
+            retryable: true
+        }
+    );
+    assert_eq!(
+        SeatRestoreOutcome::from_error(&ThreadsError::Rejected("threads said no".into())),
+        SeatRestoreOutcome::Refused {
+            reason: R::InvalidRequest,
+            retryable: false
+        }
     );
 }
 

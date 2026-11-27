@@ -6419,6 +6419,37 @@ async fn resurrect_transient_is_retried() {
     );
 }
 
+/// A retryable `Unreachable` refusal (what every graph-local failure on the restore path becomes) records no
+/// refusal meta and no `last_refusal`; once threads is reachable the resurrect is issued again and lands
+/// (hg-lnw.24).
+#[tokio::test]
+async fn resurrect_unreachable_is_retried() {
+    let fx = model_fx();
+    let (clone, epoch, ..) = closed_and_undone(&fx, false).await;
+    fx.threads.disconnect();
+    steps(&fx, 3).await;
+    let rows = resurrect_rows(&fx);
+    assert_eq!(rows.len(), 1, "the resurrect was attempted");
+    assert_eq!(rows[0].last_error.as_deref(), Some("Unreachable"));
+    assert!(!threads_done(&fx, &clone.id));
+    assert_eq!(refused_meta_of(&fx, &clone.id), None);
+    assert!(matches!(
+        intent(&fx, &clone.id),
+        Some(SeatIntent::Restore {
+            last_refusal: None,
+            ..
+        })
+    ));
+    fx.threads.reconnect();
+    later(&fx).await;
+    later(&fx).await;
+    assert_eq!(
+        intent(&fx, &clone.id),
+        restore("seat-A", &epoch, true, false)
+    );
+    assert_eq!(fx.threads.call_count("resurrect_seat"), 1);
+}
+
 #[tokio::test]
 async fn resurrect_target_already_owned_is_recorded_once_and_gates_the_launch() {
     let fx = model_fx();
