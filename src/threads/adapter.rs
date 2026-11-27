@@ -3,6 +3,7 @@
 //! A busy service or a dropped connection is reported as such for the reconciler to back off on; the adapter
 //! never retries registration on its own, so it can never take over another registration.
 use super::fake::thread_for_ensure_key;
+use crate::model::HerdrPaneId;
 use crate::model::clone::{InvitationState, InviteConstraint};
 use crate::ports::threads::*;
 use herdr_threads::client::service::{
@@ -579,6 +580,27 @@ impl ThreadsPort for ServiceThreads {
             ServiceResult::SeatUnretired(_) => Ok(()),
             _ => Err(rejected("unretire seat", "unexpected result")),
         }
+    }
+
+    // Real ResurrectSeat / U2 call: hg-lnw.7 (needs the threads 3.6.0 pin, hg-lnw.6).
+    async fn resurrect_seat(
+        &self,
+        _seat: &ThreadsSeatRef,
+        _pane: &HerdrPaneId,
+        _replace: Option<&ThreadsSeatRef>,
+        _op: &OpKey,
+    ) -> SeatRestoreOutcome {
+        SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported)
+    }
+
+    // Real ResurrectSeat / U2 call: hg-lnw.7 (needs the threads 3.6.0 pin, hg-lnw.6).
+    async fn rebind_held_seat(
+        &self,
+        _seat: &ThreadsSeatRef,
+        _pane: &HerdrPaneId,
+        _op: &OpKey,
+    ) -> SeatRestoreOutcome {
+        SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported)
     }
 
     /// One `FinalizeRetirement` request (`service_session_v3`); threads releases the seat's key with it.

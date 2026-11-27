@@ -3552,7 +3552,11 @@ fn restore_commit_clears_occupant_and_runtime() {
         c.runtime.observed_at = Some(t0());
         c.seat_fact = Some(SeatFact {
             seat: "seat-7".into(),
-            state: SeatFactState::Retired { reversible: false },
+            state: SeatFactState::Retired {
+                reversible: false,
+                keyed: true,
+                retired_at: None,
+            },
             read_at: t0(),
         });
     };

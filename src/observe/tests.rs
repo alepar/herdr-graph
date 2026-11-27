@@ -1335,6 +1335,8 @@ async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     let reads = fx.seats.reads();
@@ -1376,7 +1378,11 @@ async fn deactivating_a_seat_with_a_seated_clone_does_not_retire_it() {
     ));
     assert_eq!(
         fact_state(&fx, &c.id),
-        Some(SeatFactState::Retired { reversible: false }),
+        Some(SeatFactState::Retired {
+            reversible: false,
+            keyed: true,
+            retired_at: None
+        }),
         "the fact still records what threads said"
     );
 }
@@ -2954,8 +2960,14 @@ async fn seat_retired_retires_the_clone_undoably() {
     for kind in [RetirementKind::Final, RetirementKind::Reversible] {
         let fx = fx();
         let (c, _) = seated(&fx, "seat-1").await;
-        fx.seats
-            .set(&seat_ref("seat-1"), SeatStatus::Retired { kind });
+        fx.seats.set(
+            &seat_ref("seat-1"),
+            SeatStatus::Retired {
+                kind,
+                keyed: true,
+                retired_at: None,
+            },
+        );
         step(&fx).await;
         let after = clone_by_id(&fx, &c.id);
         assert_eq!(after.lifecycle, CloneLifecycle::Retired, "{kind:?}");
@@ -2987,6 +2999,8 @@ async fn seated_node_manager_retired_seat_is_kept_and_restored() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3194,6 +3208,8 @@ async fn seated_node_manager_herdr_close_before_threads_retired_succeeds_once() 
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     map.set(&new_pane, "seat-2");
@@ -3216,6 +3232,8 @@ async fn seated_node_manager_threads_retired_first_succeeds_once() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     nm_step(&fx).await;
@@ -3277,6 +3295,8 @@ async fn seated_node_manager_stale_unresolved_outlives_the_reopen_then_retired_s
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     map.set(&new_pane, "seat-2");
@@ -3370,6 +3390,8 @@ async fn seatless_clone_keeps_the_matcher_result() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3420,6 +3442,8 @@ async fn retired_seat_with_pending_restore_does_not_retire() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3434,7 +3458,11 @@ async fn retired_seat_with_pending_restore_does_not_retire() {
     ));
     assert_eq!(
         fact_state(&fx, &c.id),
-        Some(SeatFactState::Retired { reversible: false }),
+        Some(SeatFactState::Retired {
+            reversible: false,
+            keyed: true,
+            retired_at: None
+        }),
         "the fact still records what threads said"
     );
 }
@@ -3466,6 +3494,8 @@ async fn retired_seat_after_threads_done_retires_and_clears_the_intent() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     step(&fx).await;
@@ -3908,6 +3938,8 @@ async fn parity_pane_close_retires_the_clone_once() {
         &seat_ref("seat-a"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     fx.herdr.user_close_pane(&pa);
@@ -3941,6 +3973,8 @@ async fn parity_close_while_daemon_down_is_decided_by_threads() {
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     let lp2 = fx.restarted_loop();
@@ -4313,6 +4347,8 @@ async fn pane_closed_during_downtime_retires_after_the_window_undoably_without_r
         &seat_ref("seat-1"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     lp2.step_once().await.unwrap();

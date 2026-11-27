@@ -2874,13 +2874,17 @@ fn seat_status_maps_v3_inspection_fixtures() {
     assert_eq!(
         seat_status(&inspection_fixture("retired", None, Some(5_000))),
         SeatStatus::Retired {
-            kind: RetirementKind::Final
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
         }
     );
     assert_eq!(
         seat_status(&inspection_fixture("retired", Some("w1:p2"), Some(5_000))),
         SeatStatus::Retired {
-            kind: RetirementKind::Final
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
         },
         "a retired seat is never reported as bound to its old pane"
     );
@@ -2903,13 +2907,17 @@ fn retirement_kind_is_mapped_from_seat_inspect() {
     assert_eq!(
         seat_status(&retired(Some(SeatRetirementState::Reversible))),
         SeatStatus::Retired {
-            kind: RetirementKind::Reversible
+            kind: RetirementKind::Reversible,
+            keyed: false,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
         }
     );
     assert_eq!(
         seat_status(&retired(None)),
         SeatStatus::Retired {
-            kind: RetirementKind::Final
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
         }
     );
     // The state field says nothing about a seat that is not retired.
@@ -2941,7 +2949,11 @@ fn g5_disposition_maps_from_seat_inspect() {
     ] {
         assert_eq!(
             seat_status(&limbo(reversible)),
-            SeatStatus::Retired { kind },
+            SeatStatus::Retired {
+                kind,
+                keyed: false,
+                retired_at: Some(t0_epoch_plus_ms(600_000))
+            },
             "reversible={reversible}"
         );
     }
@@ -3021,7 +3033,9 @@ fn seat_status_maps_a_continuity_key_conflict() {
             Some("w1:p9")
         )),
         SeatStatus::Retired {
-            kind: RetirementKind::Final
+            kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
         }
     );
 }
@@ -3035,13 +3049,17 @@ async fn fake_seat_view_errors_are_errors() {
         &a,
         SeatStatus::Retired {
             kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         },
     );
     let read = view.inspect(&[a.clone(), b.clone()]).await.unwrap();
     assert_eq!(
         read[&a],
         SeatStatus::Retired {
-            kind: RetirementKind::Final
+            kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: None,
         }
     );
     assert_eq!(
@@ -4022,6 +4040,8 @@ fn reversible() -> serde_json::Value {
 fn final_read() -> SeatStatus {
     SeatStatus::Retired {
         kind: RetirementKind::Final,
+        keyed: false,
+        retired_at: None,
     }
 }
 
@@ -4154,6 +4174,8 @@ async fn finalize_tombstone_survives_until_acknowledged_then_is_removed() {
         &seat_ref("seat-a"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     later(&fx).await;
@@ -4230,6 +4252,8 @@ async fn finalize_treats_a_seat_threads_no_longer_knows_as_finalized() {
         &seat_ref("seat-a"),
         SeatStatus::Retired {
             kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: None,
         },
     );
     steps(fx, 3).await;
@@ -4249,8 +4273,14 @@ async fn purge_of_a_seated_clone_writes_finalize_without_a_threads_read() {
         let c = base(&fx).await;
         seat_the_clone(&fx, &c, "seat-a");
         retire_clone_observed(&fx, &c.id);
-        fx.seats
-            .set(&seat_ref("seat-a"), SeatStatus::Retired { kind });
+        fx.seats.set(
+            &seat_ref("seat-a"),
+            SeatStatus::Retired {
+                kind,
+                keyed: true,
+                retired_at: None,
+            },
+        );
         // Threads is unreachable for the whole commit.
         fx.threads.disconnect();
         fx.seats.set_error(Some(FakeSeatViewError::Disconnected));
@@ -4507,7 +4537,7 @@ fn close_seat_in_fake(fx: &Fx, seat: &str) {
 async fn commit_seat_read(fx: &Fx, clone: &CloneId, seat: &str) {
     let read = fx.seats.inspect(&[seat_ref(seat)]).await.unwrap();
     let state = match &read[&seat_ref(seat)] {
-        SeatStatus::Retired { kind } => {
+        SeatStatus::Retired { kind, .. } => {
             json!({ "state": "retired", "reversible": *kind == RetirementKind::Reversible })
         }
         SeatStatus::KeyConflict { pane } => json!({ "state": "key_conflict", "pane": pane }),
@@ -4582,7 +4612,11 @@ async fn backfilled_clone_is_bound_then_closes_reversibly() {
     commit_seat_read(&fx, &c.id, "seat-A").await;
     assert_eq!(
         clone_rec(&fx, &c.id).seat_fact.map(|f| f.state),
-        Some(crate::model::clone::SeatFactState::Retired { reversible: true })
+        Some(crate::model::clone::SeatFactState::Retired {
+            reversible: true,
+            keyed: true,
+            retired_at: None
+        })
     );
     retire_clone_observed(&fx, &c.id);
     assert_eq!(clone_rec(&fx, &c.id).lifecycle, CloneLifecycle::Retired);
@@ -5138,4 +5172,588 @@ async fn undo_unreachable_threads_commits_no_seat_change_and_launches_nothing() 
         restore("seat-A", &epoch, true, false)
     );
     assert_eq!(fx.threads.lifecycle_calls("unretire_seat"), vec!["seat-A"]);
+}
+
+// --- hg-lnw.2: ResurrectSeat / U2 port types and the 3.5.0/3.6.0 fake model ---
+
+#[test]
+fn seat_restore_refusal_retryable_split() {
+    use SeatRestoreRefusal as R;
+    for r in [
+        R::ServiceBusy,
+        R::StaleHostObservation,
+        R::Unreachable,
+        R::OutcomeUnknown,
+    ] {
+        assert!(r.retryable(), "{r:?}");
+    }
+    for r in [
+        R::NotFound,
+        R::Unauthorized,
+        R::TargetAlreadyOwned,
+        R::InvalidRequest,
+        R::Unsupported,
+        R::InstanceMismatch,
+    ] {
+        assert!(!r.retryable(), "{r:?}");
+        assert_eq!(
+            SeatRestoreOutcome::refused(r),
+            SeatRestoreOutcome::Refused {
+                reason: r,
+                retryable: false
+            }
+        );
+    }
+    assert_eq!(
+        SeatRestoreOutcome::refused(R::OutcomeUnknown),
+        SeatRestoreOutcome::Refused {
+            reason: R::OutcomeUnknown,
+            retryable: true
+        }
+    );
+    let from = |e: ThreadsError| SeatRestoreOutcome::from_error(&e);
+    assert_eq!(
+        from(ThreadsError::ServiceBusy),
+        SeatRestoreOutcome::refused(R::ServiceBusy)
+    );
+    assert_eq!(
+        from(ThreadsError::Disconnected("x".into())),
+        SeatRestoreOutcome::refused(R::Unreachable)
+    );
+    assert_eq!(
+        from(ThreadsError::Unsupported),
+        SeatRestoreOutcome::refused(R::Unsupported)
+    );
+    assert_eq!(
+        from(ThreadsError::Rejected("x".into())),
+        SeatRestoreOutcome::refused(R::InvalidRequest)
+    );
+}
+
+#[test]
+fn seat_status_maps_keyed_and_retired_at() {
+    use super::mapping::seat_status;
+    assert_eq!(
+        seat_status(&inspection_fixture("retired", None, Some(5_000))),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
+        }
+    );
+    assert_eq!(
+        seat_status(&keyed_inspection_fixture(
+            "retired",
+            None,
+            Some(5_000),
+            None
+        )),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: true,
+            retired_at: Some(t0_epoch_plus_ms(5_000)),
+        }
+    );
+    assert_eq!(
+        seat_status(&inspection_fixture("retired", None, None)),
+        SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: None,
+        }
+    );
+}
+
+fn t0_epoch_plus_ms(ms: i64) -> Timestamp {
+    chrono::DateTime::from_timestamp_millis(ms).unwrap()
+}
+
+#[tokio::test]
+async fn service_threads_restore_stubs_are_unsupported() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = ServiceThreads::with_system_clock(
+        dir.path().join("none.sock"),
+        dir.path().join("state/intents"),
+        herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
+    )
+    .unwrap();
+    let pane = HerdrPaneId("w1:p1".into());
+    let want = SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported);
+    assert_eq!(
+        t.resurrect_seat(&seat_ref("s"), &pane, None, &OpKey("o1".into()))
+            .await,
+        want
+    );
+    assert_eq!(
+        t.rebind_held_seat(&seat_ref("s"), &pane, &OpKey("o2".into()))
+            .await,
+        want
+    );
+}
+
+struct Resurrect {
+    threads: FakeThreads,
+    view: Arc<FakeThreadsSeatView>,
+    clock: Arc<ManualClock>,
+}
+
+fn resurrect_rig() -> Resurrect {
+    let threads = FakeThreads::new();
+    let view = Arc::new(FakeThreadsSeatView::new());
+    let clock = Arc::new(ManualClock::new(t0()));
+    threads.enable_resurrect(view.clone(), clock.clone());
+    Resurrect {
+        threads,
+        view,
+        clock,
+    }
+}
+
+fn rpane(p: &str) -> HerdrPaneId {
+    HerdrPaneId(p.into())
+}
+
+fn rop(n: &str) -> OpKey {
+    OpKey(format!("restore:{n}"))
+}
+
+fn refused(r: SeatRestoreRefusal) -> SeatRestoreOutcome {
+    SeatRestoreOutcome::refused(r)
+}
+
+/// A keyless seat with one thread of each membership kind, closed at `t0`.
+async fn closed_keyless_seat(rig: &Resurrect) -> (ThreadsSeatRef, [ThreadRef; 4]) {
+    let seat = seat_ref("seat-k");
+    let ids = ["ord-pending", "ord-accepted", "req-pending", "req-accepted"];
+    let mut threads = vec![];
+    for id in ids {
+        let t = rig
+            .threads
+            .ensure_thread(ChannelScope::Teamspace, id, &OpKey(format!("ensure:{id}")))
+            .await
+            .unwrap();
+        let constraint = if id.starts_with("ord") {
+            InviteConstraint::Ordinary
+        } else {
+            InviteConstraint::Required
+        };
+        rig.threads
+            .invite(&t, &seat, constraint, &OpKey(format!("inv:{id}")))
+            .await
+            .unwrap();
+        if id.ends_with("accepted") {
+            rig.threads.accept(&t, &seat);
+        }
+        threads.push(t);
+    }
+    rig.view.set(
+        &seat,
+        SeatStatus::Resolved {
+            pane: rpane("w1:p1"),
+        },
+    );
+    rig.threads.close_pane(&rig.view, &seat);
+    (seat, threads.try_into().unwrap())
+}
+
+#[tokio::test]
+async fn fake_keyless_close_is_reversible_with_retired_at() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("seat-k");
+    assert_eq!(
+        rig.threads.close_pane(&rig.view, &seat),
+        RetirementKind::Reversible
+    );
+    assert_eq!(
+        rig.view.status(&seat),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+            keyed: false,
+            retired_at: Some(t0()),
+        })
+    );
+    // A keyed seat is reversible too, and says so.
+    let keyed = seat_ref("seat-keyed");
+    rig.threads.set_key_binding("k", "seat-keyed");
+    rig.threads.close_pane(&rig.view, &keyed);
+    assert_eq!(
+        rig.view.status(&keyed),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+            keyed: true,
+            retired_at: Some(t0()),
+        })
+    );
+    // Model off: the 3.1.0 behaviour, a keyless close is final and carries no retirement time.
+    let plain = FakeThreads::new();
+    let pv = FakeThreadsSeatView::new();
+    assert_eq!(plain.close_pane(&pv, &seat), RetirementKind::Final);
+    assert_eq!(
+        pv.status(&seat),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: None,
+        })
+    );
+}
+
+#[tokio::test]
+async fn fake_resurrect_inside_24h_keeps_memberships_and_invitations() {
+    let rig = resurrect_rig();
+    let (seat, threads) = closed_keyless_seat(&rig).await;
+    rig.clock.advance(chrono::Duration::hours(23));
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &rpane("w1:p9"), None, &rop("a"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    assert_eq!(
+        rig.view.status(&seat),
+        Some(SeatStatus::Resolved {
+            pane: rpane("w1:p9")
+        })
+    );
+    for t in &threads {
+        assert!(
+            rig.threads.member(t, &seat).is_some(),
+            "{t:?} membership kept"
+        );
+    }
+    let state = async |i: usize| rig.threads.membership(&threads[i], &seat).await.unwrap();
+    assert_eq!(state(0).await, Some(InvitationState::Pending));
+    assert_eq!(state(1).await, Some(InvitationState::Accepted));
+    assert_eq!(state(2).await, Some(InvitationState::Pending));
+    assert_eq!(state(3).await, Some(InvitationState::Accepted));
+}
+
+#[tokio::test]
+async fn fake_resurrect_between_24h_and_7d_settles_ordinary_pending_invitations() {
+    let rig = resurrect_rig();
+    let (seat, threads) = closed_keyless_seat(&rig).await;
+    rig.clock.advance(chrono::Duration::hours(25));
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &rpane("w1:p9"), None, &rop("a"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    assert!(
+        rig.threads.member(&threads[0], &seat).is_none(),
+        "ordinary pending invitation settled"
+    );
+    assert!(rig.threads.member(&threads[1], &seat).is_some());
+    assert!(rig.threads.member(&threads[2], &seat).is_some());
+    assert!(rig.threads.member(&threads[3], &seat).is_some());
+}
+
+#[tokio::test]
+async fn fake_keyless_retirement_turns_final_at_7d() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    rig.clock
+        .advance(chrono::Duration::days(7) + chrono::Duration::seconds(1));
+    rig.threads.settle_windows();
+    assert_eq!(
+        rig.view.status(&seat),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0()),
+        })
+    );
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &rpane("w1:p9"), None, &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn fake_keyed_retirement_never_turns_final_by_window() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("seat-keyed");
+    rig.threads.set_key_binding("k", "seat-keyed");
+    rig.threads.close_pane(&rig.view, &seat);
+    rig.clock.advance(chrono::Duration::days(30));
+    rig.threads.settle_windows();
+    assert!(matches!(
+        rig.view.status(&seat),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Reversible,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn fake_resurrect_replace_must_be_bare() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    let target = rpane("w1:p9");
+    // A seat resolved on the target that threads did not mint bare is not a valid replace.
+    let named = seat_ref("named");
+    rig.view.set(
+        &named,
+        SeatStatus::Resolved {
+            pane: target.clone(),
+        },
+    );
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, Some(&named), &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::InvalidRequest)
+    );
+    let bare = seat_ref("bare");
+    rig.view.set(&named, SeatStatus::Unresolved);
+    rig.threads.set_bare_seat(&bare, &target);
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, Some(&bare), &rop("b"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    assert_eq!(
+        rig.view.status(&bare),
+        Some(SeatStatus::Retired {
+            kind: RetirementKind::Final,
+            keyed: false,
+            retired_at: Some(t0()),
+        })
+    );
+    assert_eq!(rig.view.resolved_on(&target), vec![seat]);
+}
+
+#[tokio::test]
+async fn fake_resurrect_target_already_owned() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    let target = rpane("w1:p9");
+    rig.threads.set_bare_seat(&seat_ref("bare"), &target);
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, None, &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::TargetAlreadyOwned)
+    );
+    assert!(!SeatRestoreRefusal::TargetAlreadyOwned.retryable());
+}
+
+#[tokio::test]
+async fn fake_resurrect_already_resolved_on_target() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    let target = rpane("w1:p9");
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, None, &rop("a"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, None, &rop("b"))
+            .await,
+        SeatRestoreOutcome::AlreadyResolved
+    );
+}
+
+#[tokio::test]
+async fn fake_resurrect_is_idempotent_under_op() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    let target = rpane("w1:p9");
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, None, &rop("a"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    // The same op replays the stored answer, not AlreadyResolved.
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &target, None, &rop("a"))
+            .await,
+        SeatRestoreOutcome::Done
+    );
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &rpane("w1:p10"), None, &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::InvalidRequest)
+    );
+    assert_eq!(
+        rig.threads.lifecycle_ops("resurrect_seat"),
+        vec![rop("a"), rop("a"), rop("a")]
+    );
+}
+
+#[tokio::test]
+async fn fake_rebind_held_seat_places_it_on_its_own_pane() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("held");
+    let pane = rpane("w1:p3");
+    rig.threads.hold_for_restart(&seat, &pane);
+    assert_eq!(rig.view.status(&seat), Some(SeatStatus::Unresolved));
+    assert_eq!(
+        rig.threads.rebind_held_seat(&seat, &pane, &rop("a")).await,
+        SeatRestoreOutcome::Done
+    );
+    assert_eq!(
+        rig.view.status(&seat),
+        Some(SeatStatus::Resolved { pane: pane.clone() })
+    );
+    assert_eq!(
+        rig.threads.lifecycle_calls("rebind_held_seat"),
+        vec!["held"]
+    );
+    // Already there: the U2 no-op.
+    assert_eq!(
+        rig.threads.rebind_held_seat(&seat, &pane, &rop("b")).await,
+        SeatRestoreOutcome::AlreadyResolved
+    );
+}
+
+#[tokio::test]
+async fn fake_rebind_held_seat_other_pane_not_found() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("held");
+    rig.threads.hold_for_restart(&seat, &rpane("w1:p3"));
+    assert_eq!(
+        rig.threads
+            .rebind_held_seat(&seat, &rpane("w1:p4"), &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::NotFound)
+    );
+    assert_eq!(rig.view.status(&seat), Some(SeatStatus::Unresolved));
+}
+
+#[tokio::test]
+async fn fake_rebind_held_seat_not_held_not_found() {
+    let rig = resurrect_rig();
+    assert_eq!(
+        rig.threads
+            .rebind_held_seat(&seat_ref("nobody"), &rpane("w1:p3"), &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn fake_rebind_held_seat_reconcile_pending_busy() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("held");
+    let pane = rpane("w1:p3");
+    rig.threads.hold_for_restart(&seat, &pane);
+    rig.threads.set_reconcile_pending(true);
+    let busy = rig.threads.rebind_held_seat(&seat, &pane, &rop("a")).await;
+    assert_eq!(busy, refused(SeatRestoreRefusal::ServiceBusy));
+    assert!(matches!(
+        busy,
+        SeatRestoreOutcome::Refused {
+            retryable: true,
+            ..
+        }
+    ));
+    assert_eq!(rig.view.status(&seat), Some(SeatStatus::Unresolved));
+    rig.threads.set_reconcile_pending(false);
+    assert_eq!(
+        rig.threads.rebind_held_seat(&seat, &pane, &rop("b")).await,
+        SeatRestoreOutcome::Done
+    );
+}
+
+#[tokio::test]
+async fn fake_resurrect_held_seat_with_replace_invalid() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("held");
+    let pane = rpane("w1:p3");
+    rig.threads.hold_for_restart(&seat, &pane);
+    let bare = seat_ref("bare");
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &pane, Some(&bare), &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::InvalidRequest)
+    );
+}
+
+#[tokio::test]
+async fn fake_restore_refuses_seat_keyed_by_another_service() {
+    let rig = resurrect_rig();
+    let (seat, _) = closed_keyless_seat(&rig).await;
+    rig.threads.set_foreign_key(&seat);
+    let pane = rpane("w1:p9");
+    assert_eq!(
+        rig.threads
+            .resurrect_seat(&seat, &pane, None, &rop("a"))
+            .await,
+        refused(SeatRestoreRefusal::Unauthorized)
+    );
+    let held = seat_ref("held");
+    rig.threads.hold_for_restart(&held, &rpane("w1:p3"));
+    rig.threads.set_foreign_key(&held);
+    let out = rig
+        .threads
+        .rebind_held_seat(&held, &rpane("w1:p3"), &rop("b"))
+        .await;
+    assert_eq!(out, refused(SeatRestoreRefusal::Unauthorized));
+    assert!(matches!(
+        out,
+        SeatRestoreOutcome::Refused {
+            retryable: false,
+            ..
+        }
+    ));
+    assert_eq!(rig.view.status(&held), Some(SeatStatus::Unresolved));
+}
+
+#[tokio::test]
+async fn fake_restore_transport_errors_are_retryable() {
+    let rig = resurrect_rig();
+    let seat = seat_ref("held");
+    let pane = rpane("w1:p3");
+    rig.threads.hold_for_restart(&seat, &pane);
+    rig.threads.set_busy(true);
+    let busy = rig.threads.rebind_held_seat(&seat, &pane, &rop("a")).await;
+    assert_eq!(busy, refused(SeatRestoreRefusal::ServiceBusy));
+    assert!(matches!(
+        busy,
+        SeatRestoreOutcome::Refused {
+            retryable: true,
+            ..
+        }
+    ));
+    rig.threads.set_busy(false);
+    rig.threads.disconnect();
+    let down = rig
+        .threads
+        .resurrect_seat(&seat, &pane, None, &rop("b"))
+        .await;
+    assert_eq!(down, refused(SeatRestoreRefusal::Unreachable));
+    assert!(matches!(
+        down,
+        SeatRestoreOutcome::Refused {
+            retryable: true,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn fake_restore_without_model_is_unsupported() {
+    let t = FakeThreads::new();
+    let seat = seat_ref("s");
+    let pane = rpane("w1:p3");
+    assert_eq!(
+        t.resurrect_seat(&seat, &pane, None, &rop("a")).await,
+        refused(SeatRestoreRefusal::Unsupported)
+    );
+    assert_eq!(
+        t.rebind_held_seat(&seat, &pane, &rop("b")).await,
+        refused(SeatRestoreRefusal::Unsupported)
+    );
 }

@@ -4244,7 +4244,7 @@ async fn reactivate_seated(harness: &str, resumes: bool) {
     seat_state(
         &fx,
         &c.id,
-        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false }, fx.clock.now()) }),
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: false, keyed: true, retired_at: None }, fx.clock.now()) }),
     );
     map.set(&pane_of(&fx, &c), "seat-B");
     for _ in 0..5 {
@@ -4781,7 +4781,7 @@ fn observe_reversible(w: &D2World) {
     seat_state(
         &w.fx,
         &w.clone.id,
-        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true }, w.fx.clock.now()) }),
+        json!({ "fact": fact("seat-A", SeatFactState::Retired { reversible: true, keyed: true, retired_at: None }, w.fx.clock.now()) }),
     );
 }
 
