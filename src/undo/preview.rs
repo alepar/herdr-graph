@@ -476,7 +476,7 @@ pub fn restore_preview(
 /// What an undo brings back of a retired clone's threads seat, named by the window it is in (spec §3), or None
 /// when the clone holds no threads seat or is keyed (a keyed seat's retirement is reversible without a window).
 /// Reads the committed `seat_fact` (the retire-time read) and `c.retired.at`; the action itself follows the fact
-/// at execution, so a close threads never reported says so.
+/// at execution, so a close threads has not reported as retired (no fact, or a pre-close read) says so.
 pub(crate) fn seat_window_note(c: &CloneRecord, now: Timestamp) -> Option<String> {
     use crate::model::clone::SeatFactState as F;
     let seat = c.threads_seat.as_ref()?;
@@ -484,7 +484,6 @@ pub(crate) fn seat_window_note(c: &CloneRecord, now: Timestamp) -> Option<String
     let name = &c.name;
     let (retired_at, suffix) = match fact.map(|f| &f.state) {
         Some(F::Retired { keyed: true, .. }) => return None,
-        None if !c.keyless => return None,
         Some(F::Retired {
             reversible: true,
             retired_at,
@@ -493,12 +492,13 @@ pub(crate) fn seat_window_note(c: &CloneRecord, now: Timestamp) -> Option<String
         Some(F::Retired {
             reversible: false, ..
         }) => (None, ""),
-        None => (
+        _ if !c.keyless => return None,
+        // Unread, or a pre-close read (graph observed the close before threads reported the retirement, the
+        // ordinary order): the window counts from graph's close.
+        None | Some(_) => (
             c.retired.as_ref().map(|r| r.at),
             " if threads reports the close reversible",
         ),
-        // Not retired (or conflicting) at the read: nothing to say about a window.
-        Some(_) => return None,
     };
     let age = retired_at.map(|at| now - at);
     Some(match age {
