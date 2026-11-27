@@ -11,11 +11,11 @@ branch: super-auto/resurrect-seat-frictionless-restart
 base: main
 spec: 2026-11-26-resurrect-seat-frictionless-restart-design.md
 epic: hg-lnw
-roastDesignRound: 1
+roastDesignRound: 2
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
-redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast - · state applied
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast r2 · state applied
 stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
 approvals:
