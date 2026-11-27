@@ -623,7 +623,7 @@ async fn production_discovery_reaches_real_threads_daemon() {
     assert!(
         matches!(
             threads.delivery_capability().await,
-            Err(ThreadsError::Rejected(_))
+            Err(ThreadsError::Disconnected(m)) if m.starts_with("graph-local:")
         ),
         "cached endpoint must not register or dispatch against a fresh node"
     );
