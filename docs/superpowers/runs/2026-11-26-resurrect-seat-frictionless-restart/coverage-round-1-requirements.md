@@ -9,3 +9,4 @@ R8 Every pin text site (submodule, Cargo.lock, README, CURRENT-DESIGN.md, CHANGE
 R9 An undo-restored seat whose agent exits while its pane stays open is relaunched (coordinator trial finding 3).
 R10 Tier 3 tests cover undo of a closed adopted tab keeping memberships and a Herdr restart; tier 5 tests cover ResurrectSeat against real threads.
 R11 Graph-created (keyed) seats keep their existing undo and restart behaviour (no regression).
+R12 When the running herdr-threads daemon is older than 3.6.0, graph's behaviour is defined and surfaced in status or doctor with the upgrade remedy (R-new, round 1).
