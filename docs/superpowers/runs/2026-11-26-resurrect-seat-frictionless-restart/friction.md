@@ -9,3 +9,4 @@
 - [code] stop-run-processes/remove-task-worktree exit 4 'git worktree inventory failed' because a foreign /tmp/.git exists; temp root /tmp/sp-<hash> sits under /tmp. Cleanup of task worktrees done by hand after a cwd scan showed no processes
 - [code] git worktree remove refuses task worktrees that contain the third_party/herdr-threads submodule even after deinit; coordinator used --force after a clean status and merged-branch check
 - [code] flaky: daemon::lock::tests::is_held_reports_holder failed once in hg-lnw.4's --lib run (untouched file), passed on 3 reruns; cli::adopt::tests::memberships_failures_are_errors_not_empty flaked once in hg-lnw.2
+- merge check missed the submodule sync after a gitlink bump: git merge does not update the submodule checkout, so the check compiled against the old pin and cargo rewrote Cargo.lock; coordinator re-merged with `git submodule update` before the check (2026-11-26)
