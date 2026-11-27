@@ -15,6 +15,7 @@ roastDesignRound: 2
 roastCodeRound: 2
 roastCodeExit: converged
 friction: 14 events
+feedback: parked — docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/upstream-feedback-draft.md
 findingsLedger: findings-ledger.md
 roast-code: 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-2.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-pr-audit.md
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
