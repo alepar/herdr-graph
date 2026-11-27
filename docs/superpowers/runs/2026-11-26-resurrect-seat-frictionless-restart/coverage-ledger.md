@@ -9,3 +9,14 @@ L8 · r1 · GAP · R5 · applied — hg-lnw.11 asserts the remedy text; grace is
 L9 · r1 · UNOWNED-SEAM · herdr-threads 3.6.0 API · applied — seam test fails (sequential .6 -> .7); ownership put on hg-lnw.6, consumed by hg-lnw.7
 L10 · r1 · UNOWNED-SEAM · plan_resume relaunch gating · applied — seam test fails (no parallel need); hg-lnw.3 owns it, hg-lnw.5 consumes it with an edge and a combined test
 L11 · r1 · UNOWNED-SEAM · restore epoch .3/.4 · rejected — hg-lnw.4 changes effects succession, not the restore launch gate (spec §3: the restore launch keeps its current gate)
+L12 · r2 · GAP · B2 managed predicate · applied — hg-lnw.7 verifies keyless any-v4-session authority incl. pre-upgrade adoptions; hg-lnw.2 fake Unauthorized row
+L13 · r2 · GAP · R2 pre-upgrade closes · applied — hg-lnw.4 action follows the seat fact; preview accurate
+L14 · r2 · GAP · B1 Herdr-native undo-close · rejected — spec §7 scopes Herdr-native undo-close out (graph has none)
+L15 · r2 · GAP · R5 held without refusal · applied — hg-lnw.11 row on still-held regardless of rebind result
+L16 · r2 · GAP · R1 close, restart, undo · applied — hg-lnw.4 fake test, hg-lnw.9 scenario 7
+L17 · r2 · UNOWNED-SEAM · port vs shipped API · applied — hg-lnw.7 co-owns port changes, edge hg-lnw.7 -> hg-lnw.5
+L18 · r2 · GAP · R10 tier-5 clocks · applied — hg-lnw.8 names HT_TEST_* env, narrowing rule if absent
+L19 · r2 · GAP · R8 Cargo.lock · applied — hg-lnw.6 acceptance
+L20 · r2 · GAP · B1 ht-eu3v in 3.6.0 · applied — hg-lnw.6 audit acceptance
+L21 · r2 · GAP · B2 refusal on ordinary restart · applied — hg-lnw.5 expected refusals listed, ordinary restart refuses none; hg-lnw.9 scenario 6
+L22 · r2 · GAP · R12 docs · applied — hg-lnw.10 documents the pre-3.6.0 error, edge hg-lnw.10 -> hg-lnw.7
