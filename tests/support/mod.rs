@@ -2,6 +2,7 @@
 //! Include with `mod support;` from an integration test.
 #![allow(dead_code)]
 
+pub mod agent_stub;
 pub mod isolated;
 pub mod private_herdr;
 pub mod threads_bin;

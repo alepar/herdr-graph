@@ -1,0 +1,69 @@
+     Running unittests src/lib.rs (target/debug/deps/herdr_graph-a7d15e4b8fb37b2d)
+test result: ok. 1533 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.41s
+     Running unittests src/main.rs (target/debug/deps/herdr_graph-67200045107ae7c1)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/adopt_private_herdr.rs (target/debug/deps/adopt_private_herdr-2c9d9eafef9a3069)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 247.14s
+     Running tests/config_smoke.rs (target/debug/deps/config_smoke-68f826fcecc4f950)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+     Running tests/daemon_composed.rs (target/debug/deps/daemon_composed-a31f2df107dc7ea8)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.93s
+     Running tests/daemon_error_commands.rs (target/debug/deps/daemon_error_commands-2a4ec1a94f04aeaf)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+     Running tests/daemon_free_reads.rs (target/debug/deps/daemon_free_reads-632aa0cbf83474c7)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+     Running tests/daemon_ipc.rs (target/debug/deps/daemon_ipc-d7251fe78493e813)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.44s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+test late_rebind_binds_the_fresh_agent_at_its_next_prompt ... FAILED
+test undo_restored_agent_that_exits_is_relaunched_live ... FAILED
+test result: FAILED. 40 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1072.80s
+     Running tests/herdr_client.rs (target/debug/deps/herdr_client-fb3804533fece0c4)
+test private_process_info_is_shell ... FAILED
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.37s
+     Running tests/herdr_spikes.rs (target/debug/deps/herdr_spikes-b15893597e1074e1)
+test result: ok. 1 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/inspect_live.rs (target/debug/deps/inspect_live-bd15d8893fc2958b)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.43s
+     Running tests/inspect_loaded.rs (target/debug/deps/inspect_loaded-878ee08d5ff5c424)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.21s
+     Running tests/inspect_log.rs (target/debug/deps/inspect_log-25d1394f684290ec)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests/inspect_roster.rs (target/debug/deps/inspect_roster-52c2464d375ee2ea)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/inspect_sessions.rs (target/debug/deps/inspect_sessions-311d9060ff4bb859)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/inspect_stack.rs (target/debug/deps/inspect_stack-d7fae6b86b3e9d65)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+     Running tests/inspect_sweep.rs (target/debug/deps/inspect_sweep-a20df488451aae08)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.38s
+     Running tests/instruction_writers.rs (target/debug/deps/instruction_writers-b3f80a584571ebd8)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/integration_sweep.rs (target/debug/deps/integration_sweep-7285ef49ffe95bfd)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.46s
+     Running tests/manager_seats_sweep.rs (target/debug/deps/manager_seats_sweep-15f23889e59ae493)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/node_manager_warning.rs (target/debug/deps/node_manager_warning-c65a817ebfe75012)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+     Running tests/packaging.rs (target/debug/deps/packaging-ff85c54a3a98a7c0)
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/real_agent_smoke.rs (target/debug/deps/real_agent_smoke-ce2e46370f18fb1c)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/seat_exit_codes.rs (target/debug/deps/seat_exit_codes-24705d6bd9b8a34d)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+     Running tests/test_isolation.rs (target/debug/deps/test_isolation-2ace6a44c5b75759)
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.02s
+     Running tests/threads_real.rs (target/debug/deps/threads_real-079463c64d52bc89)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/writer_concurrency.rs (target/debug/deps/writer_concurrency-0c10611bfe1f501c)
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+     Running tests/writer_crash.rs (target/debug/deps/writer_crash-0c01ec9686e85502)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+1710:thread 'late_rebind_binds_the_fresh_agent_at_its_next_prompt' (1698021) panicked at tests/e2e_private_herdr.rs:3831:5:
+1711-the fresh agent checked in while the seat was still held: {"hookSpecificOutput":{"additionalContext":"Complete hook/channel deliveries and default text inbox displays ACK eligible receipts automatically after output is written and flushed. Do not reread or re-ACK them. Call inbox only for conti
+--
+1718:thread 'undo_restored_agent_that_exits_is_relaunched_live' (1709769) panicked at tests/e2e_private_herdr.rs:326:9:
+1719-timed out (40s) waiting for the restored agent to reattach (Restore intent cleared)
+--
+1949:thread 'private_process_info_is_shell' (1718235) panicked at tests/herdr_client.rs:265:5:
+1950-foreground argv: []

@@ -1,0 +1,128 @@
+//! A stand-in `claude` for tier-3 rigs that have no real agent: Herdr detects it as a `claude` agent (its
+//! foreground argv names `claude`), and it does what the real agent's hooks do at SessionStart, against the
+//! rig's own threads daemon and graph instance only.
+//!
+//! Each start appends `<pane> <argv>` to `<root>/bin/claude.starts` (start N is line N) and uses session id
+//! `--resume <id>` when given, else `stub-N`. It then
+//! * checks in through `herdr-threads hook claude` (SessionStart) when `<root>/stub.env` names the threads
+//!   binary, as Claude's herdr-threads plugin hook does;
+//! * reports the session to graph (`herdr-graph session-report --from-hook claude`) when
+//!   `<root>/bin/report-sessions` exists, as graph's own Claude hook does;
+//! * stays in the foreground until `<root>/bin/release.N` or `<root>/bin/release.all` exists, then exits;
+//!   meanwhile, each time `<root>/bin/prompt.N` appears it runs the UserPromptSubmit hook (one submitted
+//!   prompt) as the agent process and logs it to `<root>/bin/prompt.N.log`.
+//!
+//! `claude --version` answers like Claude, for the threads hook's harness probe.
+use std::path::{Path, PathBuf};
+
+pub const CLAUDE: &str = r#"#!/bin/sh
+bin=$(cd "$(dirname "$0")" && pwd)
+root=$(dirname "$bin")
+if [ "$1" = "--version" ]; then echo '2.1.283 (Claude Code)'; exit 0; fi
+[ -f "$root/stub.env" ] && . "$root/stub.env"
+echo "$HERDR_PANE_ID $*" >> "$bin/claude.starts"
+n=$(wc -l < "$bin/claude.starts" | tr -d ' ')
+sid="stub-$n"
+prev=
+for a in "$@"; do [ "$prev" = "--resume" ] && sid="$a"; prev="$a"; done
+mkdir -p "$root/transcripts"
+transcript="$root/transcripts/$sid.jsonl"
+: >> "$transcript"
+payload="{\"hook_event_name\":\"SessionStart\",\"session_id\":\"$sid\",\"transcript_path\":\"$transcript\",\"cwd\":\"$root/home\",\"source\":\"startup\"}"
+[ -e "$bin/freeze.$n" ] && kill -STOP "$(cat "$bin/freeze.$n")"
+if [ -n "$STUB_THREADS" ]; then
+  echo "$payload" | CLAUDE_PID=$$ CLAUDE_CODE_SESSION_ID="$sid" HERDR_ENV=1 \
+    "$STUB_THREADS" --state-dir "$root/threads-state" --host-endpoint "$HERDR_SOCKET_PATH" hook claude \
+    >> "$bin/hook.$n.log" 2>&1
+  echo "threads-hook rc=$?" >> "$bin/hook.$n.log"
+fi
+if [ -n "$STUB_GRAPH" ] && [ -e "$bin/report-sessions" ]; then
+  # A real Claude's SessionStart hook runs after its startup, when Herdr already shows the agent on the pane;
+  # a report before that is ended at once by graph's observer (occupant without an agent).
+  sleep 2
+  echo "$payload" | HERDR_GRAPH_INSTANCE="$STUB_INSTANCE" "$STUB_GRAPH" session-report --from-hook claude \
+    >> "$bin/report.$n.log" 2>&1
+fi
+while [ ! -e "$bin/release.$n" ] && [ ! -e "$bin/release.all" ]; do
+  if [ -e "$bin/prompt.$n" ] && [ -n "$STUB_THREADS" ]; then
+    rm -f "$bin/prompt.$n"
+    echo "{\"hook_event_name\":\"UserPromptSubmit\",\"session_id\":\"$sid\",\"transcript_path\":\"$transcript\",\"cwd\":\"$root/home\",\"prompt\":\"one prompt\"}" \
+      | CLAUDE_PID=$$ CLAUDE_CODE_SESSION_ID="$sid" HERDR_ENV=1 \
+      "$STUB_THREADS" --state-dir "$root/threads-state" --host-endpoint "$HERDR_SOCKET_PATH" hook claude \
+      >> "$bin/prompt.$n.log" 2>&1
+    echo "threads-hook rc=$?" >> "$bin/prompt.$n.log"
+  fi
+  sleep 0.2
+done
+exit 0
+"#;
+
+/// Name the threads binary, graph binary and instance the stub reports to (`<root>/stub.env`).
+pub fn configure(root: &Path, threads: &Path, graph: &Path, instance: &Path) {
+    std::fs::write(
+        root.join("stub.env"),
+        format!(
+            "STUB_THREADS='{}'\nSTUB_GRAPH='{}'\nSTUB_INSTANCE='{}'\n",
+            threads.display(),
+            graph.display(),
+            instance.display()
+        ),
+    )
+    .unwrap();
+}
+
+fn bin(root: &Path) -> PathBuf {
+    root.join("bin")
+}
+
+/// Every start so far: `(pane, argv)` in start order.
+pub fn starts(root: &Path) -> Vec<(String, String)> {
+    std::fs::read_to_string(bin(root).join("claude.starts"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| {
+            let (pane, args) = l.split_once(' ').unwrap_or((l, ""));
+            (pane.to_owned(), args.to_owned())
+        })
+        .collect()
+}
+
+/// Let start `n` (1-based) exit.
+pub fn release(root: &Path, n: usize) {
+    std::fs::write(bin(root).join(format!("release.{n}")), "").unwrap();
+}
+
+/// Every start, current and future, exits at once.
+pub fn release_all(root: &Path) {
+    std::fs::write(bin(root).join("release.all"), "").unwrap();
+}
+
+/// Starts from here on report their session to graph.
+pub fn report_sessions(root: &Path) {
+    std::fs::write(bin(root).join("report-sessions"), "").unwrap();
+}
+
+/// The threads hook output of start `n`.
+pub fn hook_log(root: &Path, n: usize) -> String {
+    std::fs::read_to_string(bin(root).join(format!("hook.{n}.log"))).unwrap_or_default()
+}
+
+/// Submit one prompt to start `n`: it runs its UserPromptSubmit threads hook; returns once the hook finished.
+pub fn prompt(root: &Path, n: usize) -> String {
+    let log = bin(root).join(format!("prompt.{n}.log"));
+    std::fs::write(bin(root).join(format!("prompt.{n}")), "").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("rc=") {
+            return text;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("start {n} ran no prompt hook within 30 s");
+}
+
+/// Start `n` stops `pid` (SIGSTOP) before its check-in.
+pub fn freeze_at(root: &Path, n: usize, pid: u32) {
+    std::fs::write(bin(root).join(format!("freeze.{n}")), pid.to_string()).unwrap();
+}
