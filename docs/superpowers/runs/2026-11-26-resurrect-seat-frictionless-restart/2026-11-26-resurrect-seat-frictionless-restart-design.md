@@ -67,40 +67,59 @@ Recommended: split today's `succession`/`unretirable` decision in `src/threads/e
 | Seat fact on the Restore seat | Action |
 |---|---|
 | keyed, `Retired{Reversible}` | `UnretireSeat` (unchanged) |
-| keyless, `Retired{Reversible}` | new `threads.resurrect_seat` want: `ThreadsPort::resurrect_seat(seat, pane, replace, op)` onto the reopened pane, op key `resurrect:<clone>:<epoch>`, then `SeatTransition::Acknowledge` (seat unchanged) |
+| keyless, `Retired{Reversible}` | new `threads.resurrect_seat` want: `ThreadsPort::resurrect_seat(seat, pane, replace, op)` onto the reopened pane, op key `resurrect:<clone>:<epoch>`; outcomes below |
 | keyless, `Retired{Final}` (after 7 d, or operator-final) | fresh-seat succession (unchanged), graph channels re-invited |
 
-The seat fact gains the keyed/keyless distinction, read from `continuity_key` in `SeatInspect`. `replace` names a bare seat that threads already minted for the reopened pane: if `ResolveSeat` or a race gave that pane a seat, graph passes it, so threads retires it in the same decision. Otherwise it passes `None`. The restore launch keeps its current gate (`threads_done`) and argv (`--resume` with the last session). The agent then enrolls onto the original seat. Considered and discarded: resurrecting before the pane is reopened (`ResurrectSeat` needs a target); keeping keyless undo on the fresh-seat path until 7 d (contradicts B1).
+The seat fact gains the keyed/keyless distinction, read from `continuity_key` in `SeatInspect`. `replace` names a bare seat that threads already minted for the reopened pane: if `ResolveSeat` or a race gave that pane a seat, graph passes it, so threads retires it in the same decision. Otherwise it passes `None`.
+
+`resurrect_seat` outcomes. Each one is either done or deferred; a deferred want is re-planned from the seat fact re-read on the next pass, never from the previous outcome:
+
+- success: `SeatTransition::Acknowledge` (seat unchanged), then the invitation reset below.
+- `NotFound`: deferred. The next fact read picks the row: `Retired{Final}` takes fresh-seat succession; `Resolved` on the reopened pane (an earlier call went through and its response was lost) is acknowledged as success; still `Retired{Reversible}` retries.
+- transient (`ServiceBusy`, `StaleHostObservation`, which threads classes as transient, timeout, threads unreachable, outcome unknown): deferred and retried on the next pass.
+- any other definitive refusal (`TargetAlreadyOwned`, `Unauthorized`, `InvalidRequest`, `Unsupported`, `InstanceMismatch`): recorded once as journal meta `resurrect_refused:<clone>` with the epoch and reason, and deferred; the fact is still re-read every pass, so a later change (the seat turns Final, the target frees) is picked up. The restore launch stays gated on `threads_done`, because launching on a fresh seat would drop the seat B1 asks for. A seat whose meta is set and whose fact still reads `Retired{Reversible}` one grace period (90 s) after the first refusal gets a `clones.resurrect_held` status row and a doctor finding naming the seat, pane, reason and the operator remedy (`herdr-threads seat rebind SEAT --pane PANE --operator`, which also resurrects a reversibly retired seat). The row clears when the fact leaves `Retired{Reversible}`.
+
+A Restore seat whose fact is not yet `Retired` (threads has not caught up with the close, or is unreachable) gets no want; the existing caught-up guard in `succession` already waits for it.
+
+The restore launch keeps its current gate (`threads_done`) and argv (`--resume` with the last session). The agent then enrolls onto the original seat. Considered and discarded: resurrecting before the pane is reopened (`ResurrectSeat` needs a target); keeping keyless undo on the fresh-seat path until 7 d (contradicts B1).
 
 Windows, derived from the seat's `retired_at` because threads exposes no clock fields:
 
 - before `retired_at + 24h`: everything returns: memberships, history, pending ACK receipts and invitations (deadlines shifted).
-- from 24 h to 7 d: memberships, history and requirement episodes return. Ordinary invitations and ACK receipts owed to the seat have settled as `recipient_retired`. Graph's channel wants re-issue graph's own invitations if needed.
+- from 24 h to 7 d: memberships, history and requirement episodes return. Ordinary invitations and ACK receipts owed to the seat have settled as `recipient_retired`. Graph's own invitations are re-issued by the reset below.
+
+Invitation reset after a resurrect. Graph cannot tell a settled ordinary invitation from a pending one: threads reports both as no membership or `Invited`, which graph's poll records as `Pending`, and the channel want counts `Pending` on the recorded seat as satisfied (`src/threads/effects.rs` invitation wants). So the resurrect success transition, in the same journal write as the acknowledgement, marks every invitation row of that clone with constraint `Ordinary`, recorded state `Pending` and a link to the resurrected seat as `Retired`. The existing want rule then re-plans an `Invite` for each one still desired (graph's seat-wide participation threads, minus opt-outs). Accepted rows and `Required` rows (graph's seat and teamspace channels, which are requirement episodes and return intact) are left alone. The reset does not read the window or any clock: a service invite on a seat that still holds a pending invitation to that thread reuses it (herdr-threads `service_controls.rs`, existing pending invitation), so before 24 h the re-issue is a no-op, and between 24 h and 7 d it mints a fresh invitation. "Graph's own invitations" means exactly these ordinary seat-wide invitations; invitations other parties sent are theirs to re-send.
 - after 7 d (final): fresh seat, graph channels re-invited, external memberships lost.
 
 The undo plan (`herdr-graph undo` preview) names which of the three applies for each seat, so the warning the trial found missing exists. The adoption plan warning (`src/plan/seat_adopt.rs`) changes from "closing loses the seat" to the windowed wording. `clone purge` of a seated keyless clone tombstones `FinalizeRetirement` as today, which 3.5.0 now accepts for keyless seats. A purge of a closed keyless seat inside the window therefore finalizes it at once (documented; this is the operator's explicit choice).
 
 ### 4. Herdr restart, every path
 
-Recommended: one new effect, `threads.rebind_held_seat`: `ThreadsPort::rebind_held_seat(seat, pane, op)` over U2, op key `rebind:<clone>:<incarnation changed_at>`. The planner emits it after an incarnation change for every seated clone whose fact, read after the change, is `Unresolved` and whose bound pane exists. A seat already resolved onto its pane needs nothing. Every path:
+Recommended: one new effect, `threads.rebind_held_seat`: `ThreadsPort::rebind_held_seat(seat, pane, op)` over U2, op key `rebind:<clone>:<incarnation changed_at>`. Every rule in this section reads state on each planner pass; none waits for one effect's outcome, and every wait is bounded by the 90 s grace that already starts at `incarnation:changed_at` (`relaunch_grace`, `src/reconcile/mod.rs`).
+
+- Emission. On every pass while a seated clone's fact, read at or after `incarnation:changed_at`, is `Unresolved` and its bound pane exists, the planner wants the rebind (one op key per incarnation, so a want is re-planned, not duplicated). A fact that turns `Unresolved` later in the incarnation is picked up by the next pass. A fact still reading `Resolved` on its pane, or read before `changed_at`, counts as threads not caught up: nothing is emitted, and the keyless gate below stays closed (the same caught-up reasoning as the close guard in `succession`, `src/threads/effects.rs`). The first pass that sees `Unresolved` in an incarnation records meta `seat_unresolved:<clone>` = that `changed_at`, which is how a later `Resolved` read is known to be fresh.
+- Gate. A keyless relaunch (fresh `StartAgent` or `RelaunchOccupant`) after an incarnation change proceeds once either holds: the seat fact reads `Resolved` on the clone's own pane and `seat_unresolved:<clone>` names this incarnation (threads saw the restart and the seat is placed, by graph's rebind or anyone else), or the grace since `changed_at` has passed. It then proceeds whatever the rebind did. Keyed relaunches never wait on it. `RelaunchOccupant` keeps its existing grace deferral unchanged, so for it the gate adds nothing.
+- Status. When the grace ends with the fact still `Unresolved`, §4.5 applies, whatever happened to the rebind.
+
+Every path:
 
 | Case | Today | After |
 |---|---|---|
 | created (keyed), session captured | resume + key: back | rebind also runs; relaunch does not wait on it |
 | created (keyed), no session | fresh + key: back | same as above |
-| adopted (keyless), session captured | resume; cooperative continuity reattaches (Claude documented, Codex unverified) | relaunch waits for the rebind, then resumes; the seat is placed before the agent checks in, so the harness does not matter |
-| adopted (keyless), no session, or resume fails | fresh start held until operator rebind | relaunch waits for the rebind, then starts fresh; the agent enrolls on the original seat |
+| adopted (keyless), session captured | resume; cooperative continuity reattaches (Claude documented, Codex unverified) | relaunch waits until the seat is placed or the grace expires, then resumes; when the rebind succeeds the seat is placed before the agent checks in, so the harness does not matter |
+| adopted (keyless), no session, or resume fails | fresh start held until operator rebind | relaunch waits until the seat is placed or the grace expires, then starts fresh; the agent enrolls on the original seat |
 | graph-created shell seat | nothing launches; seat stays unresolved | rebind places the seat; nothing launches |
 | adopted shell pane | seatless, located by pane id | unchanged |
 | agent never observed, keyed (`launched:` meta, no session) | nothing relaunches (`restart_arm_needs_an_earlier_agent`) | treated as had-agent: rebind, then fresh keyed start |
-| agent never observed, keyless (`adopt --harness`, no agent) | ordinary fresh start, held by threads | rebind, then fresh start |
+| agent never observed, keyless (`adopt --harness`, no agent) | ordinary fresh start, held by threads | rebind; the fresh start waits until the seat is placed or the grace expires |
 | pane missing after restart | `resume_blocked` row | unchanged |
 
-4.1 Keyless relaunches wait for `rebind` done in the same incarnation. Keyed relaunches do not wait, because their key already reattaches them and a U2 failure must not regress them.
-4.2 Rebind refusal: `NotFound` because the seat is already resolved on that pane counts as done; any other definitive refusal records the refusal, and the relaunch proceeds anyway (resume may still reattach). The status row (4.5) reports it.
+4.1 Keyless relaunches follow the gate above: seat placed in this incarnation, or the grace expired. Keyed relaunches do not wait, because their key already reattaches them and a U2 failure must not regress them.
+4.2 Rebind outcomes, which only record; none opens or closes the gate. Success and an already-placed answer (`NotFound` or the U2 equivalent, because the seat is already resolved on that pane) are done. A transient outcome (error, timeout, threads unreachable, `ServiceBusy`, `StaleHostObservation`) is deferred and retried on the next pass while the fact reads `Unresolved` and the grace runs. Any other definitive refusal is recorded once as meta `rebind_refused:<clone>` with the incarnation and reason, and not retried in that incarnation; the status row (4.5) reports it.
 4.3 Never-observed: `restart_covered` counts a `launched:` meta (graph launched the agent) as having had an agent, for non-shell harnesses.
 4.4 Trial finding 3: an undo-restored seat whose agent exits with the pane open is not relaunched. The suspected cause is the restore epoch's one-launch mark (`planner.rs` restore branch, `assignment.rs` "allowed once per epoch"), which also suppresses the ordinary exited-agent restart. The bead root-causes it, fixes it so the ordinary restart rule applies once the restore launch has happened, and adds a regression test at the unit tier and the tier-3 private-Herdr tier.
-4.5 Status: a seat still `Unresolved` one grace period (90 s) after its rebind was refused or could not run (old daemon, threads unreachable) gets a `clones.restart_held` status row and a doctor finding, with the operator remedy (`herdr-threads seat rebind SEAT --pane PANE --operator`). This is a fallback for a degraded threads, not the expected path.
+4.5 Status: a seated clone whose fact still reads `Unresolved` when the grace since the incarnation change ends, whatever happened to its rebind (refused, still erroring, never attempted because threads was unreachable), gets a `clones.restart_held` status row and a doctor finding, with the operator remedy (`herdr-threads seat rebind SEAT --pane PANE --operator`). The reason names `rebind_refused:<clone>` when it is set for this incarnation, otherwise "rebind did not complete". The row clears when the fact reads `Resolved`. This is a fallback for a degraded threads, not the expected path.
 
 Considered and discarded: keying adopted seats (reverses G4, keyed seats cannot be released), graph running the operator rebind itself (a service taking operator authority), best-effort plus documented gap (contradicts B2).
 
@@ -120,6 +139,17 @@ Every rig goes through `TestRoot`/`PrivateHerdr`; runs only in `hg-build`.
 ### 7. Out of scope
 
 Herdr-native "undo close" (graph has none; graph undo is the only undo). Automatic threads-side resurrect by resumed session id (threads design D3, a threads follow-up). Trial finding 4 (roster "is Unknown" after a daemon restart) unless a bead touches that code.
+
+## Unchanged behavior
+
+- Keyed seats: undo of a keyed `Retired{Reversible}` seat calls `UnretireSeat`; keyed relaunches after a restart never wait on the rebind; existing keyed undo and restart tests pass unchanged.
+- Fresh-seat succession for a `Retired{Final}` seat, with graph channels re-invited, is unchanged.
+- The restore launch keeps its `threads_done` gate and `--resume` argv; a restore epoch still launches at most once through the restore path.
+- `RelaunchOccupant` keeps its existing 90 s grace after an incarnation change; no new grace constant is added.
+- The caught-up guard in `succession` (a pre-close read does not stand in for the close) is unchanged.
+- `Required` invitations and accepted memberships are never reset or re-issued by a resurrect.
+- Adopted shell panes stay seatless; a pane missing after a restart still gets the `resume_blocked` row.
+- `clone purge` of a seated keyless clone still tombstones `FinalizeRetirement`.
 
 ## Post-Implementation Notes
 
