@@ -14,6 +14,7 @@ use super::seat_observation::{self, ThreadsRead};
 use crate::config::InstancePaths;
 use crate::journal::Journal;
 use crate::model::change::{ChangeRequest, RequestKind, Requester};
+use crate::model::clone::SeatFactState;
 use crate::model::common::{Availability, Binding, CloneLifecycle, Lifecycle, Runtime};
 use crate::model::effect::EffectStatus;
 use crate::model::harness::Harness;
@@ -34,6 +35,7 @@ use crate::writer::OpEvent;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tokio::sync::{broadcast, watch};
@@ -81,6 +83,10 @@ pub struct LoopTuning {
     pub settle_timeout: Duration,
     /// Pause after a trigger so a burst of events becomes one step.
     pub debounce: Duration,
+    /// First re-read delay while a seated clone's seat reads Unresolved. Threads pushes nothing, and an
+    /// Unresolved seat is expected to change (threads reconciling a restarted pane, an agent's keyed check-in),
+    /// so the loop reads it again on its own; the delay doubles per consecutive Unresolved read up to the tick.
+    pub seat_recheck: Duration,
 }
 
 impl Default for LoopTuning {
@@ -89,6 +95,7 @@ impl Default for LoopTuning {
             commit_timeout: Duration::from_secs(30),
             settle_timeout: Duration::from_secs(2),
             debounce: Duration::from_millis(100),
+            seat_recheck: Duration::from_secs(1),
         }
     }
 }
@@ -134,6 +141,9 @@ pub struct RuntimeLoop {
     seat_lost: SeatLost,
     /// What the last full seat read left behind, for `roster --live`; written only by `observe_seats`.
     seat_read: SeatReadState,
+    /// Consecutive successful seat reads that found a seated clone Unresolved (0: none did); paces the
+    /// loop's own re-read of those seats.
+    unresolved_reads: AtomicU32,
 }
 
 /// Seats refused beyond the staleness window: `{clone, seat, error, since, remedy}` entries.
@@ -465,6 +475,7 @@ impl RuntimeLoop {
             refused_since: Default::default(),
             seat_lost: Default::default(),
             seat_read: Default::default(),
+            unresolved_reads: AtomicU32::new(0),
         })
     }
 
@@ -647,6 +658,7 @@ impl RuntimeLoop {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clear();
+            self.unresolved_reads.store(0, Ordering::Relaxed);
             // Nothing seated, nothing to read: healthy and empty.
             *self.seat_read.lock().unwrap_or_else(|e| e.into_inner()) = SeatReadSnapshot {
                 last: Some(Ok(())),
@@ -699,9 +711,29 @@ impl RuntimeLoop {
             .collect();
         let live = locs.into_keys().collect();
         let changed_at = incarnation_changed_at(&self.journal);
-        seat_observation::observe(
+        let out = seat_observation::observe(
             desired, &read, &live, &bare, changed_at, &lost, matches, now,
-        )
+        );
+        if matches!(read, ThreadsRead::Statuses(_)) {
+            if out
+                .facts
+                .iter()
+                .any(|(_, f)| f.state == SeatFactState::Unresolved)
+            {
+                self.unresolved_reads.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.unresolved_reads.store(0, Ordering::Relaxed);
+            }
+        }
+        out
+    }
+
+    /// When the loop reads an Unresolved seat again by itself: `seat_recheck` doubled per consecutive
+    /// Unresolved read, capped at the tick; `None` while no seated clone reads Unresolved.
+    fn seat_recheck(&self) -> Option<Duration> {
+        let n = self.unresolved_reads.load(Ordering::Relaxed);
+        (n > 0)
+            .then(|| crate::reconcile::backoff::deferred(self.tuning().seat_recheck, self.tick, n))
     }
 
     /// The per-seat refusal messages the seat view kept from its last read.
@@ -1012,7 +1044,8 @@ impl RuntimeLoop {
     }
 
     /// Trigger loop: Herdr events, the tick, op-committed notifications and reconnects all just cause a new
-    /// complete snapshot (spec §4.3.1). Returns when `shutdown` turns true.
+    /// complete snapshot (spec §4.3.1), as do deferred effects' wake times and the re-read of an Unresolved
+    /// seat (`LoopTuning::seat_recheck`). Returns when `shutdown` turns true.
     pub async fn run(self: Arc<Self>, mut shutdown: watch::Receiver<bool>) {
         let mut op_rx = self
             .op_events
@@ -1049,6 +1082,7 @@ impl RuntimeLoop {
                     .unwrap_or_default()
                     .clamp(Duration::from_millis(20), self.tick)
             });
+            let wake = wake.into_iter().chain(self.seat_recheck()).min();
             tokio::select! {
                 _ = shutdown.changed() => {}
                 _ = async { match wake { Some(d) => tokio::time::sleep(d).await, None => std::future::pending::<()>().await } } => {}

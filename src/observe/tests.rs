@@ -155,6 +155,7 @@ fn new_loop(
         commit_timeout: Duration::from_secs(5),
         settle_timeout: Duration::from_millis(50),
         debounce: Duration::from_millis(5),
+        seat_recheck: Duration::from_millis(50),
     });
     lp
 }
@@ -1610,8 +1611,7 @@ async fn seated_clone_is_located_only_by_seat_observation() {
     // Threads resolves the seat to a pane that carries no token, while another pane carries the clone's.
     let threads_pane = fx.herdr.add_user_pane(&tab, "resumed");
     assert_ne!(threads_pane, token_pane);
-    fx.seats
-        .set(&seat_ref("seat-1"), resolved(&threads_pane));
+    fx.seats.set(&seat_ref("seat-1"), resolved(&threads_pane));
     step(&fx).await;
     let now = clone_by_id(&fx, &c.id);
     assert_eq!(now.runtime.availability, Availability::Present);
@@ -2160,6 +2160,7 @@ async fn run_loop_reacts_to_events_and_ticks() {
         commit_timeout: Duration::from_secs(5),
         settle_timeout: Duration::from_millis(50),
         debounce: Duration::from_millis(5),
+        seat_recheck: Duration::from_millis(50),
     });
     let (tx, rx) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(lp.clone().run(rx));
@@ -3504,6 +3505,58 @@ async fn retired_seat_after_threads_done_retires_and_clears_the_intent() {
     assert_eq!(
         after.seat_intent, None,
         "the retire commit dropped the intent"
+    );
+}
+
+/// Threads pushes nothing to the graph: after a Herdr restart its seat mapping reads Unresolved for a moment
+/// and then Resolved again (or an agent's keyed check-in resolves it) with no Herdr event, op or effect wake to
+/// trigger a step. The running loop re-reads an Unresolved seat by itself, so the committed fact and the
+/// clone's availability catch up long before the tick.
+#[tokio::test]
+async fn run_loop_rereads_an_unresolved_seat_without_another_trigger() {
+    let fx = fx();
+    let (c, pane) = seated(&fx, "seat-1").await;
+    fx.seats.set(&seat_ref("seat-1"), SeatStatus::Unresolved);
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    let task = tokio::spawn(fx.lp.clone().run(rx));
+    for _ in 0..200 {
+        if fact_state(&fx, &c.id) == Some(SeatFactState::Unresolved) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        fact_state(&fx, &c.id),
+        Some(SeatFactState::Unresolved),
+        "the loop's first step read the seat"
+    );
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Unknown
+    );
+
+    fx.seats.set(
+        &seat_ref("seat-1"),
+        SeatStatus::Resolved { pane: pane.clone() },
+    );
+    let mut caught_up = false;
+    for _ in 0..200 {
+        if fact_state(&fx, &c.id) == Some(SeatFactState::Resolved { pane: pane.clone() }) {
+            caught_up = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    tx.send(true).unwrap();
+    task.await.unwrap();
+    assert!(
+        caught_up,
+        "the loop re-read the Unresolved seat within 2 s, with a 60 s tick: {:?}",
+        fact_state(&fx, &c.id)
+    );
+    assert_eq!(
+        clone_by_id(&fx, &c.id).runtime.availability,
+        Availability::Present
     );
 }
 
