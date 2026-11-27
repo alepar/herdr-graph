@@ -63,7 +63,9 @@ fn key_conflicts(clones: &[CloneRecord]) -> Vec<serde_json::Value> {
 
 /// The operator command that brings a held seat back onto `pane`. herdr-threads 3.6.0 refuses person/operator
 /// actions outside its `human` namespace, so the command must start `herdr-threads human`.
-pub(crate) fn operator_rebind_remedy(seat: &str, pane: &str) -> String {
+// Public only so tier 5 (tests/threads_real.rs) runs this exact string against real threads.
+#[doc(hidden)]
+pub fn operator_rebind_remedy(seat: &str, pane: &str) -> String {
     format!("herdr-threads human seat rebind {seat} --pane {pane} --operator")
 }
 

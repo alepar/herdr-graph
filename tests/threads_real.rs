@@ -1395,15 +1395,20 @@ async fn operator_rebind_resurrects_and_places() {
     };
     let daemon = tier5_daemon(&herdr, &[]);
     let ports = Tier5::new(&herdr, &daemon);
+    // The words after `herdr-threads human` in the remedy graph prints; `human_cli` adds those two itself.
     let remedy = |seat: &ThreadsSeatRef, pane: &HerdrPaneId| {
-        vec![
-            "seat".to_owned(),
-            "rebind".into(),
-            seat.0.clone(),
-            "--pane".into(),
-            pane.0.clone(),
-            "--operator".into(),
-        ]
+        assert!(
+            !seat.0.contains(char::is_whitespace) && !pane.0.contains(char::is_whitespace),
+            "ids split cleanly: {seat:?} {pane:?}"
+        );
+        let printed = herdr_graph::daemon::clone_status::operator_rebind_remedy(&seat.0, &pane.0);
+        let words: Vec<String> = printed.split_whitespace().map(str::to_owned).collect();
+        assert_eq!(
+            words[..2],
+            ["herdr-threads", "human"],
+            "remedy runs in threads' human namespace: {printed}"
+        );
+        words[2..].to_vec()
     };
     let rebind = |seat: &ThreadsSeatRef, pane: &HerdrPaneId| {
         let args = remedy(seat, pane);
@@ -1425,6 +1430,7 @@ async fn operator_rebind_resurrects_and_places() {
         .expect("reopened workspace")
         .pane
         .expect("reopened pane");
+    // The same remedy without `human`: the bare `seat rebind ...` form.
     let bare_form = remedy(&closed, &reopened);
     let refused = daemon.cli(
         None,
