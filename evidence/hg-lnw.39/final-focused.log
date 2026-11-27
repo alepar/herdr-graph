@@ -1,0 +1,12 @@
+   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.39)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.11s
+     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
+
+running 3 tests
+test e2e_cold_restart_attended_keeps_clones_on_their_seats ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+ok
+test e2e_cold_restart_fresh_agent_reattaches_by_key ... ok
+test e2e_cold_restart_headless_resumes_via_the_driver ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 21.88s
+
