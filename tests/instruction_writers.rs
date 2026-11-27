@@ -77,6 +77,9 @@ fn std_fs_writers_are_inventoried() {
         "src/store/init.rs",
         // thread namespace marker file in the plugin state dir.
         "src/threads/namespace.rs",
+        // test-only: `publish_descriptor` fixture writes node.json and a descriptor under a tempfile::tempdir()
+        // state dir (daemon_floor/discover tests); never an InstructionSource path.
+        "src/threads/service_tests.rs",
         // spool dir of session reports under .graph-local/ and its rejected/ quarantine.
         "src/transcripts/capture.rs",
         // removes stale git lock files (refs/heads/main.lock, index.lock) in .git.
