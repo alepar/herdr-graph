@@ -1,7 +1,0 @@
-diff --git a/third_party/herdr-threads b/third_party/herdr-threads
-index 482e0d2..7c3c090 160000
---- a/third_party/herdr-threads
-+++ b/third_party/herdr-threads
-@@ -1 +1 @@
--Subproject commit 482e0d2f8de761d7d31e562faf38c06bdab5f30e
-+Subproject commit 7c3c09082e8894ebceec9c060b769b07e359a2ad

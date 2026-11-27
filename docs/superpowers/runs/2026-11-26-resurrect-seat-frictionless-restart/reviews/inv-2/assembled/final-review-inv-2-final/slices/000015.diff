@@ -1,7 +1,0 @@
-diff --git a/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-punch-list.txt b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-punch-list.txt
-new file mode 100644
-index 0000000..21655b2
---- /dev/null
-+++ b/docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-pr-1-punch-list.txt
-@@ -0,0 +1 @@
-+[Nit] src/threads/adapter.rs:272; src/threads/adapter.rs:467

@@ -1,6 +1,0 @@
-{"findings":[
-{"key":"[Should-fix] src/ports/threads.rs:179; src/daemon/compose.rs:1031","disposition":"in-scope","reason":"Graph-local retryable errors become a definitive refusal, so the restart rebind is not retried: incorrect behavior in the goal-named frictionless Herdr restart (B2)."},
-{"key":"[Should-fix] CHANGELOG.md:24","disposition":"in-scope","reason":"The 3.6.0 floor claim is false for 3.5.x, so the pinned-release requirement and the restart rebind give a misleading result with no upgrade hint in a goal-named path (pin, B2)."},
-{"key":"[Nit] src/model/clone.rs:100; src/model/clone.rs:107","disposition":"in-scope","reason":"Legacy keyless facts route undo to UnretireSeat instead of ResurrectSeat, which is incorrect behavior in the goal-named undo-resurrects-seat path (B1), though in a narrow upgrade window."},
-{"key":"[Nit] src/threads/adapter.rs:272; src/threads/adapter.rs:467","disposition":"punch-list","reason":"Rollback with a pending intent concerns an unsupported downgrade path the goal does not name; the fix is a migration note, not a correctness change to goal-named behavior."}
-]}

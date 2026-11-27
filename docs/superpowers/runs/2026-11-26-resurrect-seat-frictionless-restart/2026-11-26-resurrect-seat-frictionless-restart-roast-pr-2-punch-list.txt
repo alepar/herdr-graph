@@ -1,3 +1,0 @@
-[Should-fix] src/threads/adapter.rs:374; src/threads/adapter.rs:423; src/threads/adapter.rs:496
-[Nit] src/daemon/compose.rs:764; src/daemon/compose.rs:797; src/daemon/compose.rs:801; src/daemon/compose.rs:807; src/daemon/compose.rs:812; src/daemon/compose.rs:872; src/ports/threads.rs:86
-[Nit] src/threads/adapter.rs:272; src/threads/adapter.rs:467

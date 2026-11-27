@@ -1,9 +1,0 @@
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
-     Running tests/e2e_private_herdr.rs (target/debug/deps/e2e_private_herdr-f151e482618e2c22)
-
-running 1 test
-test e2e_cold_restart_attended_keeps_clones_on_their_seats ...     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
-ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 7.92s
-

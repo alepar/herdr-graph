@@ -1,4 +1,0 @@
-[Should-fix] src/ports/threads.rs:179; src/daemon/compose.rs:1031
-[Should-fix] CHANGELOG.md:24
-[Nit] src/model/clone.rs:100; src/model/clone.rs:107
-[Nit] src/threads/adapter.rs:272; src/threads/adapter.rs:467

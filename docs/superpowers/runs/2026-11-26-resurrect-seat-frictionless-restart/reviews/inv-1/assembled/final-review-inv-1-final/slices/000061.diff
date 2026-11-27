@@ -1,9 +1,0 @@
-diff --git a/evidence/hg-lnw.4/final-lib-repeat.log b/evidence/hg-lnw.4/final-lib-repeat.log
-new file mode 100644
-index 0000000..ca378d9
---- /dev/null
-+++ b/evidence/hg-lnw.4/final-lib-repeat.log
-@@ -0,0 +1,3 @@
-+test result: ok. 1482 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.41s
-+test result: ok. 1482 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.56s
-+test result: ok. 1482 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.40s

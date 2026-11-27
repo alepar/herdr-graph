@@ -1,8 +1,0 @@
-diff --git a/evidence/hg-lnw.9/base-057ad4d-isolation-lint.log b/evidence/hg-lnw.9/base-057ad4d-isolation-lint.log
-new file mode 100644
-index 0000000..14f6c3b
---- /dev/null
-+++ b/evidence/hg-lnw.9/base-057ad4d-isolation-lint.log
-@@ -0,0 +1,2 @@
-+tests/threads_real.rs:50: R1: let mut c = std::process::Command::new(&self.bin);
-+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.09s
