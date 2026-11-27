@@ -1,7 +1,7 @@
 # super-auto run — 2026-11-26-resurrect-seat-frictionless-restart
 
 flags: planOneShot=f skipPlanRoast=f skipCodeRoast=f autonomous=t
-phase: roast-design
+phase: code
 codeMechanism: ordinary-subagents
 runTag: resurrect-seat-frictionless-restart-20261126T231316
 context: Context: claude · planner=200K/167K · implementer=200K/167K · reviewer=200K/167K · finalReview=200K/167K · assembler=200K/167K · warn: planner, finalReview on a 200K model → set ANTHROPIC_DEFAULT_OPUS_MODEL=<model>[1m] or config.models.<role> to a 1M model · warn: implementer, reviewer, assembler on a 200K model → set ANTHROPIC_DEFAULT_SONNET_MODEL=<model>[1m] or config.models.<role> to a 1M model
@@ -20,6 +20,8 @@ redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3,
 stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
 approvals:
+- root-acceptance · {"version": 1, "owner": "super-auto", "sourceTree": "004132e7d4c05e86a26b1aef361cd3f8afadf043", "requirements": [{"id": "final-review", "kind": "review", "owner": "super-auto", "source": "skill"}, {"id": "final-suite", "kind": "measurement", "owner": "super-auto", "source": "skill", "command": "toolbox run -c hg-build cargo test", "configuration": "tiers 1-2, AGENTS.md envelope, leak check after", "requiredLive": true}, {"id": "tier-3", "kind": "measurement", "owner": "super-auto", "source": "agent", "command": "toolbox run -c hg-build cargo test --features private-herdr -- --test-threads=1", "configuration": "coordinator brief mnSGHEfT9jck: tier 3 for undo-of-closed-adopted-tab keeping memberships and Herdr restart", "requiredLive": true}, {"id": "tier-5", "kind": "measurement", "owner": "super-auto", "source": "agent", "command": "HG_REAL_THREADS=1 toolbox run -c hg-build cargo test --features private-herdr --test threads_real -- --test-threads=1 --nocapture", "configuration": "coordinator brief mnSGHEfT9jck: tier 5 against real threads for ResurrectSeat", "requiredLive": true}, {"id": "merge-choice", "kind": "human", "owner": "coordinator", "source": "skill"}], "evidence": [], "reviews": [], "decisions": [], "recovery": [], "checkEvidence": [], "runFailures": []}
+- review-collection · {"invocationId": "inv-1", "workspace": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.superpowers/sdd/hg-lnw-plan", "reviewPath": "/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.superpowers/sdd/hg-lnw-plan/final-review-inv-1.md", "review": "pending", "required": [], "settled": false}
 - top-split · auto · hg-lnw.1 LEAF, hg-lnw.2 LEAF, hg-lnw.3 LEAF, hg-lnw.4 LEAF, hg-lnw.5 LEAF (PROMOTE overruled, sp:demoted-by-session), hg-lnw.6 LEAF, hg-lnw.7 LEAF, hg-lnw.8 LEAF, hg-lnw.9 LEAF, hg-lnw.10 LEAF, hg-lnw.11 LEAF
 - coverage-round-1 · L1 flag-sweep kept auto; L2-L10 applied auto; L11 rejected auto · R1..R12 in coverage-round-1-requirements.md · specsAt f1085a469e7441a8509e384b51ed8f96ebd683d5 · requirements: 11 · mapped: 11 · unmapped: 0
 - coverage-round-2 · L12, L13, L15-L22 applied auto; L14 rejected auto; reviewer 2 NEEDS-SPEC hg-lnw.5 not re-run (answered from spec §4.2 into the bead) · divergence: findings 10 → 9 · novel 5/9 (56%) · widening: no · sweep hg-lnw.12
