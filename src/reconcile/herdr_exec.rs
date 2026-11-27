@@ -590,6 +590,7 @@ impl HerdrExecutor {
         let restart_owned = relaunch
             && incarnation_changed_at(&self.journal)
                 .is_some_and(|at| launched_before(&p.seat_intent, at));
+        let mut restore_launch = false;
         if !restart_owned
             && let Some(SeatIntent::Restore {
                 epoch,
@@ -624,6 +625,7 @@ impl HerdrExecutor {
                 return ExecOutcome::Failed(format!("restore launch mark: {err}"));
             }
             let _ = self.journal.meta_delete(&failed_key);
+            restore_launch = true;
         }
         let args = prof.argv(p.model.as_deref(), p.resume.as_deref(), &p.args);
         let env = agent_env(&clone, p.key_reservation.is_some());
@@ -639,7 +641,12 @@ impl HerdrExecutor {
         crate::failpoint!(&format!("reconcile.after_call.{}", e.kind.as_str()));
         let out = start_outcome(started);
         if matches!(out, ExecOutcome::Done | ExecOutcome::BlockedNeedsHuman) {
-            self.record_launch(p);
+            // A keyless clone is an adopted one: graph never launched it, so `start_needed` relaunches it when
+            // its agent exits with the pane open. Its undo-restore launch must not change that: recording it
+            // would shut the ordinary rule out for good (hg-lnw.3).
+            if !(restore_launch && p.keyless) {
+                self.record_launch(p);
+            }
             self.record_launch_env(&clone, &lp.pane.id, &env);
             if relaunch && let Some(at) = incarnation_changed_at(&self.journal) {
                 // One restart relaunch per incarnation change.

@@ -5185,6 +5185,115 @@ async fn keyless_restore_launches_without_a_key() {
     }
 }
 
+/// An undo-restored keyless clone (acknowledged Restore, bare pane, no launch on record) after its restore launch:
+/// the agent checked in and exited with the pane open. Returns the clone, its pane and the epoch.
+async fn undo_restored_exited(fx: &Fx, clear_intent: bool) -> (CloneRecord, HerdrPaneId, OpId) {
+    let c = keyless_claude(fx, true).await;
+    let pane = pane_of(fx, &c);
+    // The pane is as undo leaves it: bare shell, no launch record of graph's.
+    fx.journal
+        .meta_delete(&planner::launched_key(&c.id))
+        .unwrap();
+    let epoch = OpId::new();
+    seat_state(
+        fx,
+        &c.id,
+        json!({
+            "threads_seat": "seat-1",
+            "intent": restore_intent("seat-1", &epoch, true, false),
+            "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()),
+        }),
+    );
+    fx.herdr.clear_calls();
+    step_unreserved(fx).await;
+    assert_eq!(start_calls(fx).len(), 1, "the restore launch: {:?}", calls(fx));
+    assert!(matches!(
+        the_clone(fx, &c.id).seat_intent,
+        Some(SeatIntent::Restore {
+            launched: Some(_),
+            ..
+        })
+    ));
+    // The agent checked in, then exited; the pane stays open.
+    let c = the_clone(fx, &c.id);
+    end_session(fx, &c, "abc", "claude");
+    fx.herdr.set_agent(&pane, None);
+    if clear_intent {
+        admit_threads_seat(
+            &*fx.w,
+            &c.id,
+            &SeatTransition::ClearOnReattach {
+                epoch: epoch.clone(),
+            },
+        )
+        .unwrap();
+        fx.w.drain().unwrap();
+        assert_eq!(the_clone(fx, &c.id).seat_intent, None);
+    }
+    fx.herdr.clear_calls();
+    (c, pane, epoch)
+}
+
+#[tokio::test]
+async fn undo_restored_agent_that_exits_is_relaunched() {
+    // The agent reattached, so the Restore intent was cleared (ClearOnReattach) before it exited.
+    let fx = fx();
+    undo_restored_exited(&fx, true).await;
+    for _ in 0..3 {
+        step_unreserved(&fx).await;
+    }
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+    assert!(!has_key(&start_calls(&fx)[0].env));
+    // Like the adopted seat it was before the close: relaunched once, then left alone.
+    fx.herdr.clear_calls();
+    step_unreserved(&fx).await;
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn adopted_keyless_clone_whose_agent_exits_is_relaunched() {
+    // The control the undo-restored clone must match: no restore history, no launch on record.
+    let fx = fx();
+    let c = keyless_claude(&fx, true).await;
+    let pane = pane_of(&fx, &c);
+    fx.journal
+        .meta_delete(&planner::launched_key(&c.id))
+        .unwrap();
+    fx.herdr.set_agent(&pane, None);
+    fx.herdr.clear_calls();
+    step_unreserved(&fx).await;
+    assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+}
+
+#[tokio::test]
+async fn restore_epoch_launches_at_most_once_via_restore_path() {
+    let fx = fx();
+    let (c, _, epoch) = undo_restored_exited(&fx, false).await;
+    let marked = the_clone(&fx, &c.id).seat_intent;
+    for _ in 0..3 {
+        step_unreserved(&fx).await;
+    }
+    // The intent is still the marked Restore (the clear has not landed): the restore path never launches it
+    // again, and the ordinary rule leaves a pending Restore to it.
+    assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+    assert_eq!(
+        the_clone(&fx, &c.id).seat_intent,
+        marked,
+        "the epoch's launch mark is untouched: marked once, not re-marked"
+    );
+    // Marking again is refused: one restore launch per epoch (a re-mark would move the timestamp).
+    fx.clock.advance(chrono::Duration::seconds(5));
+    let _ = admit_threads_seat(
+        &*fx.w,
+        &c.id,
+        &SeatTransition::MarkLaunched {
+            epoch: epoch.clone(),
+        },
+    );
+    let _ = fx.w.drain();
+    assert_eq!(the_clone(&fx, &c.id).seat_intent, marked);
+}
+
 #[tokio::test]
 async fn keyless_restart_resumes_after_grace() {
     let fx = fx();

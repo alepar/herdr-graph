@@ -1,0 +1,6 @@
+test reconcile::tests::undo_restored_agent_that_exits_is_relaunched ... FAILED
+thread 'reconcile::tests::undo_restored_agent_that_exits_is_relaunched' (1630050) panicked at src/reconcile/tests.rs:5245:5:
+assertion `left == right` failed: []
+  left: 0
+ right: 1
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1449 filtered out; finished in 0.04s
