@@ -30,3 +30,5 @@ L29 · amend-design-1 · GAP · R5 operator remedy verified · applied — hg-ln
 L30 · amend-design-1 · ORPHAN · hg-lnw.5 · rejected — already closed, superseded by hg-lnw.13
 L31 · amend-design-1 · UNOWNED-SEAM · hg-lnw.7 caller list · applied — names hg-lnw.4, hg-lnw.13, hg-lnw.14; outcome split acceptance
 L32 · amend-design-1 · GAP · R2 docs invitation reset · applied — edge hg-lnw.10 -> hg-lnw.15 and acceptance
+L33 · graph · GRAPH-EDGE · hg-lnw.4 <- hg-lnw.2 · kept — consumes ThreadsPort::resurrect_seat signature and keyed fact (genuine artifact; only candidate that shortens depth)
+L34 · graph · GRAPH-EDGE · 10 other candidates · kept — removing any leaves depth 6 unchanged

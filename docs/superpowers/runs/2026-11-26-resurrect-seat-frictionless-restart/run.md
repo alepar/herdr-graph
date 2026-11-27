@@ -15,6 +15,7 @@ roastDesignRound: 2
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md, 2026-11-26-resurrect-seat-frictionless-restart-roast-design-2.md
 findingsLedgerDesign: findings-ledger-design.md
 redesignCycles-design: 1
+graph-pass: depth 6→6 · width 2.3→2.3 · applied 0 · parked 0
 redesign-design-1: round 1 · triggers shared-cause, defect-type · amended §3, §4 · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast r2 fixed · state applied
 stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
