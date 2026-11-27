@@ -1,0 +1,84 @@
+diff --git a/src/undo/preview.rs b/src/undo/preview.rs
+index 0b8fba4..a217043 100644
+--- a/src/undo/preview.rs
++++ b/src/undo/preview.rs
+@@ -9,13 +9,14 @@ use crate::model::clone::CloneRecord;
+ use crate::model::common::{AppLifecycle, CloneLifecycle, Lifecycle, Retirement};
+ use crate::model::manager::Pointers;
+ use crate::model::seat::SeatRecord;
+-use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateId};
++use crate::model::{AnyId, AppId, CloneId, IdKind, SeatId, TeamspaceId, TemplateId, Timestamp};
+ use crate::plan::core_kinds::{open_clone_effects, read_seat, read_ts, rev_of};
+ use crate::plan::kind::{PlanBody, PlanCx, PlanError};
+ use crate::plan::managers::first_seat;
+ use crate::plan::managers::reparent::{REPARENTED_KEY, Rewrite};
+ use crate::plan::managers::{default_manager_effect, seat_manager_effect};
+ use crate::plan::types::{PlanEffect, Reserved};
++use crate::ports::threads::{KEYLESS_OBLIGATIONS_SETTLE_AFTER, KEYLESS_REVERSIBLE_FOR};
+ use crate::store::instruction_source::{
+     self as source, InstructionError, InstructionFile, InstructionTarget, ScopeKind,
+ };
+@@ -373,6 +374,7 @@ pub fn restore_preview(
+         ));
+         for (_, c) in &f.clones {
+             if r.clones.contains(&c.id) {
++                warnings.extend(seat_window_note(c, cx.now));
+                 effects.push(PlanEffect::new(
+                     "clone.resurrect",
+                     c.id.clone(),
+@@ -428,6 +430,7 @@ pub fn restore_preview(
+         if r.seats.iter().any(|(s, _)| s == &rec.seat) {
+             continue;
+         }
++        warnings.extend(seat_window_note(&rec, cx.now));
+         relied_on.push(rev_of(c.clone(), rec.rev));
+         effects.push(PlanEffect::new(
+             "clone.resurrect",
+@@ -470,6 +473,47 @@ pub fn restore_preview(
+     })
+ }
+ 
++/// What an undo brings back of a retired clone's threads seat, named by the window it is in (spec §3), or None
++/// when the clone holds no threads seat or is keyed (a keyed seat's retirement is reversible without a window).
++/// Reads the committed `seat_fact` (the retire-time read) and `c.retired.at`; the action itself follows the fact
++/// at execution, so a close threads never reported says so.
++pub(crate) fn seat_window_note(c: &CloneRecord, now: Timestamp) -> Option<String> {
++    use crate::model::clone::SeatFactState as F;
++    let seat = c.threads_seat.as_ref()?;
++    let fact = c.seat_fact.as_ref().filter(|f| &f.seat == seat);
++    let name = &c.name;
++    let (retired_at, suffix) = match fact.map(|f| &f.state) {
++        Some(F::Retired { keyed: true, .. }) => return None,
++        None if !c.keyless => return None,
++        Some(F::Retired {
++            reversible: true,
++            retired_at,
++            ..
++        }) => (retired_at.or(c.retired.as_ref().map(|r| r.at)), ""),
++        Some(F::Retired {
++            reversible: false, ..
++        }) => (None, ""),
++        None => (
++            c.retired.as_ref().map(|r| r.at),
++            " if threads reports the close reversible",
++        ),
++        // Not retired (or conflicting) at the read: nothing to say about a window.
++        Some(_) => return None,
++    };
++    let age = retired_at.map(|at| now - at);
++    Some(match age {
++        Some(age) if age < KEYLESS_OBLIGATIONS_SETTLE_AFTER => format!(
++            "clone {name}: threads seat {seat} comes back with everything: memberships, history, pending ACK receipts and invitations (closed less than 24 h ago){suffix}"
++        ),
++        Some(age) if age < KEYLESS_REVERSIBLE_FOR => format!(
++            "clone {name}: threads seat {seat} comes back with its memberships and history; ACK receipts and ordinary invitations owed to it settled at 24 h, and graph re-issues its own seat-wide invitations{suffix}"
++        ),
++        _ => format!(
++            "clone {name}: the closed threads seat {seat} is final; the pane gets a fresh threads seat, graph channels are re-invited, and memberships graph does not own are lost"
++        ),
++    })
++}
++
+ /// The pointer restores an undo of `act` performs: for each `reparented` row whose holder still exists and still
+ /// holds the reparent value (`new`), and whose `old` seat is live or comes back with this undo (`restored`), an
+ /// effect back to `old`; for each other row, a warning listing it.

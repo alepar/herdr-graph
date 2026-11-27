@@ -1,0 +1,37 @@
+# Final review: cluster 17 (evidence-hg-lnw-9)
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 8f8ec538ca1f1e4d8d897804aae726472f753ef9. Both resolve as commits. The review-source binding was recorded in the ledger.
+
+## Scope and method
+
+The cluster is five log files under evidence/hg-lnw.9/ added by commit 8c32c83. It holds no source code. I judged each log for what it proves about task hg-lnw.9 (tier-3 keyless undo, frictionless cold restart, exited restored agent) and whether the failures it records are resolved at the reviewed head.
+
+## What the logs show
+
+- tier3-final-rebased.log is a full cargo test on the rebased branch. Lib 1533 passed, e2e_private_herdr 42 of 42 (including late_rebind_binds_the_fresh_agent_at_its_next_prompt and undo_restored_agent_that_exits_is_relaunched_live), adopt_private_herdr 8, daemon_composed 22, integration_sweep 24, herdr_client 7 of 7, threads_real 9.
+- The only failure in that run is test_sources_spawn_only_through_isolated_helpers, caused by tests/threads_real.rs:50, a raw std::process::Command spawn. base-057ad4d-isolation-lint.log shows the same single R1 hit at base commit 057ad4d, so it predates hg-lnw.9 and is not caused by it.
+- That lint failure is resolved at head. hg-lnw.22 (merged in 4185dc4) moved the spawn behind the isolated helper. `git show` of tests/threads_real.rs at head contains no Command::new, and evidence/hg-lnw.22/rebased-test_isolation.log shows 22 of 22 passing.
+- tier3-run2-summary.log is an earlier run with three failures: late_rebind (a held seat produced a check-in), undo_restored_agent_that_exits_is_relaunched_live (40s timeout), and private_process_info_is_shell (empty foreground argv). The final rebased run passes all three. base-private_process_info_is_shell.log shows 1 failure in 6 repeats at base, which marks it as a pre-existing flake, not a regression.
+- late-rebind-pinned-order.log is a single run of the late-rebind test that passes (231.99s). It shows the fresh agent's SessionStart check-in refused with TargetUnresolved, the seat unresolved at generation 2, the rebind flipping it to resolved at generation 3, and the first prompt hook binding the agent (active true, available, connected binding). That is the spec behaviour: the seat stays held until the operator remedy and binds at the next prompt.
+- The cargo warning "field herdr is never read" (src/threads/tests.rs:245) appears in the log. It is a test-only dead-code warning and was already noted by the hg-lnw.14 report.
+
+## Requirement baseline
+
+The cluster adds no production code, so no baseline row is traced here. Production entry points for the restart rebind and undo relaunch belong to the src and tests clusters and the seam reviewer.
+
+## Verdict
+
+ready
+
+## Must fix before landing
+
+- none
+
+## Untested scope
+
+- The e2e_private_herdr run took 928s to 1072s. The two failures in run2 (late_rebind and undo_restored relaunch timeout) were not root-caused in the logs. They pass in the final run, so a timing-sensitive flake under load remains possible.
+
+## Deferred OK
+
+- private_process_info_is_shell fails about 1 in 6 at base (empty foreground argv). This is a pre-existing flake outside hg-lnw.9 and worth a separate bead.
+- The dead-code warning on Fx.herdr in src/threads/tests.rs:245 is cosmetic.

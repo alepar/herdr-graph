@@ -1,0 +1,44 @@
+diff --git a/evidence/hg-lnw.22/green-test_isolation.log b/evidence/hg-lnw.22/green-test_isolation.log
+new file mode 100644
+index 0000000..5722cde
+--- /dev/null
++++ b/evidence/hg-lnw.22/green-test_isolation.log
+@@ -0,0 +1,38 @@
++   Compiling herdr-graph v0.3.0 (/var/home/alepar/AleCode/herdr-graph/.worktrees/super-auto/resurrect-seat-frictionless-restart/.worktrees/super-auto-resurrect-seat-frictionless-restart--task-hg-lnw.22)
++    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.83s
++     Running tests/test_isolation.rs (target/debug/deps/test_isolation-2ace6a44c5b75759)
++
++running 22 tests
++test helper_owned_protected_child ... ok
++test helper_sigkilled_with_live_rig ... ok
++test helper_panics_with_live_children ... ok
++test helper_panics_with_private_herdr ... ok
++test helper_sigkilled_with_private_herdr ... ok
++test scanner_flags_raw_cli_spawn_and_real_home_read ... ok
++test support::isolated::root_watchdog ... ok
++test pinned_threads_version_is_the_submodule_manifest_version ... ok
++test threads_binary_with_a_different_version_is_rejected ... ok
++
++running 1 test
++test helper_sigkilled_with_private_herdr ... 
++running 1 test
++test helper_sigkilled_with_live_rig ... 
++running 1 test
++
++running 1 test
++test helper_sigkilled_with_live_rig ... test init_prints_where_it_wrote_config ... ok
++test orphan_rule_spares_a_fresh_lockless_root ... ok
++test child_outside_test_root_is_refused ... ok
++test init_no_user_config_writes_nothing_under_home ... ok
++test test_sources_spawn_only_through_isolated_helpers ... ok
++test panicking_test_leaves_no_private_herdr_behind ... ok
++test panicking_test_leaves_no_process_behind ... ok
++test sigkilled_test_leaves_no_private_herdr_behind ... ok
++test sigkilled_test_leaves_no_rig_behind ... ok
++test private_herdr_disables_background_updates ... ok
++test start_of_run_sweep_reaps_a_dead_owners_rig ... ok
++test root_reaper_reaps_protected_descendant ... ok
++test test_root_drop_reaps_detached_daemon ... ok
++
++test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.45s
++

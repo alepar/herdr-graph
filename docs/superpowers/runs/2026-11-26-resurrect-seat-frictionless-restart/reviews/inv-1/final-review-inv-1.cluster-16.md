@@ -1,0 +1,39 @@
+# Final review, cluster 16 (evidence-hg-lnw-8)
+
+Reviewed head 8f8ec538ca1f1e4d8d897804aae726472f753ef9 against base 60e287aadd08af10779df39e625200f28d4b7fa3. The cluster is three evidence logs for bead hg-lnw.8 and holds no production code.
+
+## Evidence content
+
+- callers.log holds two runs: test_isolation `threads_binary_with_a_different_version_is_rejected` (1 passed) and tests/adopt_private_herdr.rs (4 passed, including the adopted-seat restart test). Both exit 0.
+- tier5.log and tier5-rebased.log each show tests/threads_real.rs with 9 passed, 0 failed, exit 0: before-24h resurrect, 24h-7d resurrect, after-finalization NotFound, held-seat rebind, operator rebind, plus the four earlier tier-5 tests and the isolation watchdog.
+- The rebased log matches the pre-rebase log test for test, so the rebase onto the integration branch did not change tier-5 outcomes.
+
+## Cross-check against hg-lnw.8 acceptance at the reviewed head
+
+- Each window and the rebind has a named test in tests/threads_real.rs at head; all appear as ok in the logs.
+- The 24h and 7d boundaries use a test-support threads build (target/threads-bin-test-support, honouring HT_TEST_OBLIGATION_EXPIRY_MS and HT_TEST_KEYLESS_FINALIZE_MS); tests/support/threads_bin.rs and README Test tiers document it. The build dir is under target/, not /tmp.
+- The fresh-pending-invitation row is asserted in the 24h-7d test: participant episode goes to 2 after resurrect and re-issue, and episode 1 is reused before 24h.
+- operator_rebind_resurrects_and_places covers the 3.6.0 operator remedy row.
+
+## Requirement baseline trace
+
+- B1 (reuse resurrect for closed-tab seats) and B2 (frictionless restart) are exercised end to end against the real threads daemon by these tests; the production entry points (real adapter resurrect_seat and rebind_held_seat) belong to the src clusters and the seam reviewer.
+- B3 and B4 (upstream v4 session and held-seat rebind) are consumed by tier 5 through the real adapter. Nothing in this cluster undelivers a row.
+
+## Evidence quality notes
+
+- The logs carry no command header or HG_REAL_THREADS=1 line; the gate is inferred from the real-daemon tests passing rather than being skipped. Tests that skip print ok with no real work, so a header would make the proof stronger.
+- No log records the post-run rig-leak check from AGENTS.md; leak absence is claimed only in the bead report.
+- Wall times (about 27s) are consistent with real daemons being started.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- Rig-leak check (AGENTS.md pgrep cwd /tmp/hg-) is not captured in these logs; no run header proves HG_REAL_THREADS=1 was set.
+
+## Deferred OK
+- Add a command and env header plus the leak-check count to future evidence logs.

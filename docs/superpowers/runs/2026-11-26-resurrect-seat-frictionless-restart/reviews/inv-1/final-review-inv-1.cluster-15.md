@@ -1,0 +1,38 @@
+# Final review inv-1, cluster 15 (evidence-hg-lnw-7)
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 8f8ec538ca1f1e4d8d897804aae726472f753ef9 (both verified as commits). Cluster inputs: evidence/hg-lnw.7/{base,check-all,lib,lib2,lib-final,tier5}.log (slices 000072 to 000077). The root spec has no Requirement baseline section, so the baseline paragraph does not apply.
+
+## What the cluster is
+
+Evidence logs for task hg-lnw.7 (real threads adapter: v4 session, resurrect_seat, rebind_held_seat), added by commit b2950ed. No production code in this cluster; it is test output only.
+
+## Evidence read against the claims
+
+- base.log: lib run at the pre-task base (281 tests, filtered to threads:: and daemon::) fails daemon::lock::tests::is_held_reports_holder and second_acquire_fails_while_held (lock.rs:108 and :91). This substantiates the "pre-existing flake" claim in the task review.
+- lib.log and lib2.log: same filtered run at the task head (288 tests). The same two lock tests fail in lib.log, one of them in lib2.log; every other test passes. The varying failure set across runs (2, then 1) is consistent with a flake, not a regression from the task.
+- lib-final.log: unfiltered lib run, 1533 passed, 0 failed, including both lock tests (they pass when not racing the filtered set). This is the clean-green evidence for the task head.
+- tier5.log: tests/threads_real.rs, 4 passed, 0 failed, against the real herdr-threads daemon (including production discovery and invite, membership, notify, release).
+- check-all.log: cargo check all targets, exit 0, one dead_code warning (field herdr in src/threads/tests.rs:245), already recorded as a minor in the task review.
+- The logs name the task worktree path, which the coordinator has since removed; the logs are self-contained and do not need it.
+
+## Observations outside the cluster's remit
+
+- The two lock tests are order or load sensitive (a held-lock assertion raced by sibling tests in the same process). The failing assertions are in src/daemon/lock.rs, not in the cluster; the flake exists at base, so it is not owned by hg-lnw. Repeat runs of the full suite elsewhere in the branch (evidence for other tasks) record green runs, so it is a latent nuisance, not a blocker.
+- Behavior tracing of hg-lnw.7's code (ResurrectSeat, v4 registration, old-daemon refusal) belongs to the source clusters, not this evidence cluster.
+
+## Verdict
+
+ready
+
+## Must fix before landing
+
+- none
+
+## Untested scope
+
+- The tier 5 run (tier5.log) exercises discovery, invite, membership and notify against a real threads daemon but not ResurrectSeat or rebind; those real-daemon rows are for the later evidence clusters (hg-lnw.8 onward), not this one.
+
+## Deferred OK
+
+- daemon::lock::tests::is_held_reports_holder and second_acquire_fails_while_held fail intermittently under the filtered threads:: daemon:: run, also at base (base.log); pre-existing, file a separate bead for the flake if not already tracked.
+- dead_code warning for field herdr in src/threads/tests.rs:245 (check-all.log); cosmetic.

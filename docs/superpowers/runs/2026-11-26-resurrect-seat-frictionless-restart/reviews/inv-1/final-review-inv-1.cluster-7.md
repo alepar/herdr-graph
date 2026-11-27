@@ -1,0 +1,33 @@
+# Final review: cluster evidence-hg-lnw-14
+
+Source: base 60e287aadd08af10779df39e625200f28d4b7fa3, head 8f8ec538ca1f1e4d8d897804aae726472f753ef9 (both verified as commits; review source bound in the ledger as inv-1).
+Cluster inputs: evidence/hg-lnw.14/{final,focused-1,focused-2,lib}.log (slices 000040 to 000043). All four are added files; no product code in this cluster.
+
+## What the logs show
+
+- focused-1.log is a 48-test focused run with 44 passed and 4 failed. The failures are assertion failures in the resurrect threads tests (for example "acknowledged: threads_done opens the restore launch gate", "NotFound, then deferred on the stale fact"). It is the red step of the red/green cycle for hg-lnw.14 and is not a defect in the shipped tree.
+- focused-2.log is the same 48-test filter on the same test binary name, 48 passed, 0 failed. Its list covers each acceptance item of hg-lnw.14: success acknowledges, already-resolved acknowledges, NotFound then resolved, NotFound then final takes succession, transient retried, TargetAlreadyOwned recorded once and gating the launch, refusal re-planned when a bare seat appears or the target frees, held row after 90 s and only for the current epoch, held row clears when the fact leaves reversible, refused meta clears on ack and on succession, operator resurrect after refusal acknowledged with the launch running once, and the doctor remedy text test.
+- lib.log and final.log are full lib runs: 1497 passed, 0 failed, 0 ignored. Their test-name sets are identical (only the timing line differs), so final.log is a faithful re-run of lib.log.
+- The only compiler warning is the pre-existing "field herdr is never read" in src/threads/tests.rs, noted by earlier task reports.
+
+## Requirement baseline
+
+The design doc has a `## Requirement baseline` section. This cluster is evidence only and holds no production code path, so no baseline row can be traced to a production entry point from it. The rows hg-lnw.14 serves (undo of a closed keyless tab resurrects the original seat; the refused-resurrect remedy path) are traced by the code clusters and the seam reviewer. The evidence here is consistent with them: unit tests against the fake only, as the bead's acceptance specifies.
+
+## Evidence quality notes
+
+- The logs were produced at the task-14 head in a task worktree, before the 3.6.0 pin bump (focused-1 still compiles herdr-threads v3.1.0). They are superseded for whole-branch confidence by later logs (hg-lnw.12, hg-lnw.23) and by the 8f8ec53 head itself; they prove the task, not the integration.
+- No log records the rig-leak check required by the bead ("no rig leak"). The lib tests do not start private Herdr servers, so the risk is low.
+- Logs embed absolute worktree paths in compile lines; harmless.
+
+## Verdict
+ready
+
+## Must fix before landing
+- none
+
+## Untested scope
+- hg-lnw.14 logs were taken at the task head before the 3.6.0 pin bump and record no rig-leak check; integration-head confidence rests on later evidence outside this cluster.
+
+## Deferred OK
+- none

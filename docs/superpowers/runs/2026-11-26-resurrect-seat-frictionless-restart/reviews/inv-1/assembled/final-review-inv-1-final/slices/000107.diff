@@ -1,0 +1,469 @@
+diff --git a/src/threads/service_tests.rs b/src/threads/service_tests.rs
+index 3dd9b67..a787521 100644
+--- a/src/threads/service_tests.rs
++++ b/src/threads/service_tests.rs
+@@ -2,6 +2,7 @@
+ //! busy handling, replay of an unresolved mutation, and the membership mapping. (The real daemon is exercised
+ //! by the opt-in `tests/threads_real.rs`.)
+ use super::adapter::ServiceThreads;
++use crate::model::HerdrPaneId;
+ use crate::model::clone::{InvitationState, InviteConstraint};
+ use crate::ports::threads::*;
+ use herdr_threads::daemon::transport::{read_frame, write_frame};
+@@ -10,7 +11,7 @@ use herdr_threads::protocol::ids::{
+ };
+ use herdr_threads::protocol::results::{ApiError, ErrorCode};
+ use herdr_threads::protocol::service::{
+-    ContinuityKeyReservation, ManagedThread, RequiredMembership, RequirementState,
++    ContinuityKeyReservation, ManagedThread, RequiredMembership, RequirementState, ResurrectSeat,
+     ServiceInvitation, ServiceMembership, ServiceOperation, ServiceRegistration, ServiceRequest,
+     ServiceResult, ServiceWireRequest, ServiceWireResponse, VoluntaryMembershipState,
+ };
+@@ -42,6 +43,12 @@ struct Service {
+     reserve_error: Mutex<Option<ErrorCode>>,
+     /// `(key, seat)` of every `ReserveContinuityKey` received.
+     reserved: Mutex<Vec<(String, Option<String>)>>,
++    /// The capability named by every registration.
++    capabilities: Mutex<Vec<String>>,
++    /// Every `ResurrectSeat` received.
++    resurrects: Mutex<Vec<ResurrectSeat>>,
++    /// Answers for the next `ResurrectSeat`s, in order; `SeatResurrected` once they run out.
++    resurrect_answers: Mutex<std::collections::VecDeque<Result<ServiceResult, ApiError>>>,
+ }
+ 
+ fn api_error(code: ErrorCode) -> ApiError {
+@@ -67,8 +74,9 @@ impl Service {
+     fn answer(&self, request: &ServiceWireRequest) -> Option<Result<ServiceResult, ApiError>> {
+         let author = ServiceAuthorId::new("graph");
+         match &request.service {
+-            ServiceRequest::Register(_) => {
++            ServiceRequest::Register(r) => {
+                 self.registers.fetch_add(1, Ordering::SeqCst);
++                self.capabilities.lock().unwrap().push(r.capability.clone());
+                 if self.busy.load(Ordering::SeqCst) {
+                     return Some(Err(api_error(ErrorCode::ServiceBusy)));
+                 }
+@@ -166,6 +174,13 @@ impl Service {
+                             reserved_at: UtcMillis(1),
+                         })
+                     }
++                    ServiceOperation::ResurrectSeat(r) => {
++                        self.resurrects.lock().unwrap().push(r.clone());
++                        match self.resurrect_answers.lock().unwrap().pop_front() {
++                            Some(answer) => return Some(answer),
++                            None => ServiceResult::SeatResurrected(r.seat.clone()),
++                        }
++                    }
+                     ServiceOperation::ReleaseContinuityKey(_)
+                     | ServiceOperation::UnretireSeat(_)
+                     | ServiceOperation::FinalizeRetirement(_)
+@@ -286,7 +301,8 @@ async fn fx() -> Fx {
+     tokio::spawn(serve(listener, svc.clone()));
+     let intents = ServiceThreads::intents_dir_in(dir.path());
+     let instance = herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes());
+-    let threads = ServiceThreads::with_system_clock(socket, intents.clone(), instance).unwrap();
++    let threads =
++        ServiceThreads::with_system_clock(socket, intents.clone(), instance, host()).unwrap();
+     Fx {
+         _dir: dir,
+         svc,
+@@ -296,6 +312,10 @@ async fn fx() -> Fx {
+     }
+ }
+ 
++fn host() -> herdr_threads::protocol::ids::HostLocator {
++    herdr_threads::protocol::ids::HostLocator::parse("/host.sock").unwrap()
++}
++
+ fn seat(s: &str) -> ThreadsSeatRef {
+     ThreadsSeatRef(s.into())
+ }
+@@ -494,6 +514,7 @@ async fn no_daemon_is_a_disconnect() {
+         dir.path().join("absent.sock"),
+         dir.path().join("i/intents"),
+         herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
++        host(),
+     )
+     .unwrap();
+     let r = t
+@@ -548,7 +569,8 @@ async fn unresolved_intents_survive_a_restart_of_the_adapter() {
+     );
+     // A new adapter over the same intents directory (the daemon restarted) replays it before anything new.
+     let socket = fx._dir.path().join("t.sock");
+-    let again = ServiceThreads::with_system_clock(socket, fx.intents.clone(), fx.instance).unwrap();
++    let again =
++        ServiceThreads::with_system_clock(socket, fx.intents.clone(), fx.instance, host()).unwrap();
+     again
+         .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_Q".into()))
+         .await
+@@ -644,58 +666,33 @@ mod ack {
+         );
+     }
+ 
+-    /// A service that refuses `service_session_v2` registration as unsupported, like every service before the
+-    /// ACK amendment (ht-5nb), selects the Notify fallback; a v2 registration selects ServiceAck.
++    /// A daemon that refuses graph's `service_session_v4` registration as unsupported (older than threads
++    /// 3.6.0) is a named error on the `threads` status probe, not a silent Notify fallback; a registration the
++    /// daemon serves selects ServiceAck.
+     #[tokio::test]
+-    async fn v2_registration_unsupported_falls_back() {
++    async fn old_daemon_refusing_v4_is_an_error_not_a_notify_fallback() {
+         let fx = fx().await;
+-        // The stand-in's Register ignores the capability and succeeds, i.e. it supports v2.
++        // The stand-in's Register ignores the capability and succeeds, i.e. it serves v4.
+         assert_eq!(
+             fx.threads.delivery_capability().await.unwrap(),
+             DeliveryCapability::ServiceAck
+         );
+         let dir = tempfile::tempdir().unwrap();
+-        let socket = dir.path().join("old.sock");
+-        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+-        tokio::spawn(async move {
+-            loop {
+-                let Ok((mut s, _)) = listener.accept().await else {
+-                    return;
+-                };
+-                tokio::spawn(async move {
+-                    let Ok(bytes) = read_frame(&mut s).await else {
+-                        return;
+-                    };
+-                    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+-                    let response = json!({
+-                        "version": PROTOCOL_VERSION, "request_id": v["request_id"], "instance": v["expected_instance"],
+-                        "daemon_boot": BOOT,
+-                        "result": { "Err": { "code": "unsupported", "detail": "unsupported service capability",
+-                                              "restart_argv": null, "required_minimum_bytes": null } }
+-                    });
+-                    let _ = write_frame(&mut s, &serde_json::to_vec(&response).unwrap()).await;
+-                });
++        let old = super::old_daemon(dir.path());
++        for _ in 0..2 {
++            match old.delivery_capability().await {
++                Err(ThreadsError::Rejected(m)) => assert!(
++                    m.contains("service_session_v4") && m.contains(">= 3.6.0"),
++                    "{m}"
++                ),
++                other => panic!("expected the named v4 refusal, got {other:?}"),
+             }
+-        });
+-        let old = ServiceThreads::with_system_clock(
+-            socket,
+-            dir.path().join("i/intents"),
+-            herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
+-        )
+-        .unwrap();
+-        assert_eq!(
+-            old.delivery_capability().await.unwrap(),
+-            DeliveryCapability::NotifyFallback
+-        );
+-        assert_eq!(
+-            old.delivery_capability().await.unwrap(),
+-            DeliveryCapability::NotifyFallback,
+-            "cached"
+-        );
++        }
+         let none = ServiceThreads::with_system_clock(
+             dir.path().join("none.sock"),
+             dir.path().join("j/intents"),
+             herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
++            host(),
+         )
+         .unwrap();
+         assert!(matches!(
+@@ -705,6 +702,288 @@ mod ack {
+     }
+ }
+ 
++/// A threads daemon that refuses every registration as an unsupported capability (one older than 3.6.0, which
++/// does not serve `service_session_v4`).
++fn old_daemon(dir: &std::path::Path) -> ServiceThreads {
++    let socket = dir.join("old.sock");
++    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
++    tokio::spawn(async move {
++        loop {
++            let Ok((mut s, _)) = listener.accept().await else {
++                return;
++            };
++            tokio::spawn(async move {
++                let Ok(bytes) = read_frame(&mut s).await else {
++                    return;
++                };
++                let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
++                let response = json!({
++                    "version": PROTOCOL_VERSION, "request_id": v["request_id"], "instance": v["expected_instance"],
++                    "daemon_boot": BOOT,
++                    "result": { "Err": { "code": "unsupported", "detail": "unsupported service capability",
++                                          "restart_argv": null, "required_minimum_bytes": null } }
++                });
++                let _ = write_frame(&mut s, &serde_json::to_vec(&response).unwrap()).await;
++            });
++        }
++    });
++    ServiceThreads::with_system_clock(
++        socket,
++        dir.join("i/intents"),
++        herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
++        host(),
++    )
++    .unwrap()
++}
++
++/// Graph registers `service_session_v4`, the level `ResurrectSeat` needs, and nothing lower.
++#[tokio::test]
++async fn graph_registers_service_session_v4() {
++    let fx = fx().await;
++    fx.threads
++        .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_V4".into()))
++        .await
++        .unwrap();
++    assert_eq!(
++        *fx.svc.capabilities.lock().unwrap(),
++        vec!["service_session_v4".to_owned()]
++    );
++    assert_eq!(
++        super::adapter::GRAPH_SERVICE_LEVEL.capability(),
++        "service_session_v4"
++    );
++}
++
++/// An older daemon's refusal of the v4 registration is a named error with the upgrade step on every call,
++/// never a fallback to v3; the restore calls read it as a definitive `Unsupported` refusal.
++#[tokio::test]
++async fn v4_registration_refused_is_a_named_error() {
++    let dir = tempfile::tempdir().unwrap();
++    let old = old_daemon(dir.path());
++    match old
++        .ensure_thread(ChannelScope::Seat, "t", &OpKey("ensure:st_OLD".into()))
++        .await
++    {
++        Err(ThreadsError::Rejected(m)) => assert_eq!(
++            m,
++            "herdr-threads daemon refused service_session_v4 (unsupported service capability); \
++             upgrade the herdr-threads daemon to >= 3.6.0"
++        ),
++        other => panic!("expected the named v4 refusal, got {other:?}"),
++    }
++    let pane = HerdrPaneId("w1:p1".into());
++    assert_eq!(
++        old.rebind_held_seat(&seat("s"), &pane, &OpKey("rebind:old".into()))
++            .await,
++        SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported)
++    );
++    assert_eq!(
++        old.resurrect_seat(&seat("s"), &pane, None, &OpKey("resurrect:old".into()))
++            .await,
++        SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported)
++    );
++}
++
++/// `rebind_held_seat` is `ResurrectSeat` with no `replace`, on graph's host and the seat's own pane.
++#[tokio::test]
++async fn rebind_held_seat_sends_resurrect_with_no_replace() {
++    let fx = fx().await;
++    let pane = HerdrPaneId("w1:p7".into());
++    fx.svc
++        .resurrect_answers
++        .lock()
++        .unwrap()
++        .push_back(Ok(ServiceResult::SeatAlreadyResolved(SeatId::new(
++            "seat-h",
++        ))));
++    assert_eq!(
++        fx.threads
++            .rebind_held_seat(&seat("seat-h"), &pane, &OpKey("rebind:c1:t1".into()))
++            .await,
++        SeatRestoreOutcome::AlreadyResolved
++    );
++    assert_eq!(
++        fx.threads
++            .rebind_held_seat(&seat("seat-h"), &pane, &OpKey("rebind:c1:t2".into()))
++            .await,
++        SeatRestoreOutcome::Done
++    );
++    let got = fx.svc.resurrects.lock().unwrap().clone();
++    assert_eq!(got.len(), 2);
++    assert_eq!(got[0].seat.as_str(), "seat-h");
++    assert_eq!(got[0].target.as_str(), "w1:p7");
++    assert_eq!(got[0].host, host());
++    assert_eq!(got[0].replace, None);
++    assert_eq!(got[0].operation.as_str(), "rebind:c1:t1");
++}
++
++/// `resurrect_seat` names the bare seat to replace and graph's host.
++#[tokio::test]
++async fn resurrect_seat_sends_replace_and_host() {
++    let fx = fx().await;
++    let pane = HerdrPaneId("w2:p3".into());
++    assert_eq!(
++        fx.threads
++            .resurrect_seat(
++                &seat("seat-old"),
++                &pane,
++                Some(&seat("seat-bare")),
++                &OpKey("resurrect:c1:e1:seat-bare:0".into()),
++            )
++            .await,
++        SeatRestoreOutcome::Done
++    );
++    let got = fx.svc.resurrects.lock().unwrap().clone();
++    assert_eq!(got.len(), 1);
++    assert_eq!(got[0].seat.as_str(), "seat-old");
++    assert_eq!(got[0].target.as_str(), "w2:p3");
++    assert_eq!(got[0].host, host());
++    assert_eq!(got[0].replace, Some(SeatId::new("seat-bare")));
++    assert_eq!(got[0].operation.as_str(), "resurrect:c1:e1:seat-bare:0");
++}
++
++/// A refusal is never replayed from the intent journal: a retry under the same key (a `NotFound` re-read or a
++/// stale observation) reaches threads again and gets a fresh decision. A busy answer stays pending and is
++/// replayed with its original envelope.
++#[tokio::test]
++async fn restore_retry_under_the_same_key_is_a_fresh_decision() {
++    let fx = fx().await;
++    let pane = HerdrPaneId("w1:p1".into());
++    let key = OpKey("resurrect:c1:e1:none:0".into());
++    {
++        let mut answers = fx.svc.resurrect_answers.lock().unwrap();
++        answers.push_back(Err(api_error(ErrorCode::NotFound)));
++        answers.push_back(Err(api_error(ErrorCode::StaleHostObservation)));
++        answers.push_back(Err(api_error(ErrorCode::ServiceBusy)));
++    }
++    let s = seat("s");
++    let call = || fx.threads.resurrect_seat(&s, &pane, None, &key);
++    assert_eq!(
++        call().await,
++        SeatRestoreOutcome::refused(SeatRestoreRefusal::NotFound)
++    );
++    assert_eq!(
++        call().await,
++        SeatRestoreOutcome::refused(SeatRestoreRefusal::StaleHostObservation)
++    );
++    assert_eq!(
++        call().await,
++        SeatRestoreOutcome::refused(SeatRestoreRefusal::ServiceBusy)
++    );
++    assert_eq!(call().await, SeatRestoreOutcome::Done);
++    let seen = fx.svc.mutations.lock().unwrap().clone();
++    assert_eq!(seen.len(), 4, "every retry reached threads: {seen:?}");
++    assert!(seen.iter().all(|(k, _)| k == "resurrect:c1:e1:none:0"));
++    assert_eq!(
++        seen[2], seen[3],
++        "the busy intent is replayed with its original envelope"
++    );
++    assert_ne!(seen[0].1, seen[1].1, "a refused intent is not replayed");
++}
++
++/// Every answer threads can give a `ResurrectSeat` maps to one port outcome, with the transient/definitive split
++/// of the resurrect and rebind executors.
++#[test]
++fn restore_outcome_maps_every_variant() {
++    use super::adapter::{MutateError, restore_outcome};
++    use SeatRestoreRefusal as R;
++    let api = |code: ErrorCode, pending: bool| {
++        Err(MutateError::Api {
++            error: api_error(code),
++            pending,
++        })
++    };
++    let s = SeatId::new("s");
++    assert_eq!(
++        restore_outcome(Ok(ServiceResult::SeatResurrected(s.clone()))),
++        SeatRestoreOutcome::Done
++    );
++    assert_eq!(
++        restore_outcome(Ok(ServiceResult::SeatAlreadyResolved(s))),
++        SeatRestoreOutcome::AlreadyResolved
++    );
++    assert_eq!(
++        restore_outcome(Ok(ServiceResult::TopicChanged(ManagedThread {
++            thread: ThreadId::new("t"),
++            owner: ServiceAuthorId::new("graph"),
++            archived: false,
++        }))),
++        SeatRestoreOutcome::refused(R::InvalidRequest)
++    );
++    let table = [
++        (ErrorCode::NotFound, R::NotFound, false),
++        (ErrorCode::Unauthorized, R::Unauthorized, false),
++        (ErrorCode::CallerUnverified, R::Unauthorized, false),
++        (ErrorCode::TargetAlreadyOwned, R::TargetAlreadyOwned, false),
++        (ErrorCode::InvalidRequest, R::InvalidRequest, false),
++        (
++            ErrorCode::OperationPayloadMismatch,
++            R::InvalidRequest,
++            false,
++        ),
++        (ErrorCode::StoreCorrupt, R::InvalidRequest, false),
++        (ErrorCode::Unsupported, R::Unsupported, false),
++        (ErrorCode::UnsupportedHarness, R::Unsupported, false),
++        (ErrorCode::InstanceMismatch, R::InstanceMismatch, false),
++        (ErrorCode::ServiceBusy, R::ServiceBusy, true),
++        (ErrorCode::StoreBusy, R::ServiceBusy, true),
++        (
++            ErrorCode::StaleHostObservation,
++            R::StaleHostObservation,
++            true,
++        ),
++        (ErrorCode::UnknownOutcome, R::OutcomeUnknown, true),
++        (ErrorCode::HostUnavailable, R::Unreachable, true),
++        (ErrorCode::TransportDenied, R::Unreachable, true),
++        (ErrorCode::DeadlineExceeded, R::Unreachable, true),
++        (ErrorCode::Cancelled, R::Unreachable, true),
++        (ErrorCode::StaleServiceGeneration, R::Unreachable, true),
++        (ErrorCode::ServiceNotRegistered, R::Unreachable, true),
++        (ErrorCode::DaemonBootChanged, R::Unreachable, true),
++    ];
++    for (code, reason, retryable) in table {
++        let got = restore_outcome(api(code.clone(), false));
++        assert_eq!(got, SeatRestoreOutcome::refused(reason), "{code:?}");
++        assert_eq!(reason.retryable(), retryable, "{code:?}");
++    }
++    // An intent left pending: busy stays busy, anything else is an unknown outcome (replayed).
++    assert_eq!(
++        restore_outcome(api(ErrorCode::ServiceBusy, true)),
++        SeatRestoreOutcome::refused(R::ServiceBusy)
++    );
++    for code in [
++        ErrorCode::HostUnavailable,
++        ErrorCode::UnknownOutcome,
++        ErrorCode::NotFound,
++    ] {
++        assert_eq!(
++            restore_outcome(api(code.clone(), true)),
++            SeatRestoreOutcome::refused(R::OutcomeUnknown),
++            "{code:?}"
++        );
++    }
++    // Local failures: the v4 registration refusal is Unsupported; the others keep the transport mapping.
++    let local = |e| restore_outcome(Err(MutateError::Local(e)));
++    assert_eq!(
++        local(super::adapter::level_refused(
++            "unsupported service capability"
++        )),
++        SeatRestoreOutcome::refused(R::Unsupported)
++    );
++    assert_eq!(
++        local(ThreadsError::Disconnected("gone".into())),
++        SeatRestoreOutcome::refused(R::Unreachable)
++    );
++    assert_eq!(
++        local(ThreadsError::ServiceBusy),
++        SeatRestoreOutcome::refused(R::ServiceBusy)
++    );
++    assert_eq!(
++        local(ThreadsError::Rejected("other".into())),
++        SeatRestoreOutcome::refused(R::InvalidRequest)
++    );
++}
++
+ /// Replacing a node must never reinterpret the old journal under the new identity.
+ #[tokio::test]
+ async fn node_change_refuses_old_pending_journal_without_modifying_it() {
+@@ -727,6 +1006,7 @@ async fn node_change_refuses_old_pending_journal_without_modifying_it() {
+         f._dir.path().join("t.sock"),
+         f.intents.clone(),
+         new_node,
++        host(),
+     );
+     assert!(
+         reopened.is_err(),

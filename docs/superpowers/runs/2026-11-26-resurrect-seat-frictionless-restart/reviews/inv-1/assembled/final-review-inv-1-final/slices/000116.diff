@@ -1,0 +1,32 @@
+diff --git a/tests/support/private_herdr.rs b/tests/support/private_herdr.rs
+index 15fd054..ed5a45a 100644
+--- a/tests/support/private_herdr.rs
++++ b/tests/support/private_herdr.rs
+@@ -82,6 +82,14 @@ fn wait_for_socket(child: &mut Child, socket: &Path) -> anyhow::Result<()> {
+     )
+ }
+ 
++/// `env_clear()` + `env` + `current_dir(root)`: [`PrivateHerdr::command`] for a caller that holds copies of a
++/// private Herdr's root and env rather than a borrow (so the Herdr can be restarted meanwhile).
++pub fn private_command(root: &Path, env: &[(String, String)], program: &Path) -> Command {
++    let mut c = Command::new(program);
++    c.env_clear().envs(env.iter().cloned()).current_dir(root);
++    c
++}
++
+ impl PrivateHerdr {
+     /// root = <tmp_dir>/hg-<ulid lower>. Errors when `herdr` is not installed.
+     pub fn start() -> anyhow::Result<Self> {
+@@ -246,11 +254,7 @@ impl PrivateHerdr {
+ 
+     /// A command running with the private env and nothing else (e.g. `herdr plugin link`).
+     pub fn command(&self, program: &Path) -> Command {
+-        let mut c = Command::new(program);
+-        c.env_clear()
+-            .envs(self.env.iter().cloned())
+-            .current_dir(&self.root);
+-        c
++        private_command(&self.root, &self.env, program)
+     }
+ 
+     /// The isolation guard for this root (tests may check extra paths).

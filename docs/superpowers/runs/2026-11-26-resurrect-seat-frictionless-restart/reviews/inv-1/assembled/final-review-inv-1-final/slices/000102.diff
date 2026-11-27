@@ -1,0 +1,358 @@
+diff --git a/src/threads/adapter.rs b/src/threads/adapter.rs
+index 190c770..0973fcc 100644
+--- a/src/threads/adapter.rs
++++ b/src/threads/adapter.rs
+@@ -3,22 +3,24 @@
+ //! A busy service or a dropped connection is reported as such for the reconciler to back off on; the adapter
+ //! never retries registration on its own, so it can never take over another registration.
+ use super::fake::thread_for_ensure_key;
++use crate::model::HerdrPaneId;
+ use crate::model::clone::{InvitationState, InviteConstraint};
+ use crate::ports::threads::*;
+ use herdr_threads::client::service::{
+     PersistentServiceClient, ServiceCallError, ServiceIntentJournal,
+ };
+ use herdr_threads::protocol::ids::{
+-    ContinuityKey, MessageId, OperationId, RequirementId, SeatId, ThreadId,
++    ContinuityKey, HostLocator, HostTargetId, MessageId, OperationId, RequirementId, SeatId,
++    ThreadId,
+ };
+ use herdr_threads::protocol::pagination::PageRequest;
+ use herdr_threads::protocol::results::{ApiError, ErrorCode, ReceiptStatus, Recipient};
+ use herdr_threads::protocol::service::{
+     EnsureManagedThread, FinalizeRetirement, InvitationConstraint, NotificationSeverity,
+     ReleaseContinuityKey, ReleaseRequirement, RequirementState, ReserveContinuityKey,
+-    SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership, ServiceMembershipQuery,
+-    ServiceNotify, ServiceOperation, ServiceReceiptsQuery, ServiceResult, ServiceSend,
+-    ServiceSetTopic, UnretireSeat, VoluntaryMembershipState,
++    ResurrectSeat, SERVICE_SEND_MAX_BODY_BYTES, ServiceInvite, ServiceMembership,
++    ServiceMembershipQuery, ServiceNotify, ServiceOperation, ServiceReceiptsQuery, ServiceResult,
++    ServiceSend, ServiceSessionLevel, ServiceSetTopic, UnretireSeat, VoluntaryMembershipState,
+ };
+ use herdr_threads::protocol::time::{CallBudget, Cancellation, Clock as ThreadsClock, MonoInstant};
+ use sha2::{Digest, Sha256};
+@@ -55,6 +57,95 @@ pub(crate) fn api_error(e: ApiError) -> ThreadsError {
+     }
+ }
+ 
++/// The service-session level graph registers: `service_session_v4` (`ResurrectSeat` and the held-seat
++/// rebind). A daemon that does not serve it refuses the registration; there is no fallback to v3.
++pub(crate) const GRAPH_SERVICE_LEVEL: ServiceSessionLevel = ServiceSessionLevel::V4;
++
++/// The named registration error for a daemon that does not serve `GRAPH_SERVICE_LEVEL` (older than 3.6.0).
++/// The doctor's `threads` check keys its upgrade step on the capability name in it.
++pub(crate) fn level_refused(detail: &str) -> ThreadsError {
++    ThreadsError::Rejected(format!(
++        "herdr-threads daemon refused {} ({detail}); upgrade the herdr-threads daemon to >= 3.6.0",
++        GRAPH_SERVICE_LEVEL.capability()
++    ))
++}
++
++/// Whether `e` is the [`level_refused`] registration error.
++fn is_level_refused(e: &ThreadsError) -> bool {
++    matches!(e, ThreadsError::Rejected(m) if m.starts_with("herdr-threads daemon refused service_session_v"))
++}
++
++/// Map a registration refusal: a daemon that does not serve graph's level answers `Unsupported`
++/// ("unsupported service capability"), which is the named [`level_refused`] error; anything else as usual.
++pub(crate) fn register_error(e: ApiError) -> ThreadsError {
++    match e.code {
++        ErrorCode::Unsupported => level_refused(&e.detail),
++        _ => api_error(e),
++    }
++}
++
++/// A mutation's failure before it is mapped onto the port's error classes: threads' own answer (with whether
++/// its intent stays pending for replay), or a local failure (registration, the intent journal).
++pub(crate) enum MutateError {
++    Api { error: ApiError, pending: bool },
++    Local(ThreadsError),
++}
++
++impl MutateError {
++    fn into_threads(self) -> ThreadsError {
++        match self {
++            Self::Api { error, .. } => api_error(error),
++            Self::Local(e) => e,
++        }
++    }
++}
++
++/// Map the answer to a `ResurrectSeat` (resurrect or the held-seat rebind) onto the port's outcome.
++/// Transient: `ServiceBusy` (also a busy store), `StaleHostObservation`, transport trouble (`Unreachable`) and
++/// an intent left pending by a dropped call (`OutcomeUnknown`, replayed under the same key). Every other
++/// refusal is definitive; a daemon that refused graph's v4 registration, or the operation, is `Unsupported`.
++pub(crate) fn restore_outcome(answer: Result<ServiceResult, MutateError>) -> SeatRestoreOutcome {
++    use SeatRestoreRefusal as R;
++    let reason = match answer {
++        Ok(ServiceResult::SeatResurrected(_)) => return SeatRestoreOutcome::Done,
++        Ok(ServiceResult::SeatAlreadyResolved(_)) => return SeatRestoreOutcome::AlreadyResolved,
++        Ok(_) => R::InvalidRequest,
++        Err(MutateError::Api {
++            error,
++            pending: true,
++        }) => match error.code {
++            ErrorCode::ServiceBusy => R::ServiceBusy,
++            _ => R::OutcomeUnknown,
++        },
++        Err(MutateError::Api {
++            error,
++            pending: false,
++        }) => match error.code {
++            ErrorCode::NotFound => R::NotFound,
++            ErrorCode::Unauthorized | ErrorCode::CallerUnverified => R::Unauthorized,
++            ErrorCode::TargetAlreadyOwned => R::TargetAlreadyOwned,
++            ErrorCode::InstanceMismatch => R::InstanceMismatch,
++            ErrorCode::Unsupported | ErrorCode::UnsupportedHarness => R::Unsupported,
++            ErrorCode::ServiceBusy | ErrorCode::StoreBusy => R::ServiceBusy,
++            ErrorCode::StaleHostObservation => R::StaleHostObservation,
++            ErrorCode::UnknownOutcome => R::OutcomeUnknown,
++            ErrorCode::HostUnavailable
++            | ErrorCode::TransportDenied
++            | ErrorCode::DeadlineExceeded
++            | ErrorCode::Cancelled
++            | ErrorCode::StaleServiceGeneration
++            | ErrorCode::ServiceNotRegistered
++            | ErrorCode::DaemonBootChanged => R::Unreachable,
++            // InvalidRequest (replace on a held seat, a bad id), OperationPayloadMismatch (the key reused with
++            // another payload) and every other refusal.
++            _ => R::InvalidRequest,
++        },
++        Err(MutateError::Local(e)) if is_level_refused(&e) => R::Unsupported,
++        Err(MutateError::Local(e)) => return SeatRestoreOutcome::from_error(&e),
++    };
++    SeatRestoreOutcome::refused(reason)
++}
++
+ /// How `api_error` renders threads' `Conflict` code (`Rejected("Conflict: <detail>")`).
+ const CONFLICT_PREFIX: &str = "Conflict:";
+ 
+@@ -151,6 +242,8 @@ pub fn discover(state_dir: &Path, host_endpoint: &Path) -> std::io::Result<Disco
+ pub struct ServiceThreads {
+     client: PersistentServiceClient,
+     clock: Arc<dyn ThreadsClock>,
++    /// The Herdr host the managed panes live on (`ResurrectSeat` names it with the target pane).
++    host: HostLocator,
+     timeout: Duration,
+     /// Mutations whose outcome is unknown: replayed (same envelope) after the next registration.
+     pending: tokio::sync::Mutex<Vec<OperationId>>,
+@@ -163,10 +256,12 @@ impl ServiceThreads {
+     /// `intents_dir`: `.graph-local/threads-intents` (private to this instance's author).
+     /// `instance`: the threads node identity of the daemon (see [`discover`]); intents saved under one instance
+     /// are only replayed under the same one.
++    /// `host`: the Herdr host locator of the managed panes (the one the seat map resolves panes on).
+     pub fn new(
+         socket: PathBuf,
+         intents_dir: PathBuf,
+         instance: herdr_threads::node::NodeUuid,
++        host: HostLocator,
+         clock: Arc<dyn ThreadsClock>,
+     ) -> std::io::Result<Self> {
+         super::namespace::ensure(&intents_dir, instance, None)?;
+@@ -182,10 +277,12 @@ impl ServiceThreads {
+             instance,
+             None,
+         );
+-        let client = PersistentServiceClient::new(socket, clock.clone(), instance, None, journal);
++        let client = PersistentServiceClient::new(socket, clock.clone(), instance, None, journal)
++            .with_level(GRAPH_SERVICE_LEVEL);
+         Ok(Self {
+             client,
+             clock,
++            host,
+             timeout: Duration::from_secs(10),
+             pending: tokio::sync::Mutex::new(pending),
+             #[cfg(feature = "threads-service-ack")]
+@@ -198,11 +295,13 @@ impl ServiceThreads {
+         socket: PathBuf,
+         intents_dir: PathBuf,
+         instance: herdr_threads::node::NodeUuid,
++        host: HostLocator,
+     ) -> std::io::Result<Self> {
+         Self::new(
+             socket,
+             intents_dir,
+             instance,
++            host,
+             Arc::new(herdr_threads::app::SystemClock::new()),
+         )
+     }
+@@ -225,7 +324,7 @@ impl ServiceThreads {
+             .register(&self.budget())
+             .await
+             .map(|_| ())
+-            .map_err(api_error)
++            .map_err(register_error)
+     }
+ 
+     /// Replay mutations left unresolved by a dropped connection or an earlier crash, in order. The result of
+@@ -233,7 +332,7 @@ impl ServiceThreads {
+     async fn replay_pending(
+         &self,
+         want: &OperationId,
+-    ) -> Result<Option<ServiceResult>, ThreadsError> {
++    ) -> Result<Option<ServiceResult>, MutateError> {
+         let keys: Vec<OperationId> = self.pending.lock().await.clone();
+         let mut found = None;
+         for key in keys {
+@@ -253,7 +352,7 @@ impl ServiceThreads {
+         Ok(found)
+     }
+ 
+-    async fn call_error(&self, e: ServiceCallError) -> ThreadsError {
++    async fn call_error(&self, e: ServiceCallError) -> MutateError {
+         if let Some(key) = e.pending_operation() {
+             let mut p = self.pending.lock().await;
+             if !p.contains(key) {
+@@ -261,30 +360,46 @@ impl ServiceThreads {
+             }
+         }
+         match e {
+-            ServiceCallError::Api { error, .. } => api_error(error),
++            ServiceCallError::Api { error, pending } => MutateError::Api {
++                error,
++                pending: pending.is_some(),
++            },
+             ServiceCallError::Journal(io) => {
+-                ThreadsError::Disconnected(format!("intent journal: {io}"))
++                MutateError::Local(ThreadsError::Disconnected(format!("intent journal: {io}")))
+             }
+             ServiceCallError::Completion { result, .. } => match result {
+-                Ok(_) => ThreadsError::Disconnected("completion record needs repair".into()),
+-                Err(e) => api_error(e),
++                Ok(_) => MutateError::Local(ThreadsError::Disconnected(
++                    "completion record needs repair".into(),
++                )),
++                Err(error) => MutateError::Api {
++                    error,
++                    pending: false,
++                },
+             },
+         }
+     }
+ 
+     /// One durable mutation: a completed or unresolved intent under the same key is resumed, never duplicated.
+     async fn mutate(&self, op: ServiceOperation) -> Result<ServiceResult, ThreadsError> {
+-        self.ready().await?;
++        self.mutate_raw(op).await.map_err(MutateError::into_threads)
++    }
++
++    /// `mutate` with threads' answer unmapped.
++    async fn mutate_raw(&self, op: ServiceOperation) -> Result<ServiceResult, MutateError> {
++        self.ready().await.map_err(MutateError::Local)?;
+         let key = op
+             .operation_key()
+             .cloned()
+-            .ok_or_else(|| rejected("mutate", "operation has no key"))?;
++            .ok_or_else(|| MutateError::Local(rejected("mutate", "operation has no key")))?;
+         if let Some(r) = self.replay_pending(&key).await? {
+             return Ok(r);
+         }
+         let journal = self.client.journal();
+         let result = if let Ok(done) = journal.inspect_completed(&key) {
+-            done.response.result.map_err(api_error)
++            done.response.result.map_err(|error| MutateError::Api {
++                error,
++                pending: false,
++            })
+         } else if journal.inspect(&key).is_ok() {
+             match self.client.replay(&key, &self.budget()).await {
+                 Ok(r) => Ok(r),
+@@ -326,6 +441,49 @@ impl ServiceThreads {
+     }
+ }
+ 
++impl ServiceThreads {
++    /// The `ResurrectSeat` request behind `resurrect_seat` and `rebind_held_seat`.
++    fn resurrect_request(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        replace: Option<&ThreadsSeatRef>,
++        op: &OpKey,
++    ) -> Result<ServiceOperation, ThreadsError> {
++        Ok(ServiceOperation::ResurrectSeat(ResurrectSeat {
++            seat: seat_id(seat)?,
++            target: HostTargetId::parse(pane.0.clone()).map_err(|e| rejected("pane id", e))?,
++            host: self.host.clone(),
++            replace: replace.map(seat_id).transpose()?,
++            operation: operation_id(op),
++        }))
++    }
++
++    /// One `ResurrectSeat` under `op`. Threads stores only a success under the key (a replay returns it, and
++    /// the same key with another payload is refused); a refusal rolls back and stores nothing. The client's
++    /// intent journal does keep a refusal as the key's completion, so it is forgotten here: a retry under the
++    /// same key (a `NotFound` or `StaleHostObservation` retried) is a fresh decision, never the cached refusal.
++    /// A busy or dropped call stays pending and is replayed with its original envelope.
++    async fn restore(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        replace: Option<&ThreadsSeatRef>,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        let request = match self.resurrect_request(seat, pane, replace, op) {
++            Ok(r) => r,
++            Err(e) => return SeatRestoreOutcome::from_error(&e),
++        };
++        let key = operation_id(op);
++        let answer = self.mutate_raw(request).await;
++        if matches!(answer, Err(MutateError::Api { pending: false, .. })) {
++            let _ = self.client.journal().forget_completed(&key);
++        }
++        restore_outcome(answer)
++    }
++}
++
+ fn thread_id(thread: &ThreadRef) -> Result<ThreadId, ThreadsError> {
+     ThreadId::parse(thread.0.clone()).map_err(|e| rejected("thread id", e))
+ }
+@@ -581,6 +739,27 @@ impl ThreadsPort for ServiceThreads {
+         }
+     }
+ 
++    /// One `ResurrectSeat` request (`service_session_v4`) onto `pane` of graph's Herdr host.
++    async fn resurrect_seat(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        replace: Option<&ThreadsSeatRef>,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        self.restore(seat, pane, replace, op).await
++    }
++
++    /// U2 (threads 3.6.0): `ResurrectSeat` with `replace: None` on the held seat's own saved pane.
++    async fn rebind_held_seat(
++        &self,
++        seat: &ThreadsSeatRef,
++        pane: &HerdrPaneId,
++        op: &OpKey,
++    ) -> SeatRestoreOutcome {
++        self.restore(seat, pane, None, op).await
++    }
++
+     /// One `FinalizeRetirement` request (`service_session_v3`); threads releases the seat's key with it.
+     async fn finalize_retirement(
+         &self,
+@@ -614,15 +793,12 @@ impl ThreadsPort for ServiceThreads {
+         Ok(DeliveryCapability::NotifyFallback)
+     }
+ 
+-    /// ACK delivery requires both `service_session_v2` and `messages.send_time_receipts_v1`.
+-    /// Only definitive lack of support selects Notify fallback; transport trouble stays retryable.
++    /// ACK delivery requires graph's `service_session_v4` registration and `messages.send_time_receipts_v1`.
++    /// Only the absent receipts capability selects Notify fallback; a refused registration is the named
++    /// `level_refused` error and transport trouble stays retryable.
+     #[cfg(feature = "threads-service-ack")]
+     async fn delivery_capability(&self) -> Result<DeliveryCapability, ThreadsError> {
+-        match self.ready().await {
+-            Ok(()) => {}
+-            Err(ThreadsError::Unsupported) => return Ok(DeliveryCapability::NotifyFallback),
+-            Err(e) => return Err(e),
+-        }
++        self.ready().await?;
+         // A definitive unsupported response (or absent advertised capability) can
+         // select fallback. A transport failure must remain retryable, not downgrade.
+         // Probe afresh: a reconnect/daemon restart can change its capabilities.
