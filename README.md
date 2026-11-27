@@ -59,6 +59,8 @@ Every seat has a manager it escalates lifecycle issues to: its own `manager`, el
 
 ## Adopting existing Herdr spaces
 
+New here? Start with the [onboarding guide](docs/onboarding.md).
+
 Graph can take over live Herdr workspaces and tabs without relaunching their agents. The unit of adoption is a tab, inside an adopted workspace; one space is migrated one tab at a time, and tabs you do not adopt stay unmanaged and untouched.
 
 ```sh
