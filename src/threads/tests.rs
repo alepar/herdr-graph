@@ -2026,6 +2026,7 @@ async fn delivery_capability_fallback_without_feature() {
         dir.path().join("none.sock"),
         dir.path().join("state/intents"),
         herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
+        herdr_threads::protocol::ids::HostLocator::parse("/host.sock").unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -5716,16 +5717,17 @@ fn t0_epoch_plus_ms(ms: i64) -> Timestamp {
 }
 
 #[tokio::test]
-async fn service_threads_restore_stubs_are_unsupported() {
+async fn service_threads_restore_without_daemon_is_unreachable() {
     let dir = tempfile::tempdir().unwrap();
     let t = ServiceThreads::with_system_clock(
         dir.path().join("none.sock"),
         dir.path().join("state/intents"),
         herdr_threads::node::NodeUuid::from_bytes(*uuid::Uuid::new_v4().as_bytes()),
+        herdr_threads::protocol::ids::HostLocator::parse("/host.sock").unwrap(),
     )
     .unwrap();
     let pane = HerdrPaneId("w1:p1".into());
-    let want = SeatRestoreOutcome::refused(SeatRestoreRefusal::Unsupported);
+    let want = SeatRestoreOutcome::refused(SeatRestoreRefusal::Unreachable);
     assert_eq!(
         t.resurrect_seat(&seat_ref("s"), &pane, None, &OpKey("o1".into()))
             .await,

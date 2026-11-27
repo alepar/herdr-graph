@@ -220,9 +220,13 @@ async fn real_threads_channel_invite_membership_notify_release() {
         .guard()
         .check(&intents)
         .expect("intents dir is private");
-    let threads =
-        ServiceThreads::with_system_clock(found.socket.clone(), intents.clone(), found.instance)
-            .unwrap();
+    let threads = ServiceThreads::with_system_clock(
+        found.socket.clone(),
+        intents.clone(),
+        found.instance,
+        herdr_threads::protocol::ids::HostLocator::parse(herdr.socket.to_str().unwrap()).unwrap(),
+    )
+    .unwrap();
     let clock: Arc<dyn herdr_threads::protocol::time::Clock> =
         Arc::new(herdr_threads::app::SystemClock::new());
     let map = ThreadsSeatMap::new(
@@ -439,6 +443,7 @@ async fn real_threads_channel_invite_membership_notify_release() {
         found.socket.clone(),
         herdr.root.join("graph/.graph-local/threads-intents-2"),
         found.instance,
+        herdr_threads::protocol::ids::HostLocator::parse(herdr.socket.to_str().unwrap()).unwrap(),
     )
     .unwrap();
     let r = second
@@ -458,8 +463,13 @@ async fn real_threads_channel_invite_membership_notify_release() {
     );
     let restarted = discover(&daemon.state, &herdr.socket).unwrap();
     assert_eq!(restarted.instance, found.instance);
-    let threads =
-        ServiceThreads::with_system_clock(restarted.socket, intents, restarted.instance).unwrap();
+    let threads = ServiceThreads::with_system_clock(
+        restarted.socket,
+        intents,
+        restarted.instance,
+        herdr_threads::protocol::ids::HostLocator::parse(herdr.socket.to_str().unwrap()).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         threads
             .ensure_thread(ChannelScope::Seat, "alpha/foreman", &key)
