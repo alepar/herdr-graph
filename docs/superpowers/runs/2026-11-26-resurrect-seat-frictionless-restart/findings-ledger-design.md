@@ -2,7 +2,7 @@
 triggers: none
 blocking: r0=- r1=0 carriedB=- regressedB=- degraded=r1 not-computable=no-progress,returned,regressed
 ignored-overrides: 0
-- [Should-fix] §4.1 "Keyless relaunches wait for `rebind` done in the same incarnation"; §4.2; §4.5 · raised r1@42c4bd6 · open · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
-- [Should-fix] §4 opening paragraph ("whose fact, read after the change, is `Unresolved` … A seat already resolved onto its pane needs nothing"); §4.1 · raised r1@42c4bd6 · open · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
+- [Should-fix] §4.1 "Keyless relaunches wait for `rebind` done in the same incarnation"; §4.2; §4.5 · raised r1@42c4bd6 · dissolved@r1 · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
+- [Should-fix] §4 opening paragraph ("whose fact, read after the change, is `Unresolved` … A seat already resolved onto its pane needs nothing"); §4.1 · raised r1@42c4bd6 · dissolved@r1 · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
 - [Should-fix] §3 window "from 24 h to 7 d": "Graph's channel wants re-issue graph's own invitations if needed." · raised r1@42c4bd6 · open · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
 - [Nit] §3 table row "keyless, `Retired{Reversible}`"; compare §4.2 · raised r1@42c4bd6 · open · source roast · text docs/superpowers/runs/2026-11-26-resurrect-seat-frictionless-restart/2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md

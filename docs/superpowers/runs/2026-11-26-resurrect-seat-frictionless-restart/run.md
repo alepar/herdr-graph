@@ -14,6 +14,9 @@ epic: hg-lnw
 roastDesignRound: 1
 roast-design: 2026-11-26-resurrect-seat-frictionless-restart-roast-design-1.md
 findingsLedgerDesign: findings-ledger-design.md
+redesignCycles-design: 1
+redesign-design-1: round 1 · triggers shared-cause, defect-type · amended - · lastGood 723b39a51ec3cd10342deb957ed4de70d88320cc · designRoast - · state started
+stepBackDesign-round-1: redesign — applied: keyless relaunch gate becomes level-triggered (seat fact Resolved on its pane, or 90 s grace), rebind re-planned while Unresolved
 
 approvals:
 - top-split · auto · hg-lnw.1 LEAF, hg-lnw.2 LEAF, hg-lnw.3 LEAF, hg-lnw.4 LEAF, hg-lnw.5 LEAF (PROMOTE overruled, sp:demoted-by-session), hg-lnw.6 LEAF, hg-lnw.7 LEAF, hg-lnw.8 LEAF, hg-lnw.9 LEAF, hg-lnw.10 LEAF, hg-lnw.11 LEAF
