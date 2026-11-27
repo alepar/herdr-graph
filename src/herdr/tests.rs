@@ -449,6 +449,68 @@ async fn client_start_agent_maps_outcomes() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// An unlabelled pane's agent is named after its kind; when Herdr refuses that name as `agent_name_taken`
+/// (another unlabelled pane of the kind runs one), the client retries once under the pane-qualified name.
+#[tokio::test]
+async fn client_start_agent_retries_taken_name_with_pane_suffix() {
+    let dir = scratch("agentname");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let socket = mini_server(&dir, move |m, p, _| match m {
+        "pane.get" => Reply::Result(json!({"pane": {"pane_id": p["pane_id"]}})),
+        "agent.start" => {
+            let name = p["name"].as_str().unwrap().to_owned();
+            log.lock().unwrap().push(name.clone());
+            if name == "claude" || p["pane_id"] == "w1:p9" {
+                Reply::Error("agent_name_taken", "agent name is already in use")
+            } else {
+                Reply::Result(json!({"type": "agent_started"}))
+            }
+        }
+        _ => Reply::Error("unexpected", "unexpected"),
+    });
+    let c = HerdrClient::new(socket);
+    let start = |p: &str| StartAgent {
+        pane: pane(p),
+        kind: "claude".into(),
+        args: vec![],
+        env: vec![],
+    };
+    assert_eq!(
+        c.start_agent(start("w1:p2")).await.unwrap(),
+        StartOutcome::Started
+    );
+    assert_eq!(*seen.lock().unwrap(), ["claude", "claude-w1-p2"]);
+    seen.lock().unwrap().clear();
+    let StartOutcome::NeedsRevision { reason } = c.start_agent(start("w1:p9")).await.unwrap() else {
+        panic!("expected NeedsRevision")
+    };
+    assert!(reason.starts_with("agent_name_taken:"), "{reason}");
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["claude", "claude-w1-p9"],
+        "one retry only"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn agent_names_follow_herdr_name_rule() {
+    use super::client::agent_names;
+    assert_eq!(
+        agent_names(None, "claude", &pane("w1:p3")),
+        ["claude", "claude-w1-p3"]
+    );
+    assert_eq!(
+        agent_names(Some("Legacy Agent"), "claude", &pane("w2:p1")),
+        ["legacy-agent", "legacy-agent-w2-p1"]
+    );
+    let long = "a".repeat(40);
+    let [first, retry] = agent_names(Some(&long), "claude", &pane("w12:p345"));
+    assert_eq!(first.len(), 32);
+    assert_eq!(retry, format!("{}-w12-p345", "a".repeat(23)));
+}
+
 #[tokio::test]
 async fn client_start_agent_exports_env_before_agent_start() {
     let dir = scratch("agentenv");
