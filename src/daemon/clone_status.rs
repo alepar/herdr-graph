@@ -61,6 +61,12 @@ fn key_conflicts(clones: &[CloneRecord]) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// The operator command that brings a held seat back onto `pane`. herdr-threads 3.6.0 refuses person/operator
+/// actions outside its `human` namespace, so the command must start `herdr-threads human`.
+pub(crate) fn operator_rebind_remedy(seat: &str, pane: &str) -> String {
+    format!("herdr-threads human seat rebind {seat} --pane {pane} --operator")
+}
+
 /// One row per active seated clone whose seat is still held after a Herdr restart: the fact graph holds for the
 /// seat is a fresh `Unresolved` read (read in the current incarnation) and one grace period has passed since the
 /// incarnation began. `SEAT_LOST_AFTER` is that grace (documented as equal to the 90 s relaunch grace). It does
@@ -105,7 +111,7 @@ fn restart_held(
                 "pane": pane,
                 "reason": reason,
                 "since": changed_at.to_rfc3339(),
-                "remedy": format!("herdr-threads seat rebind {seat} --pane {pane} --operator"),
+                "remedy": operator_rebind_remedy(seat, pane),
             }))
         })
         .collect()
@@ -246,7 +252,8 @@ pub fn clone_status_at(
                 "reason": m["reason"],
                 "since": m["first_at"],
                 "remedy": format!(
-                    "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: herdr-threads seat rebind {seat} --pane {pane} --operator"
+                    "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: {}",
+                    operator_rebind_remedy(seat, pane)
                 ),
             }))
         })

@@ -6054,7 +6054,7 @@ impl Restarted {
 
     fn remedy(&self) -> String {
         format!(
-            "herdr-threads seat rebind {HELD_SEAT} --pane {} --operator",
+            "herdr-threads human seat rebind {HELD_SEAT} --pane {} --operator",
             self.pane.0
         )
     }
