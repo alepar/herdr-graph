@@ -667,7 +667,7 @@ mod ack {
     }
 
     /// A daemon that refuses graph's `service_session_v4` registration as unsupported (older than threads
-    /// 3.6.0) is a named error on the `threads` status probe, not a silent Notify fallback; a registration the
+    /// 3.5.0) is a named error on the `threads` status probe, not a silent Notify fallback; a registration the
     /// daemon serves selects ServiceAck.
     #[tokio::test]
     async fn old_daemon_refusing_v4_is_an_error_not_a_notify_fallback() {
@@ -702,7 +702,7 @@ mod ack {
     }
 }
 
-/// A threads daemon that refuses every registration as an unsupported capability (one older than 3.6.0, which
+/// A threads daemon that refuses every registration as an unsupported capability (one older than 3.5.0, which
 /// does not serve `service_session_v4`).
 fn old_daemon(dir: &std::path::Path) -> ServiceThreads {
     let socket = dir.join("old.sock");
@@ -1305,4 +1305,91 @@ async fn resolve_maps_continuity_key_pending_to_not_yet() {
         SeatResolution::Seat(seat("seat-late"))
     );
     peer.await.unwrap();
+}
+
+#[test]
+fn daemon_floor_refuses_below_3_6_0_by_name() {
+    use super::adapter::daemon_floor;
+    for old in ["3.5.0", "3.5.9", "3.4.1", "3.5.9-rc.1"] {
+        let msg = daemon_floor(old).unwrap_err();
+        assert!(
+            msg.contains("herdr-threads daemon must be at least 3.6.0") && msg.contains(old),
+            "{old}: {msg}"
+        );
+    }
+    for ok in ["3.6.0", "3.6.1", "4.0.0", "3.6.0+build.7", "3.10.0"] {
+        assert_eq!(daemon_floor(ok), Ok(()), "{ok}");
+    }
+    // A format graph does not understand is not refused.
+    for odd in ["", "dev", "3.6", "3.x.0", "3.5.0.1"] {
+        assert_eq!(daemon_floor(odd), Ok(()), "{odd:?}");
+    }
+}
+
+/// A published descriptor naming `software_version`, next to a bound socket, under a fresh state dir.
+fn publish_descriptor(
+    state: &std::path::Path,
+    software_version: &str,
+) -> (std::os::unix::net::UnixListener, herdr_threads::node::NodeUuid) {
+    use herdr_threads::daemon::paths::NodePaths;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let paths = NodePaths::resolve(state).unwrap();
+    paths.prepare_node_dir().unwrap();
+    let socket = std::os::unix::net::UnixListener::bind(&paths.socket_path).unwrap();
+    let meta = std::fs::metadata(&paths.socket_path).unwrap();
+    let node = herdr_threads::node::NodeUuid::from_bytes([7; 16]);
+    std::fs::write(
+        &paths.node_json_path,
+        serde_json::to_vec(&json!({
+            "format": 1, "node_uuid": node, "tag": "abc", "tag_k": 0, "created_at": 1
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &paths.descriptor_path,
+        serde_json::to_vec(&herdr_threads::daemon::ownership::EndpointDescriptor {
+            software_version: software_version.into(),
+            protocol_version: PROTOCOL_VERSION,
+            node_uuid: node,
+            boot_id: uuid::Uuid::new_v4(),
+            endpoint: paths.socket_path.clone(),
+            pid: std::process::id(),
+            socket_device: meta.dev(),
+            socket_inode: meta.ino(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    for path in [
+        &paths.node_json_path,
+        &paths.descriptor_path,
+        &paths.socket_path,
+    ] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    (socket, node)
+}
+
+#[test]
+fn discover_refuses_a_3_5_daemon_by_name_and_accepts_3_6() {
+    for (version, refused) in [("3.5.0", true), ("3.6.0", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        let state = state.canonicalize().unwrap();
+        let (_socket, node) = publish_descriptor(&state, version);
+        let found = super::discover(&state, &dir.path().join("host.sock"));
+        if refused {
+            let e = found.unwrap_err();
+            assert_eq!(e.kind(), std::io::ErrorKind::Unsupported, "{e}");
+            assert!(
+                e.to_string()
+                    .contains("herdr-threads daemon must be at least 3.6.0 (found 3.5.0)"),
+                "{e}"
+            );
+        } else {
+            assert_eq!(found.unwrap().instance, node);
+        }
+    }
 }

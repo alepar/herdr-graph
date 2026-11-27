@@ -771,6 +771,10 @@ mod lazy {
                 ));
             };
             let discovered = crate::threads::discover(&dir, &self.herdr_socket).map_err(|e| {
+                // A daemon below the 3.6.0 floor is running: name the upgrade, retried after it.
+                if e.kind() == std::io::ErrorKind::Unsupported {
+                    return ThreadsError::Disconnected(e.to_string());
+                }
                 ThreadsError::Disconnected(format!(
                     "herdr-threads is not running (state dir {} from {source}): {e}",
                     dir.display()
@@ -1395,7 +1399,7 @@ mod lazy {
                     std::fs::write(
                         &paths.descriptor_path,
                         serde_json::to_vec(&herdr_threads::daemon::ownership::EndpointDescriptor {
-                            software_version: "2.0.3".into(),
+                            software_version: "3.6.0".into(),
                             protocol_version: herdr_threads::protocol::wire::PROTOCOL_VERSION,
                             node_uuid: node,
                             boot_id: uuid::Uuid::new_v4(),

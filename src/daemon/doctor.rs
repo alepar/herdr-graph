@@ -108,8 +108,9 @@ fn threads_check(
             .or(c["note"].as_str())
             .unwrap_or("no reason reported");
         detail.push_str(&format!("; daemon not connected: {why}"));
-        // An older daemon refused graph's v4 service session (adapter `level_refused`).
-        if why.contains("service_session_v4") {
+        // A daemon older than 3.5.0 refused graph's v4 service session (adapter `level_refused`), or a 3.5.x
+        // daemon failed graph's descriptor version check (adapter `daemon_floor`).
+        if why.contains("service_session_v4") || why.contains("must be at least 3.6.0") {
             detail.push_str(
                 "; upgrade step: install herdr-threads >= 3.6.0 and restart the herdr-threads daemon \
                  (graph registers service_session_v4 and has no fallback to v3)",
@@ -1146,6 +1147,27 @@ mod tests {
             Some(&serde_json::json!({"connected": false, "error": "refused"})),
         );
         assert!(!c.detail.contains("upgrade step"), "{}", c.detail);
+    }
+
+    #[test]
+    fn threads_check_names_the_upgrade_step_for_a_3_5_daemon() {
+        let found = Ok(Some((
+            PathBuf::from("/s/herdr-threads"),
+            Source::XdgDefault,
+        )));
+        let floor = crate::threads::adapter::daemon_floor("3.5.0").unwrap_err();
+        let c = threads_check(
+            found,
+            Some(&serde_json::json!({"connected": false, "error": floor})),
+        );
+        assert!(!c.ok, "{c:?}");
+        assert!(
+            c.detail
+                .contains("upgrade step: install herdr-threads >= 3.6.0")
+                && c.detail.contains("must be at least 3.6.0 (found 3.5.0)"),
+            "{}",
+            c.detail
+        );
     }
 
     #[test]

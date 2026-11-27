@@ -19,14 +19,16 @@ default = ["threads-service-ack"]
 test-support = []
 # herdr-threads service ACK delivery (spec §7.4) over graph's service_session_v4 session.
 # On by default; a daemon without the send-time receipts capability falls back to Notify. A daemon older than
-# 3.6.0 refuses the v4 registration, which is a named error (no fallback).
+# 3.5.0 refuses the v4 registration and graph refuses a 3.5.x daemon by its published version; both are named
+# errors (no fallback).
 threads-service-ack = []
 # Tier-3 private Herdr server tests (spec §11).
 private-herdr = []
 
 [dependencies]
 # Pinned at v3.6.0: graph registers service_session_v4 (with_level, ht-lzhi) for ResurrectSeat and the
-# restart-held seat rebind (ht-0f0r); the daemon must run >= 3.6.0.
+# restart-held seat rebind (ht-0f0r); the daemon must run >= 3.6.0 (checked
+# against the published descriptor's software_version at discovery).
 herdr-threads = { path = "third_party/herdr-threads" }
 # Versions chosen to unify with herdr-threads' exact pins.
 serde = { version = "1.0.229", features = ["derive"] }
