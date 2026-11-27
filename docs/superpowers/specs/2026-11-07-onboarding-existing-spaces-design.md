@@ -1,6 +1,6 @@
 # Onboarding existing Herdr and herdr-threads spaces into herdr-graph
 
-Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement"). Written 2026-11-07. Applies to herdr-graph v0.3.0 (threads 3.1.0, Herdr 0.9.5).
+Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement"). Written 2026-11-07. Applies to herdr-graph v0.3.0 and later (threads pinned at 3.6.0 since hg-lnw; v0.3.0 shipped with 3.1.0; Herdr 0.9.5).
 
 ## Question
 
@@ -16,7 +16,7 @@ Status: approved by the user on 2026-11-25 ("rest lgtm, feel free to implement")
 
 Every step below is checked against the code or the CLI help. File references are the source of truth.
 
-1. **Prerequisites.** herdr-threads daemon 3.1.0 or later (graph registers `service_session_v3`, no fallback: CHANGELOG Migration). Build, `herdr plugin link`, `herdr-graph init <path>`.
+1. **Prerequisites.** herdr-threads daemon 3.6.0 or later (graph pins 3.6.0 and registers its service session with no fallback: CHANGELOG Migration). Build, `herdr plugin link`, `herdr-graph init <path>`.
 2. **Harness setup.** `herdr-graph setup claude` / `setup codex` installs a user-level SessionStart hook, the `seat` and `graph` skills and the apply ask rule. Safe for unmanaged panes: the hook prompts for `/seat` only when `HERDR_GRAPH=1` or the pane id resolves to a bound live clone (`src/bootstrap/mod.rs` `wants_seat_prompt`). Unmanaged agents see nothing new.
 3. **Create a teamspace.** `plan teamspace create <name> --project-repo <repo> --active`. This always opens a **new** Herdr workspace (`runtime.open_workspace`, `src/plan/core_kinds.rs` TeamspaceCreate). There is no flag to bind an existing workspace.
 4. **Create seats.** `plan seat create <name> --teamspace <ts> --active` always opens a **new** tab and launches a **new** agent (`runtime.open_tab` plus `open_clone_effects`, SeatCreate). The agent starts with a continuity key and gets a fresh threads seat. Or `application apply <template> --teamspace <ts> --name <app>` to hydrate a team template.

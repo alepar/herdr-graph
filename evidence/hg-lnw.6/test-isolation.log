@@ -1,0 +1,31 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/test_isolation.rs (target/debug/deps/test_isolation-6fb11f79ee2404e8)
+
+running 17 tests
+test helper_owned_protected_child ... ok
+test helper_panics_with_live_children ... ok
+test helper_sigkilled_with_live_rig ... ok
+test scanner_flags_raw_cli_spawn_and_real_home_read ... ok
+test support::isolated::root_watchdog ... ok
+test pinned_threads_version_is_the_submodule_manifest_version ... ok
+test threads_binary_with_a_different_version_is_rejected ... ok
+
+running 1 test
+test helper_sigkilled_with_live_rig ... 
+running 1 test
+
+running 1 test
+test helper_sigkilled_with_live_rig ... test orphan_rule_spares_a_fresh_lockless_root ... ok
+test init_no_user_config_writes_nothing_under_home ... ok
+test child_outside_test_root_is_refused ... ok
+test test_sources_spawn_only_through_isolated_helpers ... ok
+test init_prints_where_it_wrote_config ... ok
+test panicking_test_leaves_no_process_behind ... ok
+test sigkilled_test_leaves_no_rig_behind ... ok
+test start_of_run_sweep_reaps_a_dead_owners_rig ... ok
+test root_reaper_reaps_protected_descendant ... ok
+test test_root_drop_reaps_detached_daemon ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.45s
+
+exit 0
