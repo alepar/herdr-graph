@@ -1524,6 +1524,23 @@ fn record_refusal(cx: &ExecCx<'_>, clone: &CloneRecord, epoch: &OpId, reason: &s
     );
 }
 
+/// Journal meta `{"epoch","first_at","reason","count","replace","pane"}`: the last definitive refusal of a
+/// resurrect of `clone`'s seat. Cleared when the Restore is acknowledged or succeeded.
+pub fn resurrect_refused_key(clone: &CloneId) -> String {
+    format!("resurrect_refused:{clone}")
+}
+
+/// The refusal meta of `clone`, only while it names `epoch` (a meta of another Restore epoch is absent).
+pub fn refused_meta(journal: &Journal, clone: &CloneId, epoch: &OpId) -> Option<serde_json::Value> {
+    let raw = journal
+        .meta_get(&resurrect_refused_key(clone))
+        .ok()
+        .flatten()?;
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .filter(|m| m["epoch"] == epoch.to_string())
+}
+
 fn port_outcome(e: ThreadsError) -> ExecOutcome {
     match e {
         // Backoff, never takeover: the reconciler schedules the retry.
@@ -1658,7 +1675,10 @@ impl ThreadsExecutor {
                 epoch: epoch.clone(),
             },
         ) {
-            Ok(()) => ExecOutcome::Done,
+            Ok(()) => {
+                let _ = self.journal.meta_delete(&resurrect_refused_key(&clone.id));
+                ExecOutcome::Done
+            }
             Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
         }
     }
@@ -1730,8 +1750,15 @@ impl ThreadsExecutor {
 
     /// Bring the reversibly retired keyless seat of a pending Restore back onto the reopened pane (spec §3), then
     /// acknowledge the Restore with the seat unchanged. `replace` is the bare seat threads minted for the pane,
-    /// read now (threads retires it in the same decision). Minimal refusal path: a retryable refusal backs off, a
-    /// definitive one is recorded on the intent and deferred; the full mapping is the refusal bead's.
+    /// read now (threads retires it in the same decision). Outcomes:
+    /// - done or already resolved on the pane: acknowledge and clear the refusal meta;
+    /// - `NotFound`: defer with no meta; the next seat read decides (final: succession, resolved: acknowledge,
+    ///   still reversible: this want retries);
+    /// - a retryable refusal: back off;
+    /// - any other definitive refusal: record `resurrect_refused:<clone>` once (epoch, first time, reason,
+    ///   count, the `replace` and pane tried) and defer. The restore launch stays gated on `threads_done`. The
+    ///   want asks again only when `replace` or the pane changed, under an op key that carries the refusal
+    ///   count, so threads never replays the cached refusal.
     async fn resurrect_seat(
         &self,
         cx: &ExecCx<'_>,
@@ -1760,13 +1787,24 @@ impl ThreadsExecutor {
             Ok(_) | Err(ThreadsError::Rejected(_)) => None,
             Err(err) => return port_outcome(err),
         };
+        let replace_name = replace.as_ref().map_or("none", |s| s.0.as_str());
+        let refused = refused_meta(&self.journal, &clone.id, epoch);
+        if let Some(m) = &refused
+            && m["replace"] == replace_name
+            && m["pane"] == pane.0.as_str()
+        {
+            return ExecOutcome::Deferred(format!(
+                "refused: {}; waiting for the seat or the pane to change",
+                m["reason"].as_str().unwrap_or("unknown")
+            ));
+        }
+        let count = refused
+            .as_ref()
+            .and_then(|m| m["count"].as_u64())
+            .unwrap_or(0);
         let op = OpKey(super::namespace::salt(
             &g.epoch,
-            &format!(
-                "resurrect:{}:{epoch}:{}",
-                clone.id,
-                replace.as_ref().map_or("none", |s| s.0.as_str())
-            ),
+            &format!("resurrect:{}:{epoch}:{replace_name}:{count}", clone.id),
         ));
         match self
             .threads
@@ -1786,10 +1824,17 @@ impl ThreadsExecutor {
                         epoch: epoch.clone(),
                     },
                 ) {
-                    Ok(()) => ExecOutcome::Done,
+                    Ok(()) => {
+                        let _ = self.journal.meta_delete(&resurrect_refused_key(&clone.id));
+                        ExecOutcome::Done
+                    }
                     Err(err) => ExecOutcome::Transient(format!("seat intent write: {err}")),
                 }
             }
+            SeatRestoreOutcome::Refused {
+                reason: SeatRestoreRefusal::NotFound,
+                ..
+            } => ExecOutcome::Deferred("seat not found; waiting for the next seat read".into()),
             SeatRestoreOutcome::Refused {
                 reason,
                 retryable: true,
@@ -1798,6 +1843,24 @@ impl ThreadsExecutor {
                 reason,
                 retryable: false,
             } => {
+                let first_at = refused
+                    .as_ref()
+                    .and_then(|m| m["first_at"].as_str().map(str::to_owned))
+                    .unwrap_or_else(|| cx.now.to_rfc3339());
+                let meta = serde_json::json!({
+                    "epoch": epoch.to_string(),
+                    "first_at": first_at,
+                    "reason": reason,
+                    "count": count + 1,
+                    "replace": replace_name,
+                    "pane": pane.0,
+                });
+                if let Err(err) = self
+                    .journal
+                    .meta_set(&resurrect_refused_key(&clone.id), &meta.to_string())
+                {
+                    return ExecOutcome::Transient(format!("refusal meta write: {err}"));
+                }
                 let msg = format!("resurrect refused: {reason:?}");
                 record_refusal(cx, clone, epoch, &msg);
                 ExecOutcome::Deferred(msg)
@@ -2037,7 +2100,10 @@ impl ThreadsExecutor {
                 epoch: epoch.clone(),
             },
         ) {
-            Ok(()) => ExecOutcome::Done,
+            Ok(()) => {
+                let _ = self.journal.meta_delete(&resurrect_refused_key(&clone.id));
+                ExecOutcome::Done
+            }
             Err(err) => ExecOutcome::Transient(format!("threads_seat write: {err}")),
         }
     }

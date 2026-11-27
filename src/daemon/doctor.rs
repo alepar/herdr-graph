@@ -139,6 +139,29 @@ fn restart_held_check(clones: Option<&Value>) -> Option<Check> {
     Some(warn_check("restart held", capped(&items)))
 }
 
+/// The `resurrect held` finding: clones whose seat threads refused to resurrect (the `clones` component's
+/// `resurrect_held` rows). None when there are none.
+fn resurrect_held_check(clones: Option<&Value>) -> Option<Check> {
+    let rows = clones?["resurrect_held"].as_array()?;
+    if rows.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{} seat {} on pane {}: {}; {}",
+                r["name"].as_str().unwrap_or("?"),
+                r["seat"].as_str().unwrap_or("?"),
+                r["pane"].as_str().unwrap_or("?"),
+                r["reason"].as_str().unwrap_or("?"),
+                r["remedy"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    Some(warn_check("resurrect held", capped(&items)))
+}
+
 const LIST_CAP: usize = 10;
 
 /// `a; b; c; +N more` for lists longer than [`LIST_CAP`].
@@ -632,6 +655,7 @@ pub fn doctor(env: &Env) -> DoctorReport {
         comp("threads").as_ref(),
     ));
     checks.extend(restart_held_check(comp("clones").as_ref()));
+    checks.extend(resurrect_held_check(comp("clones").as_ref()));
     match comp("journal") {
         Some(j) => checks.push(check("journal", true, j.to_string())),
         None => checks.push(check("journal", true, "no counts reported")),
@@ -950,6 +974,24 @@ mod tests {
         );
         let c = attention_effects_check(&rows, 0);
         assert!(!c.detail.contains("not yet delivered"), "{}", c.detail);
+    }
+
+    #[test]
+    fn resurrect_held_check_names_the_remedy() {
+        assert!(resurrect_held_check(None).is_none());
+        assert!(resurrect_held_check(Some(&serde_json::json!({ "resurrect_held": [] }))).is_none());
+        let clones = serde_json::json!({ "resurrect_held": [{
+            "clone": "c1", "name": "foreman", "seat": "seat-A", "pane": "w1:p9",
+            "reason": "target_already_owned", "since": "t",
+            "remedy": "an operator rebind brings the seat back: herdr-threads seat rebind seat-A --pane w1:p9 --operator",
+        }]});
+        let c = resurrect_held_check(Some(&clones)).expect("finding");
+        assert_eq!(c.name, "resurrect held");
+        assert!(c.ok && c.warn, "{c:?}");
+        assert_eq!(
+            c.detail,
+            "foreman seat seat-A on pane w1:p9: target_already_owned; an operator rebind brings the seat back: herdr-threads seat rebind seat-A --pane w1:p9 --operator"
+        );
     }
 
     #[test]

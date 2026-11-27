@@ -9,6 +9,7 @@ use crate::reconcile::planner::{
 };
 use crate::store::layout;
 use crate::store::tree::TreeRead;
+use crate::threads::effects::refused_meta;
 use serde_json::json;
 
 /// `{"retired_unpurged": [{clone, name, seat, retired_at}], "key_conflicts": [{clone, name, pane, remedy}]}`:
@@ -118,8 +119,11 @@ pub fn clone_status_with_journal(tree: &dyn TreeRead, journal: &Journal) -> serd
     clone_status_at(tree, journal, chrono::Utc::now())
 }
 
-/// `clone_status_with_journal` at an explicit `now` (the restart-held rows are time-dependent).
-/// Adds `"restart_held": [{clone, name, seat, pane, reason, since, remedy}]` (see `restart_held`).
+/// `clone_status_with_journal` at an explicit `now` (the held rows are time-dependent).
+/// Adds `"restart_held": [{clone, name, seat, pane, reason, since, remedy}]` (see `restart_held`). Also `"resurrect_held": [{clone, name, seat, pane, reason, since,
+/// remedy}]`: a pending Restore whose resurrect threads refused definitively (journal meta of the Restore's
+/// epoch) and whose seat still reads `Retired{Reversible}`, once `SEAT_LOST_AFTER` has passed since the first
+/// refusal. It clears when the fact leaves that state, the Restore is acknowledged or the epoch moves on.
 pub fn clone_status_at(
     tree: &dyn TreeRead,
     journal: &Journal,
@@ -212,6 +216,42 @@ pub fn clone_status_at(
         })
         .collect();
     v["restart_held"] = json!(restart_held(&clones, journal, now));
+    let resurrect_held: Vec<_> = clones
+        .iter()
+        .filter_map(|c| {
+            let Some(SeatIntent::Restore {
+                seat,
+                epoch,
+                threads_done: false,
+                ..
+            }) = &c.seat_intent
+            else {
+                return None;
+            };
+            let reversible = c.seat_fact.as_ref().is_some_and(|f| {
+                &f.seat == seat
+                    && matches!(f.state, SeatFactState::Retired { reversible: true, .. })
+            });
+            let m = refused_meta(journal, &c.id, epoch).filter(|_| reversible)?;
+            let first_at = chrono::DateTime::parse_from_rfc3339(m["first_at"].as_str()?).ok()?;
+            if now < first_at.with_timezone(&chrono::Utc) + SEAT_LOST_AFTER {
+                return None;
+            }
+            let pane = m["pane"].as_str().unwrap_or("unknown");
+            Some(json!({
+                "clone": c.id.to_string(),
+                "name": c.name,
+                "seat": seat,
+                "pane": pane,
+                "reason": m["reason"],
+                "since": m["first_at"],
+                "remedy": format!(
+                    "threads refused graph's resurrect; an operator rebind brings the seat back, and graph then acknowledges it: herdr-threads seat rebind {seat} --pane {pane} --operator"
+                ),
+            }))
+        })
+        .collect();
+    v["resurrect_held"] = json!(resurrect_held);
     v["stuck_restores"] = json!(stuck_restores);
     v["resume_blocked"] = json!(resume_blocked);
     v
