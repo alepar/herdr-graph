@@ -5298,6 +5298,87 @@ async fn undo_restored_agent_that_exits_is_relaunched() {
 }
 
 #[tokio::test]
+async fn undo_restored_agent_whose_start_response_was_lost_is_relaunched_after_exit() {
+    // The restore StartAgent goes through but its response is lost (Unknown); the re-run finds the agent on
+    // the pane. It must not record `launched:` for the keyless clone, or the agent is never relaunched.
+    for clear_intent in [true, false] {
+        let fx = fx();
+        let c = keyless_claude(&fx, true).await;
+        let pane = pane_of(&fx, &c);
+        fx.journal
+            .meta_delete(&planner::launched_key(&c.id))
+            .unwrap();
+        let epoch = OpId::new();
+        seat_state(
+            &fx,
+            &c.id,
+            json!({
+                "threads_seat": "seat-1",
+                "intent": restore_intent("seat-1", &epoch, true, false),
+                "fact": fact("seat-1", SeatFactState::Resolved { pane: pane.clone() }, fx.clock.now()),
+            }),
+        );
+        fx.herdr.clear_calls();
+        fx.herdr.fail_next("agent.start", Fault::LostResponse);
+        step_unreserved(&fx).await;
+        let ef = rows(&fx, EffectKind::StartAgent)
+            .into_iter()
+            .find(|r| r.status == EffectStatus::Unknown)
+            .expect("the restore start is Unknown");
+        // The re-run inspects the pane instead of launching again.
+        step_unreserved(&fx).await;
+        assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+        assert_eq!(
+            fx.journal.get_effect(&ef.id).unwrap().unwrap().status,
+            EffectStatus::Done
+        );
+        assert!(
+            fx.journal
+                .meta_get(&planner::launched_key(&c.id))
+                .unwrap()
+                .is_none(),
+            "clear_intent={clear_intent}: a keyless restore launch records no launched:"
+        );
+        let marked = the_clone(&fx, &c.id).seat_intent;
+        assert!(matches!(
+            marked,
+            Some(SeatIntent::Restore {
+                launched: Some(_),
+                ..
+            })
+        ));
+        // The agent checked in, then exited; the pane stays open.
+        let c = the_clone(&fx, &c.id);
+        end_session(&fx, &c, "abc", "claude");
+        fx.herdr.set_agent(&pane, None);
+        if clear_intent {
+            admit_threads_seat(
+                &*fx.w,
+                &c.id,
+                &SeatTransition::ClearOnReattach {
+                    epoch: epoch.clone(),
+                },
+            )
+            .unwrap();
+            fx.w.drain().unwrap();
+        }
+        fx.herdr.clear_calls();
+        for _ in 0..3 {
+            step_unreserved(&fx).await;
+        }
+        if clear_intent {
+            // Relaunched once by the ordinary rule, like the adopted seat it was.
+            assert_eq!(start_calls(&fx).len(), 1, "{:?}", calls(&fx));
+            assert!(!has_key(&start_calls(&fx)[0].env));
+        } else {
+            // The marked Restore still pending: the restore path never launches the epoch again.
+            assert!(start_calls(&fx).is_empty(), "{:?}", calls(&fx));
+            assert_eq!(the_clone(&fx, &c.id).seat_intent, marked);
+        }
+    }
+}
+
+#[tokio::test]
 async fn adopted_keyless_clone_whose_agent_exits_is_relaunched() {
     // The control the undo-restored clone must match: no restore history, no launch on record.
     let fx = fx();
